@@ -39,3 +39,6 @@ Thumbs.db
 
 # Project specific
 config/local_config.json 
+
+# Brief
+brief/

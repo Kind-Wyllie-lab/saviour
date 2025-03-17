@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat Controller - TTL IO Module
+Habitat System - TTL IO Module
 
 This module is used to control IO devices that use Transistor-Transistor Logic (TTL) signals (0V or 5V).
 Hardware should be a Raspberry Pi 5 connected to the main controller via ethernet. 

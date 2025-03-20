@@ -1,7 +1,0 @@
-As Peter mentioned, we have been developing the Habitat for some years, a colony system in which up to 50 animals can live 24/7, experiencing a much more enriched environment and hopefully learning more natural behaviours. I have built everything so far with data being collected intermittently over several years. It is a very labour intensive process still and analysing data very time consuming as it is still very manual.  
-
-Our role is not to develop the analysis but integrating the various data sources and ensuring accurate synchronisation and very high reliability across the board would be extremely valuable. Video recording is reliable and well compressed however the USV apparatus (8mic Avisoft system) is manually operated and I have hit multiple issues with the rfid system - it worked well in the workshop with some simple electronics and coding but failed in the lab. For instance, we had females in the system for a couple of years then moved to males - our antennas were not water/pee proof and they soon failed - I am changing the design to cater for this!
-
-I would like to see a capture system that is very much more modular than what I have created, easy to set up and operate.
-
-I have attached early thoughts for such a system (doc.txt).

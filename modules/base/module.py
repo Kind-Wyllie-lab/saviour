@@ -4,15 +4,17 @@ Habitat System - Base Module Class
 This is the base class for all peripheral modules in the Habitat system.
 
 Author: Andrew SG
-Created: 2025-03-17
+Created: 17/03/2025
 License: GPLv3
 """
 
 import os
+import subprocess
 import sys
 import time
 import socket
 import logging
+import ptp
 
 class Module:
     """
@@ -37,6 +39,7 @@ class Module:
         self.logger.setLevel(logging.INFO)
 
         self.logger.info(f"Initializing {module_type} module {module_id}")
+         
 
     def start(self) -> bool:
         """
@@ -48,8 +51,25 @@ class Module:
             bool: True if the module started successfully, False otherwise.
         """
         self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        
+        # Activate ptp
+        self.logger.info("Starting ptp4l.service")
+        ptp.stop_ptp4l()
+        ptp.restart_ptp4l()
+        time.sleep(1)
+        self.logger.info("Starting phc2sys.service")
+        ptp.stop_phc2sys()
+        ptp.restart_phc2sys()
 
         return True
+    
+    
+    def status_ptp(self) -> bool:
+        """
+        Get PTP status.
+        """
+        ptp.status_ptp4l()
+        ptp.status_phc2sys()
 
     def stop(self) -> bool:
         """
@@ -64,3 +84,20 @@ class Module:
 
         return True
 
+
+# Main entry point
+def main():
+    """Main entry point for the controller application"""
+    module = Module(module_id=1,
+                    module_type="Generic",
+                    config={})
+    print("Habitat Controller initialized")
+
+    # Start the main loop
+    module.start()
+    
+    module.status_ptp()
+
+# Run the main function if the script is executed directly
+if __name__ == "__main__":
+    main()

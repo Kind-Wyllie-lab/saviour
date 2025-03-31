@@ -12,6 +12,8 @@ This script serves as the main controller for the habitat system, providing:
 
 import sys
 import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+import src.shared.ptp as ptp
 import time
 import datetime
 import logging # for logging and debugging

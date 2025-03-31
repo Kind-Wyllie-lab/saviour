@@ -8,13 +8,16 @@ Created: 17/03/2025
 License: GPLv3
 """
 
-import os
-import subprocess
 import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+import src.shared.ptp as ptp
+
+
+import subprocess
 import time
 import socket
 import logging
-import shared.ptp as ptp
 
 class Module:
     """

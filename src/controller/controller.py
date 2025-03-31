@@ -39,6 +39,10 @@ class HabitatController:
     def __init__(self):
         """Initialize the controller with default values"""
         self.modules = [] # list of discovered modules
+        
+        # Setup logging
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.INFO)
 
     def start(self) -> bool:
         """
@@ -47,7 +51,7 @@ class HabitatController:
         Returns:
             bool: True if the controller started successfully, False otherwise.
         """
-        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        self.logger.info("Starting controller")
 
         # Activate ptp
         self.logger.info("Starting ptp4l.service")
@@ -70,7 +74,7 @@ def main():
     print("Habitat Controller initialized")
 
     # Start the main loop
-    controller.run()
+    controller.start()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

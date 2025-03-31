@@ -12,7 +12,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import src.shared.ptp as ptp
-
+import src.shared.network as network
 
 import subprocess
 import time
@@ -63,6 +63,9 @@ class Module:
         self.logger.info("Starting phc2sys.service")
         ptp.stop_phc2sys()
         ptp.restart_phc2sys()
+
+        # Start the client
+        network.run_client()
 
         return True
     

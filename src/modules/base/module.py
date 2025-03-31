@@ -14,7 +14,7 @@ import sys
 import time
 import socket
 import logging
-import ptp
+import shared.ptp as ptp
 
 class Module:
     """

@@ -14,6 +14,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import src.shared.ptp as ptp
+import src.shared.network as network
 import time
 import datetime
 import logging # for logging and debugging
@@ -39,12 +40,28 @@ class HabitatController:
         """Initialize the controller with default values"""
         self.modules = [] # list of discovered modules
 
-    def run(self):
-        """Main loop for the controller"""
-        while True:
-            print("Running...")
-            time.sleep(1)    
+    def start(self) -> bool:
+        """
+        Start the controller.
+        
+        Returns:
+            bool: True if the controller started successfully, False otherwise.
+        """
+        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
 
+        # Activate ptp
+        self.logger.info("Starting ptp4l.service")
+        ptp.stop_ptp4l()
+        ptp.restart_ptp4l()
+        time.sleep(1)
+        self.logger.info("Starting phc2sys.service")
+        ptp.stop_phc2sys()
+        ptp.restart_phc2sys()
+
+        # Start the server
+        network.run_server()
+
+        return True
         
 # Main entry point
 def main():

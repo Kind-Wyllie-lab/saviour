@@ -18,10 +18,12 @@ import time
 import socket
 import logging
 import uuid
+import threading
 
 import src.shared.ptp as ptp
 import src.shared.network as network
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
+import zmq
 
 def generate_module_id(module_type: str) -> str:
     mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
@@ -55,15 +57,23 @@ class Module:
         # zeroconf setup
         self.zeroconf = Zeroconf()
         self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+
+        # ZeroMQ setup
+        self.context = zmq.Context()
+        self.command_socket = self.context.socket(zmq.SUB)
+        self.command_socket.subscribe(self.module_id) # Subscribe only to messages for this module.
         
-         
+    # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            self.controller_ip = socket.inet_ntoa(info.addresses[0])
-            self.controller_port = info.port
+            self.controller_ip = socket.inet_ntoa(info.addresses[0]) # save the IP of the controller
+            self.controller_port = info.port # save the port of the controller
             self.logger.info(f"Found controller at {self.controller_ip}:{self.controller_port}")
+            # connect to zeroMQ
+            self.connect_to_controller()
+            threading.Thread(target=self.listen_for_commands, daemon=True).start()
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
@@ -72,6 +82,29 @@ class Module:
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
+
+    # ZeroMQ methods
+    def connect_to_controller(self):
+        """Connect to controller once we have its IP"""
+        self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
+        self.logger.info(f"Connected to controller at {self.controller_ip}:5555")
+    
+    def listen_for_commands(self):
+        """Listen for commands from controller"""
+        while True:
+            try:
+                message = self.command_socket.recv_string()
+                module_id, command = message.split(' ', 1)
+                self.logger.info(f"Received command: {command}")
+                self.handle_command(command)
+            except Exception as e:
+                self.logger.error(f"Error handling command: {e}")
+
+    def handle_command(self, command: str):
+        """Handle received commands"""
+        self.logger.info(f"Handling command: {command}")
+        print(f"Command: {command}")
+        # Add command handling logic here
 
     def start(self) -> bool:
         """

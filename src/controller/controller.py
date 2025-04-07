@@ -89,6 +89,7 @@ class HabitatController:
         # for receiving status updates from modules
         self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
         self.status_socket.subscribe("status/") # subscribe to status updates
+        self.status_socket.subscribe("data/") # subscribe to data updates
         self.status_socket.bind("tcp://*:5556") # bind the socket to a port
 
         # Setup logging
@@ -195,7 +196,7 @@ class HabitatController:
                         print("  supabase insert test - Insert test data into supabase")
                         print("  zeroconf add - Add a service to the list of discovered modules")
                         print("  zeroconf remove - Remove a service from the list of discovered modules")
-                        print("  zeromq send - Send a command to a specific module")
+                        print("  zmq send - Send a command to a specific module via zeromq")
                     case "list":
                         print("Available modules:")
                         for module in self.modules:
@@ -233,7 +234,7 @@ class HabitatController:
                     case "zeroconf remove":
                         # Remove a service from the list of discovered modules
                         self.remove_service(self.zeroconf, "_habitat._tcp.local.", "test")
-                    case "zeromq send":
+                    case "zmq send":
                         # Send a command to a specific module
                         module_id = input("Enter the module ID: ")
                         command = input("Enter the command: ")

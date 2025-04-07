@@ -86,6 +86,7 @@ class HabitatController:
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
         self.logger.info(f"Removing module: {name}")
+        self.modules = [module for module in self.modules if module.name != name] # remove the module from the list
 
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
@@ -103,6 +104,9 @@ class HabitatController:
             self.modules.append(module)
             self.logger.info(f"Discovered module: {module}")
 
+    def update_service(self, zeroconf, service_type, name):
+        """Called when a service is updated"""
+        self.logger.info(f"Service updated: {name}")
 
     def start(self) -> bool:
         """

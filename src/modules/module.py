@@ -68,6 +68,10 @@ class Module:
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("Lost connection to controller")
+    
+    def update_service(self, zeroconf, service_type, name):
+        """Called when a service is updated"""
+        self.logger.info(f"Service updated: {name}")
 
     def start(self) -> bool:
         """

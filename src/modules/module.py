@@ -23,7 +23,10 @@ import src.shared.ptp as ptp
 import src.shared.network as network
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 
-module_id = os.getenv("id")
+def generate_module_id(module_type: str) -> str:
+    mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
+    short_id = mac[-4:]  # Takes last 4 characters
+    return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"
 
 class Module:
     """
@@ -38,20 +41,21 @@ class Module:
         config (dict): Configuration parameters for the module
 
     """
-    def __init__(self, module_id: str, module_type: str, config: dict):
-        self.module_id = module_id
+    def __init__(self, module_type: str, config: dict):
         self.module_type = module_type
+        self.module_id = generate_module_id(module_type)
         self.config = config
         self.ip = os.popen('hostname -I').read().split()[0]
 
         # Setup logging
-        self.logger = logging.getLogger(f"{module_type}.{module_id}")
+        self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
         self.logger.setLevel(logging.INFO)
-        self.logger.info(f"Initializing {module_type} module {module_id}")
+        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
 
         # zeroconf setup
         self.zeroconf = Zeroconf()
         self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+        
          
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
@@ -126,8 +130,7 @@ class Module:
 # Main entry point
 def main():
     """Main entry point for the controller application"""
-    module = Module(module_id=module_id,
-                    module_type="Generic",
+    module = Module(module_type="generic",
                     config={})
     print("Habitat Module initialized")
 

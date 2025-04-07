@@ -19,6 +19,7 @@ import socket
 import logging
 import uuid
 import threading
+import random
 
 import src.shared.ptp as ptp
 import src.shared.network as network
@@ -111,16 +112,49 @@ class Module:
         self.status_socket.send_string(message)
         self.logger.info(f"Status sent: {message}")
 
+    def send_data(self, data: str):
+        """Send data to the controller"""
+        message = f"data/{self.module_id} {data}"
+        self.status_socket.send_string(message)
+        self.logger.info(f"Data sent: {message}")
+
     def handle_command(self, command: str):
         """Handle received commands"""
         self.logger.info(f"Handling command: {command}")
         print(f"Command: {command}")
         # Add command handling logic here
         match command:
-            case get_status:
+            case "get_status":
                 print("Command identified as get_status")
-                self.send_status("test status data")
+                status = {
+                    "timestamp": time.time(),
+                    "cpu_temp": os.popen('vcgencmd measure_temp').read()[5:9],  # Raspberry Pi CPU temp
+                    "cpu_usage": os.popen('top -n1 | grep "Cpu(s)"').read().split()[1],  # CPU usage %
+                    "memory_usage": os.popen('free -m').readlines()[1].split()[2],  # Memory usage
+                    "uptime": os.popen('uptime').read().split()[0],
+                    "disk_space": os.popen('df -h /').readlines()[1].split()[3]  # Free disk space
+                }
+                self.send_status(status)
+            
+            case "get_data":
+                print("Command identified as get_data")
+                data = str(self.read_data_fake())
+                self.send_data(data)
 
+            case "stream_data":
+                print("Command identified as stream_data")
+                #threading.Thread(target=self.stream_data, daemon=True).start()
+            
+            case "stop_stream":
+                print("Command identified as stop_stream")
+                #@TODO: kill the thread?
+                
+    def stream_data(self):
+        """Function to continuously read and transmit data"""
+        while True:
+            data=str(self.read_data_fake())
+            self.send_data(data)
+        
 
     def start(self) -> bool:
         """
@@ -154,6 +188,9 @@ class Module:
 
         return True
     
+    def read_data_fake(self): 
+        """Stand in for future sensor integration. Returns a random int."""
+        return random.random()
     
     def status_ptp(self) -> bool:
         """

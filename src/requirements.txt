@@ -38,6 +38,7 @@ pytest-mock==3.14.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.0
 pytz==2025.2
+pyzmq==26.4.0
 realtime==2.4.2
 referencing==0.36.2
 rpds-py==0.24.0
@@ -55,3 +56,4 @@ tzdata==2025.2
 websockets==14.2
 yarl==1.19.0
 zeroconf==0.146.3
+zmq==0.0.0

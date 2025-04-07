@@ -38,7 +38,10 @@ class HabitatController:
     
     def __init__(self):
         """Initialize the controller with default values"""
+
+        # Parameters
         self.modules = [] # list of discovered modules
+        self.manual_control = True # whether to run in manual control mode
         
         # Setup logging
         self.logger = logging.getLogger()
@@ -54,16 +57,37 @@ class HabitatController:
         self.logger.info("Starting controller")
 
         # Activate ptp
-        self.logger.info("Starting ptp4l.service")
-        ptp.stop_ptp4l()
-        ptp.restart_ptp4l()
-        time.sleep(1)
-        self.logger.info("Starting phc2sys.service")
-        ptp.stop_phc2sys()
-        ptp.restart_phc2sys()
+        self.logger.debug("Starting ptp4l.service")
+        ptp.stop_ptp4l() # Stop
+        ptp.restart_ptp4l() # Restart
+        time.sleep(1) # Wait for 1 second
+        self.logger.debug("Starting phc2sys.service")
+        ptp.stop_phc2sys() # Stop
+        ptp.restart_phc2sys() # Restart
 
         # Start the server
-        network.run_server()
+        if self.manual_control:
+            print("Starting manual control loop.")
+            while True:
+                print("Manual control loop running...")
+                # Get user input
+                user_input = input("Enter a command: ")
+                match user_input:
+                    case "quit":
+                        break
+                    case "help":
+                        print("Available commands:")
+                        print("  quit - Quit the manual control loop")
+                        print("  help - Show this help message")
+                        print("  list - List available modules")
+                    case "list":
+                        print("Available modules:")
+                        for module in self.modules:
+                            print(f"  {module.name}")
+                    
+                time.sleep(1)
+        else:
+            print("Starting automatic loop (not implemented yet)")
 
         return True
         

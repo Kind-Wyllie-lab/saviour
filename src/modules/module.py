@@ -67,6 +67,11 @@ class Module:
 
         # status socket for sending status updates
         self.status_socket = self.context.socket(zmq.PUB)
+
+        # Data parameters
+        self.streaming = False # A flag which will be used to indicate when the module should stream data, default false
+        self.stream_thread = None # the thread which will be used to stream data
+        self.samplerate = 50 # the sample rate in milliseconds
         
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -143,17 +148,24 @@ class Module:
 
             case "stream_data":
                 print("Command identified as stream_data")
-                #threading.Thread(target=self.stream_data, daemon=True).start()
+                if not self.streaming:  # Only start if not already streaming
+                    self.streaming = True
+                    self.stream_thread = threading.Thread(target=self.stream_data, daemon=True)
+                    self.stream_thread.start()
             
             case "stop_stream":
                 print("Command identified as stop_stream")
-                #@TODO: kill the thread?
+                self.streaming = False  # Thread will stop on next loop
+                if self.stream_thread: # If there is a thread still
+                    self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
+                    self.stream_thread = None # Empty the thread
                 
     def stream_data(self):
         """Function to continuously read and transmit data"""
-        while True:
+        while self.streaming:
             data=str(self.read_data_fake())
             self.send_data(data)
+            time.sleep(self.samplerate/1000)
         
 
     def start(self) -> bool:

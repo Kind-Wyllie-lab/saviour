@@ -13,6 +13,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import src.shared.ptp as ptp
 import src.shared.network as network
+from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 
 import subprocess
 import time
@@ -40,9 +41,23 @@ class Module:
         # Setup logging
         self.logger = logging.getLogger(f"{module_type}.{module_id}")
         self.logger.setLevel(logging.INFO)
-
         self.logger.info(f"Initializing {module_type} module {module_id}")
+
+        # zeroconf setup
+        self.zeroconf = Zeroconf()
+        self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
          
+    def add_service(self, zeroconf, service_type, name):
+        """Called when controller is discovered"""
+        info = zeroconf.get_service_info(service_type, name)
+        if info:
+            self.controller_ip = socket.inet_ntoa(info.addresses[0])
+            self.controller_port = info.port
+            self.logger.info(f"Found controller at {self.controller_ip}:{self.controller_port}")
+
+    def remove_service(self, zeroconf, service_type, name):
+        """Called when controller disappears"""
+        self.logger.warning("Lost connection to controller")
 
     def start(self) -> bool:
         """
@@ -64,8 +79,15 @@ class Module:
         ptp.stop_phc2sys()
         ptp.restart_phc2sys()
 
-        # Start the client
-        network.run_client()
+        # Advertise this module
+        service_info = ServiceInfo(
+            "_module._tcp.local.",
+            f"{self.module_type}_{self.module_id}._module._tcp.local.",
+            addresses=[socket.inet_aton("192.168.1.2")],
+            port=5000,
+            properties={'type': self.module_type, 'id': self.module_id}
+        )
+        self.zeroconf.register_service(service_info)
 
         return True
     

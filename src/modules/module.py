@@ -59,9 +59,13 @@ class Module:
         self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
 
         # ZeroMQ setup
+        # command socket for receiving commands from controller
         self.context = zmq.Context()
         self.command_socket = self.context.socket(zmq.SUB)
-        self.command_socket.subscribe(self.module_id) # Subscribe only to messages for this module.
+        self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
+
+        # status socket for sending status updates
+        self.status_socket = self.context.socket(zmq.PUB)
         
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -87,6 +91,7 @@ class Module:
     def connect_to_controller(self):
         """Connect to controller once we have its IP"""
         self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
+        self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
         self.logger.info(f"Connected to controller at {self.controller_ip}:5555")
     
     def listen_for_commands(self):
@@ -100,11 +105,22 @@ class Module:
             except Exception as e:
                 self.logger.error(f"Error handling command: {e}")
 
+    def send_status(self, status_data: str):
+        """Send status to the controller"""
+        message = f"status/{self.module_id} {status_data}"
+        self.status_socket.send_string(message)
+        self.logger.info(f"Status sent: {message}")
+
     def handle_command(self, command: str):
         """Handle received commands"""
         self.logger.info(f"Handling command: {command}")
         print(f"Command: {command}")
         # Add command handling logic here
+        match command:
+            case get_status:
+                print("Command identified as get_status")
+                self.send_status("test status data")
+
 
     def start(self) -> bool:
         """

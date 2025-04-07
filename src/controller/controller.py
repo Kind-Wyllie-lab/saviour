@@ -12,16 +12,27 @@ This script serves as the main controller for the habitat system, providing:
 
 import sys
 import os
+from dotenv import load_dotenv
+load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-import src.shared.ptp as ptp
-import src.shared.network as network
 import time
 import datetime
 import logging # for logging and debugging
+import supabase # for supabase client, the external database
 
 # Networking and synchronization
 import socket # for network communication
 import threading # for concurrent operations
+from zeroconf import ServiceBrowser, Zeroconf
+
+# Local modules
+import src.shared.ptp as ptp
+import src.shared.network as network
+
+# Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Optional: For NWB format support
 try:
@@ -67,24 +78,43 @@ class HabitatController:
 
         # Start the server
         if self.manual_control:
-            print("Starting manual control loop.")
+            self.logger.info("Starting manual control loop")
             while True:
-                print("Manual control loop running...")
+                self.logger.info("Manual control loop running...")
                 # Get user input
                 user_input = input("Enter a command: ")
                 match user_input:
                     case "quit":
+                        self.logger.info("Quitting manual control loop")
                         break
                     case "help":
                         print("Available commands:")
                         print("  quit - Quit the manual control loop")
                         print("  help - Show this help message")
                         print("  list - List available modules")
+                        print("  get test data - Get test data from supabase")
+                        print("  insert test data - Insert test data into supabase")
                     case "list":
                         print("Available modules:")
                         for module in self.modules:
                             print(f"  {module.name}")
-                    
+                    case "get test data":
+                        # Get test data from supabase
+                        response = (supabase_client.table("controller_test")
+                            .select("*")
+                            .execute()
+                        )
+                        print(response)
+                    case "insert test data":
+                        # Insert test data into supabase
+                        response = (supabase_client.table("controller_test")
+                            .insert({
+                                "type": "test",
+                                "value": "Test entry inserted from test_supabase.py script at " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                            .execute()
+                        )
+                        print(response)
                 time.sleep(1)
         else:
             print("Starting automatic loop (not implemented yet)")
@@ -95,7 +125,6 @@ class HabitatController:
 def main():
     """Main entry point for the controller application"""
     controller = HabitatController()
-    print("Habitat Controller initialized")
 
     # Start the main loop
     controller.start()

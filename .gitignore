@@ -32,6 +32,7 @@ log.txt
 .vscode/
 *.swp
 *.swo
+.cursor/
 
 # OS specific files
 .DS_Store

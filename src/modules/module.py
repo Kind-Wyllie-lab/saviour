@@ -10,15 +10,20 @@ License: GPLv3
 
 import sys
 import os
+from dotenv import load_dotenv
+load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-import src.shared.ptp as ptp
-import src.shared.network as network
-from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
-
 import subprocess
 import time
 import socket
 import logging
+import uuid
+
+import src.shared.ptp as ptp
+import src.shared.network as network
+from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
+
+module_id = os.getenv("id")
 
 class Module:
     """
@@ -37,6 +42,7 @@ class Module:
         self.module_id = module_id
         self.module_type = module_type
         self.config = config
+        self.ip = os.popen('hostname -I').read().split()[0]
 
         # Setup logging
         self.logger = logging.getLogger(f"{module_type}.{module_id}")
@@ -80,14 +86,14 @@ class Module:
         ptp.restart_phc2sys()
 
         # Advertise this module
-        service_info = ServiceInfo(
+        self.service_info = ServiceInfo(
             "_module._tcp.local.",
             f"{self.module_type}_{self.module_id}._module._tcp.local.",
-            addresses=[socket.inet_aton("192.168.1.2")],
+            addresses=[socket.inet_aton(self.ip)],
             port=5000,
             properties={'type': self.module_type, 'id': self.module_id}
         )
-        self.zeroconf.register_service(service_info)
+        self.zeroconf.register_service(self.service_info)
 
         return True
     
@@ -110,21 +116,33 @@ class Module:
         """
         self.logger.info(f"Stopping {self.module_type} module {self.module_id}")
 
+        # Unregister from zeroconf
+        self.zeroconf.unregister_service(self.service_info)
+        self.zeroconf.close()
+
         return True
 
 
 # Main entry point
 def main():
     """Main entry point for the controller application"""
-    module = Module(module_id=1,
+    module = Module(module_id=module_id,
                     module_type="Generic",
                     config={})
-    print("Habitat Controller initialized")
+    print("Habitat Module initialized")
 
     # Start the main loop
     module.start()
     
-    module.status_ptp()
+    # module.status_ptp()
+
+    # Keep running until interrupted
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        module.stop()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

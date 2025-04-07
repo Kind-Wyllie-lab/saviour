@@ -58,6 +58,10 @@ class Module:
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("Lost connection to controller")
+    
+    def update_service(self, zeroconf, service_type, name):
+        """Called when a service is updated"""
+        self.logger.info(f"Service updated: {name}")
 
     def start(self) -> bool:
         """
@@ -124,7 +128,15 @@ def main():
     # Start the main loop
     module.start()
     
-    module.status_ptp()
+    # module.status_ptp()
+
+    # Keep running until interrupted
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        module.stop()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

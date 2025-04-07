@@ -26,7 +26,8 @@ from typing import List, Dict, Any # for type hinting
 # Networking and synchronization
 import socket # for network communication
 import threading # for concurrent operations
-from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
+from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery
+import zmq # for zeromq communication
 
 # Local modules
 import src.shared.ptp as ptp
@@ -79,10 +80,16 @@ class HabitatController:
         self.zeroconf.register_service(self.service_info) # register the service with the above info
         self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services
         
+        # ZeroMQ setup
+        self.context = zmq.Context() # context object to contain all sockets
+        self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
+        self.command_socket.bind("tcp://*:5555") # bind the socket to a port
+
         # Setup logging
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
     
+    # zeroconf methods
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
         self.logger.info(f"Removing module: {name}")
@@ -107,6 +114,13 @@ class HabitatController:
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
+
+    # ZeroMQ methods
+    def send_command(self, module_id: str, command: str):
+        """Send a command to a specific module"""
+        message = f"{module_id} {command}"
+        self.command_socket.send_string(message)
+        self.logger.info(f"Command sent: {message}")
 
     def start(self) -> bool:
         """
@@ -150,6 +164,8 @@ class HabitatController:
                         print("Available modules:")
                         for module in self.modules:
                             print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
+                        if not self.modules:
+                            print("No modules found")
                     case "supabase get test":
                         # Get test data from supabase
                         response = (supabase_client.table("controller_test")
@@ -181,6 +197,11 @@ class HabitatController:
                     case "zeroconf remove":
                         # Remove a service from the list of discovered modules
                         self.remove_service(self.zeroconf, "_habitat._tcp.local.", "test")
+                    case "zeromq send":
+                        # Send a command to a specific module
+                        module_id = input("Enter the module ID: ")
+                        command = input("Enter the command: ")
+                        self.send_command(module_id, command)
                 time.sleep(1)
         else:
             print("Starting automatic loop (not implemented yet)")

@@ -81,14 +81,23 @@ class HabitatController:
         self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services
         
         # ZeroMQ setup
+        # for sending commands to modules
         self.context = zmq.Context() # context object to contain all sockets
         self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
         self.command_socket.bind("tcp://*:5555") # bind the socket to a port
 
+        # for receiving status updates from modules
+        self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
+        self.status_socket.subscribe("status/") # subscribe to status updates
+        self.status_socket.bind("tcp://*:5556") # bind the socket to a port
+
         # Setup logging
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
-    
+
+        # Start the listener thread
+        threading.Thread(target=self.listen_for_updates, daemon=True).start()
+
     # zeroconf methods
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
@@ -118,10 +127,36 @@ class HabitatController:
     # ZeroMQ methods
     def send_command(self, module_id: str, command: str):
         """Send a command to a specific module"""
-        message = f"{module_id} {command}"
+        message = f"cmd/{module_id} {command}"
         self.command_socket.send_string(message)
         self.logger.info(f"Command sent: {message}")
 
+    def listen_for_updates(self):
+        """Listen for status and data updates from modules"""
+        while True:
+            try:
+                message = self.status_socket.recv_string()
+                topic, data = message.split(' ', 1)
+                self.logger.info(f"Received update: {message}")
+                # Handle different topics
+                if topic.startswith('status/'):
+                    self.handle_status_update(topic, data)
+                elif topic.startswith('data/'):
+                    self.handle_data_update(topic, data)
+            except Exception as e:
+                self.logger.error(f"Error handling update: {e}")
+
+    def handle_status_update(self, topic: str, data: str):
+        """Handle a status update from a module"""
+        self.logger.info(f"Status update received from module {topic} with data: {data}")
+        print(f"Status update received from module {topic} with data: {data}")
+
+    def handle_data_update(self, topic: str, data: str):
+        """Handle a data update from a module"""
+        self.logger.info(f"Data update received from module {topic} with data: {data}")
+        print(f"Data update received from module {topic} with data: {data}")
+
+    # Main methods
     def start(self) -> bool:
         """
         Start the controller.
@@ -146,7 +181,7 @@ class HabitatController:
             while True:
                 self.logger.info("Manual control loop running...")
                 # Get user input
-                user_input = input("Enter a command: ")
+                user_input = input("Enter a command (type help for list of commands): ")
                 match user_input:
                     case "quit":
                         self.logger.info("Quitting manual control loop")
@@ -160,6 +195,7 @@ class HabitatController:
                         print("  supabase insert test - Insert test data into supabase")
                         print("  zeroconf add - Add a service to the list of discovered modules")
                         print("  zeroconf remove - Remove a service from the list of discovered modules")
+                        print("  zeromq send - Send a command to a specific module")
                     case "list":
                         print("Available modules:")
                         for module in self.modules:

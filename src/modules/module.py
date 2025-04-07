@@ -119,7 +119,15 @@ class Module:
         match command:
             case get_status:
                 print("Command identified as get_status")
-                self.send_status("test status data")
+                status = {
+                    "timestamp": time.time(),
+                    "cpu_temp": os.popen('vcgencmd measure_temp').read()[5:9],  # Raspberry Pi CPU temp
+                    "cpu_usage": os.popen('top -n1 | grep "Cpu(s)"').read().split()[1],  # CPU usage %
+                    "memory_usage": os.popen('free -m').readlines()[1].split()[2],  # Memory usage
+                    "uptime": os.popen('uptime').read().split()[0],
+                    "disk_space": os.popen('df -h /').readlines()[1].split()[3]  # Free disk space
+                }
+                self.send_status(status)
 
 
     def start(self) -> bool:

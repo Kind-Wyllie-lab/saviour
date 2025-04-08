@@ -68,6 +68,8 @@ class HabitatController:
         self.modules: List[Module] = [] # list of discovered modules
         self.module_data = {} # store data from modules before exporting to database
         self.manual_control = True # whether to run in manual control mode
+        self.export_interval = 10 # the interval at which to export data to the database
+        self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
         self.print_received_data = False # whether to print received data
         self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
         
@@ -156,23 +158,67 @@ class HabitatController:
         print(f"Status update received from module {topic} with data: {data}")
 
     def handle_data_update(self, topic: str, data: str):
-        """Handle a data update from a module"""
+        """Buffer incoming data from modules"""
         self.logger.info(f"Data update received from module {topic} with data: {data}")
         module_id = topic.split('/')[1] # get module id from topic
         timestamp = time.time() # time at which the data was received
-        # store locally
-        if module_id not in self.module_data:
+        
+        # store in local buffer
+        if module_id not in self.module_data: # if module id not in buffer, create a new buffer entry
             self.module_data[module_id] = []
+
+        # append data to buffer
         self.module_data[module_id].append({
             "timestamp": timestamp,
-            "data": data
+            "data": data,
+            #"type": self.modules[module_id].type
         })
+
+        # prevent buffer from growing too large
+        if len(self.module_data[module_id]) > self.max_buffer_size:
+            self.logger.warning(f"Buffer for module {module_id} is too large. Exporting to database.")
+            self.export_buffered_data(module_id)
 
         if self.print_received_data:
             print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
 
-        # TODO: Export to database
+    # Database methods
+    def export_buffered_data(self):
+        """Export the local buffer to the database"""
+        try:
+            for module_id, data_list in self.module_data.items(): # for each module in the buffer
+                if data_list:  # If there's data to upload
+                    # find the module type by seaching through the modules list
+                    module_type = next((module.type for module in self.modules if module.id == module_id), 'unknown')
+                    self.logger.debug(f"Preparing to upload for module: {module_id}, type: {module_type}")
+                    self.logger.debug(f"Data to upload: {data_list}")
 
+                    # format data for upload    
+                    records = [{
+                        "module_id": module_id,
+                        "module_type": module_type,
+                        "timestamp": item['timestamp'],
+                        "data": item['data']
+                    } for item in data_list]
+                    self.logger.debug(f"Records formatted for upload: {records}")
+
+                    # upload data to database
+                    response = supabase_client.table("controller_test").insert(records).execute()
+                    self.logger.debug(f"Supabase response: {response}")
+
+                    # Clear uploaded data from buffer
+                    self.module_data[module_id] = []
+                    
+        except Exception as e:
+            self.logger.error(f"Failed to upload data: {e}")
+            print(f"DEBUG - Full error: {str(e)}")
+        
+    def periodic_export(self):
+        """Periodically export the local buffer to the database"""
+        while True:
+            time.sleep(self.upload_interval)
+            self.export_buffered_data(self.module_data)
+        
     # Main methods
     def start(self) -> bool:
         """
@@ -200,21 +246,22 @@ class HabitatController:
                 # Get user input
                 user_input = input("Enter a command (type help for list of commands): ")
                 match user_input:
-                    case "quit":
-                        self.logger.info("Quitting manual control loop")
-                        break
                     case "help":
                         print("Available commands:")
-                        print("  quit - Quit the manual control loop")
                         print("  help - Show this help message")
+                        print("  quit - Quit the manual control loop")
                         print("  list - List available modules")
                         print("  supabase get test - Get test data from supabase")
                         print("  supabase insert test - Insert test data into supabase")
+                        print("  supabase export - Export the local buffer to the database")
                         print("  zeroconf add - Add a service to the list of discovered modules")
                         print("  zeroconf remove - Remove a service from the list of discovered modules")
                         print("  zmq send - Send a command to a specific module via zeromq")
                         print("  read buffer - Read the local buffer for a given module")
                         print("  size buffer - Print the size of the local buffer for a given module")
+                    case "quit":
+                        self.logger.info("Quitting manual control loop")
+                        break
                     case "list":
                         print("Available modules:")
                         for module in self.modules:
@@ -228,16 +275,9 @@ class HabitatController:
                             .execute()
                         )
                         print(response)
-                    case "supabase insert test":
-                        # Insert test data into supabase
-                        response = (supabase_client.table("controller_test")
-                            .insert({
-                                "type": "test",
-                                "value": "Test entry inserted from test_supabase.py script at " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            })
-                            .execute()
-                        )
-                        print(response)
+                    case "supabase export":
+                        # Export the local buffer to the database
+                        self.export_buffered_data()
                     case "zeroconf add":
                         # Add a service to the list of discovered modules
                         test_service = ServiceInfo(
@@ -299,12 +339,12 @@ def main():
 
     # Keep running until interrupted
     # @TODO: Implement a proper shutdown. At present I don't think this is triggered, as it's already looping from controller.start()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        controller.stop()
+    # try:
+    #     while True:
+    #         time.sleep(1)
+    # except KeyboardInterrupt:
+    #     print("\nShutting down...")
+    #     controller.stop()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

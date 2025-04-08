@@ -67,6 +67,7 @@ class HabitatController:
         # Parameters
         self.modules: List[Module] = [] # list of discovered modules
         self.manual_control = True # whether to run in manual control mode
+        self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
         
         # zeroconf
         self.zeroconf = Zeroconf()
@@ -235,10 +236,18 @@ class HabitatController:
                         # Remove a service from the list of discovered modules
                         self.remove_service(self.zeroconf, "_habitat._tcp.local.", "test")
                     case "zmq send":
-                        # Send a command to a specific module
-                        module_id = input("Enter the module ID: ")
-                        command = input("Enter the command: ")
-                        self.send_command(module_id, command)
+                        # send a command to module from list of modules
+                        i=1
+                        for module in self.modules:
+                            print(f"{i}. {module.name}")
+                            i+=1
+                        module_id = input("Chosen module: ")
+                        i=1
+                        for command in self.commands:
+                            print(f"{i}. {command}")
+                            i+=1
+                        command = input("Chosen command: ")
+                        self.send_command(self.modules[int(module_id)-1].id, self.commands[int(command)-1])
                 time.sleep(1)
         else:
             print("Starting automatic loop (not implemented yet)")

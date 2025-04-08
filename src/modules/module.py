@@ -146,8 +146,8 @@ class Module:
                 data = str(self.read_fake_data())
                 self.send_data(data)
 
-            case "stream_data":
-                print("Command identified as stream_data")
+            case "start_stream":
+                print("Command identified as start_stream")
                 if not self.streaming:  # Only start if not already streaming
                     self.streaming = True
                     self.stream_thread = threading.Thread(target=self.stream_data, daemon=True)

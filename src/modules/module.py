@@ -71,7 +71,7 @@ class Module:
         # Data parameters
         self.streaming = False # A flag which will be used to indicate when the module should stream data, default false
         self.stream_thread = None # the thread which will be used to stream data
-        self.samplerate = 50 # the sample rate in milliseconds
+        self.samplerate = 200 # the sample rate in milliseconds
         
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):

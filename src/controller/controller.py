@@ -67,12 +67,15 @@ class HabitatController:
         # Parameters
         self.modules: List[Module] = [] # list of discovered modules
         self.module_data = {} # store data from modules before exporting to database
-        self.manual_control = True # whether to run in manual control mode
         self.export_interval = 10 # the interval at which to export data to the database
         self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
-        self.print_received_data = False # whether to print received data
         self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
         
+        # Control flags
+        self.manual_control = True # whether to run in manual control mode
+        self.print_received_data = False # whether to print received data
+        self.is_exporting = False # whether the controller is currently exporting data to the database
+
         # zeroconf
         self.zeroconf = Zeroconf()
         self.service_info = ServiceInfo(
@@ -101,8 +104,19 @@ class HabitatController:
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
+        # Add console handler if none exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+
         # Start the zmq listener thread
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
+
+        # Start the auto export thread
+        threading.Thread(target=self.periodic_export, daemon=True).start()
 
     # zeroconf methods
     def remove_service(self, zeroconf, service_type, name):
@@ -143,7 +157,7 @@ class HabitatController:
             try:
                 message = self.status_socket.recv_string()
                 topic, data = message.split(' ', 1)
-                self.logger.info(f"Received update: {message}")
+                self.logger.debug(f"Received update: {message}")
                 # Handle different topics
                 if topic.startswith('status/'):
                     self.handle_status_update(topic, data)
@@ -154,7 +168,7 @@ class HabitatController:
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
-        self.logger.info(f"Status update received from module {topic} with data: {data}")
+        self.logger.debug(f"Status update received from module {topic} with data: {data}")
         print(f"Status update received from module {topic} with data: {data}")
 
     def handle_data_update(self, topic: str, data: str):
@@ -215,9 +229,17 @@ class HabitatController:
         
     def periodic_export(self):
         """Periodically export the local buffer to the database"""
+        self.logger.debug("Periodic export function called")
         while True:
-            time.sleep(self.upload_interval)
-            self.export_buffered_data(self.module_data)
+            while self.is_exporting:
+                self.logger.debug("Periodic export function saw that is_exporting is true")
+                try:
+                    self.logger.info("Starting periodic export from buffer...")
+                    self.export_buffered_data()
+                    self.logger.info("Periodic export completed successfully")
+                except Exception as e:
+                    self.logger.error(f"Error during periodic export: {e}")
+                time.sleep(self.export_interval)
         
     # Main methods
     def start(self) -> bool:
@@ -259,6 +281,8 @@ class HabitatController:
                         print("  zmq send - Send a command to a specific module via zeromq")
                         print("  read buffer - Read the local buffer for a given module")
                         print("  size buffer - Print the size of the local buffer for a given module")
+                        print("  start export - Periodically export the local buffer to the database")
+                        print("  stop export - Stop the periodic export of the local buffer to the database ")
                     case "quit":
                         self.logger.info("Quitting manual control loop")
                         break
@@ -323,6 +347,18 @@ class HabitatController:
                             i+=1
                         module_id = input("Chosen module: ")
                         print(len(self.module_data[self.modules[int(module_id)-1].id]))
+                    case "start export":
+                        # Start auto exporting buffer data to databsae
+                        print("Starting auto export...")
+                        self.is_exporting = True
+                    
+                    case "stop export":
+                        # Stop auto exporting buffer data to databsae
+                        print("Stopping auto export...")
+                        self.is_exporting = False
+                    
+                    case "check export":
+                        print(f"Exporting is currently: {self.is_exporting}")
                 time.sleep(0.1)
         else:
             print("Starting automatic loop (not implemented yet)")

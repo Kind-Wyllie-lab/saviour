@@ -303,7 +303,7 @@ class Module:
 
         # stop the heartbeat thread
         self.is_running = False
-        self.heartbeat_thread.join()
+
 
         return True
 

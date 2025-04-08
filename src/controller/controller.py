@@ -107,7 +107,7 @@ class HabitatController:
         # Add console handler if none exists
         if not self.logger.handlers:
             console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.DEBUG)
+            console_handler.setLevel(logging.INFO)
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
@@ -181,12 +181,13 @@ class HabitatController:
         try:
             status_data = eval(data) # Convert string data to dictionary
             self.module_health[module_id] = {
-                'last_heartbeat': time.time(), # last heartbeat set to now
+                'last_heartbeat': status_data['timestamp'],  # Use the module's timestamp
                 'status': 'online',
-                'cpu_usage': status_data.get('cpu_usage', 0),
-                'memory_usage': status_data.get('memory_usage', 0),
-                'temperature': status_data.get('temperature', 0),
-                'uptime': status_data.get('uptime', 0)
+                'cpu_temp': status_data['cpu_temp'],
+                'cpu_usage': status_data['cpu_usage'],
+                'memory_usage': status_data['memory_usage'],
+                'uptime': status_data['uptime'],
+                'disk_space': status_data['disk_space']
             }
             self.logger.debug(f"Module {module_id} is online with status: {self.module_health[module_id]}")
         except Exception as e:
@@ -399,7 +400,8 @@ class HabitatController:
                             print(f"Status: {health['status']}")
                             print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
                             print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
-                            print(f"Temperature: {health.get('temperature', 'N/A')}°C")
+                            print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
+                            print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
                             #print(f"PTP Offset: {health.get('ptp_offset', 'N/A')}ns")
                             print(f"Uptime: {health.get('uptime', 'N/A')}s")
                             print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")

@@ -66,6 +66,7 @@ class HabitatController:
 
         # Parameters
         self.modules: List[Module] = [] # list of discovered modules
+        self.module_data = {} # store data from modules before exporting to database
         self.manual_control = True # whether to run in manual control mode
         self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
         
@@ -97,7 +98,7 @@ class HabitatController:
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.INFO)
 
-        # Start the listener thread
+        # Start the zmq listener thread
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
 
     # zeroconf methods
@@ -156,7 +157,19 @@ class HabitatController:
     def handle_data_update(self, topic: str, data: str):
         """Handle a data update from a module"""
         self.logger.info(f"Data update received from module {topic} with data: {data}")
-        print(f"Data update received from module {topic} with data: {data}")
+        module_id = topic.split('/')[1] # get module id from topic
+        timestamp = time.time() # time at which the data was received
+        # store locally
+        if module_id not in self.module_data:
+            self.module_data[module_id] = []
+        self.module_data[module_id].append({
+            "timestamp": timestamp,
+            "data": data
+        })
+
+        print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
+
+        # TODO: Export to database
 
     # Main methods
     def start(self) -> bool:

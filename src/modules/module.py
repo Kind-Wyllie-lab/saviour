@@ -20,6 +20,7 @@ import logging
 import uuid
 import threading
 import random
+import psutil
 
 import src.shared.ptp as ptp
 import src.shared.network as network
@@ -52,8 +53,16 @@ class Module:
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
+    
+        # Add console handler if none exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
 
         # zeroconf setup
         self.zeroconf = Zeroconf()
@@ -74,8 +83,10 @@ class Module:
         self.samplerate = 200 # the sample rate in milliseconds
         self.is_running = True # a flag to indicate if the module is running
         self.heartbeat_interval = 5 # the interval at which to send heartbeats to the controller
+
         # Heartbeat thread
-        threading.Thread(target=self.send_heartbeat, daemon=True).start()
+        self.start_time = None
+        threading.Thread(target=self.send_heartbeats, daemon=True).start()
         
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -169,6 +180,7 @@ class Module:
         """Continuously send heartbeat messages to the controller"""
         while self.is_running:
             try:
+                self.logger.debug("Sending heartbeat")
                 status = {
                     "timestamp": time.time(),
                     'cpu_temp': self.get_cpu_temp(),
@@ -251,6 +263,7 @@ class Module:
             bool: True if the module started successfully, False otherwise.
         """
         self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        self.start_time = time.time()
         
         # Activate ptp
         self.logger.info("Starting ptp4l.service")

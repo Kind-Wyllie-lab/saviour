@@ -68,6 +68,7 @@ class HabitatController:
         self.modules: List[Module] = [] # list of discovered modules
         self.module_data = {} # store data from modules before exporting to database
         self.manual_control = True # whether to run in manual control mode
+        self.print_received_data = False # whether to print received data
         self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
         
         # zeroconf
@@ -167,7 +168,8 @@ class HabitatController:
             "data": data
         })
 
-        print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
+        if self.print_received_data:
+            print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
 
         # TODO: Export to database
 
@@ -211,6 +213,8 @@ class HabitatController:
                         print("  zeroconf add - Add a service to the list of discovered modules")
                         print("  zeroconf remove - Remove a service from the list of discovered modules")
                         print("  zmq send - Send a command to a specific module via zeromq")
+                        print("  read buffer - Read the local buffer for a given module")
+                        print("  size buffer - Print the size of the local buffer for a given module")
                     case "list":
                         print("Available modules:")
                         for module in self.modules:
@@ -261,7 +265,25 @@ class HabitatController:
                             i+=1
                         command = input("Chosen command: ")
                         self.send_command(self.modules[int(module_id)-1].id, self.commands[int(command)-1])
-                time.sleep(1)
+                    case "read buffer":
+                        # read local buffer for a given module
+                        # @TODO: Implement this
+                        # i=1
+                        # for module in self.modules:
+                        #     print(f"{i}. {module.name}")
+                        #     i+=1
+                        # module_id = input("Chosen module: ")
+                        # print(self.module_data[self.modules[int(module_id)-1].id])
+                        print(self.module_data)
+                    case "size buffer":
+                        # print the size of the local buffer for a given module
+                        i=1
+                        for module in self.modules:
+                            print(f"{i}. {module.name}")
+                            i+=1
+                        module_id = input("Chosen module: ")
+                        print(len(self.module_data[self.modules[int(module_id)-1].id]))
+                time.sleep(0.1)
         else:
             print("Starting automatic loop (not implemented yet)")
 
@@ -274,6 +296,15 @@ def main():
 
     # Start the main loop
     controller.start()
+
+    # Keep running until interrupted
+    # @TODO: Implement a proper shutdown. At present I don't think this is triggered, as it's already looping from controller.start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        controller.stop()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

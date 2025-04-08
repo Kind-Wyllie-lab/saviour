@@ -72,6 +72,10 @@ class Module:
         self.streaming = False # A flag which will be used to indicate when the module should stream data, default false
         self.stream_thread = None # the thread which will be used to stream data
         self.samplerate = 200 # the sample rate in milliseconds
+        self.is_running = True # a flag to indicate if the module is running
+        self.heartbeat_interval = 5 # the interval at which to send heartbeats to the controller
+        # Heartbeat thread
+        threading.Thread(target=self.send_heartbeat, daemon=True).start()
         
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -159,6 +163,35 @@ class Module:
                 if self.stream_thread: # If there is a thread still
                     self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
                     self.stream_thread = None # Empty the thread
+    
+    # Health monitoring methods            
+    def send_heartbeats(self):
+        """Continuously send heartbeat messages to the controller"""
+        while self.is_running:
+            try:
+                status = {
+                    "timestamp": time.time(),
+                    'cpu_temp': self.get_cpu_temp(),
+                    'cpu_usage': psutil.cpu_percent(),
+                    'memory_usage': psutil.virtual_memory().percent,
+                    'uptime': time.time() - self.start_time,
+                    'disk_space': psutil.disk_usage('/').percent # Free disk space
+                }
+                # Send on status/ topic
+                message = f"status/{self.module_id} {status}"
+                self.status_socket.send_string(message)
+                self.logger.debug(f"Heartbeat sent: {message}")
+            except Exception as e:
+                self.logger.error(f"Error sending heartbeat: {e}")
+            time.sleep(self.heartbeat_interval)
+
+    def get_cpu_temp(self):
+        """Get CPU temperature"""
+        try:
+            temp = os.popen("vcgencmd measure_temp").readline()
+            return float(temp.replace("temp=","").replace("'C\n",""))
+        except:
+            return None            
                 
     # Sensor data methods
     def stream_data(self):
@@ -254,6 +287,10 @@ class Module:
         # Unregister from zeroconf
         self.zeroconf.unregister_service(self.service_info)
         self.zeroconf.close()
+
+        # stop the heartbeat thread
+        self.is_running = False
+        self.heartbeat_thread.join()
 
         return True
 

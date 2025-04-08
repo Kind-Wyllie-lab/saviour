@@ -102,7 +102,7 @@ class HabitatController:
 
         # Setup logging
         self.logger = logging.getLogger()
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
 
         # Add console handler if none exists
         if not self.logger.handlers:
@@ -112,11 +112,19 @@ class HabitatController:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
+        # Health monitoring
+        self.module_health = {} # dictionary to store the health of each module
+        self.heartbeat_interval = 5 # the interval at which to check the health of each module
+        self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
+
         # Start the zmq listener thread
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
 
         # Start the auto export thread
         threading.Thread(target=self.periodic_export, daemon=True).start()
+
+        # Start the health monitoring thread
+        threading.Thread(target=self.monitor_module_health, daemon=True).start()
 
     # zeroconf methods
     def remove_service(self, zeroconf, service_type, name):
@@ -169,8 +177,21 @@ class HabitatController:
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         self.logger.debug(f"Status update received from module {topic} with data: {data}")
-        print(f"Status update received from module {topic} with data: {data}")
-
+        module_id = topic.split('/')[1] # get module id from topic
+        try:
+            status_data = eval(data) # Convert string data to dictionary
+            self.module_health[module_id] = {
+                'last_heartbeat': time.time(), # last heartbeat set to now
+                'status': 'online',
+                'cpu_usage': status_data.get('cpu_usage', 0),
+                'memory_usage': status_data.get('memory_usage', 0),
+                'temperature': status_data.get('temperature', 0),
+                'uptime': status_data.get('uptime', 0)
+            }
+            self.logger.debug(f"Module {module_id} is online with status: {self.module_health[module_id]}")
+        except Exception as e:
+            self.logger.error(f"Error parsing status data for module {module_id}: {e}")
+            
     def handle_data_update(self, topic: str, data: str):
         """Buffer incoming data from modules"""
         self.logger.info(f"Data update received from module {topic} with data: {data}")
@@ -241,6 +262,22 @@ class HabitatController:
                     self.logger.error(f"Error during periodic export: {e}")
                 time.sleep(self.export_interval)
         
+    # Monitor health
+    def monitor_module_health(self):
+        """Monitor the health of each module"""
+        while True: 
+            current_time = time.time() # get current time to compare to last heartbeat
+            for module_id in list(self.module_health.keys()): # iterate over all modules
+                last_heartbeat = self.module_health[module_id]['last_heartbeat'] # get last heartbeat time
+                if current_time - last_heartbeat > self.heartbeat_timeout: # if the last heartbeat was more than 3 intervals ago
+                    self.logger.warning(f"Module {module_id} has not sent a heartbeat in the last {self.heartbeat_timeout} seconds. Marking as offline.")
+                    self.module_health[module_id]['status'] = 'offline'
+            time.sleep(1)
+                    
+                    
+
+
+
     # Main methods
     def start(self) -> bool:
         """
@@ -330,14 +367,7 @@ class HabitatController:
                         command = input("Chosen command: ")
                         self.send_command(self.modules[int(module_id)-1].id, self.commands[int(command)-1])
                     case "read buffer":
-                        # read local buffer for a given module
-                        # @TODO: Implement this
-                        # i=1
-                        # for module in self.modules:
-                        #     print(f"{i}. {module.name}")
-                        #     i+=1
-                        # module_id = input("Chosen module: ")
-                        # print(self.module_data[self.modules[int(module_id)-1].id])
+                        # read local buffer
                         print(self.module_data)
                     case "size buffer":
                         # print the size of the local buffer for a given module
@@ -359,9 +389,24 @@ class HabitatController:
                     
                     case "check export":
                         print(f"Exporting is currently: {self.is_exporting}")
+
+                    case "health status":
+                        print("\nModule Health Status:")
+                        if not self.module_health:
+                            print("No modules reporting health data")
+                        for module_id, health in self.module_health.items():
+                            print(f"\nModule: {module_id}")
+                            print(f"Status: {health['status']}")
+                            print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
+                            print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
+                            print(f"Temperature: {health.get('temperature', 'N/A')}°C")
+                            #print(f"PTP Offset: {health.get('ptp_offset', 'N/A')}ns")
+                            print(f"Uptime: {health.get('uptime', 'N/A')}s")
+                            print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
                 time.sleep(0.1)
         else:
             print("Starting automatic loop (not implemented yet)")
+            # @TODO: Implement automatic loop
 
         return True
         

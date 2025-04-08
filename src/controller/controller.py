@@ -75,6 +75,8 @@ class HabitatController:
         self.manual_control = True # whether to run in manual control mode
         self.print_received_data = False # whether to print received data
         self.is_exporting = False # whether the controller is currently exporting data to the database
+        self.is_health_exporting = False # whether the controller is currently exporting health data to the database
+        self.health_export_interval = 10 # the interval at which to export health data to the database
 
         # zeroconf
         self.zeroconf = Zeroconf()
@@ -120,11 +122,14 @@ class HabitatController:
         # Start the zmq listener thread
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
 
-        # Start the auto export thread
+        # Start the data auto export thread
         threading.Thread(target=self.periodic_export, daemon=True).start()
 
         # Start the health monitoring thread
         threading.Thread(target=self.monitor_module_health, daemon=True).start()
+
+        # Start the health data auto export thread
+        threading.Thread(target=self.periodic_health_export, daemon=True).start()
 
     # zeroconf methods
     def remove_service(self, zeroconf, service_type, name):
@@ -180,6 +185,8 @@ class HabitatController:
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data) # Convert string data to dictionary
+
+            # Update local health tracking
             self.module_health[module_id] = {
                 'last_heartbeat': status_data['timestamp'],  # Use the module's timestamp
                 'status': 'online',
@@ -189,7 +196,8 @@ class HabitatController:
                 'uptime': status_data['uptime'],
                 'disk_space': status_data['disk_space']
             }
-            self.logger.debug(f"Module {module_id} is online with status: {self.module_health[module_id]}")
+            self.logger.debug(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
+
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
             
@@ -275,8 +283,50 @@ class HabitatController:
                     self.module_health[module_id]['status'] = 'offline'
             time.sleep(1)
                     
-                    
+    def export_health_data(self):
+        """Export the local health data to the database"""
+        self.logger.debug("Export health data function called")
+        if not self.module_health:
+            self.logger.debug("Export health data function saw that module_health is empty")
+            self.logger.info("No health data to export")
+            return
 
+        try:
+            self.logger.debug("Export health data function saw that module_health is not empty")
+            records = [
+                {
+                    "module_id": module_id,
+                    "timestamp": health["last_heartbeat"],
+                    "status": health["status"],
+                    "cpu_temp": health["cpu_temp"],
+                    "cpu_usage": health["cpu_usage"],
+                    "memory_usage": health["memory_usage"],
+                    "disk_space": health["disk_space"],
+                    "uptime": health["uptime"]
+                }
+                for module_id, health in self.module_health.items()
+            ]
+        
+            response=supabase_client.table("module_health").insert(records).execute()
+            self.logger.debug(f"Uploaded {len(records)} health records to Supabase")
+            self.logger.debug(f"Supabase response: {response}")
+            self.logger.debug("Export health data function saw that supabase response is good")
+
+        except Exception as e:
+            self.logger.debug("Export health data function saw that there was an error exporting health data")
+            self.logger.error(f"Error exporting health data: {e}")
+                
+    def periodic_health_export(self):
+        """Periodically export the local health data to the database"""
+        self.logger.debug("Periodic health export function called")
+        while True:
+            if self.is_health_exporting:
+                self.logger.debug("Periodic health export function saw is_health_exporting is true")
+                try:
+                    self.export_health_data()
+                except Exception as e:
+                    self.logger.error(f"Error exporting health data: {e}")
+                time.sleep(self.health_export_interval)
 
 
     # Main methods
@@ -321,6 +371,10 @@ class HabitatController:
                         print("  size buffer - Print the size of the local buffer for a given module")
                         print("  start export - Periodically export the local buffer to the database")
                         print("  stop export - Stop the periodic export of the local buffer to the database ")
+                        print("  start health export - Periodically export the local health data to the database")
+                        print("  stop health export - Stop the periodic export of the local health data to the database")
+                        print("  health status - Print the health status of all modules")
+                        print("  check export - Check if the controller is currently exporting data to the database")
                     case "quit":
                         self.logger.info("Quitting manual control loop")
                         break
@@ -382,14 +436,22 @@ class HabitatController:
                         # Start auto exporting buffer data to databsae
                         print("Starting auto export...")
                         self.is_exporting = True
-                    
+                    case "start health export":
+                        # Start auto exporting health data to databsae
+                        print("Start health export command called")
+                        self.is_health_exporting = True
                     case "stop export":
                         # Stop auto exporting buffer data to databsae
                         print("Stopping auto export...")
                         self.is_exporting = False
+                    case "stop health export":
+                        # Stop auto exporting health data to databsae
+                        print("Stopping health export...")
+                        self.is_health_exporting = False
                     
                     case "check export":
                         print(f"Exporting is currently: {self.is_exporting}")
+                        print(f"Health exporting is currently: {self.is_health_exporting}")
 
                     case "health status":
                         print("\nModule Health Status:")

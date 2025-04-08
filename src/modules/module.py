@@ -143,7 +143,7 @@ class Module:
             
             case "get_data":
                 print("Command identified as get_data")
-                data = str(self.read_data_fake())
+                data = str(self.read_fake_data())
                 self.send_data(data)
 
             case "stream_data":
@@ -160,14 +160,54 @@ class Module:
                     self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
                     self.stream_thread = None # Empty the thread
                 
+    # Sensor data methods
     def stream_data(self):
         """Function to continuously read and transmit data"""
         while self.streaming:
-            data=str(self.read_data_fake())
+            data=str(self.read_fake_data())
             self.send_data(data)
             time.sleep(self.samplerate/1000)
-        
 
+    def read_fake_data(self): 
+        """Stand in for future sensor integration. Returns a random float between 0 and 1."""
+        return random.random()
+    
+    def read_fake_camera_frame(self):
+        """Generate fake camera frame data"""
+        # Create random 640x480 RGB frame
+        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        return frame.tobytes()  # Convert to bytes for transmission
+
+    def read_fake_audio(self):
+        """Generate fake audio samples"""
+        # Generate 1 second of fake audio at 192kHz
+        samples = np.random.uniform(-1, 1, 192000)
+        return samples.tobytes()
+
+    def read_fake_rfid(self):
+        """Generate fake RFID readings"""
+        tags = ['A1B2C3D4', 'E5F6G7H8', 'I9J0K1L2']
+        return random.choice(tags)
+
+    def read_fake_ttl(self):
+        """Generate fake TTL I/O readings"""
+        digital_in = [random.choice([0, 1]) for _ in range(8)]  # 8 digital inputs
+        analog_in = [random.uniform(0, 5) for _ in range(4)]    # 4 analog inputs (0-5V)
+        return {
+            'digital': digital_in,
+            'analog': analog_in
+        }
+            
+    
+    # PTP methods
+    def status_ptp(self) -> bool:
+        """
+        Get PTP status.
+        """
+        ptp.status_ptp4l()
+        ptp.status_phc2sys()
+
+    # Start and stop module methods
     def start(self) -> bool:
         """
         Start the module.
@@ -199,17 +239,6 @@ class Module:
         self.zeroconf.register_service(self.service_info)
 
         return True
-    
-    def read_data_fake(self): 
-        """Stand in for future sensor integration. Returns a random int."""
-        return random.random()
-    
-    def status_ptp(self) -> bool:
-        """
-        Get PTP status.
-        """
-        ptp.status_ptp4l()
-        ptp.status_phc2sys()
 
     def stop(self) -> bool:
         """
@@ -238,8 +267,6 @@ def main():
 
     # Start the main loop
     module.start()
-    
-    # module.status_ptp()
 
     # Keep running until interrupted
     try:

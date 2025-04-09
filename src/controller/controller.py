@@ -361,7 +361,7 @@ class HabitatController:
                         print("  help - Show this help message")
                         print("  quit - Quit the manual control loop")
                         print("  list - List available modules")
-                        print("  supabase get test - Get test data from supabase")
+                        print("  supabase get test - Test retrieving a couple entries from supabase")
                         print("  supabase insert test - Insert test data into supabase")
                         print("  supabase export - Export the local buffer to the database")
                         print("  zeroconf add - Add a service to the list of discovered modules")
@@ -388,6 +388,7 @@ class HabitatController:
                         # Get test data from supabase
                         response = (supabase_client.table("controller_test")
                             .select("*")
+                            .limit(2)
                             .execute()
                         )
                         print(response)

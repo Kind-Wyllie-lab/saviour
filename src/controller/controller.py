@@ -364,8 +364,6 @@ class HabitatController:
                         print("  supabase get test - Test retrieving a couple entries from supabase")
                         print("  supabase insert test - Insert test data into supabase")
                         print("  supabase export - Export the local buffer to the database")
-                        print("  zeroconf add - Add a service to the list of discovered modules")
-                        print("  zeroconf remove - Remove a service from the list of discovered modules")
                         print("  zmq send - Send a command to a specific module via zeromq")
                         print("  read buffer - Read the local buffer for a given module")
                         print("  size buffer - Print the size of the local buffer for a given module")
@@ -395,20 +393,6 @@ class HabitatController:
                     case "supabase export":
                         # Export the local buffer to the database
                         self.export_buffered_data()
-                    case "zeroconf add":
-                        # Add a service to the list of discovered modules
-                        test_service = ServiceInfo(
-                            "_module._tcp.local.",
-                            "test_module._module._tcp.local.",
-                            addresses=[socket.inet_aton("192.168.1.2")],
-                            port=5000,
-                            properties={'type': 'camera',
-                            'id': uuid.uuid4()}
-                        )
-                        self.zeroconf.register_service(test_service)
-                    case "zeroconf remove":
-                        # Remove a service from the list of discovered modules
-                        self.remove_service(self.zeroconf, "_habitat._tcp.local.", "test")
                     case "zmq send":
                         # send a command to module from list of modules
                         i=1

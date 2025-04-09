@@ -32,6 +32,7 @@ import zmq # for zeromq communication
 # Local modules
 import src.shared.ptp as ptp
 import src.shared.network as network
+import src.controller.session as session
 
 # Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -118,6 +119,9 @@ class HabitatController:
         self.module_health = {} # dictionary to store the health of each module
         self.heartbeat_interval = 5 # the interval at which to check the health of each module
         self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
+
+        # Session manager
+        self.session_manager = session.SessionManager()
 
         # Start the zmq listener thread
         threading.Thread(target=self.listen_for_updates, daemon=True).start()
@@ -372,6 +376,7 @@ class HabitatController:
                         print("  stop health export - Stop the periodic export of the local health data to the database")
                         print("  health status - Print the health status of all modules")
                         print("  check export - Check if the controller is currently exporting data to the database")
+                        print("  session_id  - Generate a session_id")
                     case "quit":
                         self.logger.info("Quitting manual control loop")
                         break
@@ -432,12 +437,12 @@ class HabitatController:
                         # Stop auto exporting health data to databsae
                         print("Stopping health export...")
                         self.is_health_exporting = False
-                    
                     case "check export":
+                        # Check how export flags are set
                         print(f"Exporting is currently: {self.is_exporting}")
                         print(f"Health exporting is currently: {self.is_health_exporting}")
-
                     case "health status":
+                        # Get health status for modules
                         print("\nModule Health Status:")
                         if not self.module_health:
                             print("No modules reporting health data")
@@ -451,6 +456,10 @@ class HabitatController:
                             #print(f"PTP Offset: {health.get('ptp_offset', 'N/A')}ns")
                             print(f"Uptime: {health.get('uptime', 'N/A')}s")
                             print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
+                    case "session_id":
+                        # Test generating a session ID
+                        print(f"Session ID generated as: {self.session_manager.generate_session_id()}")
+                        
                 time.sleep(0.1)
         else:
             print("Starting automatic loop (not implemented yet)")

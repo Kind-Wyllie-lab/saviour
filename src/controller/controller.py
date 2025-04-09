@@ -50,13 +50,21 @@ except ImportError:
 
 @dataclass
 class Module:
-    """Dataclass to represent a module in the habitat system"""
+    """Dataclass to represent a module in the habitat system - used by zeroconf to discover modules"""
     id: str
     name: str
     type: str
     ip: str
     port: int
     properties: Dict[str, Any]
+
+@dataclass
+class ModuleData:
+    """Dataclass to represent data from a module"""
+    timestamp: float # timestamp of a given data point
+    data: any # the data itself
+    session_id: str | None # the session ID of the data (this contains module_id, is it necessary to include both?). it can be None if we gather data outside of a session e.g. for debugging
+    module_id: str # the module ID of the data
     
 # Habitat Controller Class
 class HabitatController:

@@ -57,7 +57,7 @@ class Module:
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.WARNING)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
     
         # Add console handler if none exists

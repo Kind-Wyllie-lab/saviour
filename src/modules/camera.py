@@ -1,3 +1,12 @@
+"""
+Habitat System - Camera Module Class
+
+This module is used to capture images from a camera.
+
+Author: Andrew SG
+Created: 11/04/2025
+License: GPLv3
+"""
 import cv2
 import numpy as np
 import sys
@@ -12,7 +21,7 @@ class CameraModule(Module):
         """Initialize the camera module"""
         super().__init__(module_type="camera", config=config) # call the parent class constructor
         self.camera = cv2.VideoCapture(0)
-        self.frame_shape = (100, 100, 3) # default frame shape
+        self.frame_shape = (640, 480, 3) # default frame shape
         self.frame = np.zeros(self.frame_shape, dtype=np.uint8) # default frame
 
         # Camera specific initialization
@@ -22,9 +31,12 @@ class CameraModule(Module):
         ret, frame = self.camera.read()
         return frame
 
-    def get_fake_frame(self):
-        """Get a fake frame from the camera"""
-        self.frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    def get_frame(self):
+        """Get a frame from the camera"""
+        ret, frame = self.camera.read()
+        if ret:
+            self.frame = frame
+        return self.frame
     
     def show_frame(self):
         """Show the frame"""

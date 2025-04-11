@@ -49,7 +49,11 @@ class Module:
         self.module_type = module_type
         self.module_id = generate_module_id(module_type)
         self.config = config
-        self.ip = os.popen('hostname -I').read().split()[0]
+        print("test")
+        if os.name == 'nt': # Windows
+            self.ip = socket.gethostbyname(socket.gethostname())
+        else: # Linux/Unix
+            self.ip = os.popen('hostname -I').read().split()[0]
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")

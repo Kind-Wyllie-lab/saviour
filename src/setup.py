@@ -8,3 +8,6 @@ setup(
         # Add your dependencies here
     ],
 )
+
+# @TODO:  install linuxptp here
+# @TODO: setup ptp services here

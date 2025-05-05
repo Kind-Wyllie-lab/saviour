@@ -27,6 +27,8 @@ class Module:
     ip: str
     port: int
     properties: Dict[str, Any]
+    last_seen: float = 0.0  # Timestamp when module was last seen
+    status: str = "unknown"  # Module status: "connected", "disconnected", "unknown"
 
 # Habitat Controller class
 class HabitatController:
@@ -36,6 +38,10 @@ class HabitatController:
         """Initialize the controller with default values"""
         # module management
         self.modules: List[Module] = []
+
+        # setup logging first
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
 
         # zeroconf
         self.zeroconf = Zeroconf()
@@ -47,12 +53,9 @@ class HabitatController:
             properties={'type': 'controller'}  # the properties of the service
         )
         self.zeroconf.register_service(self.service_info)  # register the controller service with the above info
-        self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)  # Browse for habitat_module services
-
-
-        # setup logging
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.DEBUG)
+        self.browser = None  # Initialize browser as None
+        self.scan_interval = 5 # the interval to scan for modules
+        self.start_browser()  # Start the initial browser
 
     # Zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -60,34 +63,70 @@ class HabitatController:
         self.logger.info(f"Discovered module: {name}")
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            module = Module(
-                id=str(info.properties.get(b'id', b'unknown').decode()),
-                name=name,
-                type=info.properties.get(b'type', b'unknown').decode(),
-                ip=socket.inet_ntoa(info.addresses[0]),
-                port=info.port,
-                properties=info.properties
-            )
-            self.modules.append(module)
-            self.logger.info(f"Discovered module: {module}")
+            module_id = str(info.properties.get(b'id', b'unknown').decode())
+            # Check if module already exists
+            if not any(m.id == module_id for m in self.modules):
+                module = Module(
+                    id=module_id,
+                    name=name,
+                    type=info.properties.get(b'type', b'unknown').decode(),
+                    ip=socket.inet_ntoa(info.addresses[0]),
+                    port=info.port,
+                    properties=info.properties,
+                    last_seen=time.time(),
+                    status="connected"
+                )
+                self.modules.append(module)
+                self.logger.info(f"Added new module: {module}")
+            else:
+                # Update existing module
+                for module in self.modules:
+                    if module.id == module_id:
+                        module.last_seen = time.time()
+                        module.status = "connected"
+                        self.logger.info(f"Updated module {module_id} status to connected")
+                        break
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
-        self.logger.info(f"Removing module: {name}")
-        self.modules = [module for module in self.modules if module.name != name] # remove the module from the list
+        self.logger.info(f"Module disconnected: {name}")
+        # Find the module and mark it as disconnected
+        for module in self.modules:
+            if module.name == name:
+                module.status = "disconnected"
+                module.last_seen = time.time()
+                self.logger.info(f"Module {module.id} ({module.type}) disconnected at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                break
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
 
+    def start_browser(self):
+        """Start or restart the service browser"""
+        if self.browser:
+            self.browser.cancel()  # Cancel existing browser
+        self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
+        self.logger.info("Service browser started/restarted")
+
     # Main program
     def start(self):
         """Start the controller."""
         self.logger.info("Starting controller")
+        last_scan_time = time.time()
+        scan_interval = self.scan_interval
+
         while True:
-            print("Available modules:")
+            current_time = time.time()
+            if current_time - last_scan_time >= scan_interval:
+                self.logger.info("Performing periodic service scan...")
+                self.start_browser()
+                last_scan_time = current_time
+
+            print("\nAvailable modules:")
             for module in self.modules:
-                print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
+                status_str = "✓" if module.status == "connected" else "✗"
+                print(f"  {status_str} ID: {module.id}, Type: {module.type}, IP: {module.ip}, Status: {module.status}")
             time.sleep(1)
 
 # Main entry point

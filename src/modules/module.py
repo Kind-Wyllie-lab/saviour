@@ -59,7 +59,7 @@ class Module:
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
         self.logger.setLevel(logging.WARNING)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
-    
+
         # Add console handler if none exists
         if not self.logger.handlers:
             console_handler = logging.StreamHandler()
@@ -303,8 +303,10 @@ class Module:
 
         # Unregister from zeroconf
         self.zeroconf.unregister_service(self.service_info)
+        time.sleep(2)
         self.zeroconf.close()
-
+        time.sleep(2)
+        
         # stop the heartbeat thread
         self.is_running = False
 

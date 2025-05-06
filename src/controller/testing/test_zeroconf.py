@@ -54,7 +54,7 @@ class HabitatController:
         )
         self.zeroconf.register_service(self.service_info)  # register the controller service with the above info
         self.browser = None  # Initialize browser as None
-        self.scan_interval = 5 # the interval to scan for modules
+        self.scan_interval = 2 # the interval to scan for modules
         self.start_browser()  # Start the initial browser
 
     # Zeroconf methods

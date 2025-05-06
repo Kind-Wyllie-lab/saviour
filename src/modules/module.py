@@ -302,19 +302,17 @@ class Module:
         self.logger.info(f"Stopping {self.module_type} module {self.module_id}")
 
         # Unregister from zeroconf
-<<<<<<< HEAD
         self.zeroconf.unregister_service(self.service_info)
         time.sleep(2)
         self.zeroconf.close()
         time.sleep(2)
-        
-=======
+
         if hasattr(self, 'service_info'):
             self.logger.info("Unregistering zeroconf service...")
             self.zeroconf.unregister_service(self.service_info)
             self.zeroconf.close()
 
->>>>>>> ebea3f9e71f2125175c3045c8b4e1dcb9cea7e82
+
         # stop the heartbeat thread
         self.is_running = False
 

@@ -1,15 +1,16 @@
 # Python Virtual Environment
-Lib/
-Scripts/
-Include/
-pyvenv.cfg
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# I have chosen not to ignore these at present as it will speed up cross-device development.
+#Lib/
+#Scripts/
+#Include/
+#pyvenv.cfg
+# .env
+#.venv
+#env/
+#venv/
+#ENV/
+#env.bak/
+#venv.bak/
 
 # Python bytecode
 __pycache__/

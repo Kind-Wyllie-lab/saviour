@@ -87,12 +87,16 @@ class HabitatController:
         self.is_health_exporting = False # whether the controller is currently exporting health data to the database
         self.health_export_interval = 10 # the interval at which to export health data to the database
 
-        # zeroconf
+        # zeroconf and network
+        if os.name == 'nt': # Windows
+            self.ip = socket.gethostbyname(socket.gethostname())
+        else: # Linux/Unix
+            self.ip = os.popen('hostname -I').read().split()[0]
         self.zeroconf = Zeroconf()
         self.service_info = ServiceInfo(
             "_controller._tcp.local.", # the service type - tcp protocol, local domain
             "controller._controller._tcp.local.", # a unique name for the service to advertise itself
-            addresses=[socket.inet_aton("192.168.1.1")], # the ip address of the controller
+            addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
             port=5000, # the port number of the controller
             properties={'type': 'controller'} # the properties of the service
         )

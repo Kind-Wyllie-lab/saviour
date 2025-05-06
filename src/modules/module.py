@@ -178,7 +178,8 @@ class Module:
                 print("Command identified as start_stream")
                 if not self.streaming:  # Only start if not already streaming
                     self.streaming = True
-                    self.stream_session_id = self.session_manager.generate_session_id(module_id) 
+                    self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+                    self.logger.debug(f"Stream session ID generated as {self.stream_session_id}")
                     self.stream_thread = threading.Thread(target=self.stream_data, daemon=True)
                     self.stream_thread.start()
             

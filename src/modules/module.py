@@ -57,7 +57,7 @@ class Module:
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.WARNING)
+        self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
 
         # Add console handler if none exists
@@ -89,6 +89,7 @@ class Module:
         self.heartbeat_interval = 5 # the interval at which to send heartbeats to the controller
 
         # Heartbeat thread
+        self.heartbeats_active = False
         self.start_time = None
         threading.Thread(target=self.send_heartbeats, daemon=True).start()
         
@@ -97,11 +98,13 @@ class Module:
         """Called when controller is discovered"""
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            self.controller_ip = socket.inet_ntoa(info.addresses[0]) # save the IP of the controller
+            self.logger.info(f"Controller discovered. info={info}")
+            self.controller_ip = socket.inet_ntoa(info.addresses[0]) # save the IP of the controller. #TODO: this is saving as 192.168.1.1 when it is 192.168.0.11 (060525 12:48)000
             self.controller_port = info.port # save the port of the controller
             self.logger.info(f"Found controller at {self.controller_ip}:{self.controller_port}")
             # connect to zeroMQ
             self.connect_to_controller()
+            self.heartbeats_active = True
             threading.Thread(target=self.listen_for_commands, daemon=True).start()
 
     def remove_service(self, zeroconf, service_type, name):
@@ -183,23 +186,24 @@ class Module:
     def send_heartbeats(self):
         """Continuously send heartbeat messages to the controller"""
         while self.is_running:
-            try:
-                self.logger.debug("Sending heartbeat")
-                status = {
-                    "timestamp": time.time(),
-                    'cpu_temp': self.get_cpu_temp(),
-                    'cpu_usage': psutil.cpu_percent(),
-                    'memory_usage': psutil.virtual_memory().percent,
-                    'uptime': time.time() - self.start_time,
-                    'disk_space': psutil.disk_usage('/').percent # Free disk space
-                }
-                # Send on status/ topic
-                message = f"status/{self.module_id} {status}"
-                self.status_socket.send_string(message)
-                self.logger.debug(f"Heartbeat sent: {message}")
-            except Exception as e:
-                self.logger.error(f"Error sending heartbeat: {e}")
-            time.sleep(self.heartbeat_interval)
+            if self.heartbeats_active == True:
+                try:
+                    self.logger.debug("Sending heartbeat")
+                    status = {
+                        "timestamp": time.time(),
+                        'cpu_temp': self.get_cpu_temp(),
+                        'cpu_usage': psutil.cpu_percent(),
+                        'memory_usage': psutil.virtual_memory().percent,
+                        'uptime': time.time() - self.start_time,
+                        'disk_space': psutil.disk_usage('/').percent # Free disk space
+                    }
+                    # Send on status/ topic
+                    message = f"status/{self.module_id} {status}"
+                    self.status_socket.send_string(message)
+                    self.logger.debug(f"Heartbeat sent: {message}")
+                except Exception as e:
+                    self.logger.error(f"Error sending heartbeat: {e}")
+                time.sleep(self.heartbeat_interval)
 
     def get_cpu_temp(self):
         """Get CPU temperature"""

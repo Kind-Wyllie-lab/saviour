@@ -24,6 +24,7 @@ import psutil
 
 import src.shared.ptp as ptp
 import src.shared.network as network
+import src.controller.session as session
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
 
@@ -46,6 +47,7 @@ class Module:
 
     """
     def __init__(self, module_type: str, config: dict):
+        # Parameters
         self.module_type = module_type
         self.module_id = generate_module_id(module_type)
         self.config = config
@@ -59,6 +61,10 @@ class Module:
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
+        
+        # Session Management
+        self.session_manager = session.SessionManager()
+        self.stream_session_id = None
 
         # Add console handler if none exists
         if not self.logger.handlers:
@@ -172,6 +178,7 @@ class Module:
                 print("Command identified as start_stream")
                 if not self.streaming:  # Only start if not already streaming
                     self.streaming = True
+                    self.stream_session_id = self.session_manager.generate_session_id(module_id) 
                     self.stream_thread = threading.Thread(target=self.stream_data, daemon=True)
                     self.stream_thread.start()
             

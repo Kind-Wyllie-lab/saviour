@@ -470,7 +470,12 @@ class HabitatController:
                             print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
                     case "session_id":
                         # Test generating a session ID
-                        print(f"Session ID generated as: {self.session_manager.generate_session_id()}")
+                        i=1
+                        for module in self.modules:
+                            print(f"{i}. {module.name}")
+                            i+=1
+                        module_id = input("Chosen module: ")
+                        print(f"Session ID generated as: {self.session_manager.generate_session_id(self.modules[int(module_id)-1].id)}")
                         
                 time.sleep(0.1)
         else:

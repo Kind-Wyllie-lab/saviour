@@ -8,7 +8,7 @@ class SessionManager:
 
     def generate_session_id(self, module_id="unknown"):
         """Start a new session for a module"""
-        timestamp = datetime.now().strftime("%Y%m%d %H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"REC_{timestamp}_{module_id}" # Generate a new session ID
 
 

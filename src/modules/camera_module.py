@@ -1,6 +1,6 @@
 from module import Module
 import datetime
-
+import subprocess
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None):
 
@@ -20,8 +20,8 @@ class CameraModule(Module):
         super().__init__(module_type, config)
         
         # Camera specific variables
-        self.video_folder = "rec/"
-        self.video_filetype = ".mp4"
+        self.video_folder = "rec"
+        self.video_filetype = "mp4"
 
 
     def record_video(self, length: int = 10):
@@ -42,6 +42,12 @@ class CameraModule(Module):
             "--level", "4.2", # H.264 level
             "--codec", "h264",
         ]
+
+        self.logger.info(f"Recording video to {self.video_folder}/{filename}.{self.video_filetype}")
+        self.logger.info(f"Command: {' '.join(cmd)}")
+
+        # Execute the command
+        subprocess.run(cmd)
 
     def start_recording(self):
         """Start recording a video stream"""

@@ -28,11 +28,6 @@ import src.controller.session as session
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
 
-def generate_module_id(module_type: str) -> str:
-    mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
-    short_id = mac[-4:]  # Takes last 4 characters
-    return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"
-
 class Module:
     """
     Base class for all modules in the Habitat Controller.
@@ -49,7 +44,7 @@ class Module:
     def __init__(self, module_type: str, config: dict):
         # Parameters
         self.module_type = module_type
-        self.module_id = generate_module_id(module_type)
+        self.module_id = self.generate_module_id(self.module_type)
         self.config = config
         print("test")
         if os.name == 'nt': # Windows
@@ -98,7 +93,13 @@ class Module:
         self.heartbeats_active = False
         self.start_time = None
         threading.Thread(target=self.send_heartbeats, daemon=True).start()
-        
+
+    def generate_module_id(self, module_type: str) -> str:
+        """Generate a module ID based on the module type and the MAC address"""
+        mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
+        short_id = mac[-4:]  # Takes last 4 characters
+        return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
+    
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
@@ -189,7 +190,11 @@ class Module:
                 if self.stream_thread: # If there is a thread still
                     self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
                     self.stream_thread = None # Empty the thread
-    
+            
+            case _:
+                print(f"Command {command} not recognized")
+                self.send_data("Command not recognized")
+
     # Health monitoring methods            
     def send_heartbeats(self):
         """Continuously send heartbeat messages to the controller"""

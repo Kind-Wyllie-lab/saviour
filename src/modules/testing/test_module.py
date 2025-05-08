@@ -72,14 +72,19 @@ def test_module_zmq_command_receiving():
         # Give it time to discover the controller and start command thread
         time.sleep(2)  # Increased sleep time to ensure thread starts
 
-        # Create a test client
+        # Create a fake controller command socket
         context = zmq.Context()
         cmd_socket = context.socket(zmq.PUB)
-        cmd_socket.connect("tcp://localhost:5555")
+        print(f"Binding PUB socket to tcp://*:5555")
+        cmd_socket.bind("tcp://*:5555") # Bind the socket to port 5555 with a wildcard address - this means the socket will listen for connections on all interfaces
+        time.sleep(0.1)  # Give time for binding to establish
 
         # Send a test command
         test_command = "get_status"
-        cmd_socket.send_string(f"cmd/{module.module_id} {test_command}")
+        message = f"cmd/{module.module_id} {test_command}"
+        print(f"Sending message: {message}")
+        cmd_socket.send_string(message)
+        print("Message sent")
 
         # Check that the module received the command    
         time.sleep(1)

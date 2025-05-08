@@ -199,6 +199,10 @@ class Module:
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
+        # Ignore our own service
+        if name == f"{self.module_type}_{self.module_id}._module._tcp.local.":
+            return
+            
         info = zeroconf.get_service_info(service_type, name)
         if info:
             self.logger.info(f"Controller discovered. info={info}")
@@ -221,20 +225,30 @@ class Module:
     # ZeroMQ methods
     def connect_to_controller(self):
         """Connect to controller once we have its IP"""
-        self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
-        self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
-        self.logger.info(f"Connected to controller command socket at {self.controller_ip}:5555, status socket at {self.controller_ip}:5556")
+        try:
+            self.logger.info(f"Attempting to connect command socket to tcp://{self.controller_ip}:5555")
+            self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
+            self.logger.info(f"Attempting to connect status socket to tcp://{self.controller_ip}:5556")
+            self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
+            self.logger.info(f"Connected to controller command socket at {self.controller_ip}:5555, status socket at {self.controller_ip}:5556")
+        except Exception as e:
+            self.logger.error(f"Error connecting to controller: {e}")
 
     def listen_for_commands(self):
         """Listen for commands from controller"""
-        while True:
+        self.logger.info("Starting command listener thread")
+        while self.is_running:
             try:
+                self.logger.info("Waiting for command...")
                 message = self.command_socket.recv_string()
-                module_id, command = message.split(' ', 1)
-                self.logger.info(f"Received command: {command}")
+                self.logger.info(f"Raw message received: {message}")
+                topic, command = message.split(' ', 1)
+                self.logger.info(f"Parsed topic: {topic}, command: {command}")
+                self.last_command = command  # Update last_command before handling
                 self.handle_command(command)
             except Exception as e:
                 self.logger.error(f"Error handling command: {e}")
+                time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def send_status(self, status_data: str):
         """Send status to the controller"""
@@ -252,7 +266,6 @@ class Module:
         """Handle received commands"""
         self.logger.info(f"Handling command: {command}")
         print(f"Command: {command}")
-        self.last_command = command
         # Add command handling logic here
         match command:
             case "get_status":

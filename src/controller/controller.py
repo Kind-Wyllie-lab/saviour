@@ -151,7 +151,16 @@ class HabitatController:
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
         self.logger.info(f"Removing module: {name}")
-        self.modules = [module for module in self.modules if module.name != name] # remove the module from the list
+        # Find the module being removed
+        module_to_remove = next((module for module in self.modules if module.name == name), None)
+        if module_to_remove:
+            # Clean up health tracking
+            if module_to_remove.id in self.module_health:
+                self.logger.info(f"Removing health tracking for module {module_to_remove.id}")
+                del self.module_health[module_to_remove.id]
+            # Remove from modules list
+            self.modules = [module for module in self.modules if module.name != name]
+            self.logger.info(f"Module {module_to_remove.id} removed from tracking")
 
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""

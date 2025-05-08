@@ -197,7 +197,7 @@ class HabitatController:
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
-        self.logger.debug(f"Status update received from module {topic} with data: {data}")
+        self.logger.info(f"Status update received from module {topic} with data: {data}")
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data) # Convert string data to dictionary
@@ -212,7 +212,7 @@ class HabitatController:
                 'uptime': status_data['uptime'],
                 'disk_space': status_data['disk_space']
             }
-            self.logger.debug(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
+            self.logger.info(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
 
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")

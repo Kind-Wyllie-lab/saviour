@@ -353,6 +353,63 @@ class HabitatController:
                     self.logger.error(f"Error exporting health data: {e}")
                 time.sleep(self.health_export_interval)
 
+    def stop(self) -> bool:
+        """
+        Stop the controller gracefully.
+
+        Returns:
+            bool: True if the controller stopped successfully, False otherwise.
+        """
+        self.logger.info("Stopping controller...")
+        
+        try:
+            # Stop all threads by setting flags
+            self.is_exporting = False
+            self.is_health_exporting = False
+            
+            # Clean up module health tracking
+            self.logger.info("Cleaning up module health tracking")
+            self.module_health.clear()
+            
+            # Clean up module data buffer
+            self.logger.info("Cleaning up module data buffer")
+            self.module_data.clear()
+            
+            # Clean up modules list
+            self.logger.info("Cleaning up modules list")
+            self.modules.clear()
+            
+            # Clean up zeroconf first
+            if hasattr(self, 'service_info'):
+                self.logger.info("Unregistering controller service")
+                self.zeroconf.unregister_service(self.service_info)
+            if hasattr(self, 'browser'):
+                self.logger.info("Cancelling service browser")
+                self.browser.cancel()
+            if hasattr(self, 'zeroconf'):
+                self.logger.info("Closing zeroconf")
+                self.zeroconf.close()
+            
+            # Give modules time to detect the controller is gone
+            time.sleep(1)
+            
+            # Now clean up ZeroMQ sockets
+            if hasattr(self, 'command_socket'):
+                self.logger.info("Closing command socket")
+                self.command_socket.close()
+            if hasattr(self, 'status_socket'):
+                self.logger.info("Closing status socket")
+                self.status_socket.close()
+            if hasattr(self, 'context'):
+                self.logger.info("Terminating ZeroMQ context")
+                self.context.term()
+            
+            self.logger.info("Controller stopped successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping controller: {e}")
+            return False
 
     # Main methods
     def start(self) -> bool:
@@ -466,17 +523,15 @@ def main():
     """Main entry point for the controller application"""
     controller = HabitatController()
 
-    # Start the main loop
-    controller.start()
-
-    # Keep running until interrupted
-    # @TODO: Implement a proper shutdown. At present I don't think this is triggered, as it's already looping from controller.start()
-    # try:
-    #     while True:
-    #         time.sleep(1)
-    # except KeyboardInterrupt:
-    #     print("\nShutting down...")
-    #     controller.stop()
+    try:
+        # Start the main loop
+        controller.start()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        controller.stop()
+    except Exception as e:
+        print(f"\nError: {e}")
+        controller.stop()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

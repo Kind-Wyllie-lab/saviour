@@ -1,6 +1,7 @@
 import sys
 import os
 import uuid
+import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_camera_module_import():
@@ -19,10 +20,13 @@ def test_camera_module_id():
     short_id = mac[-4:]  # Takes last 4 characters
     assert(camera.module_id == f"camera_{short_id}")
 
-def test_camera_module_start_recording():
+def test_camera_module_record_video():
     from camera_module import CameraModule
     camera = CameraModule()
-    camera.start_recording()
-    assert(camera)
+    filename = camera.record_video(3)
+    time.sleep(1) # Give time for file to be created
+    assert(os.path.exists(f"{filename}"))
+
+
 
 

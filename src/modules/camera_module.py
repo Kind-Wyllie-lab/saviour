@@ -28,8 +28,7 @@ class CameraModule(Module):
         """Record a short video"""
         self.logger.info("Recording video")
         
-        # TODO: Implement video recording
-        filename = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_test")
+        filename = f"{self.video_folder}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_test')}.{self.video_filetype}"
 
         cmd = [
             "rpicam-vid",
@@ -37,17 +36,20 @@ class CameraModule(Module):
             "--width", "1280",
             "--height", "720",
             "-t", f"{length}s",
-            "-o", f"{self.video_folder}/{filename}.{self.video_filetype}",
+            "-o", f"{filename}",
             "--nopreview",
             "--level", "4.2", # H.264 level
             "--codec", "h264",
         ]
 
-        self.logger.info(f"Recording video to {self.video_folder}/{filename}.{self.video_filetype}")
+        self.logger.info(f"Recording video to {filename}")
         self.logger.info(f"Command: {' '.join(cmd)}")
 
         # Execute the command
         subprocess.run(cmd)
+        
+        # return filename 
+        return filename
 
     def start_recording(self):
         """Start recording a video stream"""

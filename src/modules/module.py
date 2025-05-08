@@ -70,7 +70,7 @@ class Module:
 
         # zeroconf setup
         self.zeroconf = Zeroconf()
-        self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+        self.service_browser = None
 
         # ZeroMQ setup
         # command socket for receiving commands from controller
@@ -85,7 +85,7 @@ class Module:
         self.streaming = False # A flag which will be used to indicate when the module should stream data, default false
         self.stream_thread = None # the thread which will be used to stream data
         self.samplerate = 200 # the sample rate in milliseconds
-        self.is_running = True # a flag to indicate if the module is running
+        self.is_running = False # a flag to indicate if the module is running
         self.heartbeat_interval = 5 # the interval at which to send heartbeats to the controller
 
         # Heartbeat thread
@@ -126,8 +126,8 @@ class Module:
         """Connect to controller once we have its IP"""
         self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
         self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
-        self.logger.info(f"Connected to controller at {self.controller_ip}:5555")
-    
+        self.logger.info(f"Connected to controller command socket at {self.controller_ip}:5555, status socket at {self.controller_ip}:5556")
+
     def listen_for_commands(self):
         """Listen for commands from controller"""
         while True:
@@ -283,16 +283,24 @@ class Module:
             bool: True if the module started successfully, False otherwise.
         """
         self.logger.info(f"Starting {self.module_type} module {self.module_id}")
-        self.start_time = time.time()
-        
+        if self.is_running:
+            self.logger.info("Module already running")
+            return False
+        else:
+            self.is_running = True
+            self.start_time = time.time()
+            
         # Activate ptp
-        self.logger.info("Starting ptp4l.service")
-        ptp.stop_ptp4l()
-        ptp.restart_ptp4l()
-        time.sleep(1)
-        self.logger.info("Starting phc2sys.service")
-        ptp.stop_phc2sys()
-        ptp.restart_phc2sys()
+        # self.logger.info("Starting ptp4l.service")
+        # ptp.stop_ptp4l()
+        # ptp.restart_ptp4l()
+        # time.sleep(1)
+        # self.logger.info("Starting phc2sys.service")
+        # ptp.stop_phc2sys()
+        # ptp.restart_phc2sys()
+
+        # zeroconf
+        self.service_browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
 
         # Advertise this module
         self.service_info = ServiceInfo(
@@ -315,21 +323,47 @@ class Module:
         Returns:
             bool: True if the module stopped successfully, False otherwise.
         """
-        self.logger.info(f"Stopping {self.module_type} module {self.module_id}")
+        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        if not self.is_running:
+            self.logger.info("Module already stopped")
+            return False
 
-        # Unregister from zeroconf
-        self.zeroconf.unregister_service(self.service_info)
-        time.sleep(2)
-        self.zeroconf.close()
-        time.sleep(2)
+        try:
 
-        if hasattr(self, 'service_info'):
-            self.logger.info("Unregistering zeroconf service...")
-            self.zeroconf.unregister_service(self.service_info)
-            self.zeroconf.close()
+            # Stop the threads
+            if self.stream_thread:
+                self.stream_thread.join(timeout=2.0)
+                self.stream_thread = None
+            
+            # Clean up zeroconf
+            # destroy the service browser
+            if self.service_browser:
+                try:
+                    self.service_browser.cancel()
+                    self.logger.info("Service browser cancelled")
+                except Exception as e:
+                    self.logger.error(f"Error canceling service browser: {e}")
+                self.service_browser = None
+            # unregister the service
+            if self.zeroconf:
+                try:
+                    self.zeroconf.unregister_service(self.service_info) # unregister the service
+                    time.sleep(1)
+                    self.zeroconf.close()
+                    self.logger.info("Zeroconf service unregistered and closed")
+                except Exception as e:
+                    self.logger.error(f"Error unregistering service: {e}")  
+                self.zeroconf = None
 
+            # Stop the heartbeat thread
+            self.heartbeats_active = False
+            self.logger.info("Heartbeat flag set to false")
 
-        # stop the heartbeat thread
+        except Exception as e:
+            self.logger.error(f"Error stopping module: {e}")
+            return False
+
+        # Confirm the module is stopped
         self.is_running = False
-
+        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True

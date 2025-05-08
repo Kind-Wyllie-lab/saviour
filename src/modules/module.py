@@ -51,6 +51,10 @@ class Module:
         else: # Linux/Unix
             self.ip = os.popen('hostname -I').read().split()[0]
 
+        # Controller connection
+        self.controller_ip = None
+        self.controller_port = None
+
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
         self.logger.setLevel(logging.INFO)
@@ -120,6 +124,11 @@ class Module:
             # Start heartbeat thread
             self.logger.info("Starting heartbeat thread")
             threading.Thread(target=self.send_heartbeats, daemon=True).start()
+            
+            # Start command listener thread if we have a controller
+            if self.controller_ip:
+                self.logger.info("Starting command listener thread")
+                threading.Thread(target=self.listen_for_commands, daemon=True).start()
             
         return True
 
@@ -287,11 +296,15 @@ class Module:
                 self.logger.info(f"Raw message received: {message}")
                 topic, command = message.split(' ', 1)
                 self.logger.info(f"Parsed topic: {topic}, command: {command}")
-                self.last_command = command  # Update last_command before handling
-                self.handle_command(command)
+                self.last_command = command  # Store the command before handling
+                try:
+                    self.handle_command(command)
+                except Exception as e:
+                    self.logger.error(f"Error handling command: {e}")
+                    # Don't re-raise the exception, just log it and continue
             except Exception as e:
                 if self.command_listener_running:  # Only log if we're still supposed to be running
-                    self.logger.error(f"Error handling command: {e}")
+                    self.logger.error(f"Error receiving command: {e}")
                 time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def send_status(self, status_data: str):
@@ -314,15 +327,21 @@ class Module:
         match command:
             case "get_status":
                 print("Command identified as get_status")
-                status = {
-                    "timestamp": time.time(),
-                    "cpu_temp": os.popen('vcgencmd measure_temp').read()[5:9],  # Raspberry Pi CPU temp
-                    "cpu_usage": os.popen('top -n1 | grep "Cpu(s)"').read().split()[1],  # CPU usage %
-                    "memory_usage": os.popen('free -m').readlines()[1].split()[2],  # Memory usage
-                    "uptime": os.popen('uptime').read().split()[0],
-                    "disk_space": os.popen('df -h /').readlines()[1].split()[3]  # Free disk space
-                }
-                self.send_status(status)
+                try:
+                    status = {
+                        "timestamp": time.time(),
+                        "cpu_temp": self.get_cpu_temp(),
+                        "cpu_usage": psutil.cpu_percent(),
+                        "memory_usage": psutil.virtual_memory().percent,
+                        "uptime": time.time() - self.start_time if self.start_time else 0,
+                        "disk_space": psutil.disk_usage('/').percent
+                    }
+                    self.send_status(status)
+                except Exception as e:
+                    self.logger.error(f"Error getting status: {e}")
+                    # Send a minimal status if we can't get all metrics
+                    status = {"timestamp": time.time(), "error": str(e)}
+                    self.send_status(status)
             
             case "get_data":
                 print("Command identified as get_data")

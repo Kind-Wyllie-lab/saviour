@@ -107,7 +107,7 @@ class Module:
             self.logger.info(f"Controller discovered. info={info}")
             self.controller_ip = socket.inet_ntoa(info.addresses[0]) # save the IP of the controller. #TODO: this is saving as 192.168.1.1 when it is 192.168.0.11 (060525 12:48)000
             self.controller_port = info.port # save the port of the controller
-            self.logger.info(f"Found controller at {self.controller_ip}:{self.controller_port}")
+            self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             # connect to zeroMQ
             self.connect_to_controller()
             self.heartbeats_active = True

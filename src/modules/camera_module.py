@@ -109,6 +109,8 @@ class CameraModule(Module):
                     "session_id": self.stream_session_id,
                     "duration": length
                 })
+                # Send the video file to the controller
+                self.send_video_file(filename)
                 return filename
             else:
                 self.logger.error(f"Video recording failed with return code {process.returncode}")
@@ -117,6 +119,38 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error during video recording: {e}")
             return None
+
+    def send_video_file(self, filename: str):
+        """Send a video file to the controller"""
+        try:
+            self.logger.info(f"Sending video file: {filename}")
+            
+            # Send metadata first
+            file_size = os.path.getsize(filename)
+            metadata = {
+                'type': 'video_file',
+                'filename': os.path.basename(filename),
+                'size': file_size,
+                'session_id': self.stream_session_id
+            }
+            self.send_data(str(metadata))
+            
+            # Send file in chunks
+            chunk_size = 1024 * 1024  # 1MB chunks
+            with open(filename, 'rb') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    # Convert binary to hex string for transmission
+                    self.send_data(chunk.hex())
+            
+            # Send end marker
+            self.send_data('FILE_END')
+            self.logger.info(f"Video file sent successfully: {filename}")
+            
+        except Exception as e:
+            self.logger.error(f"Error sending video file: {e}")
 
     def start_recording(self):
         """Start recording a video stream"""

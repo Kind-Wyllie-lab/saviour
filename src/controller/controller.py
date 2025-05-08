@@ -236,24 +236,78 @@ class HabitatController:
         module_id = topic.split('/')[1] # get module id from topic
         timestamp = time.time() # time at which the data was received
         
-        # store in local buffer
-        if module_id not in self.module_data: # if module id not in buffer, create a new buffer entry
+        try:
+            # Check if this is file metadata
+            if data.startswith('{'):
+                metadata = eval(data)
+                if metadata.get('type') == 'video_file':
+                    self.logger.info(f"Received video file metadata: {metadata}")
+                    # Create a new file buffer for this transfer
+                    if 'file_buffers' not in self.__dict__:
+                        self.file_buffers = {}
+                    self.file_buffers[module_id] = {
+                        'metadata': metadata,
+                        'chunks': [],
+                        'bytes_received': 0
+                    }
+                    return
+            
+            # Check if this is the end of a file transfer
+            if data == 'FILE_END':
+                if module_id in self.file_buffers:
+                    self.logger.info(f"File transfer complete for module {module_id}")
+                    self.save_received_file(module_id)
+                    return
+            
+            # Handle file chunks
+            if module_id in self.file_buffers:
+                # Convert hex string back to bytes
+                chunk = bytes.fromhex(data)
+                self.file_buffers[module_id]['chunks'].append(chunk)
+                self.file_buffers[module_id]['bytes_received'] += len(chunk)
+                return
+        
+        except Exception as e:
+            self.logger.error(f"Error handling data update: {e}")
+        
+        # If not file data, handle as normal data
+        if module_id not in self.module_data:
             self.module_data[module_id] = []
 
-        # append data to buffer
         self.module_data[module_id].append({
             "timestamp": timestamp,
-            "data": data,
-            #"type": self.modules[module_id].type
+            "data": data
         })
 
-        # prevent buffer from growing too large
         if len(self.module_data[module_id]) > self.max_buffer_size:
             self.logger.warning(f"Buffer for module {module_id} is too large. Exporting to database.")
             self.export_buffered_data(module_id)
 
         if self.print_received_data:
             print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
+
+    def save_received_file(self, module_id: str):
+        """Save a received file to disk"""
+        try:
+            buffer = self.file_buffers[module_id]
+            metadata = buffer['metadata']
+            
+            # Create videos directory if it doesn't exist
+            os.makedirs('videos', exist_ok=True)
+            
+            # Save the file
+            filename = os.path.join('videos', metadata['filename'])
+            with open(filename, 'wb') as f:
+                for chunk in buffer['chunks']:
+                    f.write(chunk)
+            
+            self.logger.info(f"Saved video file: {filename}")
+            
+            # Clean up the buffer
+            del self.file_buffers[module_id]
+            
+        except Exception as e:
+            self.logger.error(f"Error saving received file: {e}")
 
     # Database methods
     def export_buffered_data(self):

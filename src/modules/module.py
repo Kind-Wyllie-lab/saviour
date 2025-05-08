@@ -46,7 +46,6 @@ class Module:
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
         self.config = config
-        print("test")
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
@@ -334,26 +333,3 @@ class Module:
         self.is_running = False
 
         return True
-
-
-# Main entry point
-def main():
-    """Main entry point for the controller application"""
-    module = Module(module_type="generic",
-                    config={})
-    print("Habitat Module initialized")
-
-    # Start the main loop
-    module.start()
-
-    # Keep running until interrupted
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        module.stop()
-
-# Run the main function if the script is executed directly
-if __name__ == "__main__":
-    main()

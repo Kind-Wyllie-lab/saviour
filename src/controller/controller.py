@@ -405,11 +405,13 @@ class HabitatController:
             try:
                 if hasattr(self, 'command_socket'):
                     self.logger.info("Closing command socket")
-                    self.command_socket.setsockopt(zmq.LINGER, 0)  # Don't wait for pending messages
+                    # Set a reasonable linger time to allow messages to be sent
+                    self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
                     self.command_socket.close()
                 if hasattr(self, 'status_socket'):
                     self.logger.info("Closing status socket")
-                    self.status_socket.setsockopt(zmq.LINGER, 0)  # Don't wait for pending messages
+                    # Set a reasonable linger time to allow messages to be sent
+                    self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
                     self.status_socket.close()
                 if hasattr(self, 'context'):
                     self.logger.info("Terminating ZeroMQ context")

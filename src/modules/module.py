@@ -70,13 +70,14 @@ class Module:
 
         # zeroconf setup
         self.zeroconf = Zeroconf()
-        self.service_browser = None
+        self.service_browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
 
         # ZeroMQ setup
         # command socket for receiving commands from controller
         self.context = zmq.Context()
         self.command_socket = self.context.socket(zmq.SUB)
         self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
+        self.last_command = None
 
         # status socket for sending status updates
         self.status_socket = self.context.socket(zmq.PUB)
@@ -92,6 +93,102 @@ class Module:
         self.heartbeats_active = False
         self.start_time = None
         threading.Thread(target=self.send_heartbeats, daemon=True).start()
+
+    # Start and stop module methods
+    def start(self) -> bool:
+        """
+        Start the module.
+
+        This method should be overridden by the subclass to implement specific module initialization logic.
+        
+        Returns:
+            bool: True if the module started successfully, False otherwise.
+        """
+        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        if self.is_running:
+            self.logger.info("Module already running")
+            return False
+        else:
+            self.is_running = True
+            self.start_time = time.time()
+            
+        # Activate ptp
+        # self.logger.info("Starting ptp4l.service")
+        # ptp.stop_ptp4l()
+        # ptp.restart_ptp4l()
+        # time.sleep(1)
+        # self.logger.info("Starting phc2sys.service")
+        # ptp.stop_phc2sys()
+        # ptp.restart_phc2sys()
+
+        # zeroconf
+        # self.service_browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
+
+        # Advertise this module
+        self.service_info = ServiceInfo(
+            "_module._tcp.local.",
+            f"{self.module_type}_{self.module_id}._module._tcp.local.",
+            addresses=[socket.inet_aton(self.ip)],
+            port=5000,
+            properties={'type': self.module_type, 'id': self.module_id}
+        )
+        self.zeroconf.register_service(self.service_info)
+
+        return True
+
+    def stop(self) -> bool:
+        """
+        Stop the module.
+
+        This method should be overridden by the subclass to implement specific module shutdown logic.
+
+        Returns:
+            bool: True if the module stopped successfully, False otherwise.
+        """
+        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        if not self.is_running:
+            self.logger.info("Module already stopped")
+            return False
+
+        try:
+
+            # Stop the threads
+            if self.stream_thread:
+                self.stream_thread.join(timeout=2.0)
+                self.stream_thread = None
+            
+            # Clean up zeroconf
+            # destroy the service browser
+            if self.service_browser:
+                try:
+                    self.service_browser.cancel()
+                    self.logger.info("Service browser cancelled")
+                except Exception as e:
+                    self.logger.error(f"Error canceling service browser: {e}")
+                self.service_browser = None
+            # unregister the service
+            if self.zeroconf:
+                try:
+                    self.zeroconf.unregister_service(self.service_info) # unregister the service
+                    time.sleep(1)
+                    self.zeroconf.close()
+                    self.logger.info("Zeroconf service unregistered and closed")
+                except Exception as e:
+                    self.logger.error(f"Error unregistering service: {e}")  
+                self.zeroconf = None
+
+            # Stop the heartbeat thread
+            self.heartbeats_active = False
+            self.logger.info("Heartbeat flag set to false")
+
+        except Exception as e:
+            self.logger.error(f"Error stopping module: {e}")
+            return False
+
+        # Confirm the module is stopped
+        self.is_running = False
+        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        return True
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""
@@ -155,6 +252,7 @@ class Module:
         """Handle received commands"""
         self.logger.info(f"Handling command: {command}")
         print(f"Command: {command}")
+        self.last_command = command
         # Add command handling logic here
         match command:
             case "get_status":
@@ -272,98 +370,3 @@ class Module:
         ptp.status_ptp4l()
         ptp.status_phc2sys()
 
-    # Start and stop module methods
-    def start(self) -> bool:
-        """
-        Start the module.
-
-        This method should be overridden by the subclass to implement specific module initialization logic.
-        
-        Returns:
-            bool: True if the module started successfully, False otherwise.
-        """
-        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
-        if self.is_running:
-            self.logger.info("Module already running")
-            return False
-        else:
-            self.is_running = True
-            self.start_time = time.time()
-            
-        # Activate ptp
-        # self.logger.info("Starting ptp4l.service")
-        # ptp.stop_ptp4l()
-        # ptp.restart_ptp4l()
-        # time.sleep(1)
-        # self.logger.info("Starting phc2sys.service")
-        # ptp.stop_phc2sys()
-        # ptp.restart_phc2sys()
-
-        # zeroconf
-        self.service_browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
-
-        # Advertise this module
-        self.service_info = ServiceInfo(
-            "_module._tcp.local.",
-            f"{self.module_type}_{self.module_id}._module._tcp.local.",
-            addresses=[socket.inet_aton(self.ip)],
-            port=5000,
-            properties={'type': self.module_type, 'id': self.module_id}
-        )
-        self.zeroconf.register_service(self.service_info)
-
-        return True
-
-    def stop(self) -> bool:
-        """
-        Stop the module.
-
-        This method should be overridden by the subclass to implement specific module shutdown logic.
-
-        Returns:
-            bool: True if the module stopped successfully, False otherwise.
-        """
-        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        if not self.is_running:
-            self.logger.info("Module already stopped")
-            return False
-
-        try:
-
-            # Stop the threads
-            if self.stream_thread:
-                self.stream_thread.join(timeout=2.0)
-                self.stream_thread = None
-            
-            # Clean up zeroconf
-            # destroy the service browser
-            if self.service_browser:
-                try:
-                    self.service_browser.cancel()
-                    self.logger.info("Service browser cancelled")
-                except Exception as e:
-                    self.logger.error(f"Error canceling service browser: {e}")
-                self.service_browser = None
-            # unregister the service
-            if self.zeroconf:
-                try:
-                    self.zeroconf.unregister_service(self.service_info) # unregister the service
-                    time.sleep(1)
-                    self.zeroconf.close()
-                    self.logger.info("Zeroconf service unregistered and closed")
-                except Exception as e:
-                    self.logger.error(f"Error unregistering service: {e}")  
-                self.zeroconf = None
-
-            # Stop the heartbeat thread
-            self.heartbeats_active = False
-            self.logger.info("Heartbeat flag set to false")
-
-        except Exception as e:
-            self.logger.error(f"Error stopping module: {e}")
-            return False
-
-        # Confirm the module is stopped
-        self.is_running = False
-        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        return True

@@ -70,13 +70,22 @@ class Module:
 
         # zeroconf setup
         self.zeroconf = Zeroconf()
-        self.service_browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
+        self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+        
+        # Advertise this module
+        self.service_info = ServiceInfo(
+            "_module._tcp.local.",
+            f"{self.module_type}_{self.module_id}._module._tcp.local.",
+            addresses=[socket.inet_aton(self.ip)],
+            port=5000,
+            properties={'type': self.module_type, 'id': self.module_id}
+        )
+        self.zeroconf.register_service(self.service_info)
 
         # ZeroMQ setup
         # command socket for receiving commands from controller
         self.context = zmq.Context()
         self.command_socket = self.context.socket(zmq.SUB)
-        self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
         self.last_command = None
 
         # status socket for sending status updates
@@ -94,7 +103,6 @@ class Module:
         self.start_time = None
         threading.Thread(target=self.send_heartbeats, daemon=True).start()
 
-    # Start and stop module methods
     def start(self) -> bool:
         """
         Start the module.
@@ -120,19 +128,6 @@ class Module:
         # self.logger.info("Starting phc2sys.service")
         # ptp.stop_phc2sys()
         # ptp.restart_phc2sys()
-
-        # zeroconf
-        # self.service_browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self)
-
-        # Advertise this module
-        self.service_info = ServiceInfo(
-            "_module._tcp.local.",
-            f"{self.module_type}_{self.module_id}._module._tcp.local.",
-            addresses=[socket.inet_aton(self.ip)],
-            port=5000,
-            properties={'type': self.module_type, 'id': self.module_id}
-        )
-        self.zeroconf.register_service(self.service_info)
 
         return True
 
@@ -226,6 +221,10 @@ class Module:
     def connect_to_controller(self):
         """Connect to controller once we have its IP"""
         try:
+            self.logger.info(f"Module ID: {self.module_id}")
+            self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
+            self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
+            
             self.logger.info(f"Attempting to connect command socket to tcp://{self.controller_ip}:5555")
             self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
             self.logger.info(f"Attempting to connect status socket to tcp://{self.controller_ip}:5556")

@@ -19,8 +19,8 @@ def test_module_zeroconf_discovery():
     # Register a test controller service FIRST
     zeroconf = Zeroconf()
     service_info = ServiceInfo(
-        "_module._tcp.local.",
-        "test_controller._module._tcp.local.",
+        "_controller._tcp.local.",
+        "test_controller._controller._tcp.local.",
         addresses=[socket.inet_aton("127.0.0.1")],
         port=5000,
         properties={'type': 'controller', 'id': 'test_controller'}  # Make sure type is 'controller'
@@ -53,8 +53,8 @@ def test_module_zmq_command_receiving():
     # Register a test controller service FIRST
     zeroconf = Zeroconf()
     service_info = ServiceInfo(
-        "_module._tcp.local.",
-        "test_controller._module._tcp.local.",
+        "_controller._tcp.local.",
+        "test_controller._controller._tcp.local.",
         addresses=[socket.inet_aton("127.0.0.1")],
         port=5000,
         properties={'type': 'controller', 'id': 'test_controller'}

@@ -356,19 +356,18 @@ class HabitatController:
         self.logger.info("Starting controller")
 
         # Activate ptp
-        self.logger.debug("Starting ptp4l.service")
-        ptp.stop_ptp4l() # Stop
-        ptp.restart_ptp4l() # Restart
-        time.sleep(1) # Wait for 1 second
-        self.logger.debug("Starting phc2sys.service")
-        ptp.stop_phc2sys() # Stop
-        ptp.restart_phc2sys() # Restart
+        # self.logger.debug("Starting ptp4l.service")
+        # ptp.stop_ptp4l() # Stop
+        # ptp.restart_ptp4l() # Restart
+        # time.sleep(1) # Wait for 1 second
+        # self.logger.debug("Starting phc2sys.service")
+        # ptp.stop_phc2sys() # Stop
+        # ptp.restart_phc2sys() # Restart
 
         # Start the server
         if self.manual_control:
             self.logger.info("Starting manual control loop")
             while True:
-                self.logger.info("Manual control loop running...")
                 # Get user input
                 print("\nEnter a command (type help for list of commands): ", end='', flush=True)
                 try:
@@ -432,6 +431,19 @@ class HabitatController:
                             except ValueError:
                                 print("Invalid input - please enter a number")
                                 continue
+                        case "health status":
+                            print("\nModule Health Status:")
+                            if not self.module_health:
+                                print("No modules reporting health data")
+                            for module_id, health in self.module_health.items():
+                                print(f"\nModule: {module_id}")
+                                print(f"Status: {health['status']}")
+                                print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
+                                print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
+                                print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
+                                print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
+                                print(f"Uptime: {health.get('uptime', 'N/A')}s")
+                                print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
                 except Exception as e:
                     self.logger.error(f"Error handling input: {e}")
         else:

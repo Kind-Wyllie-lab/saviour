@@ -69,7 +69,7 @@ class Module:
             self.logger.addHandler(console_handler)
 
         # Control flags
-        self.is_running = False
+        self.is_running = False  # Start as False
         self.streaming = False
         self.heartbeats_active = False
         self.start_time = None
@@ -99,9 +99,6 @@ class Module:
         self.samplerate = 200
         self.heartbeat_interval = 5
 
-        # Start heartbeat thread
-        threading.Thread(target=self.send_heartbeats, daemon=True).start()
-
     def start(self) -> bool:
         """
         Start the module.
@@ -119,15 +116,10 @@ class Module:
             self.is_running = True
             self.start_time = time.time()
             
-        # Activate ptp
-        # self.logger.info("Starting ptp4l.service")
-        # ptp.stop_ptp4l()
-        # ptp.restart_ptp4l()
-        # time.sleep(1)
-        # self.logger.info("Starting phc2sys.service")
-        # ptp.stop_phc2sys()
-        # ptp.restart_phc2sys()
-
+            # Start heartbeat thread
+            self.logger.info("Starting heartbeat thread")
+            threading.Thread(target=self.send_heartbeats, daemon=True).start()
+            
         return True
 
     def stop(self) -> bool:
@@ -306,10 +298,11 @@ class Module:
     # Health monitoring methods            
     def send_heartbeats(self):
         """Continuously send heartbeat messages to the controller"""
+        self.logger.info("Heartbeat thread started")
         while self.is_running:
-            if self.heartbeats_active == True:
+            if self.heartbeats_active:
                 try:
-                    self.logger.debug("Sending heartbeat")
+                    self.logger.info("Sending heartbeat")
                     status = {
                         "timestamp": time.time(),
                         'cpu_temp': self.get_cpu_temp(),
@@ -321,10 +314,13 @@ class Module:
                     # Send on status/ topic
                     message = f"status/{self.module_id} {status}"
                     self.status_socket.send_string(message)
-                    self.logger.debug(f"Heartbeat sent: {message}")
+                    self.logger.info(f"Heartbeat sent: {message}")
                 except Exception as e:
                     self.logger.error(f"Error sending heartbeat: {e}")
                 time.sleep(self.heartbeat_interval)
+            else:
+                self.logger.debug("Heartbeats not active, waiting...")
+                time.sleep(1)  # Sleep longer when not active
 
     def get_cpu_temp(self):
         """Get CPU temperature"""

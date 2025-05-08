@@ -192,18 +192,55 @@ class Module:
         info = zeroconf.get_service_info(service_type, name)
         if info:
             self.logger.info(f"Controller discovered. info={info}")
-            self.controller_ip = socket.inet_ntoa(info.addresses[0]) # save the IP of the controller. #TODO: this is saving as 192.168.1.1 when it is 192.168.0.11 (060525 12:48)000
-            self.controller_port = info.port # save the port of the controller
+            self.controller_ip = socket.inet_ntoa(info.addresses[0])
+            self.controller_port = info.port
             self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
-            # connect to zeroMQ
-            self.connect_to_controller()
-            self.heartbeats_active = True
-            threading.Thread(target=self.listen_for_commands, daemon=True).start()
+            
+            # Only connect if we're not already connected
+            if not self.heartbeats_active:
+                self.logger.info("Connecting to controller...")
+                self.connect_to_controller()
+                self.heartbeats_active = True
+                threading.Thread(target=self.listen_for_commands, daemon=True).start()
+                self.logger.info("Connection to controller established")
+            else:
+                self.logger.info("Already connected to controller")
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("Lost connection to controller")
-    
+        # Stop heartbeats
+        self.heartbeats_active = False
+        self.logger.info("Heartbeats stopped")
+        
+        # Clean up ZeroMQ connections
+        try:
+            if hasattr(self, 'command_socket'):
+                self.logger.info("Closing command socket")
+                self.command_socket.close()
+            if hasattr(self, 'status_socket'):
+                self.logger.info("Closing status socket")
+                self.status_socket.close()
+            if hasattr(self, 'context'):
+                self.logger.info("Terminating ZeroMQ context")
+                self.context.term()
+                
+            # Recreate ZeroMQ context and sockets for future reconnection
+            self.context = zmq.Context()
+            self.command_socket = self.context.socket(zmq.SUB)
+            self.status_socket = self.context.socket(zmq.PUB)
+            self.logger.info("ZeroMQ resources cleaned up and recreated")
+            
+            # Reset controller connection state
+            if hasattr(self, 'controller_ip'):
+                delattr(self, 'controller_ip')
+            if hasattr(self, 'controller_port'):
+                delattr(self, 'controller_port')
+            self.logger.info("Controller connection state reset")
+            
+        except Exception as e:
+            self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
+
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")

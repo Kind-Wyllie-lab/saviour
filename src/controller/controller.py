@@ -85,6 +85,7 @@ class HabitatController:
         self.print_received_data = False # whether to print received data
         self.is_exporting = False # whether the controller is currently exporting data to the database
         self.is_health_exporting = False # whether the controller is currently exporting health data to the database
+        self.is_running = True  # Add flag for listener thread
         self.health_export_interval = 10 # the interval at which to export health data to the database
 
         # zeroconf and network
@@ -136,7 +137,8 @@ class HabitatController:
         self.session_manager = session.SessionManager()
 
         # Start the zmq listener thread
-        threading.Thread(target=self.listen_for_updates, daemon=True).start()
+        self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
+        self.listener_thread.start()
 
         # Start the data auto export thread
         threading.Thread(target=self.periodic_export, daemon=True).start()
@@ -191,7 +193,7 @@ class HabitatController:
 
     def listen_for_updates(self):
         """Listen for status and data updates from modules"""
-        while True:
+        while self.is_running:  # Check is_running flag
             try:
                 message = self.status_socket.recv_string()
                 topic, data = message.split(' ', 1)
@@ -202,7 +204,9 @@ class HabitatController:
                 elif topic.startswith('data/'):
                     self.handle_data_update(topic, data)
             except Exception as e:
-                self.logger.error(f"Error handling update: {e}")
+                if self.is_running:  # Only log errors if we're still running
+                    self.logger.error(f"Error handling update: {e}")
+                time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -364,8 +368,12 @@ class HabitatController:
         
         try:
             # Stop all threads by setting flags
+            self.is_running = False  # Stop the listener thread
             self.is_exporting = False
             self.is_health_exporting = False
+            
+            # Give threads time to stop
+            time.sleep(0.5)
             
             # Clean up module health tracking
             self.logger.info("Cleaning up module health tracking")
@@ -394,15 +402,20 @@ class HabitatController:
             time.sleep(1)
             
             # Now clean up ZeroMQ sockets
-            if hasattr(self, 'command_socket'):
-                self.logger.info("Closing command socket")
-                self.command_socket.close()
-            if hasattr(self, 'status_socket'):
-                self.logger.info("Closing status socket")
-                self.status_socket.close()
-            if hasattr(self, 'context'):
-                self.logger.info("Terminating ZeroMQ context")
-                self.context.term()
+            try:
+                if hasattr(self, 'command_socket'):
+                    self.logger.info("Closing command socket")
+                    self.command_socket.setsockopt(zmq.LINGER, 0)  # Don't wait for pending messages
+                    self.command_socket.close()
+                if hasattr(self, 'status_socket'):
+                    self.logger.info("Closing status socket")
+                    self.status_socket.setsockopt(zmq.LINGER, 0)  # Don't wait for pending messages
+                    self.status_socket.close()
+                if hasattr(self, 'context'):
+                    self.logger.info("Terminating ZeroMQ context")
+                    self.context.term()
+            except Exception as e:
+                self.logger.error(f"Error during ZeroMQ cleanup: {e}")
             
             self.logger.info("Controller stopped successfully")
             return True

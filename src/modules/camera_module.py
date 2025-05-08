@@ -1,6 +1,8 @@
 from module import Module
 import datetime
 import subprocess
+import os
+
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None):
 
@@ -43,48 +45,78 @@ class CameraModule(Module):
                 return self.stop_recording()
 
             case "record_video":
-                # length = kwargs.get('length', 10)
-                # return self.record_video(length)
-
-                # Record 10s of video and return filename
-                filename = self.record_video()
-
-                # Send video to controller
-                # TODO: Implement this
-                self.send_data(f"Video created at {filename}")
-                return True
-
+                # Get recording parameters from kwargs or use defaults
+                length = kwargs.get('length', 10)  # Default 10 seconds
+                self.logger.info(f"Received record_video command with length={length}s")
+                
+                # Start recording
+                filename = self.record_video(length)
+                
+                if filename:
+                    self.logger.info(f"Video recording completed: {filename}")
+                    return True
+                else:
+                    self.logger.error("Video recording failed")
+                    return False
                 
             # If not a camera-specific command, pass to parent class
             case _:
                 return super().handle_command(command, **kwargs)
 
     def record_video(self, length: int = 10):
-        """Record a short video"""
-        self.logger.info("Recording video")
+        """Record a video with session management"""
+        self.logger.info(f"Starting video recording for {length} seconds")
         
-        filename = f"{self.video_folder}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_test')}.{self.video_filetype}"
-
+        # Generate session ID if not exists
+        if not self.stream_session_id:
+            self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+        
+        # Create filename using just the session ID
+        filename = f"{self.video_folder}/{self.stream_session_id}.{self.video_filetype}"
+        
+        # Ensure recording directory exists
+        os.makedirs(self.video_folder, exist_ok=True)
+        
+        # Build command with high-quality settings
         cmd = [
             "rpicam-vid",
-            "--framerate", "120",
-            "--width", "1280",
-            "--height", "720",
+            "--framerate", str(self.config.get("fps", 120)),
+            "--width", str(self.config.get("width", 1280)),
+            "--height", str(self.config.get("height", 720)),
             "-t", f"{length}s",
-            "-o", f"{filename}",
+            "-o", filename,
             "--nopreview",
-            "--level", "4.2", # H.264 level
-            "--codec", "h264",
+            "--level", str(self.config.get("level", "4.2")),
+            "--codec", self.config.get("codec", "h264"),
+            "--profile", self.config.get("profile", "high"),
+            "--intra", str(self.config.get("intra", 30))
         ]
 
         self.logger.info(f"Recording video to {filename}")
         self.logger.info(f"Command: {' '.join(cmd)}")
 
-        # Execute the command
-        subprocess.run(cmd)
-        
-        # return filename 
-        return filename
+        try:
+            # Execute the command
+            process = subprocess.Popen(cmd)
+            process.wait()  # Wait for recording to complete
+            
+            if process.returncode == 0:
+                self.logger.info(f"Video recording completed successfully: {filename}")
+                # Send status update to controller
+                self.send_status({
+                    "type": "video_recording_complete",
+                    "filename": filename,
+                    "session_id": self.stream_session_id,
+                    "duration": length
+                })
+                return filename
+            else:
+                self.logger.error(f"Video recording failed with return code {process.returncode}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error during video recording: {e}")
+            return None
 
     def start_recording(self):
         """Start recording a video stream"""

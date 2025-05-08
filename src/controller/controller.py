@@ -370,114 +370,70 @@ class HabitatController:
             while True:
                 self.logger.info("Manual control loop running...")
                 # Get user input
-                user_input = input("Enter a command (type help for list of commands): ")
-                match user_input:
-                    case "help":
-                        print("Available commands:")
-                        print("  help - Show this help message")
-                        print("  quit - Quit the manual control loop")
-                        print("  list - List available modules discovered by zeroconf")
-                        print("  supabase get test - Test retrieving a couple entries from supabase")
-                        print("  supabase export - Export the local buffer to the database")
-                        print("  zmq send - Send a command to a specific module via zeromq")
-                        print("  read buffer - Read the local buffer for a given module")
-                        print("  size buffer - Print the size of the local buffer for a given module")
-                        print("  start export - Periodically export the local buffer to the database")
-                        print("  stop export - Stop the periodic export of the local buffer to the database ")
-                        print("  start health export - Periodically export the local health data to the database")
-                        print("  stop health export - Stop the periodic export of the local health data to the database")
-                        print("  health status - Print the health status of all modules")
-                        print("  check export - Check if the controller is currently exporting data to the database")
-                        print("  session_id  - Generate a session_id")
-                    case "quit":
-                        self.logger.info("Quitting manual control loop")
-                        break
-                    case "list":
-                        print("Available modules:")
-                        for module in self.modules:
-                            print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
-                        if not self.modules:
-                            print("No modules found")
-                    case "supabase get test":
-                        # Get test data from supabase
-                        response = (supabase_client.table("controller_test")
-                            .select("*")
-                            .limit(2)
-                            .execute()
-                        )
-                        print(response)
-                    case "supabase export":
-                        # Export the local buffer to the database
-                        self.export_buffered_data()
-                    case "zmq send":
-                        # send a command to module from list of modules
-                        i=1
-                        for module in self.modules:
-                            print(f"{i}. {module.name}")
-                            i+=1
-                        module_id = input("Chosen module: ")
-                        i=1
-                        for command in self.commands:
-                            print(f"{i}. {command}")
-                            i+=1
-                        command = input("Chosen command: ")
-                        self.send_command(self.modules[int(module_id)-1].id, self.commands[int(command)-1])
-                    case "read buffer":
-                        # read local buffer
-                        print(self.module_data)
-                    case "size buffer":
-                        # print the size of the local buffer for a given module
-                        i=1
-                        for module in self.modules:
-                            print(f"{i}. {module.name}")
-                            i+=1
-                        module_id = input("Chosen module: ")
-                        print(len(self.module_data[self.modules[int(module_id)-1].id]))
-                    case "start export":
-                        # Start auto exporting buffer data to databsae
-                        print("Starting auto export...")
-                        self.is_exporting = True
-                    case "start health export":
-                        # Start auto exporting health data to databsae
-                        print("Start health export command called")
-                        self.is_health_exporting = True
-                    case "stop export":
-                        # Stop auto exporting buffer data to databsae
-                        print("Stopping auto export...")
-                        self.is_exporting = False
-                    case "stop health export":
-                        # Stop auto exporting health data to databsae
-                        print("Stopping health export...")
-                        self.is_health_exporting = False
-                    case "check export":
-                        # Check how export flags are set
-                        print(f"Exporting is currently: {self.is_exporting}")
-                        print(f"Health exporting is currently: {self.is_health_exporting}")
-                    case "health status":
-                        # Get health status for modules
-                        print("\nModule Health Status:")
-                        if not self.module_health:
-                            print("No modules reporting health data")
-                        for module_id, health in self.module_health.items():
-                            print(f"\nModule: {module_id}")
-                            print(f"Status: {health['status']}")
-                            print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
-                            print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
-                            print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
-                            print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
-                            #print(f"PTP Offset: {health.get('ptp_offset', 'N/A')}ns")
-                            print(f"Uptime: {health.get('uptime', 'N/A')}s")
-                            print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
-                    case "session_id":
-                        # Test generating a session ID
-                        i=1
-                        for module in self.modules:
-                            print(f"{i}. {module.name}")
-                            i+=1
-                        module_id = input("Chosen module: ")
-                        print(f"Session ID generated as: {self.session_manager.generate_session_id(self.modules[int(module_id)-1].id)}")
+                print("\nEnter a command (type help for list of commands): ", end='', flush=True)
+                try:
+                    user_input = input().strip()
+                    if not user_input:
+                        continue
                         
-                time.sleep(0.1)
+                    match user_input:
+                        case "help":
+                            print("Available commands:")
+                            print("  help - Show this help message")
+                            print("  quit - Quit the manual control loop")
+                            print("  list - List available modules discovered by zeroconf")
+                            print("  supabase get test - Test retrieving a couple entries from supabase")
+                            print("  supabase export - Export the local buffer to the database")
+                            print("  zmq send - Send a command to a specific module via zeromq")
+                            print("  read buffer - Read the local buffer for a given module")
+                            print("  size buffer - Print the size of the local buffer for a given module")
+                            print("  start export - Periodically export the local buffer to the database")
+                            print("  stop export - Stop the periodic export of the local buffer to the database ")
+                            print("  start health export - Periodically export the local health data to the database")
+                            print("  stop health export - Stop the periodic export of the local health data to the database")
+                            print("  health status - Print the health status of all modules")
+                            print("  check export - Check if the controller is currently exporting data to the database")
+                            print("  session_id  - Generate a session_id")
+                        case "quit":
+                            self.logger.info("Quitting manual control loop")
+                            break
+                        case "list":
+                            print("Available modules:")
+                            for module in self.modules:
+                                print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
+                            if not self.modules:
+                                print("No modules found")
+                        case "zmq send":
+                            # send a command to module from list of modules
+                            if not self.modules:
+                                print("No modules available")
+                                continue
+                                
+                            print("\nAvailable modules:")
+                            for i, module in enumerate(self.modules, 1):
+                                print(f"{i}. {module.name}")
+                            
+                            try:
+                                module_idx = int(input("\nChosen module: ").strip()) - 1
+                                if not 0 <= module_idx < len(self.modules):
+                                    print("Invalid module selection")
+                                    continue
+                                    
+                                print("\nAvailable commands:")
+                                for i, cmd in enumerate(self.commands, 1):
+                                    print(f"{i}. {cmd}")
+                                    
+                                cmd_idx = int(input("\nChosen command: ").strip()) - 1
+                                if not 0 <= cmd_idx < len(self.commands):
+                                    print("Invalid command selection")
+                                    continue
+                                    
+                                self.send_command(self.modules[module_idx].id, self.commands[cmd_idx])
+                            except ValueError:
+                                print("Invalid input - please enter a number")
+                                continue
+                except Exception as e:
+                    self.logger.error(f"Error handling input: {e}")
         else:
             print("Starting automatic loop (not implemented yet)")
             # @TODO: Implement automatic loop

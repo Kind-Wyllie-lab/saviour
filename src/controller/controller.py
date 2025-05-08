@@ -78,7 +78,7 @@ class HabitatController:
         self.module_data = {} # store data from modules before exporting to database
         self.export_interval = 10 # the interval at which to export data to the database
         self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
-        self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
+        self.commands = ["get_status", "get_data", "start_stream", "stop_stream", "record_video"] # list of commands
         
         # Control flags
         self.manual_control = True # whether to run in manual control mode

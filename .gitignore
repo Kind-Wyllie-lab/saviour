@@ -44,3 +44,6 @@ config/local_config.json
 
 # Brief
 brief/
+
+# Video recordings
+rec/

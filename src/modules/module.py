@@ -68,6 +68,18 @@ class Module:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
+        # Control flags
+        self.is_running = False
+        self.streaming = False
+        self.heartbeats_active = False
+        self.start_time = None
+
+        # ZeroMQ setup
+        self.context = zmq.Context()
+        self.command_socket = self.context.socket(zmq.SUB)
+        self.status_socket = self.context.socket(zmq.PUB)
+        self.last_command = None
+
         # zeroconf setup
         self.zeroconf = Zeroconf()
         self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
@@ -82,25 +94,12 @@ class Module:
         )
         self.zeroconf.register_service(self.service_info)
 
-        # ZeroMQ setup
-        # command socket for receiving commands from controller
-        self.context = zmq.Context()
-        self.command_socket = self.context.socket(zmq.SUB)
-        self.last_command = None
-
-        # status socket for sending status updates
-        self.status_socket = self.context.socket(zmq.PUB)
-
         # Data parameters
-        self.streaming = False # A flag which will be used to indicate when the module should stream data, default false
-        self.stream_thread = None # the thread which will be used to stream data
-        self.samplerate = 200 # the sample rate in milliseconds
-        self.is_running = False # a flag to indicate if the module is running
-        self.heartbeat_interval = 5 # the interval at which to send heartbeats to the controller
+        self.stream_thread = None
+        self.samplerate = 200
+        self.heartbeat_interval = 5
 
-        # Heartbeat thread
-        self.heartbeats_active = False
-        self.start_time = None
+        # Start heartbeat thread
         threading.Thread(target=self.send_heartbeats, daemon=True).start()
 
     def start(self) -> bool:

@@ -296,7 +296,11 @@ class Module:
                 self.logger.info(f"Raw message received: {message}")
                 topic, command = message.split(' ', 1)
                 self.logger.info(f"Parsed topic: {topic}, command: {command}")
-                self.last_command = command  # Store the command before handling
+                
+                # Store the command immediately after parsing
+                self.last_command = command
+                self.logger.info(f"Stored command: {self.last_command}")
+                
                 try:
                     self.handle_command(command)
                 except Exception as e:

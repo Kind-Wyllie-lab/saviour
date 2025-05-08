@@ -54,7 +54,7 @@ class Module:
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
         
         # Session Management
@@ -64,7 +64,7 @@ class Module:
         # Add console handler if none exists
         if not self.logger.handlers:
             console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.DEBUG)
+            console_handler.setLevel(logging.INFO)
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)

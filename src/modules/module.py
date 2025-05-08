@@ -73,6 +73,7 @@ class Module:
         self.streaming = False
         self.heartbeats_active = False
         self.start_time = None
+        self.command_listener_running = False  # Add flag for command listener
 
         # ZeroMQ setup
         self.context = zmq.Context()
@@ -209,17 +210,23 @@ class Module:
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("Lost connection to controller")
-        # Stop heartbeats
+        # Stop heartbeats and command listener
         self.heartbeats_active = False
-        self.logger.info("Heartbeats stopped")
+        self.command_listener_running = False
+        self.logger.info("Heartbeats and command listener stopped")
+        
+        # Give threads time to stop
+        time.sleep(0.5)
         
         # Clean up ZeroMQ connections
         try:
             if hasattr(self, 'command_socket'):
                 self.logger.info("Closing command socket")
+                self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
                 self.command_socket.close()
             if hasattr(self, 'status_socket'):
                 self.logger.info("Closing status socket")
+                self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
                 self.status_socket.close()
             if hasattr(self, 'context'):
                 self.logger.info("Terminating ZeroMQ context")
@@ -240,6 +247,14 @@ class Module:
             
         except Exception as e:
             self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
+            # Even if cleanup fails, try to recreate the context and sockets
+            try:
+                self.context = zmq.Context()
+                self.command_socket = self.context.socket(zmq.SUB)
+                self.status_socket = self.context.socket(zmq.PUB)
+                self.logger.info("ZeroMQ resources recreated after error")
+            except Exception as e2:
+                self.logger.error(f"Failed to recreate ZeroMQ resources: {e2}")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
@@ -264,7 +279,8 @@ class Module:
     def listen_for_commands(self):
         """Listen for commands from controller"""
         self.logger.info("Starting command listener thread")
-        while self.is_running:
+        self.command_listener_running = True
+        while self.command_listener_running:
             try:
                 self.logger.info("Waiting for command...")
                 message = self.command_socket.recv_string()
@@ -274,7 +290,8 @@ class Module:
                 self.last_command = command  # Update last_command before handling
                 self.handle_command(command)
             except Exception as e:
-                self.logger.error(f"Error handling command: {e}")
+                if self.command_listener_running:  # Only log if we're still supposed to be running
+                    self.logger.error(f"Error handling command: {e}")
                 time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def send_status(self, status_data: str):

@@ -58,11 +58,11 @@ try:
 
 except KeyboardInterrupt:
     print("\nStopping recording...")
-    picam2.stop_recording()
+picam2.stop_recording()
     picam2.stop()
-    
+
     print("\nRecording complete!")
     print("Try playing with:")
     print("ffplay test.h264")
-    print("or")
-    print("vlc test.h264") 
+print("or")
+print("vlc test.h264") 

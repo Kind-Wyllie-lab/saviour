@@ -13,7 +13,7 @@ async def handle_upload(request):
                 break
             f.write(chunk)
     
-    return web.Response(text='Upload complete')
+    return web.Response(text=f'Uploaded as {filename}')
 
 app = web.Application()
 app.router.add_post('/upload', handle_upload)

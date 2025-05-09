@@ -130,7 +130,7 @@ class HabitatController:
 
         # Health monitoring
         self.module_health = {} # dictionary to store the health of each module
-        self.heartbeat_interval = 5 # the interval at which to check the health of each module
+        self.heartbeat_interval = 30 # the interval at which to check the health of each module
         self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
 
         # Session manager

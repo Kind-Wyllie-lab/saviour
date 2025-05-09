@@ -102,7 +102,7 @@ class Module:
         # Data parameters
         self.stream_thread = None
         self.samplerate = 200
-        self.heartbeat_interval = 5
+        self.heartbeat_interval = 30
 
     def start(self) -> bool:
         """

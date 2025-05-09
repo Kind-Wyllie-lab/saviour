@@ -102,6 +102,27 @@ class CameraModule(Module):
             
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
+                
+                # Send the video file to the controller
+                try:
+                    # Get controller IP from zeroconf
+                    controller_ip = self.get_controller_ip()
+                    if not controller_ip:
+                        self.logger.error("Could not find controller IP")
+                        return None
+                        
+                    # Send the file
+                    success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
+                    if success:
+                        self.logger.info(f"Video file sent successfully to controller")
+                    else:
+                        self.logger.error("Failed to send video file to controller")
+                        return None
+                        
+                except Exception as e:
+                    self.logger.error(f"Error sending video file: {e}")
+                    return None
+                
                 # Send status update to controller
                 self.send_status({
                     "type": "video_recording_complete",

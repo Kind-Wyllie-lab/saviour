@@ -22,6 +22,7 @@ import supabase # for supabase client, the external database
 import uuid # for unique id generation
 from dataclasses import dataclass # to define Module dataclass
 from typing import List, Dict, Any # for type hinting
+import asyncio # for asyncio
 
 # Networking and synchronization
 import socket # for network communication
@@ -135,6 +136,10 @@ class HabitatController:
 
         # Session manager
         self.session_manager = session.SessionManager()
+
+        # File transfer
+        from controller_file_transfer import ControllerFileTransfer
+        self.file_transfer = ControllerFileTransfer(self.logger)
 
         # Start the zmq listener thread
         self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
@@ -444,6 +449,11 @@ class HabitatController:
         # self.logger.debug("Starting phc2sys.service")
         # ptp.stop_phc2sys() # Stop
         # ptp.restart_phc2sys() # Restart
+
+        # start file transfer server
+        def run_file_transfer():
+            asyncio.run(self.file_transfer.start())
+        self.file_transfer_thread = threading.Thread(target=run_file_transfer, daemon=True).start()
 
         # Start the server
         if self.manual_control:

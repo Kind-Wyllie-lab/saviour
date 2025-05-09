@@ -1,5 +1,8 @@
-from module import Module
+import sys
+import os
 import time
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from module import Module
 
 # Main entry point
 def main():

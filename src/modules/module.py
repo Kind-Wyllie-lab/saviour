@@ -399,6 +399,15 @@ class Module:
                 self.logger.debug("Heartbeats not active, waiting...")
                 time.sleep(1)  # Sleep longer when not active
 
+    def get_health(self):
+        """Get health of the module"""
+        health_data = {
+            "timestamp": time.time(),
+            "module_id": self.module_id,
+            "type": "heartbeat",
+        }
+        return health_data
+
     def get_cpu_temp(self):
         """Get CPU temperature"""
         try:

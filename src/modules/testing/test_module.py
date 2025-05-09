@@ -14,6 +14,19 @@ def test_module_import():
     from module import Module
     assert(Module)
 
+def test_module_start_stop():
+    """Test that module can start and stop"""
+    from module import Module
+    module = Module(module_type="test", config=None)
+    assert module.start()
+    time.sleep(0.5)
+    assert module.is_running == True
+    assert module.stop()
+    time.sleep(0.5)
+    assert module.is_running == False
+
+
+
 def test_module_zeroconf_discovery():
     """Test that module can discover a controller via zeroconf"""
     # Register a test controller service FIRST
@@ -94,6 +107,6 @@ def test_module_zmq_command_receiving():
         # Clean up
         cmd_socket.close()
         context.term()
-        module.stop()
+        module.stop()        
         zeroconf.unregister_service(service_info)
         zeroconf.close()

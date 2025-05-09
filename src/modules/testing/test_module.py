@@ -26,7 +26,6 @@ def test_module_start_stop():
     assert module.is_running == False
 
 
-
 def test_module_zeroconf_discovery():
     """Test that module can discover a controller via zeroconf"""
     # Register a test controller service FIRST
@@ -78,10 +77,10 @@ def test_module_zmq_command_receiving():
         # Create module AFTER controller is registered
         from module import Module
         module = Module(module_type="test", config=None)
-        
+
         # Start module (it will discover our test controller)
         assert module.start()
-        
+
         # Give it time to discover the controller and start command thread
         time.sleep(2)  # Increased sleep time to ensure thread starts
 
@@ -99,14 +98,20 @@ def test_module_zmq_command_receiving():
         cmd_socket.send_string(message)
         print("Message sent")
 
-        # Check that the module received the command    
-        time.sleep(1)
-        assert module.last_command == test_command
+        # Give more time for the command to be received and processed
+        time.sleep(2)  # Increased wait time
+
+        # Check that the module received the command
+        assert module.last_command == test_command, f"Expected command '{test_command}', got '{module.last_command}'"
 
     finally:
-        # Clean up
-        cmd_socket.close()
-        context.term()
-        module.stop()        
-        zeroconf.unregister_service(service_info)
-        zeroconf.close()
+        # Cleanup
+        if 'module' in locals():
+            module.stop()
+        if 'zeroconf' in locals():
+            zeroconf.unregister_service(service_info)
+            zeroconf.close()
+        if 'cmd_socket' in locals():
+            cmd_socket.close()
+        if 'context' in locals():
+            context.term()

@@ -4,6 +4,7 @@ import asyncio
 import os
 import tempfile
 from collections import defaultdict
+import socket
 
 class ControllerFileTransfer:
     def __init__(self, logger: logging.Logger):
@@ -15,6 +16,9 @@ class ControllerFileTransfer:
         
         # Track ongoing uploads
         self.active_uploads = defaultdict(dict)
+        
+        # Log server configuration
+        self.logger.info(f"File transfer server initialized with upload directory: {os.path.abspath(self.upload_dir)}")
     
     async def handle_upload(self, request):
         """Handle receiving a file from the module"""
@@ -98,14 +102,37 @@ class ControllerFileTransfer:
 
     async def start(self):
         """Start the file transfer server"""
-        runner = web.AppRunner(self.app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', 8080)
-        await site.start()
-        self.logger.info("File transfer server started on port 8080")
+        try:
+            # Get local IP addresses
+            hostname = socket.gethostname()
+            local_ips = socket.gethostbyname_ex(hostname)[2]
+            self.logger.info(f"Starting file transfer server on interfaces: {local_ips}")
+            
+            runner = web.AppRunner(self.app)
+            await runner.setup()
+            site = web.TCPSite(runner, '0.0.0.0', 8080)
+            await site.start()
+            
+            # Verify the server is running
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = sock.connect_ex(('127.0.0.1', 8080))
+            sock.close()
+            
+            if result == 0:
+                self.logger.info("File transfer server started successfully on port 8080")
+            else:
+                self.logger.error(f"File transfer server failed to start (error code: {result})")
+                
+        except Exception as e:
+            self.logger.error(f"Error starting file transfer server: {str(e)}")
+            raise
 
     async def stop(self):
         """Stop the file transfer server"""
-        runner = web.AppRunner(self.app)
-        await runner.cleanup()
-        self.logger.info("File transfer server stopped")
+        try:
+            runner = web.AppRunner(self.app)
+            await runner.cleanup()
+            self.logger.info("File transfer server stopped")
+        except Exception as e:
+            self.logger.error(f"Error stopping file transfer server: {str(e)}")
+            raise

@@ -32,6 +32,7 @@ import zmq # for zeromq communication
 # Local modules
 import src.shared.ptp as ptp
 import src.shared.network as network
+import src.controller.session as session
 
 # Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -49,13 +50,21 @@ except ImportError:
 
 @dataclass
 class Module:
-    """Dataclass to represent a module in the habitat system"""
+    """Dataclass to represent a module in the habitat system - used by zeroconf to discover modules"""
     id: str
     name: str
     type: str
     ip: str
     port: int
     properties: Dict[str, Any]
+
+@dataclass
+class ModuleData:
+    """Dataclass to represent data from a module"""
+    timestamp: float # timestamp of a given data point
+    data: any # the data itself
+    session_id: str | None # the session ID of the data (this contains module_id, is it necessary to include both?). it can be None if we gather data outside of a session e.g. for debugging
+    module_id: str # the module ID of the data
     
 # Habitat Controller Class
 class HabitatController:
@@ -69,21 +78,26 @@ class HabitatController:
         self.module_data = {} # store data from modules before exporting to database
         self.export_interval = 10 # the interval at which to export data to the database
         self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
-        self.commands = ["get_status", "get_data", "start_stream", "stop_stream"] # list of commands
+        self.commands = ["get_status", "get_data", "start_stream", "stop_stream", "record_video"] # list of commands
         
         # Control flags
         self.manual_control = True # whether to run in manual control mode
         self.print_received_data = False # whether to print received data
         self.is_exporting = False # whether the controller is currently exporting data to the database
         self.is_health_exporting = False # whether the controller is currently exporting health data to the database
+        self.is_running = True  # Add flag for listener thread
         self.health_export_interval = 10 # the interval at which to export health data to the database
 
-        # zeroconf
+        # zeroconf and network
+        if os.name == 'nt': # Windows
+            self.ip = socket.gethostbyname(socket.gethostname())
+        else: # Linux/Unix
+            self.ip = os.popen('hostname -I').read().split()[0]
         self.zeroconf = Zeroconf()
         self.service_info = ServiceInfo(
             "_controller._tcp.local.", # the service type - tcp protocol, local domain
             "controller._controller._tcp.local.", # a unique name for the service to advertise itself
-            addresses=[socket.inet_aton("192.168.1.1")], # the ip address of the controller
+            addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
             port=5000, # the port number of the controller
             properties={'type': 'controller'} # the properties of the service
         )
@@ -116,11 +130,15 @@ class HabitatController:
 
         # Health monitoring
         self.module_health = {} # dictionary to store the health of each module
-        self.heartbeat_interval = 5 # the interval at which to check the health of each module
+        self.heartbeat_interval = 30 # the interval at which to check the health of each module
         self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
 
+        # Session manager
+        self.session_manager = session.SessionManager()
+
         # Start the zmq listener thread
-        threading.Thread(target=self.listen_for_updates, daemon=True).start()
+        self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
+        self.listener_thread.start()
 
         # Start the data auto export thread
         threading.Thread(target=self.periodic_export, daemon=True).start()
@@ -135,7 +153,16 @@ class HabitatController:
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
         self.logger.info(f"Removing module: {name}")
-        self.modules = [module for module in self.modules if module.name != name] # remove the module from the list
+        # Find the module being removed
+        module_to_remove = next((module for module in self.modules if module.name == name), None)
+        if module_to_remove:
+            # Clean up health tracking
+            if module_to_remove.id in self.module_health:
+                self.logger.info(f"Removing health tracking for module {module_to_remove.id}")
+                del self.module_health[module_to_remove.id]
+            # Remove from modules list
+            self.modules = [module for module in self.modules if module.name != name]
+            self.logger.info(f"Module {module_to_remove.id} removed from tracking")
 
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
@@ -166,7 +193,7 @@ class HabitatController:
 
     def listen_for_updates(self):
         """Listen for status and data updates from modules"""
-        while True:
+        while self.is_running:  # Check is_running flag
             try:
                 message = self.status_socket.recv_string()
                 topic, data = message.split(' ', 1)
@@ -177,11 +204,13 @@ class HabitatController:
                 elif topic.startswith('data/'):
                     self.handle_data_update(topic, data)
             except Exception as e:
-                self.logger.error(f"Error handling update: {e}")
+                if self.is_running:  # Only log errors if we're still running
+                    self.logger.error(f"Error handling update: {e}")
+                time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
-        self.logger.debug(f"Status update received from module {topic} with data: {data}")
+        self.logger.info(f"Status update received from module {topic} with data: {data}")
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data) # Convert string data to dictionary
@@ -196,7 +225,7 @@ class HabitatController:
                 'uptime': status_data['uptime'],
                 'disk_space': status_data['disk_space']
             }
-            self.logger.debug(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
+            self.logger.info(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
 
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
@@ -328,6 +357,74 @@ class HabitatController:
                     self.logger.error(f"Error exporting health data: {e}")
                 time.sleep(self.health_export_interval)
 
+    def stop(self) -> bool:
+        """
+        Stop the controller gracefully.
+
+        Returns:
+            bool: True if the controller stopped successfully, False otherwise.
+        """
+        self.logger.info("Stopping controller...")
+        
+        try:
+            # Stop all threads by setting flags
+            self.is_running = False  # Stop the listener thread
+            self.is_exporting = False
+            self.is_health_exporting = False
+            
+            # Give threads time to stop
+            time.sleep(0.5)
+            
+            # Clean up module health tracking
+            self.logger.info("Cleaning up module health tracking")
+            self.module_health.clear()
+            
+            # Clean up module data buffer
+            self.logger.info("Cleaning up module data buffer")
+            self.module_data.clear()
+            
+            # Clean up modules list
+            self.logger.info("Cleaning up modules list")
+            self.modules.clear()
+            
+            # Clean up zeroconf first
+            if hasattr(self, 'service_info'):
+                self.logger.info("Unregistering controller service")
+                self.zeroconf.unregister_service(self.service_info)
+            if hasattr(self, 'browser'):
+                self.logger.info("Cancelling service browser")
+                self.browser.cancel()
+            if hasattr(self, 'zeroconf'):
+                self.logger.info("Closing zeroconf")
+                self.zeroconf.close()
+            
+            # Give modules time to detect the controller is gone
+            time.sleep(1)
+            
+            # Now clean up ZeroMQ sockets
+            try:
+                if hasattr(self, 'command_socket'):
+                    self.logger.info("Closing command socket")
+                    # Set a reasonable linger time to allow messages to be sent
+                    self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
+                    self.command_socket.close()
+                if hasattr(self, 'status_socket'):
+                    self.logger.info("Closing status socket")
+                    # Set a reasonable linger time to allow messages to be sent
+                    self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
+                    self.status_socket.close()
+                if hasattr(self, 'context'):
+                    self.logger.info("Terminating ZeroMQ context")
+                    self.context.term()
+            except Exception as e:
+                self.logger.error(f"Error during ZeroMQ cleanup: {e}")
+            
+            self.logger.info("Controller stopped successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping controller: {e}")
+            return False
 
     # Main methods
     def start(self) -> bool:
@@ -340,135 +437,96 @@ class HabitatController:
         self.logger.info("Starting controller")
 
         # Activate ptp
-        self.logger.debug("Starting ptp4l.service")
-        ptp.stop_ptp4l() # Stop
-        ptp.restart_ptp4l() # Restart
-        time.sleep(1) # Wait for 1 second
-        self.logger.debug("Starting phc2sys.service")
-        ptp.stop_phc2sys() # Stop
-        ptp.restart_phc2sys() # Restart
+        # self.logger.debug("Starting ptp4l.service")
+        # ptp.stop_ptp4l() # Stop
+        # ptp.restart_ptp4l() # Restart
+        # time.sleep(1) # Wait for 1 second
+        # self.logger.debug("Starting phc2sys.service")
+        # ptp.stop_phc2sys() # Stop
+        # ptp.restart_phc2sys() # Restart
 
         # Start the server
         if self.manual_control:
             self.logger.info("Starting manual control loop")
             while True:
-                self.logger.info("Manual control loop running...")
                 # Get user input
-                user_input = input("Enter a command (type help for list of commands): ")
-                match user_input:
-                    case "help":
-                        print("Available commands:")
-                        print("  help - Show this help message")
-                        print("  quit - Quit the manual control loop")
-                        print("  list - List available modules")
-                        print("  supabase get test - Test retrieving a couple entries from supabase")
-                        print("  supabase insert test - Insert test data into supabase")
-                        print("  supabase export - Export the local buffer to the database")
-                        print("  zeroconf add - Add a service to the list of discovered modules")
-                        print("  zeroconf remove - Remove a service from the list of discovered modules")
-                        print("  zmq send - Send a command to a specific module via zeromq")
-                        print("  read buffer - Read the local buffer for a given module")
-                        print("  size buffer - Print the size of the local buffer for a given module")
-                        print("  start export - Periodically export the local buffer to the database")
-                        print("  stop export - Stop the periodic export of the local buffer to the database ")
-                        print("  start health export - Periodically export the local health data to the database")
-                        print("  stop health export - Stop the periodic export of the local health data to the database")
-                        print("  health status - Print the health status of all modules")
-                        print("  check export - Check if the controller is currently exporting data to the database")
-                    case "quit":
-                        self.logger.info("Quitting manual control loop")
-                        break
-                    case "list":
-                        print("Available modules:")
-                        for module in self.modules:
-                            print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
-                        if not self.modules:
-                            print("No modules found")
-                    case "supabase get test":
-                        # Get test data from supabase
-                        response = (supabase_client.table("controller_test")
-                            .select("*")
-                            .limit(2)
-                            .execute()
-                        )
-                        print(response)
-                    case "supabase export":
-                        # Export the local buffer to the database
-                        self.export_buffered_data()
-                    case "zeroconf add":
-                        # Add a service to the list of discovered modules
-                        test_service = ServiceInfo(
-                            "_module._tcp.local.",
-                            "test_module._module._tcp.local.",
-                            addresses=[socket.inet_aton("192.168.1.2")],
-                            port=5000,
-                            properties={'type': 'camera',
-                            'id': uuid.uuid4()}
-                        )
-                        self.zeroconf.register_service(test_service)
-                    case "zeroconf remove":
-                        # Remove a service from the list of discovered modules
-                        self.remove_service(self.zeroconf, "_habitat._tcp.local.", "test")
-                    case "zmq send":
-                        # send a command to module from list of modules
-                        i=1
-                        for module in self.modules:
-                            print(f"{i}. {module.name}")
-                            i+=1
-                        module_id = input("Chosen module: ")
-                        i=1
-                        for command in self.commands:
-                            print(f"{i}. {command}")
-                            i+=1
-                        command = input("Chosen command: ")
-                        self.send_command(self.modules[int(module_id)-1].id, self.commands[int(command)-1])
-                    case "read buffer":
-                        # read local buffer
-                        print(self.module_data)
-                    case "size buffer":
-                        # print the size of the local buffer for a given module
-                        i=1
-                        for module in self.modules:
-                            print(f"{i}. {module.name}")
-                            i+=1
-                        module_id = input("Chosen module: ")
-                        print(len(self.module_data[self.modules[int(module_id)-1].id]))
-                    case "start export":
-                        # Start auto exporting buffer data to databsae
-                        print("Starting auto export...")
-                        self.is_exporting = True
-                    case "start health export":
-                        # Start auto exporting health data to databsae
-                        print("Start health export command called")
-                        self.is_health_exporting = True
-                    case "stop export":
-                        # Stop auto exporting buffer data to databsae
-                        print("Stopping auto export...")
-                        self.is_exporting = False
-                    case "stop health export":
-                        # Stop auto exporting health data to databsae
-                        print("Stopping health export...")
-                        self.is_health_exporting = False
-                    
-                    case "check export":
-                        print(f"Exporting is currently: {self.is_exporting}")
-                        print(f"Health exporting is currently: {self.is_health_exporting}")
-
-                    case "health status":
-                        print("\nModule Health Status:")
-                        if not self.module_health:
-                            print("No modules reporting health data")
-                        for module_id, health in self.module_health.items():
-                            print(f"\nModule: {module_id}")
-                            print(f"Status: {health['status']}")
-                            print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
-                            print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
-                            print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
-                            print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
-                            #print(f"PTP Offset: {health.get('ptp_offset', 'N/A')}ns")
-                            print(f"Uptime: {health.get('uptime', 'N/A')}s")
-                            print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
-                time.sleep(0.1)
+                print("\nEnter a command (type help for list of commands): ", end='', flush=True)
+                try:
+                    user_input = input().strip()
+                    if not user_input:
+                        continue
+                        
+                    match user_input:
+                        case "help":
+                            print("Available commands:")
+                            print("  help - Show this help message")
+                            print("  quit - Quit the manual control loop")
+                            print("  list - List available modules discovered by zeroconf")
+                            print("  supabase get test - Test retrieving a couple entries from supabase")
+                            print("  supabase export - Export the local buffer to the database")
+                            print("  zmq send - Send a command to a specific module via zeromq")
+                            print("  read buffer - Read the local buffer for a given module")
+                            print("  size buffer - Print the size of the local buffer for a given module")
+                            print("  start export - Periodically export the local buffer to the database")
+                            print("  stop export - Stop the periodic export of the local buffer to the database ")
+                            print("  start health export - Periodically export the local health data to the database")
+                            print("  stop health export - Stop the periodic export of the local health data to the database")
+                            print("  health status - Print the health status of all modules")
+                            print("  check export - Check if the controller is currently exporting data to the database")
+                            print("  session_id  - Generate a session_id")
+                        case "quit":
+                            self.logger.info("Quitting manual control loop")
+                            break
+                        case "list":
+                            print("Available modules:")
+                            for module in self.modules:
+                                print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
+                            if not self.modules:
+                                print("No modules found")
+                        case "zmq send":
+                            # send a command to module from list of modules
+                            if not self.modules:
+                                print("No modules available")
+                                continue
+                                
+                            print("\nAvailable modules:")
+                            for i, module in enumerate(self.modules, 1):
+                                print(f"{i}. {module.name}")
+                            
+                            try:
+                                module_idx = int(input("\nChosen module: ").strip()) - 1
+                                if not 0 <= module_idx < len(self.modules):
+                                    print("Invalid module selection")
+                                    continue
+                                    
+                                print("\nAvailable commands:")
+                                for i, cmd in enumerate(self.commands, 1):
+                                    print(f"{i}. {cmd}")
+                                    
+                                cmd_idx = int(input("\nChosen command: ").strip()) - 1
+                                if not 0 <= cmd_idx < len(self.commands):
+                                    print("Invalid command selection")
+                                    continue
+                                    
+                                self.send_command(self.modules[module_idx].id, self.commands[cmd_idx])
+                            except ValueError:
+                                print("Invalid input - please enter a number")
+                                continue
+                        case "health status":
+                            print("\nModule Health Status:")
+                            if not self.module_health:
+                                print("No modules reporting health data")
+                            for module_id, health in self.module_health.items():
+                                print(f"\nModule: {module_id}")
+                                print(f"Status: {health['status']}")
+                                print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
+                                print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
+                                print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
+                                print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
+                                print(f"Uptime: {health.get('uptime', 'N/A')}s")
+                                print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
+                except Exception as e:
+                    self.logger.error(f"Error handling input: {e}")
         else:
             print("Starting automatic loop (not implemented yet)")
             # @TODO: Implement automatic loop
@@ -480,17 +538,15 @@ def main():
     """Main entry point for the controller application"""
     controller = HabitatController()
 
-    # Start the main loop
-    controller.start()
-
-    # Keep running until interrupted
-    # @TODO: Implement a proper shutdown. At present I don't think this is triggered, as it's already looping from controller.start()
-    # try:
-    #     while True:
-    #         time.sleep(1)
-    # except KeyboardInterrupt:
-    #     print("\nShutting down...")
-    #     controller.stop()
+    try:
+        # Start the main loop
+        controller.start()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        controller.stop()
+    except Exception as e:
+        print(f"\nError: {e}")
+        controller.stop()
 
 # Run the main function if the script is executed directly
 if __name__ == "__main__":

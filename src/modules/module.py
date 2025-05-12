@@ -24,13 +24,9 @@ import psutil
 
 import src.shared.ptp as ptp
 import src.shared.network as network
+import src.controller.session as session
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
-
-def generate_module_id(module_type: str) -> str:
-    mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
-    short_id = mac[-4:]  # Takes last 4 characters
-    return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"
 
 class Module:
     """
@@ -46,64 +42,229 @@ class Module:
 
     """
     def __init__(self, module_type: str, config: dict):
+        # Parameters
         self.module_type = module_type
-        self.module_id = generate_module_id(module_type)
+        self.module_id = self.generate_module_id(self.module_type)
         self.config = config
-        self.ip = os.popen('hostname -I').read().split()[0]
+        if os.name == 'nt': # Windows
+            self.ip = socket.gethostbyname(socket.gethostname())
+        else: # Linux/Unix
+            self.ip = os.popen('hostname -I').read().split()[0]
+
+        # Controller connection
+        self.controller_ip = None
+        self.controller_port = None
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
-    
+        
+        # Session Management
+        self.session_manager = session.SessionManager()
+        self.stream_session_id = None
+
         # Add console handler if none exists
         if not self.logger.handlers:
             console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.DEBUG)
+            console_handler.setLevel(logging.INFO)
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
-        # zeroconf setup
-        self.zeroconf = Zeroconf()
-        self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+        # Control flags
+        self.is_running = False  # Start as False
+        self.streaming = False
+        self.heartbeats_active = False
+        self.start_time = None
+        self.command_listener_running = False  # Add flag for command listener
 
         # ZeroMQ setup
-        # command socket for receiving commands from controller
         self.context = zmq.Context()
         self.command_socket = self.context.socket(zmq.SUB)
-        self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
-
-        # status socket for sending status updates
         self.status_socket = self.context.socket(zmq.PUB)
+        self.last_command = None
+
+        # zeroconf setup
+        self.zeroconf = Zeroconf()
+        self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+        
+        # Advertise this module
+        self.service_info = ServiceInfo(
+            "_module._tcp.local.",
+            f"{self.module_type}_{self.module_id}._module._tcp.local.",
+            addresses=[socket.inet_aton(self.ip)],
+            port=5000,
+            properties={'type': self.module_type, 'id': self.module_id}
+        )
+        self.zeroconf.register_service(self.service_info)
 
         # Data parameters
-        self.streaming = False # A flag which will be used to indicate when the module should stream data, default false
-        self.stream_thread = None # the thread which will be used to stream data
-        self.samplerate = 200 # the sample rate in milliseconds
-        self.is_running = True # a flag to indicate if the module is running
-        self.heartbeat_interval = 5 # the interval at which to send heartbeats to the controller
+        self.stream_thread = None
+        self.samplerate = 200
+        self.heartbeat_interval = 30
 
-        # Heartbeat thread
-        self.start_time = None
-        threading.Thread(target=self.send_heartbeats, daemon=True).start()
+    def start(self) -> bool:
+        """
+        Start the module.
+
+        This method should be overridden by the subclass to implement specific module initialization logic.
         
+        Returns:
+            bool: True if the module started successfully, False otherwise.
+        """
+        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        if self.is_running:
+            self.logger.info("Module already running")
+            return False
+        else:
+            self.is_running = True
+            self.start_time = time.time()
+            
+            # Start heartbeat thread
+            self.logger.info("Starting heartbeat thread")
+            threading.Thread(target=self.send_heartbeats, daemon=True).start()
+            
+            # Start command listener thread if we have a controller
+            if self.controller_ip:
+                self.logger.info("Starting command listener thread")
+                threading.Thread(target=self.listen_for_commands, daemon=True).start()
+            
+        return True
+
+    def stop(self) -> bool:
+        """
+        Stop the module.
+
+        This method should be overridden by the subclass to implement specific module shutdown logic.
+
+        Returns:
+            bool: True if the module stopped successfully, False otherwise.
+        """
+        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        if not self.is_running:
+            self.logger.info("Module already stopped")
+            return False
+
+        try:
+
+            # Stop the threads
+            if self.stream_thread:
+                self.stream_thread.join(timeout=2.0)
+                self.stream_thread = None
+            
+            # Clean up zeroconf
+            # destroy the service browser
+            if self.service_browser:
+                try:
+                    self.service_browser.cancel()
+                    self.logger.info("Service browser cancelled")
+                except Exception as e:
+                    self.logger.error(f"Error canceling service browser: {e}")
+                self.service_browser = None
+            # unregister the service
+            if self.zeroconf:
+                try:
+                    self.zeroconf.unregister_service(self.service_info) # unregister the service
+                    time.sleep(1)
+                    self.zeroconf.close()
+                    self.logger.info("Zeroconf service unregistered and closed")
+                except Exception as e:
+                    self.logger.error(f"Error unregistering service: {e}")  
+                self.zeroconf = None
+
+            # Stop the heartbeat thread
+            self.heartbeats_active = False
+            self.logger.info("Heartbeat flag set to false")
+
+        except Exception as e:
+            self.logger.error(f"Error stopping module: {e}")
+            return False
+
+        # Confirm the module is stopped
+        self.is_running = False
+        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        return True
+
+    def generate_module_id(self, module_type: str) -> str:
+        """Generate a module ID based on the module type and the MAC address"""
+        mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
+        short_id = mac[-4:]  # Takes last 4 characters
+        return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
+    
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
+        # Ignore our own service
+        if name == f"{self.module_type}_{self.module_id}._module._tcp.local.":
+            return
+            
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            self.controller_ip = socket.inet_ntoa(info.addresses[0]) # save the IP of the controller
-            self.controller_port = info.port # save the port of the controller
-            self.logger.info(f"Found controller at {self.controller_ip}:{self.controller_port}")
-            # connect to zeroMQ
-            self.connect_to_controller()
-            threading.Thread(target=self.listen_for_commands, daemon=True).start()
+            self.logger.info(f"Controller discovered. info={info}")
+            self.controller_ip = socket.inet_ntoa(info.addresses[0])
+            self.controller_port = info.port
+            self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
+            
+            # Only connect if we're not already connected
+            if not self.heartbeats_active:
+                self.logger.info("Connecting to controller...")
+                self.connect_to_controller()
+                self.heartbeats_active = True
+                threading.Thread(target=self.listen_for_commands, daemon=True).start()
+                self.logger.info("Connection to controller established")
+            else:
+                self.logger.info("Already connected to controller")
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("Lost connection to controller")
-    
+        # Stop heartbeats and command listener
+        self.heartbeats_active = False
+        self.command_listener_running = False
+        self.logger.info("Heartbeats and command listener stopped")
+        
+        # Give threads time to stop
+        time.sleep(0.5)
+        
+        # Clean up ZeroMQ connections
+        try:
+            if hasattr(self, 'command_socket'):
+                self.logger.info("Closing command socket")
+                self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
+                self.command_socket.close()
+            if hasattr(self, 'status_socket'):
+                self.logger.info("Closing status socket")
+                self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
+                self.status_socket.close()
+            if hasattr(self, 'context'):
+                self.logger.info("Terminating ZeroMQ context")
+                self.context.term()
+                
+            # Recreate ZeroMQ context and sockets for future reconnection
+            self.context = zmq.Context()
+            self.command_socket = self.context.socket(zmq.SUB)
+            self.status_socket = self.context.socket(zmq.PUB)
+            self.logger.info("ZeroMQ resources cleaned up and recreated")
+            
+            # Reset controller connection state
+            if hasattr(self, 'controller_ip'):
+                delattr(self, 'controller_ip')
+            if hasattr(self, 'controller_port'):
+                delattr(self, 'controller_port')
+            self.logger.info("Controller connection state reset")
+            
+        except Exception as e:
+            self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
+            # Even if cleanup fails, try to recreate the context and sockets
+            try:
+                self.context = zmq.Context()
+                self.command_socket = self.context.socket(zmq.SUB)
+                self.status_socket = self.context.socket(zmq.PUB)
+                self.logger.info("ZeroMQ resources recreated after error")
+            except Exception as e2:
+                self.logger.error(f"Failed to recreate ZeroMQ resources: {e2}")
+
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
@@ -111,20 +272,44 @@ class Module:
     # ZeroMQ methods
     def connect_to_controller(self):
         """Connect to controller once we have its IP"""
-        self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
-        self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
-        self.logger.info(f"Connected to controller at {self.controller_ip}:5555")
-    
+        try:
+            self.logger.info(f"Module ID: {self.module_id}")
+            self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
+            self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
+            
+            self.logger.info(f"Attempting to connect command socket to tcp://{self.controller_ip}:5555")
+            self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
+            self.logger.info(f"Attempting to connect status socket to tcp://{self.controller_ip}:5556")
+            self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
+            self.logger.info(f"Connected to controller command socket at {self.controller_ip}:5555, status socket at {self.controller_ip}:5556")
+        except Exception as e:
+            self.logger.error(f"Error connecting to controller: {e}")
+
     def listen_for_commands(self):
         """Listen for commands from controller"""
-        while True:
+        self.logger.info("Starting command listener thread")
+        self.command_listener_running = True
+        while self.command_listener_running:
             try:
+                self.logger.info("Waiting for command...")
                 message = self.command_socket.recv_string()
-                module_id, command = message.split(' ', 1)
-                self.logger.info(f"Received command: {command}")
-                self.handle_command(command)
+                self.logger.info(f"Raw message received: {message}")
+                topic, command = message.split(' ', 1)
+                self.logger.info(f"Parsed topic: {topic}, command: {command}")
+                
+                # Store the command immediately after parsing
+                self.last_command = command
+                self.logger.info(f"Stored command: {self.last_command}")
+                
+                try:
+                    self.handle_command(command)
+                except Exception as e:
+                    self.logger.error(f"Error handling command: {e}")
+                    # Don't re-raise the exception, just log it and continue
             except Exception as e:
-                self.logger.error(f"Error handling command: {e}")
+                if self.command_listener_running:  # Only log if we're still supposed to be running
+                    self.logger.error(f"Error receiving command: {e}")
+                time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def send_status(self, status_data: str):
         """Send status to the controller"""
@@ -146,15 +331,21 @@ class Module:
         match command:
             case "get_status":
                 print("Command identified as get_status")
-                status = {
-                    "timestamp": time.time(),
-                    "cpu_temp": os.popen('vcgencmd measure_temp').read()[5:9],  # Raspberry Pi CPU temp
-                    "cpu_usage": os.popen('top -n1 | grep "Cpu(s)"').read().split()[1],  # CPU usage %
-                    "memory_usage": os.popen('free -m').readlines()[1].split()[2],  # Memory usage
-                    "uptime": os.popen('uptime').read().split()[0],
-                    "disk_space": os.popen('df -h /').readlines()[1].split()[3]  # Free disk space
-                }
-                self.send_status(status)
+                try:
+                    status = {
+                        "timestamp": time.time(),
+                        "cpu_temp": self.get_cpu_temp(),
+                        "cpu_usage": psutil.cpu_percent(),
+                        "memory_usage": psutil.virtual_memory().percent,
+                        "uptime": time.time() - self.start_time if self.start_time else 0,
+                        "disk_space": psutil.disk_usage('/').percent
+                    }
+                    self.send_status(status)
+                except Exception as e:
+                    self.logger.error(f"Error getting status: {e}")
+                    # Send a minimal status if we can't get all metrics
+                    status = {"timestamp": time.time(), "error": str(e)}
+                    self.send_status(status)
             
             case "get_data":
                 print("Command identified as get_data")
@@ -165,6 +356,8 @@ class Module:
                 print("Command identified as start_stream")
                 if not self.streaming:  # Only start if not already streaming
                     self.streaming = True
+                    self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+                    self.logger.debug(f"Stream session ID generated as {self.stream_session_id}")
                     self.stream_thread = threading.Thread(target=self.stream_data, daemon=True)
                     self.stream_thread.start()
             
@@ -174,28 +367,46 @@ class Module:
                 if self.stream_thread: # If there is a thread still
                     self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
                     self.stream_thread = None # Empty the thread
-    
+            
+            case _:
+                print(f"Command {command} not recognized")
+                self.send_data("Command not recognized")
+
     # Health monitoring methods            
     def send_heartbeats(self):
         """Continuously send heartbeat messages to the controller"""
+        self.logger.info("Heartbeat thread started")
         while self.is_running:
-            try:
-                self.logger.debug("Sending heartbeat")
-                status = {
-                    "timestamp": time.time(),
-                    'cpu_temp': self.get_cpu_temp(),
-                    'cpu_usage': psutil.cpu_percent(),
-                    'memory_usage': psutil.virtual_memory().percent,
-                    'uptime': time.time() - self.start_time,
-                    'disk_space': psutil.disk_usage('/').percent # Free disk space
-                }
-                # Send on status/ topic
-                message = f"status/{self.module_id} {status}"
-                self.status_socket.send_string(message)
-                self.logger.debug(f"Heartbeat sent: {message}")
-            except Exception as e:
-                self.logger.error(f"Error sending heartbeat: {e}")
-            time.sleep(self.heartbeat_interval)
+            if self.heartbeats_active:
+                try:
+                    self.logger.info("Sending heartbeat")
+                    status = {
+                        "timestamp": time.time(),
+                        'cpu_temp': self.get_cpu_temp(),
+                        'cpu_usage': psutil.cpu_percent(),
+                        'memory_usage': psutil.virtual_memory().percent,
+                        'uptime': time.time() - self.start_time,
+                        'disk_space': psutil.disk_usage('/').percent # Free disk space
+                    }
+                    # Send on status/ topic
+                    message = f"status/{self.module_id} {status}"
+                    self.status_socket.send_string(message)
+                    self.logger.info(f"Heartbeat sent: {message}")
+                except Exception as e:
+                    self.logger.error(f"Error sending heartbeat: {e}")
+                time.sleep(self.heartbeat_interval)
+            else:
+                self.logger.debug("Heartbeats not active, waiting...")
+                time.sleep(1)  # Sleep longer when not active
+
+    def get_health(self):
+        """Get health of the module"""
+        health_data = {
+            "timestamp": time.time(),
+            "module_id": self.module_id,
+            "type": "heartbeat",
+        }
+        return health_data
 
     def get_cpu_temp(self):
         """Get CPU temperature"""
@@ -252,80 +463,3 @@ class Module:
         ptp.status_ptp4l()
         ptp.status_phc2sys()
 
-    # Start and stop module methods
-    def start(self) -> bool:
-        """
-        Start the module.
-
-        This method should be overridden by the subclass to implement specific module initialization logic.
-        
-        Returns:
-            bool: True if the module started successfully, False otherwise.
-        """
-        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
-        self.start_time = time.time()
-        
-        # Activate ptp
-        self.logger.info("Starting ptp4l.service")
-        ptp.stop_ptp4l()
-        ptp.restart_ptp4l()
-        time.sleep(1)
-        self.logger.info("Starting phc2sys.service")
-        ptp.stop_phc2sys()
-        ptp.restart_phc2sys()
-
-        # Advertise this module
-        self.service_info = ServiceInfo(
-            "_module._tcp.local.",
-            f"{self.module_type}_{self.module_id}._module._tcp.local.",
-            addresses=[socket.inet_aton(self.ip)],
-            port=5000,
-            properties={'type': self.module_type, 'id': self.module_id}
-        )
-        self.zeroconf.register_service(self.service_info)
-
-        return True
-
-    def stop(self) -> bool:
-        """
-        Stop the module.
-
-        This method should be overridden by the subclass to implement specific module shutdown logic.
-
-        Returns:
-            bool: True if the module stopped successfully, False otherwise.
-        """
-        self.logger.info(f"Stopping {self.module_type} module {self.module_id}")
-
-        # Unregister from zeroconf
-        self.zeroconf.unregister_service(self.service_info)
-        self.zeroconf.close()
-
-        # stop the heartbeat thread
-        self.is_running = False
-
-
-        return True
-
-
-# Main entry point
-def main():
-    """Main entry point for the controller application"""
-    module = Module(module_type="generic",
-                    config={})
-    print("Habitat Module initialized")
-
-    # Start the main loop
-    module.start()
-
-    # Keep running until interrupted
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        module.stop()
-
-# Run the main function if the script is executed directly
-if __name__ == "__main__":
-    main()

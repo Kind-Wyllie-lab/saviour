@@ -3,6 +3,7 @@ import datetime
 import subprocess
 import os
 from zeroconf import ServiceBrowser, Zeroconf
+import time
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None):
@@ -127,6 +128,7 @@ class CameraModule(Module):
                 # Send status update to controller
                 self.send_status({
                     "type": "video_recording_complete",
+                    "timestamp": time.time(),
                     "filename": filename,
                     "session_id": self.stream_session_id,
                     "duration": length

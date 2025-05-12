@@ -69,7 +69,9 @@ class ControllerFileTransfer:
                 # Determine final path
                 if remote_path:
                     full_path = os.path.join(self.upload_dir, remote_path)
+                    # Ensure the directory exists
                     os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                    self.logger.info(f"Ensuring directory exists: {os.path.dirname(full_path)}")
                 else:
                     full_path = os.path.join(self.upload_dir, filename)
                 

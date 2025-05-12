@@ -8,7 +8,8 @@ class ControllerFileTransfer:
         self.logger = logger
         self.app = web.Application()
         self.app.router.add_post('/upload', self.handle_upload)
-        self.upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
+        #self.upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
+        self.upload_dir = "uploads/"
         os.makedirs(self.upload_dir, exist_ok=True)
         self.logger.info(f"Initialized file transfer server with upload directory: {self.upload_dir}")
 

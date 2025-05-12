@@ -441,19 +441,27 @@ class HabitatController:
         """
         self.logger.info("Starting controller")
 
-        # Activate ptp
-        # self.logger.debug("Starting ptp4l.service")
-        # ptp.stop_ptp4l() # Stop
-        # ptp.restart_ptp4l() # Restart
-        # time.sleep(1) # Wait for 1 second
-        # self.logger.debug("Starting phc2sys.service")
-        # ptp.stop_phc2sys() # Stop
-        # ptp.restart_phc2sys() # Restart
-
-        # start file transfer server
-        def run_file_transfer():
-            asyncio.run(self.file_transfer.start())
-        self.file_transfer_thread = threading.Thread(target=run_file_transfer, daemon=True).start()
+        # Start file transfer server
+        try:
+            # Create event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Start the file transfer server
+            self.logger.info("Starting file transfer server...")
+            loop.run_until_complete(self.file_transfer.start())
+            
+            # Keep the event loop running
+            def run_event_loop():
+                loop.run_forever()
+            
+            self.file_transfer_thread = threading.Thread(target=run_event_loop, daemon=True)
+            self.file_transfer_thread.start()
+            self.logger.info("File transfer server started successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to start file transfer server: {e}")
+            return False
 
         # Start the server
         if self.manual_control:

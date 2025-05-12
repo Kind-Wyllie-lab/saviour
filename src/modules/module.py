@@ -209,9 +209,21 @@ class Module:
             self.controller_port = info.port
             self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
-            # Initialize file transfer
+            # Initialize file transfer with the correct IP
             if not self.file_transfer:
-                self.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
+                # Try to get the local IP of the controller
+                try:
+                    # Create a test socket to get local IP
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect((self.controller_ip, 80))  # Connect to controller
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                    self.logger.info(f"Using local IP {local_ip} for file transfer")
+                    self.file_transfer = ModuleFileTransfer(local_ip, self.logger)
+                except Exception as e:
+                    self.logger.error(f"Error getting local IP for file transfer: {e}")
+                    self.logger.info("Falling back to zeroconf IP for file transfer")
+                    self.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
             
             # Only connect if we're not already connected
             if not self.heartbeats_active:

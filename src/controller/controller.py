@@ -68,7 +68,7 @@ class ModuleData:
     module_id: str # the module ID of the data
     
 # Habitat Controller Class
-class HabitatController:
+class Controller:
     """Main controller class for the habitat system"""
     
     def __init__(self):

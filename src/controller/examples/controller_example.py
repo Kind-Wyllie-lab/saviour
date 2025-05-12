@@ -2,12 +2,12 @@ import sys
 import os
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from controller import HabitatController
+from controller import Controller
 
 # Main entry point
 def main():
     """Main entry point for the controller application"""
-    controller = HabitatController()
+    controller = Controller()
 
     try:
         # Start the main loop

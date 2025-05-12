@@ -21,12 +21,14 @@ import uuid
 import threading
 import random
 import psutil
+import asyncio
 
 import src.shared.ptp as ptp
 import src.shared.network as network
 import src.controller.session as session
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
+from module_file_transfer import ModuleFileTransfer
 
 class Module:
     """
@@ -54,6 +56,7 @@ class Module:
         # Controller connection
         self.controller_ip = None
         self.controller_port = None
+        self.file_transfer = None  # Will be initialized when controller is discovered
 
         # Setup logging
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
@@ -205,6 +208,10 @@ class Module:
             self.controller_ip = socket.inet_ntoa(info.addresses[0])
             self.controller_port = info.port
             self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
+            
+            # Initialize file transfer
+            if not self.file_transfer:
+                self.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
             
             # Only connect if we're not already connected
             if not self.heartbeats_active:
@@ -462,4 +469,25 @@ class Module:
         """
         ptp.status_ptp4l()
         ptp.status_phc2sys()
+
+    def send_file(self, filepath: str, remote_path: str = None) -> bool:
+        """Send a file to the controller"""
+        if not self.file_transfer:
+            self.logger.error("File transfer not initialized - controller not discovered")
+            return False
+            
+        try:
+            # Create a new event loop for this thread if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the file transfer
+            success = loop.run_until_complete(self.file_transfer.send_file(filepath, remote_path))
+            return success
+        except Exception as e:
+            self.logger.error(f"Error sending file: {e}")
+            return False
 

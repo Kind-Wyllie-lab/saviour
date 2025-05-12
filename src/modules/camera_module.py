@@ -2,6 +2,7 @@ from module import Module
 import datetime
 import subprocess
 import os
+from zeroconf import ServiceBrowser, Zeroconf
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None):
@@ -46,7 +47,7 @@ class CameraModule(Module):
 
             case "record_video":
                 # Get recording parameters from kwargs or use defaults
-                length = kwargs.get('length', 10)  # Default 10 seconds
+                length = kwargs.get('length', 3)  # Default 10 seconds
                 self.logger.info(f"Received record_video command with length={length}s")
                 
                 # Start recording
@@ -178,6 +179,10 @@ class CameraModule(Module):
         else:
             self.logger.info("Video recording not in progress")
             return False
+        
+    def get_controller_ip(self) -> str:
+        """Get the controller's IP address"""
+        return self.controller_ip
         
         
     

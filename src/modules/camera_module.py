@@ -2,6 +2,8 @@ from module import Module
 import datetime
 import subprocess
 import os
+from zeroconf import ServiceBrowser, Zeroconf
+import time
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None):
@@ -46,7 +48,7 @@ class CameraModule(Module):
 
             case "record_video":
                 # Get recording parameters from kwargs or use defaults
-                length = kwargs.get('length', 10)  # Default 10 seconds
+                length = kwargs.get('length', 3)  # Default 10 seconds
                 self.logger.info(f"Received record_video command with length={length}s")
                 
                 # Start recording
@@ -102,9 +104,31 @@ class CameraModule(Module):
             
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
+                
+                # Send the video file to the controller
+                try:
+                    # Get controller IP from zeroconf
+                    controller_ip = self.get_controller_ip()
+                    if not controller_ip:
+                        self.logger.error("Could not find controller IP")
+                        return None
+                        
+                    # Send the file
+                    success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
+                    if success:
+                        self.logger.info(f"Video file sent successfully to controller")
+                    else:
+                        self.logger.error("Failed to send video file to controller")
+                        return None
+                        
+                except Exception as e:
+                    self.logger.error(f"Error sending video file: {e}")
+                    return None
+                
                 # Send status update to controller
                 self.send_status({
                     "type": "video_recording_complete",
+                    "timestamp": time.time(),
                     "filename": filename,
                     "session_id": self.stream_session_id,
                     "duration": length
@@ -157,6 +181,10 @@ class CameraModule(Module):
         else:
             self.logger.info("Video recording not in progress")
             return False
+        
+    def get_controller_ip(self) -> str:
+        """Get the controller's IP address"""
+        return self.controller_ip
         
         
     

@@ -131,40 +131,15 @@ class ControllerFileTransfer:
     async def start(self):
         """Start the file transfer server"""
         try:
-            # Get all network interfaces
-            interfaces = self._get_all_interfaces()
-            self.logger.info(f"Available network interfaces: {interfaces}")
-            
             # Create the server
             runner = web.AppRunner(self.app)
             await runner.setup()
             
-            # Try to bind to all interfaces
-            try:
-                site = web.TCPSite(runner, '0.0.0.0', 8080)
-                await site.start()
-                self.logger.info("File transfer server started on 0.0.0.0:8080")
-            except Exception as e:
-                self.logger.error(f"Failed to bind to 0.0.0.0: {e}")
-                # Fallback to localhost
-                site = web.TCPSite(runner, '127.0.0.1', 8080)
-                await site.start()
-                self.logger.info("File transfer server started on 127.0.0.1:8080")
+            # Bind to all interfaces
+            site = web.TCPSite(runner, '0.0.0.0', 8080)
+            await site.start()
+            self.logger.info("File transfer server started on 0.0.0.0:8080")
             
-            # Verify the server is running
-            for interface in interfaces:
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(1)
-                    result = sock.connect_ex((interface, 8080))
-                    sock.close()
-                    if result == 0:
-                        self.logger.info(f"Server is accessible on {interface}:8080")
-                    else:
-                        self.logger.warning(f"Server is not accessible on {interface}:8080 (error code: {result})")
-                except Exception as e:
-                    self.logger.error(f"Error testing {interface}:8080: {e}")
-                
         except Exception as e:
             self.logger.error(f"Error starting file transfer server: {str(e)}")
             raise

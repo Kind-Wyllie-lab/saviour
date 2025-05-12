@@ -47,11 +47,12 @@ class ModuleFileTransfer:
                         text = await response.text()
                         self.logger.error(f"Upload failed with status {response.status}: {text}")
                         return False
+                
+                # Should we close the session here?
                         
         except Exception as e:
             self.logger.error(f"Error sending file: {str(e)}")
             return False
-
 
 
         

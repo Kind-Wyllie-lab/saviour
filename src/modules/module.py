@@ -28,7 +28,7 @@ import src.shared.network as network
 import src.controller.session as session
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
-from module_file_transfer import ModuleFileTransfer
+from src.modules.module_file_transfer import ModuleFileTransfer
 
 class Module:
     """

@@ -11,12 +11,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_module_import():
     """Test that module can be imported"""
-    from module import Module
+    from src.modules.module import Module
     assert(Module)
 
 def test_module_start_stop():
     """Test that module can start and stop"""
-    from module import Module
+    from src.modules.module import Module
     module = Module(module_type="test", config=None)
     assert module.start()
     time.sleep(0.5)
@@ -41,7 +41,7 @@ def test_module_zeroconf_discovery():
 
     try:
         # Create module AFTER controller is registered
-        from module import Module
+        from src.modules.module import Module
         module = Module(module_type="test", config=None)
         
         # Start module (it will discover our test controller)
@@ -75,7 +75,7 @@ def test_module_zmq_command_receiving():
 
     try:
         # Create module AFTER controller is registered
-        from module import Module
+        from src.modules.module import Module
         module = Module(module_type="test", config=None)
 
         # Start module (it will discover our test controller)

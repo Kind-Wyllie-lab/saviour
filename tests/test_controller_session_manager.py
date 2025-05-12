@@ -1,7 +1,7 @@
 from dataclasses import dataclass # to define a dataclass
 from typing import List, Dict, Any # for type hinting
 import datetime # for timestamp
-import session
+import src.controller.session as session
 
 s = session.SessionManager()
 

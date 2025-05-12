@@ -11,9 +11,27 @@ from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module dis
 import os
 import socket
 import uuid
+from dataclasses import dataclass
+from typing import Dict, Any
+import logging
+@dataclass
+class Module:
+    """Dataclass to represent a module in the habitat system - used by zeroconf to discover modules"""
+    id: str
+    name: str
+    type: str
+    ip: str
+    port: int
+    properties: Dict[str, Any]
 
 class ControllerServiceManager():
-    def __init__(self):
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+
+        # Module tracking
+        self.modules = []
+        self.module_health = {}
+
         # Get the ip address of the controller
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
@@ -30,15 +48,53 @@ class ControllerServiceManager():
             properties={'type': 'controller'} # the properties of the service
         )
         self.zeroconf.register_service(self.service_info) # register the service with the above info
-        # self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services"
+        self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services"
 
     def cleanup(self):
         """Cleanup zeroconf resources"""
         if hasattr(self, 'zeroconf'):
             try:
                 self.zeroconf.unregister_service(self.service_info)
+                self.browser.cancel()
                 self.zeroconf.close()
             except:
                 pass # Ignore errors during cleanup
+    
+    # zeroconf methods
+    def add_service(self, zeroconf, service_type, name):
+        """Add a service to the list of discovered modules"""
+        self.logger.info(f"Discovered module: {name}")
+        info = zeroconf.get_service_info(service_type, name)
+        if info:
+            module = Module(
+                id=str(info.properties.get(b'id', b'unknown').decode()),
+                name=name,
+                type=info.properties.get(b'type', b'unknown').decode(),
+                ip=socket.inet_ntoa(info.addresses[0]),
+                port=info.port,
+                properties=info.properties
+            )
+            self.modules.append(module)
+            self.logger.info(f"Discovered module: {module}")
+
+    def update_service(self, zeroconf, service_type, name):
+        """Called when a service is updated"""
+        self.logger.info(f"Service updated: {name}")
+
+    def remove_service(self, zeroconf, service_type, name):
+        """Remove a service from the list of discovered modules"""
+        self.logger.info(f"Removing module: {name}")
+        # Find the module being removed
+        module_to_remove = next((module for module in self.modules if module.name == name), None)
+        if module_to_remove:
+            # Clean up health tracking
+            if module_to_remove.id in self.module_health:
+                self.logger.info(f"Removing health tracking for module {module_to_remove.id}")
+                del self.module_health[module_to_remove.id]
+            # Remove from modules list
+            self.modules = [module for module in self.modules if module.name != name]
+            self.logger.info(f"Module {module_to_remove.id} removed from tracking")
+
+
 
 

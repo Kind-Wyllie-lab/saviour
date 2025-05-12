@@ -20,6 +20,34 @@ class ControllerFileTransfer:
         # Log server configuration
         self.logger.info(f"File transfer server initialized with upload directory: {os.path.abspath(self.upload_dir)}")
     
+    def _get_all_interfaces(self):
+        """Get all network interfaces and their IPs"""
+        interfaces = ['127.0.0.1']  # Always include localhost
+        
+        # Get all IPs from hostname
+        try:
+            hostname = socket.gethostname()
+            # Get all IPs associated with the hostname
+            for ip in socket.gethostbyname_ex(hostname)[2]:
+                if ip not in interfaces:
+                    interfaces.append(ip)
+        except Exception as e:
+            self.logger.error(f"Error getting hostname IPs: {e}")
+        
+        # Try to get IP from a test connection
+        try:
+            # Create a test socket to get local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))  # Connect to Google DNS
+            local_ip = s.getsockname()[0]
+            s.close()
+            if local_ip not in interfaces:
+                interfaces.append(local_ip)
+        except Exception as e:
+            self.logger.error(f"Error getting local IP: {e}")
+            
+        return interfaces
+
     async def handle_upload(self, request):
         """Handle receiving a file from the module"""
         self.logger.info('Received file upload request')
@@ -103,25 +131,39 @@ class ControllerFileTransfer:
     async def start(self):
         """Start the file transfer server"""
         try:
-            # Get local IP addresses
-            hostname = socket.gethostname()
-            local_ips = socket.gethostbyname_ex(hostname)[2]
-            self.logger.info(f"Starting file transfer server on interfaces: {local_ips}")
+            # Get all network interfaces
+            interfaces = self._get_all_interfaces()
+            self.logger.info(f"Available network interfaces: {interfaces}")
             
+            # Create the server
             runner = web.AppRunner(self.app)
             await runner.setup()
-            site = web.TCPSite(runner, '0.0.0.0', 8080)
-            await site.start()
+            
+            # Try to bind to all interfaces
+            try:
+                site = web.TCPSite(runner, '0.0.0.0', 8080)
+                await site.start()
+                self.logger.info("File transfer server started on 0.0.0.0:8080")
+            except Exception as e:
+                self.logger.error(f"Failed to bind to 0.0.0.0: {e}")
+                # Fallback to localhost
+                site = web.TCPSite(runner, '127.0.0.1', 8080)
+                await site.start()
+                self.logger.info("File transfer server started on 127.0.0.1:8080")
             
             # Verify the server is running
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex(('127.0.0.1', 8080))
-            sock.close()
-            
-            if result == 0:
-                self.logger.info("File transfer server started successfully on port 8080")
-            else:
-                self.logger.error(f"File transfer server failed to start (error code: {result})")
+            for interface in interfaces:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1)
+                    result = sock.connect_ex((interface, 8080))
+                    sock.close()
+                    if result == 0:
+                        self.logger.info(f"Server is accessible on {interface}:8080")
+                    else:
+                        self.logger.warning(f"Server is not accessible on {interface}:8080 (error code: {result})")
+                except Exception as e:
+                    self.logger.error(f"Error testing {interface}:8080: {e}")
                 
         except Exception as e:
             self.logger.error(f"Error starting file transfer server: {str(e)}")

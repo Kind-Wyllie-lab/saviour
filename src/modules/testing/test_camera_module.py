@@ -42,7 +42,7 @@ def test_camera_module_id():
 def test_camera_module_record_video():
     from camera_module import CameraModule
     camera = CameraModule()
-    filename = camera.record_video(3)
+    filename = camera.record_video(3, send_to_controller=False)
     time.sleep(1) # Give time for file to be created
     assert(os.path.exists(f"{filename}"))
     # cleanup

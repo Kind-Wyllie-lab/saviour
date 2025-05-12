@@ -65,7 +65,7 @@ class CameraModule(Module):
             case _:
                 return super().handle_command(command, **kwargs)
 
-    def record_video(self, length: int = 10):
+    def record_video(self, length: int = 10, send_to_controller: bool = True):
         """Record a video with session management"""
         self.logger.info(f"Starting video recording for {length} seconds")
         
@@ -106,34 +106,9 @@ class CameraModule(Module):
                 self.logger.info(f"Video recording completed successfully: {filename}")
                 
                 # Send the video file to the controller
-                try:
-                    # Get controller IP from zeroconf
-                    controller_ip = self.get_controller_ip()
-                    if not controller_ip:
-                        self.logger.error("Could not find controller IP")
-                        return None
-                        
-                    # Send the file
-                    success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
-                    if success:
-                        self.logger.info(f"Video file sent successfully to controller")
-                    else:
-                        self.logger.error("Failed to send video file to controller")
-                        return None
-                        
-                except Exception as e:
-                    self.logger.error(f"Error sending video file: {e}")
-                    return None
-                
-                # Send status update to controller
-                self.send_status({
-                    "type": "video_recording_complete",
-                    "timestamp": time.time(),
-                    "filename": filename,
-                    "session_id": self.stream_session_id,
-                    "duration": length
-                })
-                return filename
+                if send_to_controller:
+                    self.send_video_file(filename, length)
+
             else:
                 self.logger.error(f"Video recording failed with return code {process.returncode}")
                 return None
@@ -141,6 +116,39 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error during video recording: {e}")
             return None
+    
+        return filename
+
+    def send_video_file(self, filename: str, length: int):
+        # Send the video file to the controller
+        try:
+            # Get controller IP from zeroconf
+            controller_ip = self.get_controller_ip()
+            if not controller_ip:
+                self.logger.error("Could not find controller IP")
+                return None
+                
+            # Send the file
+            success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
+            if success:
+                self.logger.info(f"Video file sent successfully to controller")
+            else:
+                self.logger.error("Failed to send video file to controller")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error sending video file: {e}")
+            return None
+        
+        # Send status update to controller
+        self.send_status({
+            "type": "video_recording_complete",
+            "timestamp": time.time(),
+            "filename": filename,
+            "session_id": self.stream_session_id,
+            "duration": length
+        })
+        return filename
 
     def start_recording(self):
         """Start recording a video stream"""

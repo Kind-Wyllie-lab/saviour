@@ -31,9 +31,11 @@ from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module dis
 import zmq # for zeromq communication
 
 # Local modules
-import src.shared.ptp as ptp
-import src.shared.network as network
-import src.controller.session as session
+import src.controller.controller_service_manager as service_manager
+import src.controller.controller_communication_manager as communication_manager
+import src.controller.controller_session_manager as session_manager
+import src.controller.controller_file_transfer_manager as file_transfer_manager
+
 
 # Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -49,23 +51,6 @@ except ImportError:
     NWB_AVAILABLE = False
     logging.warning("PyNWB not available. NWB file export will be disabled.")
 
-@dataclass
-class Module:
-    """Dataclass to represent a module in the habitat system - used by zeroconf to discover modules"""
-    id: str
-    name: str
-    type: str
-    ip: str
-    port: int
-    properties: Dict[str, Any]
-
-@dataclass
-class ModuleData:
-    """Dataclass to represent data from a module"""
-    timestamp: float # timestamp of a given data point
-    data: any # the data itself
-    session_id: str | None # the session ID of the data (this contains module_id, is it necessary to include both?). it can be None if we gather data outside of a session e.g. for debugging
-    module_id: str # the module ID of the data
     
 # Habitat Controller Class
 class Controller:
@@ -117,17 +102,11 @@ class Controller:
         self.heartbeat_interval = 30 # the interval at which to check the health of each module
         self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
 
-
         # Managers
-        from controller_service_manager import ControllerServiceManager
-        self.service_manager = ControllerServiceManager(self.logger)
-
-        # Session manager
-        self.session_manager = session.SessionManager()
-
-        # File transfer
-        from controller_file_transfer import ControllerFileTransfer
-        self.file_transfer = ControllerFileTransfer(self.logger)
+        self.service_manager = service_manager.ControllerServiceManager(self.logger)
+        self.session_manager = session_manager.SessionManager()
+        self.communication_manager = communication_manager.ControllerCommunicationManager(self.logger)
+        self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
 
         # Start the zmq listener thread
         self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)

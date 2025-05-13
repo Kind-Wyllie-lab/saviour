@@ -23,9 +23,7 @@ import random
 import psutil
 import asyncio
 
-import src.shared.ptp as ptp
-import src.shared.network as network
-import src.controller.session as session
+import src.controller.controller_session_manager as controller_session_manager
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
 from src.modules.module_file_transfer import ModuleFileTransfer
@@ -64,7 +62,7 @@ class Module:
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
         
         # Session Management
-        self.session_manager = session.SessionManager()
+        self.session_manager = controller_session_manager.SessionManager()
         self.stream_session_id = None
 
         # Add console handler if none exists
@@ -471,8 +469,8 @@ class Module:
         """
         Get PTP status.
         """
-        ptp.status_ptp4l()
-        ptp.status_phc2sys()
+        # TODO: Implement PTP status
+        return True
 
     def send_file(self, filepath: str, remote_path: str = None) -> bool:
         """Send a file to the controller"""

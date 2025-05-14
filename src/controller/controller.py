@@ -105,7 +105,7 @@ class Controller:
         # Managers
         self.service_manager = service_manager.ControllerServiceManager(self.logger)
         self.session_manager = session_manager.SessionManager()
-        self.communication_manager = communication_manager.ControllerCommunicationManager(self.logger)
+        # self.communication_manager = communication_manager.ControllerCommunicationManager(self.logger)
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
 
         # Start the zmq listener thread
@@ -296,12 +296,7 @@ class Controller:
                 time.sleep(self.health_export_interval)
 
     def stop(self) -> bool:
-        """
-        Stop the controller gracefully.
-
-        Returns:
-            bool: True if the controller stopped successfully, False otherwise.
-        """
+        """Stop the controller and clean up resources"""
         self.logger.info("Stopping controller...")
         
         try:
@@ -333,19 +328,30 @@ class Controller:
             
             # Now clean up ZeroMQ sockets
             try:
+                # First set LINGER on all sockets
+                if hasattr(self, 'command_socket'):
+                    self.logger.info("Setting LINGER on command socket")
+                    self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
+                if hasattr(self, 'status_socket'):
+                    self.logger.info("Setting LINGER on status socket")
+                    self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
+
+                # Then close all sockets
                 if hasattr(self, 'command_socket'):
                     self.logger.info("Closing command socket")
-                    # Set a reasonable linger time to allow messages to be sent
-                    self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
                     self.command_socket.close()
                 if hasattr(self, 'status_socket'):
                     self.logger.info("Closing status socket")
-                    # Set a reasonable linger time to allow messages to be sent
-                    self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
                     self.status_socket.close()
+
+                # Give sockets time to fully close
+                time.sleep(0.5)
+
+                # Finally terminate the context
                 if hasattr(self, 'context'):
                     self.logger.info("Terminating ZeroMQ context")
                     self.context.term()
+
             except Exception as e:
                 self.logger.error(f"Error during ZeroMQ cleanup: {e}")
             

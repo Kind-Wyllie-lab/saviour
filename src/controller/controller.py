@@ -35,12 +35,8 @@ import src.controller.controller_service_manager as service_manager
 import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
+import src.controller.controller_data_export_manager as data_export_manager
 
-
-# Supabase
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) # supabase client object which is used to interact with the database
 
 # Optional: For NWB format support
 try:
@@ -61,17 +57,13 @@ class Controller:
 
         # Parameters
         self.module_data = {} # store data from modules before exporting to database
-        self.export_interval = 10 # the interval at which to export data to the database
         self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
         self.commands = ["get_status", "get_data", "start_stream", "stop_stream", "record_video"] # list of commands
         
         # Control flags
         self.manual_control = True # whether to run in manual control mode
         self.print_received_data = False # whether to print received data
-        self.is_exporting = False # whether the controller is currently exporting data to the database
-        self.is_health_exporting = False # whether the controller is currently exporting health data to the database
         self.is_running = True  # Add flag for listener thread
-        self.health_export_interval = 10 # the interval at which to export health data to the database
 
         # Setup logging
         self.logger = logging.getLogger()
@@ -99,16 +91,7 @@ class Controller:
             data_callback=self.handle_data_update
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
-
-        # Start the data auto export thread
-        threading.Thread(target=self.periodic_export, daemon=True).start()
-
-        # Start the health monitoring thread
-        threading.Thread(target=self.monitor_module_health, daemon=True).start()
-
-        # Start the health data auto export thread
-        threading.Thread(target=self.periodic_health_export, daemon=True).start()
-
+        self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger)
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -135,129 +118,26 @@ class Controller:
     def handle_data_update(self, topic: str, data: str):
         """Buffer incoming data from modules"""
         self.logger.info(f"Data update received from module {topic} with data: {data}")
-        module_id = topic.split('/')[1] # get module id from topic
-        timestamp = time.time() # time at which the data was received
+        module_id = topic.split('/')[1]
+        timestamp = time.time()
         
         # store in local buffer
-        if module_id not in self.module_data: # if module id not in buffer, create a new buffer entry
+        if module_id not in self.module_data:
             self.module_data[module_id] = []
 
         # append data to buffer
         self.module_data[module_id].append({
             "timestamp": timestamp,
             "data": data,
-            #"type": self.modules[module_id].type
         })
 
         # prevent buffer from growing too large
         if len(self.module_data[module_id]) > self.max_buffer_size:
             self.logger.warning(f"Buffer for module {module_id} is too large. Exporting to database.")
-            self.export_buffered_data(module_id)
+            self.data_export_manager.export_module_data(self.module_data, self.service_manager)
 
         if self.print_received_data:
             print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
-
-    # Database methods
-    def export_buffered_data(self):
-        """Export the local buffer to the database"""
-        try:
-            for module_id, data_list in self.module_data.items(): # for each module in the buffer
-                if data_list:  # If there's data to upload
-                    # find the module type by seaching through the modules list
-                    module_type = next((module.type for module in self.service_manager.modules if module.id == module_id), 'unknown')
-                    self.logger.debug(f"Preparing to upload for module: {module_id}, type: {module_type}")
-                    self.logger.debug(f"Data to upload: {data_list}")
-
-                    # format data for upload    
-                    records = [{
-                        "module_id": module_id,
-                        "module_type": module_type,
-                        "timestamp": item['timestamp'],
-                        "data": item['data']
-                    } for item in data_list]
-                    self.logger.debug(f"Records formatted for upload: {records}")
-
-                    # upload data to database
-                    response = supabase_client.table("controller_test").insert(records).execute()
-                    self.logger.debug(f"Supabase response: {response}")
-
-                    # Clear uploaded data from buffer
-                    self.module_data[module_id] = []
-                    
-        except Exception as e:
-            self.logger.error(f"Failed to upload data: {e}")
-            print(f"DEBUG - Full error: {str(e)}")
-        
-    def periodic_export(self):
-        """Periodically export the local buffer to the database"""
-        self.logger.debug("Periodic export function called")
-        while True:
-            while self.is_exporting:
-                self.logger.debug("Periodic export function saw that is_exporting is true")
-                try:
-                    self.logger.info("Starting periodic export from buffer...")
-                    self.export_buffered_data()
-                    self.logger.info("Periodic export completed successfully")
-                except Exception as e:
-                    self.logger.error(f"Error during periodic export: {e}")
-                time.sleep(self.export_interval)
-        
-    # Monitor health
-    def monitor_module_health(self):
-        """Monitor the health of each module"""
-        while True: 
-            current_time = time.time() # get current time to compare to last heartbeat
-            for module_id in list(self.module_health.keys()): # iterate over all modules
-                last_heartbeat = self.module_health[module_id]['last_heartbeat'] # get last heartbeat time
-                if current_time - last_heartbeat > self.heartbeat_timeout: # if the last heartbeat was more than 3 intervals ago
-                    self.logger.warning(f"Module {module_id} has not sent a heartbeat in the last {self.heartbeat_timeout} seconds. Marking as offline.")
-                    self.module_health[module_id]['status'] = 'offline'
-            time.sleep(1)
-                    
-    def export_health_data(self):
-        """Export the local health data to the database"""
-        self.logger.debug("Export health data function called")
-        if not self.module_health:
-            self.logger.debug("Export health data function saw that module_health is empty")
-            self.logger.info("No health data to export")
-            return
-
-        try:
-            self.logger.debug("Export health data function saw that module_health is not empty")
-            records = [
-                {
-                    "module_id": module_id,
-                    "timestamp": health["last_heartbeat"],
-                    "status": health["status"],
-                    "cpu_temp": health["cpu_temp"],
-                    "cpu_usage": health["cpu_usage"],
-                    "memory_usage": health["memory_usage"],
-                    "disk_space": health["disk_space"],
-                    "uptime": health["uptime"]
-                }
-                for module_id, health in self.module_health.items()
-            ]
-        
-            response=supabase_client.table("module_health").insert(records).execute()
-            self.logger.debug(f"Uploaded {len(records)} health records to Supabase")
-            self.logger.debug(f"Supabase response: {response}")
-            self.logger.debug("Export health data function saw that supabase response is good")
-
-        except Exception as e:
-            self.logger.debug("Export health data function saw that there was an error exporting health data")
-            self.logger.error(f"Error exporting health data: {e}")
-                
-    def periodic_health_export(self):
-        """Periodically export the local health data to the database"""
-        self.logger.debug("Periodic health export function called")
-        while True:
-            if self.is_health_exporting:
-                self.logger.debug("Periodic health export function saw is_health_exporting is true")
-                try:
-                    self.export_health_data()
-                except Exception as e:
-                    self.logger.error(f"Error exporting health data: {e}")
-                time.sleep(self.health_export_interval)
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
@@ -265,12 +145,7 @@ class Controller:
         
         try:
             # Stop all threads by setting flags
-            self.is_running = False  # Stop the listener thread
-            self.is_exporting = False
-            self.is_health_exporting = False
-            
-            # Give threads time to stop
-            time.sleep(0.5)
+            self.is_running = False
             
             # Clean up module health tracking
             self.logger.info("Cleaning up module health tracking")
@@ -289,6 +164,9 @@ class Controller:
             
             # Clean up communication manager
             self.communication_manager.cleanup()
+            
+            # Clean up data export manager
+            self.data_export_manager.stop_all_exports()
             
             # Give modules time to detect the controller is gone
             time.sleep(1)
@@ -412,6 +290,35 @@ class Controller:
                                 print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
                                 print(f"Uptime: {health.get('uptime', 'N/A')}s")
                                 print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
+                        case "supabase export":
+                            success = self.data_export_manager.export_module_data(self.module_data, self.service_manager)
+                            if success:
+                                print("Data exported successfully")
+                            else:
+                                print("Failed to export data")
+                        case "start export":
+                            self.data_export_manager.start_periodic_data_export(
+                                self.module_data, 
+                                self.service_manager, 
+                                self.export_interval
+                            )
+                            print("Started periodic data export")
+                        case "stop export":
+                            self.data_export_manager.stop_periodic_data_export()
+                            print("Stopped periodic data export")
+                        case "start health export":
+                            self.data_export_manager.start_periodic_health_export(
+                                self.module_health, 
+                                self.health_export_interval
+                            )
+                            print("Started periodic health export")
+                        case "stop health export":
+                            self.data_export_manager.stop_periodic_health_export()
+                            print("Stopped periodic health export")
+                        case "check export":
+                            status = self.data_export_manager.get_export_status()
+                            print(f"Data export active: {status['data_exporting']}")
+                            print(f"Health export active: {status['health_exporting']}")
                 except Exception as e:
                     self.logger.error(f"Error handling input: {e}")
         else:

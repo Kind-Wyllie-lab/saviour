@@ -38,6 +38,7 @@ import src.controller.controller_file_transfer_manager as file_transfer_manager
 import src.controller.controller_data_export_manager as data_export_manager
 import src.controller.controller_interface_manager as interface_manager
 import src.controller.controller_health_monitor as health_monitor
+import src.controller.controller_buffer_manager as buffer_manager
 
 # Optional: For NWB format support
 try:
@@ -57,7 +58,6 @@ class Controller:
         """Initialize the controller with default values"""
 
         # Parameters
-        self.module_data = {} # store data from modules before exporting to database
         self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
         self.commands = ["get_status", "get_data", "start_stream", "stop_stream", "record_video"] # list of commands
         
@@ -89,6 +89,7 @@ class Controller:
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
         self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger)
         self.health_monitor = health_monitor.ControllerHealthMonitor(self.logger)
+        self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
         self.interface_manager = interface_manager.ControllerInterfaceManager(self)
 
         # Start health monitoring
@@ -113,25 +114,20 @@ class Controller:
         print() # New line  
         self.logger.info(f"Data update received from module {topic} with data: {data}")
         module_id = topic.split('/')[1]
-        timestamp = time.time()
         
-        # store in local buffer
-        if module_id not in self.module_data:
-            self.module_data[module_id] = []
-
-        # append data to buffer
-        self.module_data[module_id].append({
-            "timestamp": timestamp,
-            "data": data,
-        })
-
-        # prevent buffer from growing too large
-        if len(self.module_data[module_id]) > self.max_buffer_size:
+        # Add data to buffer
+        buffer_ok = self.buffer_manager.add_data(module_id, data)
+        
+        # If buffer is getting full, export to database
+        if not buffer_ok:
             self.logger.warning(f"Buffer for module {module_id} is too large. Exporting to database.")
-            self.data_export_manager.export_module_data(self.module_data, self.service_manager)
+            self.data_export_manager.export_module_data(
+                self.buffer_manager.get_module_data(), 
+                self.service_manager
+            )
 
         if self.print_received_data:
-            print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
+            print(f"Data update received from module {module_id} with data: {self.buffer_manager.get_module_data(module_id)}")
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
@@ -150,7 +146,7 @@ class Controller:
             
             # Clean up module data buffer
             self.logger.info("Cleaning up module data buffer")
-            self.module_data.clear()
+            self.buffer_manager.clear_module_data()
             
             # Clean up modules list
             self.logger.info("Cleaning up modules list")

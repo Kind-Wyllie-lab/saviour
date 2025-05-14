@@ -73,6 +73,7 @@ def test_module_zmq_command_receiving():
     )
     zeroconf.register_service(service_info)
 
+    module = None
     try:
         # Create module AFTER controller is registered
         from src.modules.module import Module
@@ -98,15 +99,20 @@ def test_module_zmq_command_receiving():
         cmd_socket.send_string(message)
         print("Message sent")
 
-        # Give more time for the command to be received and processed
-        time.sleep(2)  # Increased wait time
-
-        # Check that the module received the command
+        # Wait for command to be received with timeout
+        start_time = time.time()
+        timeout = 5  # 5 second timeout
+        while time.time() - start_time < timeout:
+            if module.last_command == test_command:
+                break
+            time.sleep(0.1)
+        
+        # Now check the command was received
         assert module.last_command == test_command, f"Expected command '{test_command}', got '{module.last_command}'"
 
     finally:
         # Cleanup
-        if 'module' in locals():
+        if module:
             module.stop()
         if 'zeroconf' in locals():
             zeroconf.unregister_service(service_info)

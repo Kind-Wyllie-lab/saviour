@@ -17,11 +17,13 @@ import time
 from typing import Callable, Dict, Any
 
 class ControllerCommunicationManager:
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger, 
+                 status_callback: Callable[[str, str], None] = None, # Use callbacks to handle status updates in the controller.py program, not here.
+                 data_callback: Callable[[str, str], None] = None): # Use callbacks to handle data updates in the controller.py program, not here.
         """Initialize the communication manager"""
         self.logger = logger
-
-
+        self.status_callback = status_callback
+        self.data_callback = data_callback
         self.is_running = True
         
         # ZeroMQ setup
@@ -67,50 +69,13 @@ class ControllerCommunicationManager:
     
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
-        self.logger.info(f"Status update received from module {topic} with data: {data}")
-        module_id = topic.split('/')[1] # get module id from topic
-        try:
-            status_data = eval(data) # Convert string data to dictionary
+        if self.status_callback:
+            self.status_callback(topic, data)
 
-            # Update local health tracking
-            self.module_health[module_id] = {
-                'last_heartbeat': status_data['timestamp'],  # Use the module's timestamp
-                'status': 'online',
-                'cpu_temp': status_data['cpu_temp'],
-                'cpu_usage': status_data['cpu_usage'],
-                'memory_usage': status_data['memory_usage'],
-                'uptime': status_data['uptime'],
-                'disk_space': status_data['disk_space']
-            }
-            self.logger.info(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
-
-        except Exception as e:
-            self.logger.error(f"Error parsing status data for module {module_id}: {e}")
-            
     def handle_data_update(self, topic: str, data: str):
         """Buffer incoming data from modules"""
-        self.logger.info(f"Data update received from module {topic} with data: {data}")
-        module_id = topic.split('/')[1] # get module id from topic
-        timestamp = time.time() # time at which the data was received
-        
-        # store in local buffer
-        if module_id not in self.module_data: # if module id not in buffer, create a new buffer entry
-            self.module_data[module_id] = []
-
-        # append data to buffer
-        self.module_data[module_id].append({
-            "timestamp": timestamp,
-            "data": data,
-            #"type": self.modules[module_id].type
-        })
-
-        # prevent buffer from growing too large
-        if len(self.module_data[module_id]) > self.max_buffer_size:
-            self.logger.warning(f"Buffer for module {module_id} is too large. Exporting to database.")
-            self.export_buffered_data(module_id)
-
-        if self.print_received_data:
-            print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
+        if self.data_callback:
+            self.data_callback(topic, data)
 
     def cleanup(self):
         """Clean up ZMQ connections and export any remaining data"""
@@ -134,11 +99,4 @@ class ControllerCommunicationManager:
         except Exception as e:
             self.logger.error(f"Error during ZeroMQ cleanup: {e}")
 
-
-        # Close ZMQ sockets
-        if hasattr(self, 'subscriber'):
-            self.subscriber.close()
-        if hasattr(self, 'context'):
-            self.context.term()
-            
         self.logger.info("Controller communication manager cleanup complete")

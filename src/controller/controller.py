@@ -73,17 +73,17 @@ class Controller:
         self.is_running = True  # Add flag for listener thread
         self.health_export_interval = 10 # the interval at which to export health data to the database
         
-        # ZeroMQ setup
-        # for sending commands to modules
-        self.context = zmq.Context() # context object to contain all sockets
-        self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
-        self.command_socket.bind("tcp://*:5555") # bind the socket to a port
+        # # ZeroMQ setup
+        # # for sending commands to modules
+        # self.context = zmq.Context() # context object to contain all sockets
+        # self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
+        # self.command_socket.bind("tcp://*:5555") # bind the socket to a port
 
-        # for receiving status updates from modules
-        self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
-        self.status_socket.subscribe("status/") # subscribe to status updates
-        self.status_socket.subscribe("data/") # subscribe to data updates
-        self.status_socket.bind("tcp://*:5556") # bind the socket to a port
+        # # for receiving status updates from modules
+        # self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
+        # self.status_socket.subscribe("status/") # subscribe to status updates
+        # self.status_socket.subscribe("data/") # subscribe to data updates
+        # self.status_socket.bind("tcp://*:5556") # bind the socket to a port
 
         # Setup logging
         self.logger = logging.getLogger()
@@ -105,12 +105,16 @@ class Controller:
         # Managers
         self.service_manager = service_manager.ControllerServiceManager(self.logger)
         self.session_manager = session_manager.SessionManager()
-        # self.communication_manager = communication_manager.ControllerCommunicationManager(self.logger)
+        self.communication_manager = communication_manager.ControllerCommunicationManager(
+            self.logger,
+            status_callback=self.handle_status_update,
+            data_callback=self.handle_data_update
+        )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
 
         # Start the zmq listener thread
-        self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
-        self.listener_thread.start()
+        # self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
+        # self.listener_thread.start()
 
         # Start the data auto export thread
         threading.Thread(target=self.periodic_export, daemon=True).start()
@@ -123,28 +127,28 @@ class Controller:
 
 
     # ZeroMQ methods
-    def send_command(self, module_id: str, command: str):
-        """Send a command to a specific module"""
-        message = f"cmd/{module_id} {command}"
-        self.command_socket.send_string(message)
-        self.logger.info(f"Command sent: {message}")
+    # def send_command(self, module_id: str, command: str):
+    #     """Send a command to a specific module"""
+    #     message = f"cmd/{module_id} {command}"
+    #     self.command_socket.send_string(message)
+    #     self.logger.info(f"Command sent: {message}")
 
-    def listen_for_updates(self):
-        """Listen for status and data updates from modules"""
-        while self.is_running:  # Check is_running flag
-            try:
-                message = self.status_socket.recv_string()
-                topic, data = message.split(' ', 1)
-                self.logger.debug(f"Received update: {message}")
-                # Handle different topics
-                if topic.startswith('status/'):
-                    self.handle_status_update(topic, data)
-                elif topic.startswith('data/'):
-                    self.handle_data_update(topic, data)
-            except Exception as e:
-                if self.is_running:  # Only log errors if we're still running
-                    self.logger.error(f"Error handling update: {e}")
-                time.sleep(0.1)  # Add small delay to prevent tight loop on error
+    # def listen_for_updates(self):
+    #     """Listen for status and data updates from modules"""
+    #     while self.is_running:  # Check is_running flag
+    #         try:
+    #             message = self.status_socket.recv_string()
+    #             topic, data = message.split(' ', 1)
+    #             self.logger.debug(f"Received update: {message}")
+    #             # Handle different topics
+    #             if topic.startswith('status/'):
+    #                 self.handle_status_update(topic, data)
+    #             elif topic.startswith('data/'):
+    #                 self.handle_data_update(topic, data)
+    #         except Exception as e:
+    #             if self.is_running:  # Only log errors if we're still running
+    #                 self.logger.error(f"Error handling update: {e}")
+    #             time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -323,37 +327,11 @@ class Controller:
             # Clean up service manager
             self.service_manager.cleanup()
             
+            # Clean up communication manager
+            self.communication_manager.cleanup()
+            
             # Give modules time to detect the controller is gone
             time.sleep(1)
-            
-            # Now clean up ZeroMQ sockets
-            try:
-                # First set LINGER on all sockets
-                if hasattr(self, 'command_socket'):
-                    self.logger.info("Setting LINGER on command socket")
-                    self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
-                if hasattr(self, 'status_socket'):
-                    self.logger.info("Setting LINGER on status socket")
-                    self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
-
-                # Then close all sockets
-                if hasattr(self, 'command_socket'):
-                    self.logger.info("Closing command socket")
-                    self.command_socket.close()
-                if hasattr(self, 'status_socket'):
-                    self.logger.info("Closing status socket")
-                    self.status_socket.close()
-
-                # Give sockets time to fully close
-                time.sleep(0.5)
-
-                # Finally terminate the context
-                if hasattr(self, 'context'):
-                    self.logger.info("Terminating ZeroMQ context")
-                    self.context.term()
-
-            except Exception as e:
-                self.logger.error(f"Error during ZeroMQ cleanup: {e}")
             
             self.logger.info("Controller stopped successfully")
             return True
@@ -457,7 +435,7 @@ class Controller:
                                     print("Invalid command selection")
                                     continue
                                     
-                                self.send_command(self.service_manager.modules[module_idx].id, self.commands[cmd_idx])
+                                self.communication_manager.send_command(self.service_manager.modules[module_idx].id, self.commands[cmd_idx])
                             except ValueError:
                                 print("Invalid input - please enter a number")
                                 continue

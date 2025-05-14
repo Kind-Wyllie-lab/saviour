@@ -54,19 +54,27 @@ class ControllerCommunicationManager:
         """Listen for status and data updates from modules"""
         while self.is_running:  # Check is_running flag
             try:
-                message = self.status_socket.recv_string()
+                # Use a timeout on recv to allow checking is_running flag
+                message = self.status_socket.recv_string(zmq.NOBLOCK)
                 topic, data = message.split(' ', 1)
                 self.logger.debug(f"Received update: {message}")
-                # Handle different topics
+                
                 if topic.startswith('status/'):
                     self.handle_status_update(topic, data)
                 elif topic.startswith('data/'):
                     self.handle_data_update(topic, data)
+                    
+            except zmq.Again:
+                # No message available, continue to check is_running
+                time.sleep(0.1)
+            except zmq.error.ContextTerminated:
+                # Context was terminated, exit gracefully
+                break
             except Exception as e:
                 if self.is_running:  # Only log errors if we're still running
                     self.logger.error(f"Error handling update: {e}")
-                time.sleep(0.1)  # Add small delay to prevent tight loop on error
-    
+                break
+
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         if self.status_callback:
@@ -81,17 +89,22 @@ class ControllerCommunicationManager:
         """Clean up ZMQ connections and export any remaining data"""
         self.logger.info("Cleaning up controller communication manager...")
         
+        # First, stop the listener thread
+        self.is_running = False
+        
+        # Wait for listener thread to finish
+        if self.listener_thread and self.listener_thread.is_alive():
+            self.listener_thread.join(timeout=2)  # Wait up to 2 seconds
+        
         # Now clean up ZeroMQ sockets
         try:
             if hasattr(self, 'command_socket'):
                 self.logger.info("Closing command socket")
-                # Set a reasonable linger time to allow messages to be sent
-                self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
+                self.command_socket.setsockopt(zmq.LINGER, 1000)
                 self.command_socket.close()
             if hasattr(self, 'status_socket'):
                 self.logger.info("Closing status socket")
-                # Set a reasonable linger time to allow messages to be sent
-                self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
+                self.status_socket.setsockopt(zmq.LINGER, 1000)
                 self.status_socket.close()
             if hasattr(self, 'context'):
                 self.logger.info("Terminating ZeroMQ context")

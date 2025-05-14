@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Controller Interface
+
+Handles user interaction with the habitat controller, including:
+- Manual control CLI
+- Command parsing and execution
+- Help system and module listing
+"""
+
+import logging
+import time
+
+class ControllerInterfaceManager:
+    def __init__(self, controller):
+        """Initialize the controller interface"""
+        self.controller = controller
+        self.logger = controller.logger
+    
+    def run_manual_control(self):
+        """Run the manual control loop"""
+        self.logger.info("Starting manual control loop")
+        while True:
+            # Get user input
+            print("\nEnter a command (type help for list of commands): ", end='', flush=True)
+            try:
+                user_input = input().strip()
+                if not user_input:
+                    continue
+                    
+                self.handle_command(user_input)
+                    
+            except Exception as e:
+                self.logger.error(f"Error handling input: {e}")
+    
+    def handle_command(self, command):
+        """Handle a single command"""
+        match command:
+            case "help":
+                self.show_help()
+            case "quit":
+                self.logger.info("Quitting manual control loop")
+                return False  # Signal to exit
+            case "list":
+                self.list_modules()
+            case "zmq send":
+                self.send_zmq_command()
+            case "health status":
+                self.show_health_status()
+            case "supabase export":
+                self.handle_supabase_export()
+            case "start export":
+                self.handle_start_export()
+            case "stop export":
+                self.handle_stop_export()
+            case "start health export":
+                self.handle_start_health_export()
+            case "stop health export":
+                self.handle_stop_health_export()
+            case "check export":
+                self.handle_check_export()
+            case "session_id":
+                self.handle_session_id()
+            case _:
+                print(f"Unknown command: {command}. Type 'help' for available commands.")
+    
+    def show_help(self):
+        """Display available commands"""
+        print("Available commands:")
+        print("  help - Show this help message")
+        print("  quit - Quit the manual control loop")
+        print("  list - List available modules discovered by zeroconf")
+        print("  supabase export - Export the local buffer to the database")
+        print("  zmq send - Send a command to a specific module via zeromq")
+        print("  health status - Print the health status of all modules")
+        print("  start export - Periodically export the local buffer to the database")
+        print("  stop export - Stop the periodic export of the local buffer to the database")
+        print("  start health export - Periodically export the local health data to the database")
+        print("  stop health export - Stop the periodic export of the local health data to the database")
+        print("  check export - Check if the controller is currently exporting data to the database")
+        print("  session_id - Generate a session_id")
+    
+    def list_modules(self):
+        """List all discovered modules"""
+        print("Available modules:")
+        for module in self.controller.service_manager.modules:
+            print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
+        if not self.controller.service_manager.modules:
+            print("No modules found")
+    
+    def send_zmq_command(self):
+        """Handle ZMQ command sending"""
+        if not self.controller.service_manager.modules:
+            print("No modules available")
+            return
+            
+        print("\nAvailable modules:")
+        for i, module in enumerate(self.controller.service_manager.modules, 1):
+            print(f"{i}. {module.name}")
+        
+        try:
+            module_idx = int(input("\nChosen module: ").strip()) - 1
+            if not 0 <= module_idx < len(self.controller.service_manager.modules):
+                print("Invalid module selection")
+                return
+                
+            print("\nAvailable commands:")
+            for i, cmd in enumerate(self.controller.commands, 1):
+                print(f"{i}. {cmd}")
+                
+            cmd_idx = int(input("\nChosen command: ").strip()) - 1
+            if not 0 <= cmd_idx < len(self.controller.commands):
+                print("Invalid command selection")
+                return
+                
+            self.controller.communication_manager.send_command(
+                self.controller.service_manager.modules[module_idx].id, 
+                self.controller.commands[cmd_idx]
+            )
+        except ValueError:
+            print("Invalid input - please enter a number")
+    
+    def show_health_status(self):
+        """Display health status of all modules"""
+        print("\nModule Health Status:")
+        if not self.controller.module_health:
+            print("No modules reporting health data")
+            return
+            
+        for module_id, health in self.controller.module_health.items():
+            print(f"\nModule: {module_id}")
+            print(f"Status: {health['status']}")
+            print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
+            print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
+            print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
+            print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
+            print(f"Uptime: {health.get('uptime', 'N/A')}s")
+            print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
+    
+    def handle_supabase_export(self):
+        """Handle manual supabase export"""
+        success = self.controller.data_export_manager.export_module_data(
+            self.controller.module_data, 
+            self.controller.service_manager
+        )
+        if success:
+            print("Data exported successfully")
+        else:
+            print("Failed to export data")
+    
+    def handle_start_export(self):
+        """Start periodic data export"""
+        self.controller.data_export_manager.start_periodic_data_export(
+            self.controller.module_data, 
+            self.controller.service_manager, 
+            10  # Default interval
+        )
+        print("Started periodic data export")
+    
+    def handle_stop_export(self):
+        """Stop periodic data export"""
+        self.controller.data_export_manager.stop_periodic_data_export()
+        print("Stopped periodic data export")
+    
+    def handle_start_health_export(self):
+        """Start periodic health export"""
+        self.controller.data_export_manager.start_periodic_health_export(
+            self.controller.module_health, 
+            10  # Default interval
+        )
+        print("Started periodic health export")
+    
+    def handle_stop_health_export(self):
+        """Stop periodic health export"""
+        self.controller.data_export_manager.stop_periodic_health_export()
+        print("Stopped periodic health export")
+    
+    def handle_check_export(self):
+        """Check export status"""
+        status = self.controller.data_export_manager.get_export_status()
+        print(f"Data export active: {status['data_exporting']}")
+        print(f"Health export active: {status['health_exporting']}")
+    
+    def handle_session_id(self):
+        """Generate a session ID"""
+        session_id = self.controller.session_manager.generate_session_id()
+        print(f"Generated session ID: {session_id}")

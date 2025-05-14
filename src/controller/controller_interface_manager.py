@@ -124,11 +124,12 @@ class ControllerInterfaceManager:
     def show_health_status(self):
         """Display health status of all modules"""
         print("\nModule Health Status:")
-        if not self.controller.module_health:
+        module_health = self.controller.health_monitor.get_module_health()
+        if not module_health:
             print("No modules reporting health data")
             return
             
-        for module_id, health in self.controller.module_health.items():
+        for module_id, health in module_health.items():
             print(f"\nModule: {module_id}")
             print(f"Status: {health['status']}")
             print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
@@ -165,8 +166,9 @@ class ControllerInterfaceManager:
     
     def handle_start_health_export(self):
         """Start periodic health export"""
+        module_health = self.controller.health_monitor.get_module_health()
         self.controller.data_export_manager.start_periodic_health_export(
-            self.controller.module_health, 
+            module_health, 
             10  # Default interval
         )
         print("Started periodic health export")

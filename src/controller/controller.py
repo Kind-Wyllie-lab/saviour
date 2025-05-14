@@ -37,6 +37,7 @@ import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
 import src.controller.controller_data_export_manager as data_export_manager
 import src.controller.controller_interface_manager as interface_manager
+import src.controller.controller_health_monitor as health_monitor
 
 # Optional: For NWB format support
 try:
@@ -77,11 +78,6 @@ class Controller:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
-        # Health monitoring
-        self.module_health = {} # dictionary to store the health of each module
-        self.heartbeat_interval = 30 # the interval at which to check the health of each module
-        self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
-
         # Managers
         self.service_manager = service_manager.ControllerServiceManager(self.logger)
         self.session_manager = session_manager.SessionManager()
@@ -92,7 +88,11 @@ class Controller:
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
         self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger)
+        self.health_monitor = health_monitor.ControllerHealthMonitor(self.logger)
         self.interface_manager = interface_manager.ControllerInterfaceManager(self)
+
+        # Start health monitoring
+        self.health_monitor.start_monitoring()
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -100,18 +100,9 @@ class Controller:
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data) # Convert string data to dictionary
-
-            # Update local health tracking
-            self.module_health[module_id] = {
-                'last_heartbeat': status_data['timestamp'],  # Use the module's timestamp
-                'status': 'online',
-                'cpu_temp': status_data['cpu_temp'],
-                'cpu_usage': status_data['cpu_usage'],
-                'memory_usage': status_data['memory_usage'],
-                'uptime': status_data['uptime'],
-                'disk_space': status_data['disk_space']
-            }
-            self.logger.info(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
+            
+            # Update health monitoring through health monitor
+            self.health_monitor.update_module_health(module_id, status_data)
 
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
@@ -148,9 +139,12 @@ class Controller:
             # Stop all threads by setting flags
             self.is_running = False
             
-            # Clean up module health tracking
+            # Stop health monitoring
+            self.health_monitor.stop_monitoring()
+            
+            # Clean up health monitoring
             self.logger.info("Cleaning up module health tracking")
-            self.module_health.clear()
+            self.health_monitor.clear_all_health()
             
             # Clean up module data buffer
             self.logger.info("Cleaning up module data buffer")
@@ -218,5 +212,4 @@ class Controller:
             print("Starting automatic loop (not implemented yet)")
             # @TODO: Implement automatic loop
 
-        return True
-        
+        return True 

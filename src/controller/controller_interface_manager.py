@@ -62,6 +62,8 @@ class ControllerInterfaceManager:
                 self.handle_check_export()
             case "session_id":
                 self.handle_session_id()
+            case "show buffer":
+                self.handle_show_buffer()
             case _:
                 print(f"Unknown command: {command}. Type 'help' for available commands.")
     
@@ -80,6 +82,7 @@ class ControllerInterfaceManager:
         print("  stop health export - Stop the periodic export of the local health data to the database")
         print("  check export - Check if the controller is currently exporting data to the database")
         print("  session_id - Generate a session_id")
+        print("  show buffer - Print the current contents of the data buffer")
     
     def list_modules(self):
         """List all discovered modules"""
@@ -142,7 +145,7 @@ class ControllerInterfaceManager:
     def handle_supabase_export(self):
         """Handle manual supabase export"""
         success = self.controller.data_export_manager.export_module_data(
-            self.controller.module_data, 
+            self.controller.buffer_manager.get_module_data(), 
             self.controller.service_manager
         )
         if success:
@@ -153,7 +156,7 @@ class ControllerInterfaceManager:
     def handle_start_export(self):
         """Start periodic data export"""
         self.controller.data_export_manager.start_periodic_data_export(
-            self.controller.module_data, 
+            self.controller.buffer_manager, 
             self.controller.service_manager, 
             10  # Default interval
         )
@@ -188,3 +191,15 @@ class ControllerInterfaceManager:
         """Generate a session ID"""
         session_id = self.controller.session_manager.generate_session_id()
         print(f"Generated session ID: {session_id}")
+
+    def handle_show_buffer(self):
+        """Display the current contents of the data buffer"""
+        buffer = self.controller.buffer_manager.get_module_data()
+        if not buffer:
+            print("Data buffer is empty.")
+            return
+        print("Current Data Buffer:")
+        for module_id, data_list in buffer.items():
+            print(f"Module {module_id}: {len(data_list)} entries")
+            for entry in data_list:
+                print(f"  {entry}")

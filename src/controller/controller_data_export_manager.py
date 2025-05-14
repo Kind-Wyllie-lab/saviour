@@ -110,10 +110,21 @@ class ControllerDataExportManager:
             self.logger.error(f"Error exporting health data: {e}")
             return False
     
-    def start_periodic_data_export(self, module_data: Dict, service_manager, export_interval: int = None):
-        """Start periodic export of module data"""
+    def start_periodic_data_export(self, buffer_manager_ref, service_manager, export_interval: int = None):
+        """
+        Start periodic export of module data
+        
+        Args:
+            buffer_manager_ref: Either the buffer manager instance or a dict with module data
+            service_manager: Service manager instance for module lookup
+            export_interval: Optional interval in seconds between exports
+        """
         if export_interval:
             self.export_interval = export_interval
+            
+        # Store references for the thread
+        self.buffer_manager_ref = buffer_manager_ref
+        self.service_manager_ref = service_manager
             
         def periodic_export():
             """Periodically export the local buffer to the database"""
@@ -122,7 +133,15 @@ class ControllerDataExportManager:
                 self.logger.debug("Periodic export function saw that is_exporting_data is true")
                 try:
                     self.logger.info("Starting periodic export from buffer...")
-                    self.export_module_data(module_data, service_manager)
+                    # Check if we're passed a buffer manager or data dict
+                    if hasattr(self.buffer_manager_ref, 'get_module_data'):
+                        # It's a buffer manager instance
+                        current_data = self.buffer_manager_ref.get_module_data()
+                    else:
+                        # It's a data dictionary directly
+                        current_data = self.buffer_manager_ref
+                        
+                    self.export_module_data(current_data, self.service_manager_ref)
                     self.logger.info("Periodic export completed successfully")
                 except Exception as e:
                     self.logger.error(f"Error during periodic export: {e}")

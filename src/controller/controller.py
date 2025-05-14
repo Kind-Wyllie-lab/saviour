@@ -36,7 +36,7 @@ import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
 import src.controller.controller_data_export_manager as data_export_manager
-
+import src.controller.controller_interface_manager as interface_manager
 
 # Optional: For NWB format support
 try:
@@ -92,6 +92,7 @@ class Controller:
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
         self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger)
+        self.interface_manager = interface_manager.ControllerInterfaceManager(self)
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -210,117 +211,9 @@ class Controller:
             self.logger.error(f"Failed to start file transfer server: {e}")
             return False
 
-        # Start the server
+        # Start the appropriate control mode
         if self.manual_control:
-            self.logger.info("Starting manual control loop")
-            while True:
-                # Get user input
-                print("\nEnter a command (type help for list of commands): ", end='', flush=True)
-                try:
-                    user_input = input().strip()
-                    if not user_input:
-                        continue
-                        
-                    match user_input:
-                        case "help":
-                            print("Available commands:")
-                            print("  help - Show this help message")
-                            print("  quit - Quit the manual control loop")
-                            print("  list - List available modules discovered by zeroconf")
-                            print("  supabase get test - Test retrieving a couple entries from supabase")
-                            print("  supabase export - Export the local buffer to the database")
-                            print("  zmq send - Send a command to a specific module via zeromq")
-                            print("  read buffer - Read the local buffer for a given module")
-                            print("  size buffer - Print the size of the local buffer for a given module")
-                            print("  start export - Periodically export the local buffer to the database")
-                            print("  stop export - Stop the periodic export of the local buffer to the database ")
-                            print("  start health export - Periodically export the local health data to the database")
-                            print("  stop health export - Stop the periodic export of the local health data to the database")
-                            print("  health status - Print the health status of all modules")
-                            print("  check export - Check if the controller is currently exporting data to the database")
-                            print("  session_id  - Generate a session_id")
-                        case "quit":
-                            self.logger.info("Quitting manual control loop")
-                            break
-                        case "list":
-                            print("Available modules:")
-                            for module in self.service_manager.modules:
-                                print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
-                            if not self.service_manager.modules:
-                                print("No modules found")
-                        case "zmq send":
-                            # send a command to module from list of modules
-                            if not self.service_manager.modules:
-                                print("No modules available")
-                                continue
-                                
-                            print("\nAvailable modules:")
-                            for i, module in enumerate(self.service_manager.modules, 1):
-                                print(f"{i}. {module.name}")
-                            
-                            try:
-                                module_idx = int(input("\nChosen module: ").strip()) - 1
-                                if not 0 <= module_idx < len(self.service_manager.modules):
-                                    print("Invalid module selection")
-                                    continue
-                                    
-                                print("\nAvailable commands:")
-                                for i, cmd in enumerate(self.commands, 1):
-                                    print(f"{i}. {cmd}")
-                                    
-                                cmd_idx = int(input("\nChosen command: ").strip()) - 1
-                                if not 0 <= cmd_idx < len(self.commands):
-                                    print("Invalid command selection")
-                                    continue
-                                    
-                                self.communication_manager.send_command(self.service_manager.modules[module_idx].id, self.commands[cmd_idx])
-                            except ValueError:
-                                print("Invalid input - please enter a number")
-                                continue
-                        case "health status":
-                            print("\nModule Health Status:")
-                            if not self.module_health:
-                                print("No modules reporting health data")
-                            for module_id, health in self.module_health.items():
-                                print(f"\nModule: {module_id}")
-                                print(f"Status: {health['status']}")
-                                print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
-                                print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
-                                print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
-                                print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
-                                print(f"Uptime: {health.get('uptime', 'N/A')}s")
-                                print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
-                        case "supabase export":
-                            success = self.data_export_manager.export_module_data(self.module_data, self.service_manager)
-                            if success:
-                                print("Data exported successfully")
-                            else:
-                                print("Failed to export data")
-                        case "start export":
-                            self.data_export_manager.start_periodic_data_export(
-                                self.module_data, 
-                                self.service_manager, 
-                                self.export_interval
-                            )
-                            print("Started periodic data export")
-                        case "stop export":
-                            self.data_export_manager.stop_periodic_data_export()
-                            print("Stopped periodic data export")
-                        case "start health export":
-                            self.data_export_manager.start_periodic_health_export(
-                                self.module_health, 
-                                self.health_export_interval
-                            )
-                            print("Started periodic health export")
-                        case "stop health export":
-                            self.data_export_manager.stop_periodic_health_export()
-                            print("Stopped periodic health export")
-                        case "check export":
-                            status = self.data_export_manager.get_export_status()
-                            print(f"Data export active: {status['data_exporting']}")
-                            print(f"Health export active: {status['health_exporting']}")
-                except Exception as e:
-                    self.logger.error(f"Error handling input: {e}")
+            self.interface_manager.run_manual_control()
         else:
             print("Starting automatic loop (not implemented yet)")
             # @TODO: Implement automatic loop

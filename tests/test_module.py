@@ -50,9 +50,9 @@ def test_module_zeroconf_discovery():
         # Give it time to discover the controller
         time.sleep(1)
         
-        # Check that module discovered the controller
-        assert module.controller_ip == "127.0.0.1"
-        assert module.controller_port == 5000
+        # Check that module discovered the controller via service manager
+        assert module.service_manager.controller_ip == "127.0.0.1"
+        assert module.service_manager.controller_port == 5000
 
     finally:
         # Clean up
@@ -74,6 +74,8 @@ def test_module_zmq_command_receiving():
     zeroconf.register_service(service_info)
 
     module = None
+    context = None
+    cmd_socket = None
     try:
         # Create module AFTER controller is registered
         from src.modules.module import Module
@@ -82,15 +84,24 @@ def test_module_zmq_command_receiving():
         # Start module (it will discover our test controller)
         assert module.start()
 
-        # Give it time to discover the controller and start command thread
-        time.sleep(2)  # Increased sleep time to ensure thread starts
-
-        # Create a fake controller command socket
+        # Create a fake controller command socket FIRST (before waiting)
+        # so connections have time to establish
         context = zmq.Context()
         cmd_socket = context.socket(zmq.PUB)
         print(f"Binding PUB socket to tcp://*:5555")
-        cmd_socket.bind("tcp://*:5555") # Bind the socket to port 5555 with a wildcard address - this means the socket will listen for connections on all interfaces
-        time.sleep(0.1)  # Give time for binding to establish
+        cmd_socket.bind("tcp://*:5555") # Bind the socket to port 5555
+        
+        # Give it time to discover the controller and start command thread
+        # This delay is crucial for ZMQ PUB/SUB to establish connection
+        print("Waiting for ZMQ connection to establish...")
+        time.sleep(2)  
+        
+        # IMPORTANT: To avoid the "slow joiner syndrome" in ZMQ PUB/SUB,
+        # send a few messages that will be intentionally missed, then
+        # send the real test command
+        for i in range(3):
+            cmd_socket.send_string("cmd/dummy warming_up")
+            time.sleep(0.1)
 
         # Send a test command
         test_command = "get_status"
@@ -103,7 +114,7 @@ def test_module_zmq_command_receiving():
         start_time = time.time()
         timeout = 5  # 5 second timeout
         while time.time() - start_time < timeout:
-            if module.last_command == test_command:
+            if hasattr(module, 'last_command') and module.last_command == test_command:
                 break
             time.sleep(0.1)
         
@@ -117,7 +128,8 @@ def test_module_zmq_command_receiving():
         if 'zeroconf' in locals():
             zeroconf.unregister_service(service_info)
             zeroconf.close()
-        if 'cmd_socket' in locals():
+        if cmd_socket:
+            cmd_socket.setsockopt(zmq.LINGER, 0)
             cmd_socket.close()
-        if 'context' in locals():
+        if context:
             context.term()

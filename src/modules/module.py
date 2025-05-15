@@ -33,6 +33,7 @@ import zmq
 # Import managers
 from src.modules.module_file_transfer import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
+from src.modules.module_communication_manager import ModuleCommunicationManager
 
 class Module:
     """
@@ -70,6 +71,14 @@ class Module:
         self.config = config or {} # Store direct config reference for backwards compatibility
         self.file_transfer = None  # Will be initialized when controller is discovered
         
+        # Communication manager - handles ZMQ messaging
+        self.communication_manager = ModuleCommunicationManager(
+            self.logger, 
+            self.module_id,
+            command_callback=self.handle_command,
+            config_manager=self.config_manager
+        )
+        
         # Lazy import and initialization of ServiceManager to avoid circular imports
         from src.modules.module_service_manager import ModuleServiceManager
         self.service_manager = ModuleServiceManager(self.logger, self)
@@ -86,17 +95,10 @@ class Module:
         # Control flags
         self.is_running = False  # Start as False
         self.streaming = False
-        self.heartbeats_active = False
+        
+        # Track when module started for uptime calculation
         self.start_time = None
-        self.command_listener_running = False  # Add flag for command listener
-
-        # ZeroMQ setup
-        self.context = zmq.Context()
-        self.command_socket = self.context.socket(zmq.SUB)
-        self.status_socket = self.context.socket(zmq.PUB)
-        self.last_command = None
-
-
+        
         # Data parameters - Thread
         self.stream_thread = None
 
@@ -117,14 +119,20 @@ class Module:
             self.is_running = True
             self.start_time = time.time()
             
-            # Start heartbeat thread
-            self.logger.info("Starting heartbeat thread")
-            threading.Thread(target=self.send_heartbeats, daemon=True).start()
-            
-            # Start command listener thread if we have a controller
+            # Start command listener thread if controller is discovered
             if self.service_manager.controller_ip:
-                self.logger.info("Starting command listener thread")
-                threading.Thread(target=self.listen_for_commands, daemon=True).start()
+                # Connect to the controller
+                self.communication_manager.connect(
+                    self.service_manager.controller_ip,
+                    self.service_manager.controller_port
+                )
+                self.communication_manager.start_command_listener()
+                
+                # Start sending heartbeats
+                self.communication_manager.start_heartbeats(
+                    self.get_health,
+                    self.heartbeat_interval
+                )
             
         return True
 
@@ -143,7 +151,6 @@ class Module:
             return False
 
         try:
-
             # Stop the threads
             if self.stream_thread:
                 self.stream_thread.join(timeout=2.0)
@@ -151,10 +158,9 @@ class Module:
         
             # Stop the service manager
             self.service_manager.cleanup()
-
-            # Stop the heartbeat thread
-            self.heartbeats_active = False
-            self.logger.info("Heartbeat flag set to false")
+            
+            # Stop the communication manager
+            self.communication_manager.cleanup()
 
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
@@ -171,65 +177,6 @@ class Module:
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
     
-
-    # ZeroMQ methods
-    def connect_to_controller(self):
-        """Connect to controller once we have its IP"""
-        try:
-            # Get ports from config
-            command_port = self.config_manager.get("communication.command_socket_port")
-            status_port = self.config_manager.get("communication.status_socket_port")
-            
-            self.logger.info(f"Module ID: {self.module_id}")
-            self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
-            self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
-            
-            self.logger.info(f"Attempting to connect command socket to tcp://{self.service_manager.controller_ip}:{command_port}")
-            self.command_socket.connect(f"tcp://{self.service_manager.controller_ip}:{command_port}")
-            self.logger.info(f"Attempting to connect status socket to tcp://{self.service_manager.controller_ip}:{status_port}")
-            self.status_socket.connect(f"tcp://{self.service_manager.controller_ip}:{status_port}")
-            self.logger.info(f"Connected to controller command socket at {self.service_manager.controller_ip}:{command_port}, status socket at {self.service_manager.controller_ip}:{status_port}")
-        except Exception as e:
-            self.logger.error(f"Error connecting to controller: {e}")
-
-    def listen_for_commands(self):
-        """Listen for commands from controller"""
-        self.logger.info("Starting command listener thread")
-        self.command_listener_running = True
-        while self.command_listener_running:
-            try:
-                self.logger.info("Waiting for command...")
-                message = self.command_socket.recv_string()
-                self.logger.info(f"Raw message received: {message}")
-                topic, command = message.split(' ', 1)
-                self.logger.info(f"Parsed topic: {topic}, command: {command}")
-                
-                # Store the command immediately after parsing
-                self.last_command = command
-                self.logger.info(f"Stored command: {self.last_command}")
-                
-                try:
-                    self.handle_command(command)
-                except Exception as e:
-                    self.logger.error(f"Error handling command: {e}")
-                    # Don't re-raise the exception, just log it and continue
-            except Exception as e:
-                if self.command_listener_running:  # Only log if we're still supposed to be running
-                    self.logger.error(f"Error receiving command: {e}")
-                time.sleep(0.1)  # Add small delay to prevent tight loop on error
-
-    def send_status(self, status_data: str):
-        """Send status to the controller"""
-        message = f"status/{self.module_id} {status_data}"
-        self.status_socket.send_string(message)
-        self.logger.info(f"Status sent: {message}")
-
-    def send_data(self, data: str):
-        """Send data to the controller"""
-        message = f"data/{self.module_id} {data}"
-        self.status_socket.send_string(message)
-        self.logger.info(f"Data sent: {message}")
-
     def handle_command(self, command: str):
         """Handle received commands"""
         self.logger.info(f"Handling command: {command}")
@@ -247,17 +194,17 @@ class Module:
                         "uptime": time.time() - self.start_time if self.start_time else 0,
                         "disk_space": psutil.disk_usage('/').percent
                     }
-                    self.send_status(status)
+                    self.communication_manager.send_status(status)
                 except Exception as e:
                     self.logger.error(f"Error getting status: {e}")
                     # Send a minimal status if we can't get all metrics
                     status = {"timestamp": time.time(), "error": str(e)}
-                    self.send_status(status)
+                    self.communication_manager.send_status(status)
             
             case "get_data":
                 print("Command identified as get_data")
                 data = str(self.read_fake_data())
-                self.send_data(data)
+                self.communication_manager.send_data(data)
 
             case "start_stream":
                 print("Command identified as start_stream")
@@ -277,43 +224,18 @@ class Module:
             
             case _:
                 print(f"Command {command} not recognized")
-                self.send_data("Command not recognized")
-
-    # Health monitoring methods            
-    def send_heartbeats(self):
-        """Continuously send heartbeat messages to the controller"""
-        self.logger.info("Heartbeat thread started")
-        while self.is_running:
-            if self.heartbeats_active:
-                try:
-                    self.logger.info("Sending heartbeat")
-                    status = {
-                        "timestamp": time.time(),
-                        'cpu_temp': self.get_cpu_temp(),
-                        'cpu_usage': psutil.cpu_percent(),
-                        'memory_usage': psutil.virtual_memory().percent,
-                        'uptime': time.time() - self.start_time,
-                        'disk_space': psutil.disk_usage('/').percent # Free disk space
-                    }
-                    # Send on status/ topic
-                    message = f"status/{self.module_id} {status}"
-                    self.status_socket.send_string(message)
-                    self.logger.info(f"Heartbeat sent: {message}")
-                except Exception as e:
-                    self.logger.error(f"Error sending heartbeat: {e}")
-                time.sleep(self.heartbeat_interval)
-            else:
-                self.logger.debug("Heartbeats not active, waiting...")
-                time.sleep(1)  # Sleep longer when not active
+                self.communication_manager.send_data("Command not recognized")
 
     def get_health(self):
-        """Get health of the module"""
-        health_data = {
+        """Get health metrics for the module to be sent as heartbeat"""
+        return {
             "timestamp": time.time(),
-            "module_id": self.module_id,
-            "type": "heartbeat",
+            'cpu_temp': self.get_cpu_temp(),
+            'cpu_usage': psutil.cpu_percent(),
+            'memory_usage': psutil.virtual_memory().percent,
+            'uptime': time.time() - self.start_time if self.start_time else 0,
+            'disk_space': psutil.disk_usage('/').percent # Free disk space
         }
-        return health_data
 
     def get_cpu_temp(self):
         """Get CPU temperature"""
@@ -328,7 +250,7 @@ class Module:
         """Function to continuously read and transmit data"""
         while self.streaming:
             data=str(self.read_fake_data())
-            self.send_data(data)
+            self.communication_manager.send_data(data)
             time.sleep(self.samplerate/1000)
 
     def read_fake_data(self): 

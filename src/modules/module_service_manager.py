@@ -97,13 +97,23 @@ class ModuleServiceManager:
                 except Exception as e:
                     self.logger.error(f"Error initializing file transfer: {e}")
             
-            
             # Only connect if we're not already connected
-            if not self.module.heartbeats_active:
+            if not self.module.communication_manager.controller_ip:
                 self.logger.info("Connecting to controller...")
-                self.module.connect_to_controller()
-                self.module.heartbeats_active = True
-                threading.Thread(target=self.module.listen_for_commands, daemon=True).start()
+                
+                # Connect the communication manager
+                self.module.communication_manager.connect(self.controller_ip, self.controller_port)
+                
+                # Start the command listener
+                self.module.communication_manager.start_command_listener()
+                
+                # Start heartbeats if module is running
+                if self.module.is_running:
+                    self.module.communication_manager.start_heartbeats(
+                        self.module.get_health,
+                        self.module.heartbeat_interval
+                    )
+                    
                 self.logger.info("Connection to controller established")
             else:
                 self.logger.info("Already connected to controller")
@@ -111,52 +121,14 @@ class ModuleServiceManager:
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("Lost connection to controller")
-        # Stop heartbeats and command listener
-        self.module.heartbeats_active = False
-        self.module.command_listener_running = False
-        self.logger.info("Heartbeats and command listener stopped")
         
-        # Give threads time to stop
-        time.sleep(0.5)
+        # Clean up communication
+        self.module.communication_manager.cleanup()
         
-        # Clean up ZeroMQ connections
-        try:
-            import zmq
-            if hasattr(self, 'command_socket'):
-                self.logger.info("Closing command socket")
-                self.module.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
-                self.module.command_socket.close()
-            if hasattr(self, 'status_socket'):
-                self.logger.info("Closing status socket")
-                self.module.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
-                self.module.status_socket.close()
-            if hasattr(self, 'context'):
-                self.logger.info("Terminating ZeroMQ context")
-                self.module.context.term()
-                
-            # Recreate ZeroMQ context and sockets for future reconnection
-            self.module.context = zmq.Context()
-            self.module.command_socket = self.module.context.socket(zmq.SUB)
-            self.module.status_socket = self.module.context.socket(zmq.PUB)
-            self.logger.info("ZeroMQ resources cleaned up and recreated")
-            
-            # Reset controller connection state
-            if hasattr(self, 'controller_ip'):
-                delattr(self, 'controller_ip')
-            if hasattr(self, 'controller_port'):
-                delattr(self, 'controller_port')
-            self.logger.info("Controller connection state reset")
-            
-        except Exception as e:
-            self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
-            # Even if cleanup fails, try to recreate the context and sockets
-            try:
-                self.module.context = zmq.Context()
-                self.module.command_socket = self.module.context.socket(zmq.SUB)
-                self.module.status_socket = self.module.context.socket(zmq.PUB)
-                self.logger.info("ZeroMQ resources recreated after error")
-            except Exception as e2:
-                self.logger.error(f"Failed to recreate ZeroMQ resources: {e2}")
+        # Reset controller connection state
+        self.controller_ip = None
+        self.controller_port = None
+        self.logger.info("Controller connection state reset")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""

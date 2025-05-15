@@ -28,7 +28,7 @@ class ControllerInterfaceManager:
                 user_input = input().strip()
                 if not user_input:
                     continue
-                    
+                        
                 self.handle_command(user_input)
                     
             except Exception as e:

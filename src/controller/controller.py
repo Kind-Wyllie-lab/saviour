@@ -18,17 +18,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 import datetime
 import logging # for logging and debugging
-import supabase # for supabase client, the external database
-import uuid # for unique id generation
 from dataclasses import dataclass # to define Module dataclass
 from typing import List, Dict, Any # for type hinting
 import asyncio # for asyncio
 
 # Networking and synchronization
-import socket # for network communication
 import threading # for concurrent operations
-from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery
-import zmq # for zeromq communication
 
 # Local modules
 import src.controller.controller_service_manager as service_manager
@@ -39,32 +34,14 @@ import src.controller.controller_data_export_manager as data_export_manager
 import src.controller.controller_interface_manager as interface_manager
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
-
-# Optional: For NWB format support
-try:
-    import pynwb
-    from pynwb import NWBFile, NWBHDF5IO
-    NWB_AVAILABLE = True
-except ImportError:
-    NWB_AVAILABLE = False
-    logging.warning("PyNWB not available. NWB file export will be disabled.")
-
+import src.controller.controller_config_manager as config_manager
     
 # Habitat Controller Class
 class Controller:
     """Main controller class for the habitat system"""
     
-    def __init__(self):
+    def __init__(self, config_file_path: str = None):
         """Initialize the controller with default values"""
-
-        # Parameters
-        self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
-        self.commands = ["get_status", "get_data", "start_stream", "stop_stream", "record_video"] # list of commands
-        
-        # Control flags
-        self.manual_control = True # whether to run in manual control mode
-        self.print_received_data = False # whether to print received data
-        self.is_running = True  # Add flag for listener thread
 
         # Setup logging
         self.logger = logging.getLogger()
@@ -77,9 +54,21 @@ class Controller:
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
+            
+        # Initialize config manager
+        self.config_manager = config_manager.ControllerConfigManager(self.logger, config_file_path)
+
+        # Parameters from config
+        self.max_buffer_size = self.config_manager.get("controller.max_buffer_size")
+        self.commands = self.config_manager.get("controller.commands")
+        
+        # Control flags from config
+        self.manual_control = self.config_manager.get("controller.manual_control")
+        self.print_received_data = self.config_manager.get("controller.print_received_data")
+        self.is_running = True  # Add flag for listener thread
 
         # Managers
-        self.service_manager = service_manager.ControllerServiceManager(self.logger)
+        self.service_manager = service_manager.ControllerServiceManager(self.logger, self.config_manager)
         self.session_manager = session_manager.SessionManager()
         self.communication_manager = communication_manager.ControllerCommunicationManager(
             self.logger,
@@ -87,8 +76,17 @@ class Controller:
             data_callback=self.handle_data_update
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
-        self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger)
-        self.health_monitor = health_monitor.ControllerHealthMonitor(self.logger)
+        self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger, self.config_manager)
+        
+        # Initialize health monitor with configuration
+        heartbeat_interval = self.config_manager.get("health_monitor.heartbeat_interval")
+        heartbeat_timeout = self.config_manager.get("health_monitor.heartbeat_timeout")
+        self.health_monitor = health_monitor.ControllerHealthMonitor(
+            self.logger, 
+            heartbeat_interval=heartbeat_interval,
+            heartbeat_timeout=heartbeat_timeout
+        )
+        
         self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
         self.interface_manager = interface_manager.ControllerInterfaceManager(self)
 
@@ -210,4 +208,43 @@ class Controller:
             print("Starting automatic loop (not implemented yet)")
             # @TODO: Implement automatic loop
 
-        return True 
+        return True
+        
+    def get_config(self, key: str, default: Any = None) -> Any:
+        """
+        Get a configuration value
+        
+        Args:
+            key: Configuration key path (e.g., "controller.max_buffer_size")
+            default: Default value if key doesn't exist
+            
+        Returns:
+            Configuration value
+        """
+        return self.config_manager.get(key, default)
+        
+    def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
+        """
+        Set a configuration value
+        
+        Args:
+            key: Configuration key path (e.g., "controller.max_buffer_size")
+            value: Value to set
+            persist: Whether to save to config file
+            
+        Returns:
+            True if successful
+        """
+        # Update local variable if applicable
+        if key == "controller.max_buffer_size":
+            self.max_buffer_size = value
+            self.buffer_manager.max_buffer_size = value
+        elif key == "controller.manual_control":
+            self.manual_control = value
+        elif key == "controller.print_received_data":
+            self.print_received_data = value
+        elif key == "controller.commands":
+            self.commands = value
+        
+        # Update in config manager
+        return self.config_manager.set(key, value, persist) 

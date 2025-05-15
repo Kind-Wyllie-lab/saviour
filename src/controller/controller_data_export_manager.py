@@ -15,19 +15,46 @@ import time
 import threading
 import logging
 import supabase
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
+
+# Optional: For NWB format support
+try:
+    import pynwb
+    from pynwb import NWBFile, NWBHDF5IO
+    NWB_AVAILABLE = True
+except ImportError:
+    NWB_AVAILABLE = False
+    logging.warning("PyNWB not available. NWB file export will be disabled.")
 
 class ControllerDataExportManager:
-    def __init__(self, logger: logging.Logger):
-        """Initialize the data export manager"""
+    def __init__(self, logger: logging.Logger, config_manager=None):
+        """
+        Initialize the data export manager
+        
+        Args:
+            logger: Logger instance
+            config_manager: Optional configuration manager
+        """
         self.logger = logger
+        self.config_manager = config_manager
         
         # Initialize database client internally
         SUPABASE_URL = os.getenv("SUPABASE_URL")
         SUPABASE_KEY = os.getenv("SUPABASE_KEY")
         
+        # Try to get database credentials from config manager if available
+        if self.config_manager:
+            # These will be None if not found in config
+            db_url = self.config_manager.get("database.url")
+            db_key = self.config_manager.get("database.key")
+            
+            if db_url:
+                SUPABASE_URL = db_url
+            if db_key:
+                SUPABASE_KEY = db_key
+        
         if not SUPABASE_URL or not SUPABASE_KEY:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
+            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables or configuration")
             
         self.db_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
         self.logger.info("Initialized database connection")
@@ -36,9 +63,13 @@ class ControllerDataExportManager:
         self.is_exporting_data = False
         self.is_health_exporting = False
         
-        # Export intervals
-        self.export_interval = 10
-        self.health_export_interval = 10
+        # Export intervals from config or defaults
+        if self.config_manager:
+            self.export_interval = self.config_manager.get("data_export.export_interval", 10)
+            self.health_export_interval = self.config_manager.get("data_export.health_export_interval", 10)
+        else:
+            self.export_interval = 10
+            self.health_export_interval = 10
         
         # Thread references
         self.data_export_thread = None

@@ -12,7 +12,7 @@ import os
 import socket
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 @dataclass
 class Module:
@@ -25,8 +25,9 @@ class Module:
     properties: Dict[str, Any]
 
 class ControllerServiceManager():
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger, config_manager=None):
         self.logger = logger
+        self.config_manager = config_manager
 
         # Module tracking
         self.modules = []
@@ -38,13 +39,23 @@ class ControllerServiceManager():
         else: # Linux/Unix
             self.ip = os.popen('hostname -I').read().split()[0]
 
+        # Get service configuration from config manager if available
+        service_port = 5000  # Default value
+        service_type = "_controller._tcp.local."
+        service_name = "controller._controller._tcp.local."
+        
+        if self.config_manager:
+            service_port = self.config_manager.get("service.port", service_port)
+            service_type = self.config_manager.get("service.service_type", service_type)
+            service_name = self.config_manager.get("service.service_name", service_name)
+
         # Initialize zeroconf
         self.zeroconf = Zeroconf()
         self.service_info = ServiceInfo(
-            "_controller._tcp.local.", # the service type - tcp protocol, local domain
-            "controller._controller._tcp.local.", # a unique name for the service to advertise itself
+            service_type, # the service type - tcp protocol, local domain
+            service_name, # a unique name for the service to advertise itself
             addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
-            port=5000, # the port number of the controller
+            port=service_port, # the port number of the controller
             properties={'type': 'controller'} # the properties of the service
         )
         self.zeroconf.register_service(self.service_info) # register the service with the above info

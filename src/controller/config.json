@@ -1,0 +1,29 @@
+{
+    "controller": {
+        "max_buffer_size": 2000,
+        "manual_control": true,
+        "print_received_data": false,
+        "commands": ["get_status", "get_data", "start_stream", "stop_stream", "record_video", "custom_command"]
+    },
+    "service": {
+        "port": 5000,
+        "service_type": "_controller._tcp.local.",
+        "service_name": "controller._controller._tcp.local."
+    },
+    "health_monitor": {
+        "heartbeat_interval": 30,
+        "heartbeat_timeout": 90
+    },
+    "data_export": {
+        "export_interval": 15,
+        "health_export_interval": 30
+    },
+    "database": {
+        "url": "",
+        "key": ""
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s"
+    }
+} 

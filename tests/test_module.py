@@ -11,12 +11,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_module_import():
     """Test that module can be imported"""
-    from module import Module
+    from src.modules.module import Module
     assert(Module)
 
 def test_module_start_stop():
     """Test that module can start and stop"""
-    from module import Module
+    from src.modules.module import Module
     module = Module(module_type="test", config=None)
     assert module.start()
     time.sleep(0.5)
@@ -41,7 +41,7 @@ def test_module_zeroconf_discovery():
 
     try:
         # Create module AFTER controller is registered
-        from module import Module
+        from src.modules.module import Module
         module = Module(module_type="test", config=None)
         
         # Start module (it will discover our test controller)
@@ -73,9 +73,10 @@ def test_module_zmq_command_receiving():
     )
     zeroconf.register_service(service_info)
 
+    module = None
     try:
         # Create module AFTER controller is registered
-        from module import Module
+        from src.modules.module import Module
         module = Module(module_type="test", config=None)
 
         # Start module (it will discover our test controller)
@@ -98,15 +99,20 @@ def test_module_zmq_command_receiving():
         cmd_socket.send_string(message)
         print("Message sent")
 
-        # Give more time for the command to be received and processed
-        time.sleep(2)  # Increased wait time
-
-        # Check that the module received the command
+        # Wait for command to be received with timeout
+        start_time = time.time()
+        timeout = 5  # 5 second timeout
+        while time.time() - start_time < timeout:
+            if module.last_command == test_command:
+                break
+            time.sleep(0.1)
+        
+        # Now check the command was received
         assert module.last_command == test_command, f"Expected command '{test_command}', got '{module.last_command}'"
 
     finally:
         # Cleanup
-        if 'module' in locals():
+        if module:
             module.stop()
         if 'zeroconf' in locals():
             zeroconf.unregister_service(service_info)

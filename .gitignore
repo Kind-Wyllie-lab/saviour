@@ -50,3 +50,8 @@ brief/
 rec/
 videos/
 *.mp4
+*.ts
+*.h264
+
+# Work in progress
+wip/

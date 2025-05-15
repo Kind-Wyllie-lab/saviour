@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Habitat System - Base Module Class
 
@@ -22,11 +24,13 @@ import threading
 import random
 import psutil
 import asyncio
+from typing import Dict, Any, Optional
 
 import src.controller.controller_session_manager as controller_session_manager
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
 from src.modules.module_file_transfer import ModuleFileTransfer
+from src.modules.module_config_manager import ModuleConfigManager
 
 class Module:
     """
@@ -41,11 +45,31 @@ class Module:
         config (dict): Configuration parameters for the module
 
     """
-    def __init__(self, module_type: str, config: dict):
-        # Parameters
+    def __init__(self, module_type: str, config: dict = None, config_file_path: str = None):
+        # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
-        self.config = config
+        
+        # Setup logging first
+        self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
+        self.logger.setLevel(logging.INFO)
+        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
+        
+        # Add console handler if none exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+            
+        # Initialize config manager
+        self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
+        
+        # Store direct config reference for backwards compatibility
+        self.config = config or {}
+        
+        # Get IP address
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
@@ -55,23 +79,14 @@ class Module:
         self.controller_ip = None
         self.controller_port = None
         self.file_transfer = None  # Will be initialized when controller is discovered
-
-        # Setup logging
-        self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.INFO)
-        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
         
         # Session Management
         self.session_manager = controller_session_manager.SessionManager()
         self.stream_session_id = None
 
-        # Add console handler if none exists
-        if not self.logger.handlers:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
+        # Parameters from config
+        self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval")
+        self.samplerate = self.config_manager.get("module.samplerate")
 
         # Control flags
         self.is_running = False  # Start as False
@@ -90,20 +105,21 @@ class Module:
         self.zeroconf = Zeroconf()
         self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
         
+        # Get service port from config
+        service_port = self.config_manager.get("service.port")
+        
         # Advertise this module
         self.service_info = ServiceInfo(
-            "_module._tcp.local.",
+            self.config_manager.get("service.service_type"),
             f"{self.module_type}_{self.module_id}._module._tcp.local.",
             addresses=[socket.inet_aton(self.ip)],
-            port=5000,
+            port=service_port,
             properties={'type': self.module_type, 'id': self.module_id}
         )
         self.zeroconf.register_service(self.service_info)
 
-        # Data parameters
+        # Data parameters - Thread
         self.stream_thread = None
-        self.samplerate = 200
-        self.heartbeat_interval = 30
 
     def start(self) -> bool:
         """
@@ -282,15 +298,19 @@ class Module:
     def connect_to_controller(self):
         """Connect to controller once we have its IP"""
         try:
+            # Get ports from config
+            command_port = self.config_manager.get("communication.command_socket_port")
+            status_port = self.config_manager.get("communication.status_socket_port")
+            
             self.logger.info(f"Module ID: {self.module_id}")
             self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
             self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
             
-            self.logger.info(f"Attempting to connect command socket to tcp://{self.controller_ip}:5555")
-            self.command_socket.connect(f"tcp://{self.controller_ip}:5555")
-            self.logger.info(f"Attempting to connect status socket to tcp://{self.controller_ip}:5556")
-            self.status_socket.connect(f"tcp://{self.controller_ip}:5556")
-            self.logger.info(f"Connected to controller command socket at {self.controller_ip}:5555, status socket at {self.controller_ip}:5556")
+            self.logger.info(f"Attempting to connect command socket to tcp://{self.controller_ip}:{command_port}")
+            self.command_socket.connect(f"tcp://{self.controller_ip}:{command_port}")
+            self.logger.info(f"Attempting to connect status socket to tcp://{self.controller_ip}:{status_port}")
+            self.status_socket.connect(f"tcp://{self.controller_ip}:{status_port}")
+            self.logger.info(f"Connected to controller command socket at {self.controller_ip}:{command_port}, status socket at {self.controller_ip}:{status_port}")
         except Exception as e:
             self.logger.error(f"Error connecting to controller: {e}")
 
@@ -492,4 +512,38 @@ class Module:
         except Exception as e:
             self.logger.error(f"Error sending file: {e}")
             return False
+            
+    def get_config(self, key_path: str, default: Any = None) -> Any:
+        """
+        Get a configuration value
+        
+        Args:
+            key_path: Configuration key path (e.g., "module.heartbeat_interval")
+            default: Default value if key doesn't exist
+            
+        Returns:
+            Configuration value
+        """
+        return self.config_manager.get(key_path, default)
+        
+    def set_config(self, key_path: str, value: Any, persist: bool = False) -> bool:
+        """
+        Set a configuration value
+        
+        Args:
+            key_path: Configuration key path (e.g., "module.heartbeat_interval")
+            value: Value to set
+            persist: Whether to save to config file
+            
+        Returns:
+            True if successful
+        """
+        # Update local variable if applicable
+        if key_path == "module.heartbeat_interval":
+            self.heartbeat_interval = value
+        elif key_path == "module.samplerate":
+            self.samplerate = value
+        
+        # Update in config manager
+        return self.config_manager.set(key_path, value, persist)
 

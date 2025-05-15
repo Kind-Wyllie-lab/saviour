@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 import logging
+
 @dataclass
 class Module:
     """Dataclass to represent a module in the habitat system - used by zeroconf to discover modules"""

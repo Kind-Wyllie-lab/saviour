@@ -8,26 +8,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_module_file_transfer_import():
     """Test that the module file transfer can be imported"""
-    from module_file_transfer import ModuleFileTransfer
+    from src.modules.module_file_transfer import ModuleFileTransfer
     assert ModuleFileTransfer is not None
 
 @pytest.mark.asyncio
 async def test_module_file_transfer_init():
     """Test that the module file transfer can be initialized"""
-    from module_file_transfer import ModuleFileTransfer
+    from src.modules.module_file_transfer import ModuleFileTransfer
     assert ModuleFileTransfer is not None
     test_file_transfer = ModuleFileTransfer("192.168.0.14", logging.getLogger("ModuleTestLogger"))
     assert test_file_transfer is not None
     assert test_file_transfer.controller_ip == "192.168.0.14"
 
-@pytest.mark.asyncio
-async def test_module_file_transfer_session():
-    """Test that the module file transfer session can be initialized"""
-    from module_file_transfer import ModuleFileTransfer
-    assert ModuleFileTransfer is not None
-    test_file_transfer = ModuleFileTransfer("192.168.0.14", logging.getLogger("ModuleTestLogger"))
-    assert test_file_transfer.session is not None
-    # TODO: Implement some kind of check to see if the session is valid
+# Session no longer used in this way.
+# @pytest.mark.asyncio
+# async def test_module_file_transfer_session():
+#     """Test that the module file transfer session can be initialized"""
+#     from src.modules.module_file_transfer import ModuleFileTransfer
+#     assert ModuleFileTransfer is not None
+#     test_file_transfer = ModuleFileTransfer("192.168.0.14", logging.getLogger("ModuleTestLogger"))
+#     assert test_file_transfer.session is not None
+#     # TODO: Implement some kind of check to see if the session is valid
 
 @pytest.mark.asyncio
 async def test_module_file_transfer_send_file():
@@ -75,7 +76,7 @@ async def test_module_file_transfer_send_file():
 
     try:
         # Create module file transfer
-        from module_file_transfer import ModuleFileTransfer
+        from src.modules.module_file_transfer import ModuleFileTransfer
         test_file_transfer = ModuleFileTransfer("localhost", logging.getLogger("ModuleTestLogger"))
         print(f"Module file transfer created: {test_file_transfer}")
         
@@ -91,4 +92,4 @@ async def test_module_file_transfer_send_file():
     finally:
         # Cleanup
         await runner.cleanup()
-        await test_file_transfer.close()
+        #await test_file_transfer.close() # TODO: Implement this

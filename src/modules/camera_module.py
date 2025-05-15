@@ -1,9 +1,10 @@
-from module import Module
+from src.modules.module import Module
 import datetime
 import subprocess
 import os
 from zeroconf import ServiceBrowser, Zeroconf
 import time
+
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None):

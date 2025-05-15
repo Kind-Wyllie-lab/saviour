@@ -1,9 +1,9 @@
 from dataclasses import dataclass # to define a dataclass
 from typing import List, Dict, Any # for type hinting
 import datetime # for timestamp
-import session
+import src.controller.controller_session_manager as controller_session_manager
 
-s = session.SessionManager()
+s = controller_session_manager.SessionManager()
 
 @dataclass
 class Module:

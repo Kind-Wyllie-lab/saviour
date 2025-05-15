@@ -37,7 +37,7 @@ class ModuleServiceManager:
         self.module = module
         self.config_manager = module.config_manager
         self.module_id = module.module_id
-        self.module_type = self.module_id[-2:]
+        self.module_type = module.module_type
 
         # Controller connection params
         self.controller_ip = None
@@ -51,8 +51,8 @@ class ModuleServiceManager:
         
         # Get service configuration from config manager if available
         service_port = 5000  # Default value
-        service_type = f"{self.module_id}._module._tcp.local."
-        service_name = f"{self.module_type}_{service_type}"
+        service_type = "_module._tcp.local."  # Use standard service type format
+        service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
         
         if self.config_manager:
             service_port = self.config_manager.get("service.port", service_port)
@@ -66,10 +66,13 @@ class ModuleServiceManager:
             service_name, # a unique name for the service to advertise itself
             addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
             port=service_port, # the port number of the controller
-            properties={'type': self.module_type} # the properties of the service
+            properties={
+                'type': self.module_type,
+                'id': self.module_id  # Important: Add module_id to properties
+            } # the properties of the service
         )
         self.zeroconf.register_service(self.service_info) # register the service with the above info
-        self.browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self) # Browse for habitat_module services"
+        self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self) # Browse for habitat_module services"
     
         # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -93,6 +96,7 @@ class ModuleServiceManager:
                     self.module.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
                 except Exception as e:
                     self.logger.error(f"Error initializing file transfer: {e}")
+            
             
             # Only connect if we're not already connected
             if not self.module.heartbeats_active:
@@ -157,3 +161,26 @@ class ModuleServiceManager:
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
+    
+
+    def cleanup(self):
+        """Clean up the zeroconf service"""
+        # Clean up zeroconf
+        # destroy the service browser
+        if self.service_browser:
+            try:
+                self.service_browser.cancel()
+                self.logger.info("Service browser cancelled")
+            except Exception as e:
+                self.logger.error(f"Error canceling service browser: {e}")
+            self.service_browser = None
+        # unregister the service
+        if self.zeroconf:
+            try:
+                self.zeroconf.unregister_service(self.service_info) # unregister the service
+                time.sleep(1)
+                self.zeroconf.close()
+                self.logger.info("Zeroconf service unregistered and closed")
+            except Exception as e:
+                self.logger.error(f"Error unregistering service: {e}")  
+            self.zeroconf = None

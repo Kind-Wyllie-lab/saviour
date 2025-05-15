@@ -25,7 +25,7 @@ import asyncio # for asyncio
 # Networking and synchronization
 import threading # for concurrent operations
 
-# Local modules
+# Local managers
 import src.controller.controller_service_manager as service_manager
 import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager

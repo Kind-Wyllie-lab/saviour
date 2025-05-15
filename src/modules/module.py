@@ -29,6 +29,8 @@ from typing import Dict, Any, Optional
 import src.controller.controller_session_manager as controller_session_manager
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
 import zmq
+
+# Import managers
 from src.modules.module_file_transfer import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
 
@@ -62,26 +64,19 @@ class Module:
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
-            
-        # Initialize config manager
-        self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
-        
-        # Store direct config reference for backwards compatibility
-        self.config = config or {}
-        
-        # Get IP address
-        if os.name == 'nt': # Windows
-            self.ip = socket.gethostbyname(socket.gethostname())
-        else: # Linux/Unix
-            self.ip = os.popen('hostname -I').read().split()[0]
 
-        # Controller connection
-        self.controller_ip = None
-        self.controller_port = None
+        # Managers
+        self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
+        self.config = config or {} # Store direct config reference for backwards compatibility
         self.file_transfer = None  # Will be initialized when controller is discovered
         
-        # Session Management
+        # Lazy import and initialization of ServiceManager to avoid circular imports
+        from src.modules.module_service_manager import ModuleServiceManager
+        self.service_manager = ModuleServiceManager(self.logger, self)
+        
         self.session_manager = controller_session_manager.SessionManager()
+
+        # Session management
         self.stream_session_id = None
 
         # Parameters from config
@@ -101,22 +96,6 @@ class Module:
         self.status_socket = self.context.socket(zmq.PUB)
         self.last_command = None
 
-        # zeroconf setup
-        self.zeroconf = Zeroconf()
-        self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
-        
-        # Get service port from config
-        service_port = self.config_manager.get("service.port")
-        
-        # Advertise this module
-        self.service_info = ServiceInfo(
-            self.config_manager.get("service.service_type"),
-            f"{self.module_type}_{self.module_id}._module._tcp.local.",
-            addresses=[socket.inet_aton(self.ip)],
-            port=service_port,
-            properties={'type': self.module_type, 'id': self.module_id}
-        )
-        self.zeroconf.register_service(self.service_info)
 
         # Data parameters - Thread
         self.stream_thread = None
@@ -143,7 +122,7 @@ class Module:
             threading.Thread(target=self.send_heartbeats, daemon=True).start()
             
             # Start command listener thread if we have a controller
-            if self.controller_ip:
+            if self.service_manager.controller_ip:
                 self.logger.info("Starting command listener thread")
                 threading.Thread(target=self.listen_for_commands, daemon=True).start()
             
@@ -169,26 +148,7 @@ class Module:
             if self.stream_thread:
                 self.stream_thread.join(timeout=2.0)
                 self.stream_thread = None
-            
-            # Clean up zeroconf
-            # destroy the service browser
-            if self.service_browser:
-                try:
-                    self.service_browser.cancel()
-                    self.logger.info("Service browser cancelled")
-                except Exception as e:
-                    self.logger.error(f"Error canceling service browser: {e}")
-                self.service_browser = None
-            # unregister the service
-            if self.zeroconf:
-                try:
-                    self.zeroconf.unregister_service(self.service_info) # unregister the service
-                    time.sleep(1)
-                    self.zeroconf.close()
-                    self.logger.info("Zeroconf service unregistered and closed")
-                except Exception as e:
-                    self.logger.error(f"Error unregistering service: {e}")  
-                self.zeroconf = None
+        
 
             # Stop the heartbeat thread
             self.heartbeats_active = False
@@ -209,90 +169,6 @@ class Module:
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
     
-    # zeroconf methods
-    def add_service(self, zeroconf, service_type, name):
-        """Called when controller is discovered"""
-        # Ignore our own service
-        if name == f"{self.module_type}_{self.module_id}._module._tcp.local.":
-            return
-            
-        info = zeroconf.get_service_info(service_type, name)
-        if info:
-            self.logger.info(f"Controller discovered. info={info}")
-            self.controller_ip = socket.inet_ntoa(info.addresses[0])
-            self.controller_port = info.port
-            self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
-            
-            # Initialize file transfer with the correct IP
-            if not self.file_transfer:
-                # Try to get the IP of the controller
-                try:
-                    self.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
-                except Exception as e:
-                    self.logger.error(f"Error initializing file transfer: {e}")
-            
-            # Only connect if we're not already connected
-            if not self.heartbeats_active:
-                self.logger.info("Connecting to controller...")
-                self.connect_to_controller()
-                self.heartbeats_active = True
-                threading.Thread(target=self.listen_for_commands, daemon=True).start()
-                self.logger.info("Connection to controller established")
-            else:
-                self.logger.info("Already connected to controller")
-
-    def remove_service(self, zeroconf, service_type, name):
-        """Called when controller disappears"""
-        self.logger.warning("Lost connection to controller")
-        # Stop heartbeats and command listener
-        self.heartbeats_active = False
-        self.command_listener_running = False
-        self.logger.info("Heartbeats and command listener stopped")
-        
-        # Give threads time to stop
-        time.sleep(0.5)
-        
-        # Clean up ZeroMQ connections
-        try:
-            if hasattr(self, 'command_socket'):
-                self.logger.info("Closing command socket")
-                self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
-                self.command_socket.close()
-            if hasattr(self, 'status_socket'):
-                self.logger.info("Closing status socket")
-                self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
-                self.status_socket.close()
-            if hasattr(self, 'context'):
-                self.logger.info("Terminating ZeroMQ context")
-                self.context.term()
-                
-            # Recreate ZeroMQ context and sockets for future reconnection
-            self.context = zmq.Context()
-            self.command_socket = self.context.socket(zmq.SUB)
-            self.status_socket = self.context.socket(zmq.PUB)
-            self.logger.info("ZeroMQ resources cleaned up and recreated")
-            
-            # Reset controller connection state
-            if hasattr(self, 'controller_ip'):
-                delattr(self, 'controller_ip')
-            if hasattr(self, 'controller_port'):
-                delattr(self, 'controller_port')
-            self.logger.info("Controller connection state reset")
-            
-        except Exception as e:
-            self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
-            # Even if cleanup fails, try to recreate the context and sockets
-            try:
-                self.context = zmq.Context()
-                self.command_socket = self.context.socket(zmq.SUB)
-                self.status_socket = self.context.socket(zmq.PUB)
-                self.logger.info("ZeroMQ resources recreated after error")
-            except Exception as e2:
-                self.logger.error(f"Failed to recreate ZeroMQ resources: {e2}")
-
-    def update_service(self, zeroconf, service_type, name):
-        """Called when a service is updated"""
-        self.logger.info(f"Service updated: {name}")
 
     # ZeroMQ methods
     def connect_to_controller(self):
@@ -306,11 +182,11 @@ class Module:
             self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
             self.command_socket.subscribe(f"cmd/{self.module_id}") # Subscribe only to messages for this module, for the command topic.
             
-            self.logger.info(f"Attempting to connect command socket to tcp://{self.controller_ip}:{command_port}")
-            self.command_socket.connect(f"tcp://{self.controller_ip}:{command_port}")
-            self.logger.info(f"Attempting to connect status socket to tcp://{self.controller_ip}:{status_port}")
-            self.status_socket.connect(f"tcp://{self.controller_ip}:{status_port}")
-            self.logger.info(f"Connected to controller command socket at {self.controller_ip}:{command_port}, status socket at {self.controller_ip}:{status_port}")
+            self.logger.info(f"Attempting to connect command socket to tcp://{self.service_manager.controller_ip}:{command_port}")
+            self.command_socket.connect(f"tcp://{self.service_manager.controller_ip}:{command_port}")
+            self.logger.info(f"Attempting to connect status socket to tcp://{self.service_manager.controller_ip}:{status_port}")
+            self.status_socket.connect(f"tcp://{self.service_manager.controller_ip}:{status_port}")
+            self.logger.info(f"Connected to controller command socket at {self.service_manager.controller_ip}:{command_port}, status socket at {self.service_manager.controller_ip}:{status_port}")
         except Exception as e:
             self.logger.error(f"Error connecting to controller: {e}")
 

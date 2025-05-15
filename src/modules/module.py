@@ -149,6 +149,8 @@ class Module:
                 self.stream_thread.join(timeout=2.0)
                 self.stream_thread = None
         
+            # Stop the service manager
+            self.service_manager.cleanup()
 
             # Stop the heartbeat thread
             self.heartbeats_active = False
@@ -422,4 +424,3 @@ class Module:
         
         # Update in config manager
         return self.config_manager.set(key_path, value, persist)
-

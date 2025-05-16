@@ -25,6 +25,7 @@ import random
 import psutil
 import asyncio
 from typing import Dict, Any, Optional
+import numpy as np
 
 
 # Import managers
@@ -33,6 +34,7 @@ from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
 import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager
 from src.modules.module_health_manager import ModuleHealthManager
+from src.modules.module_command_handler import ModuleCommandHandler
 
 
 class Module:
@@ -73,12 +75,36 @@ class Module:
         self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
             self.logger, 
             self.module_id,
-            command_callback=self.handle_command,
+            # Command handling moved to command_handler
             config_manager=self.config_manager
         )
-        self.health_manager = ModuleHealthManager(self.logger, 
-                                            config_manager=self.config_manager,
-                                            communication_manager=self.communication_manager)
+        self.health_manager = ModuleHealthManager(
+            self.logger, 
+            config_manager=self.config_manager,
+            communication_manager=self.communication_manager
+        )
+        
+        # Command handler - manages command processing
+        self.command_handler = ModuleCommandHandler(
+            self.logger,
+            self.module_id,
+            self.module_type,
+            communication_manager=self.communication_manager,
+            health_manager=self.health_manager,
+            config_manager=self.config_manager,
+            start_time=None # Will be set during start()
+        )
+        
+        # Set the callback in the communication manager to use the command handler
+        self.communication_manager.command_callback = self.command_handler.handle_command
+        
+        # Define callbacks for the command handler
+        self.command_handler.set_callbacks({
+            'read_data': self.read_fake_data,
+            'stream_data': self.stream_data,
+            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
+            'samplerate': self.config_manager.get("module.samplerate", 200)
+        })
         
         # Lazy import and initialization of ServiceManager to avoid circular imports
         from src.modules.module_service_manager import ModuleServiceManager
@@ -120,6 +146,9 @@ class Module:
             self.is_running = True
             self.start_time = time.time()
             
+            # Update start time in command handler
+            self.command_handler.start_time = self.start_time
+            
             # Start command listener thread if controller is discovered
             if self.service_manager.controller_ip:
                 # Connect to the controller
@@ -149,25 +178,19 @@ class Module:
             return False
 
         try:
-            # First: Stop any active processing
-            if self.streaming:
-                self.streaming = False
+            # First: Clean up command handler (stops streaming and thread)
+            self.logger.info("Cleaning up command handler...")
+            self.command_handler.cleanup()
             
-            # Second: Stop all threads that might use ZMQ
-            if self.stream_thread:
-                self.logger.info("Waiting for stream thread to stop...")
-                self.stream_thread.join(timeout=2.0)
-                self.stream_thread = None
-        
-            # Third: Stop the health manager (and its heartbeat thread)
+            # Second: Stop the health manager (and its heartbeat thread)
             self.logger.info("Stopping health manager...")
             self.health_manager.stop_heartbeats()
 
-            # Fourth: Stop the service manager (doesn't use ZMQ directly)
+            # Third: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("Cleaning up service manager...")
             self.service_manager.cleanup()
             
-            # Fifth: Stop the communication manager (ZMQ cleanup)
+            # Fourth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("Cleaning up communication manager...")
             self.communication_manager.cleanup()
 
@@ -186,56 +209,6 @@ class Module:
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
     
-    def handle_command(self, command: str):
-        """Handle received commands"""
-        self.logger.info(f"Handling command: {command}")
-        print(f"Command: {command}")
-        # Add command handling logic here
-        match command:
-            case "get_status":
-                print("Command identified as get_status")
-                try:
-                    status = {
-                        "timestamp": time.time(),
-                        "cpu_temp": self.health_manager.get_cpu_temp(),
-                        "cpu_usage": psutil.cpu_percent(),
-                        "memory_usage": psutil.virtual_memory().percent,
-                        "uptime": time.time() - self.start_time if self.start_time else 0,
-                        "disk_space": psutil.disk_usage('/').percent
-                    }
-                    self.communication_manager.send_status(status)
-                except Exception as e:
-                    self.logger.error(f"Error getting status: {e}")
-                    # Send a minimal status if we can't get all metrics
-                    status = {"timestamp": time.time(), "error": str(e)}
-                    self.communication_manager.send_status(status)
-            
-            case "get_data":
-                print("Command identified as get_data")
-                data = str(self.read_fake_data())
-                self.communication_manager.send_data(data)
-
-            case "start_stream":
-                print("Command identified as start_stream")
-                if not self.streaming:  # Only start if not already streaming
-                    self.streaming = True
-                    self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
-                    self.logger.debug(f"Stream session ID generated as {self.stream_session_id}")
-                    self.stream_thread = threading.Thread(target=self.stream_data, daemon=True)
-                    self.stream_thread.start()
-            
-            case "stop_stream":
-                print("Command identified as stop_stream")
-                self.streaming = False  # Thread will stop on next loop
-                if self.stream_thread: # If there is a thread still
-                    self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
-                    self.stream_thread = None # Empty the thread
-            
-            case _:
-                print(f"Command {command} not recognized")
-                self.communication_manager.send_data("Command not recognized")
-
-                
     # Sensor data methods
     def stream_data(self):
         """Function to continuously read and transmit data"""

@@ -26,14 +26,14 @@ import psutil
 import asyncio
 from typing import Dict, Any, Optional
 
-import src.controller.controller_session_manager as controller_session_manager
-from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
-import zmq
 
 # Import managers
 from src.modules.module_file_transfer import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
+import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager
+from src.modules.module_health_manager import ModuleHealthManager
+
 
 class Module:
     """

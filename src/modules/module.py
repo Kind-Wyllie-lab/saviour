@@ -70,14 +70,15 @@ class Module:
         self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
         self.config = config or {} # Store direct config reference for backwards compatibility
         self.file_transfer = None  # Will be initialized when controller is discovered
-        
-        # Communication manager - handles ZMQ messaging
-        self.communication_manager = ModuleCommunicationManager(
+        self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
             self.logger, 
             self.module_id,
             command_callback=self.handle_command,
             config_manager=self.config_manager
         )
+        self.health_manager = ModuleHealthManager(self.logger, 
+                                            config_manager=self.config_manager,
+                                            communication_manager=self.communication_manager)
         
         # Lazy import and initialization of ServiceManager to avoid circular imports
         from src.modules.module_service_manager import ModuleServiceManager

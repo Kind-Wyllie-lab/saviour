@@ -37,7 +37,7 @@ class ModuleCommunicationManager:
         
         # Control flags
         self.command_listener_running = False
-        self.heartbeats_active = False
+        self.heartbeats_active = False # TODO: move to health manager
         self.last_command = None
         
         # Controller connection info

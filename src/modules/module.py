@@ -90,7 +90,7 @@ class Module:
         self.stream_session_id = None
 
         # Parameters from config
-        self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval")
+        # self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval")
         self.samplerate = self.config_manager.get("module.samplerate")
 
         # Control flags
@@ -130,10 +130,7 @@ class Module:
                 self.communication_manager.start_command_listener()
                 
                 # Start sending heartbeats
-                self.communication_manager.start_heartbeats(
-                    self.get_health,
-                    self.heartbeat_interval
-                )
+                self.health_manager.start_heartbeats()
             
         return True
 
@@ -152,15 +149,26 @@ class Module:
             return False
 
         try:
-            # Stop the threads
+            # First: Stop any active processing
+            if self.streaming:
+                self.streaming = False
+            
+            # Second: Stop all threads that might use ZMQ
             if self.stream_thread:
+                self.logger.info("Waiting for stream thread to stop...")
                 self.stream_thread.join(timeout=2.0)
                 self.stream_thread = None
         
-            # Stop the service manager
+            # Third: Stop the health manager (and its heartbeat thread)
+            self.logger.info("Stopping health manager...")
+            self.health_manager.stop_heartbeats()
+
+            # Fourth: Stop the service manager (doesn't use ZMQ directly)
+            self.logger.info("Cleaning up service manager...")
             self.service_manager.cleanup()
             
-            # Stop the communication manager
+            # Fifth: Stop the communication manager (ZMQ cleanup)
+            self.logger.info("Cleaning up communication manager...")
             self.communication_manager.cleanup()
 
         except Exception as e:
@@ -189,7 +197,7 @@ class Module:
                 try:
                     status = {
                         "timestamp": time.time(),
-                        "cpu_temp": self.get_cpu_temp(),
+                        "cpu_temp": self.health_manager.get_cpu_temp(),
                         "cpu_usage": psutil.cpu_percent(),
                         "memory_usage": psutil.virtual_memory().percent,
                         "uptime": time.time() - self.start_time if self.start_time else 0,
@@ -227,24 +235,6 @@ class Module:
                 print(f"Command {command} not recognized")
                 self.communication_manager.send_data("Command not recognized")
 
-    def get_health(self):
-        """Get health metrics for the module to be sent as heartbeat"""
-        return {
-            "timestamp": time.time(),
-            'cpu_temp': self.get_cpu_temp(),
-            'cpu_usage': psutil.cpu_percent(),
-            'memory_usage': psutil.virtual_memory().percent,
-            'uptime': time.time() - self.start_time if self.start_time else 0,
-            'disk_space': psutil.disk_usage('/').percent # Free disk space
-        }
-
-    def get_cpu_temp(self):
-        """Get CPU temperature"""
-        try:
-            temp = os.popen("vcgencmd measure_temp").readline()
-            return float(temp.replace("temp=","").replace("'C\n",""))
-        except:
-            return None            
                 
     # Sensor data methods
     def stream_data(self):
@@ -314,36 +304,3 @@ class Module:
             self.logger.error(f"Error sending file: {e}")
             return False
             
-    def get_config(self, key_path: str, default: Any = None) -> Any:
-        """
-        Get a configuration value
-        
-        Args:
-            key_path: Configuration key path (e.g., "module.heartbeat_interval")
-            default: Default value if key doesn't exist
-            
-        Returns:
-            Configuration value
-        """
-        return self.config_manager.get(key_path, default)
-        
-    def set_config(self, key_path: str, value: Any, persist: bool = False) -> bool:
-        """
-        Set a configuration value
-        
-        Args:
-            key_path: Configuration key path (e.g., "module.heartbeat_interval")
-            value: Value to set
-            persist: Whether to save to config file
-            
-        Returns:
-            True if successful
-        """
-        # Update local variable if applicable
-        if key_path == "module.heartbeat_interval":
-            self.heartbeat_interval = value
-        elif key_path == "module.samplerate":
-            self.samplerate = value
-        
-        # Update in config manager
-        return self.config_manager.set(key_path, value, persist)

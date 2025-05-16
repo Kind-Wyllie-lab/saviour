@@ -11,3 +11,10 @@ def test_import():
     import src.controller.controller_interface_manager as interface_manager
     assert interface_manager is not None
 
+def test_init():
+    """Test the controller interface manager initialization"""
+    from src.controller.controller_interface_manager import ControllerInterfaceManager
+    from src.controller.controller import Controller
+    controller = Controller()
+    interface_manager = ControllerInterfaceManager(controller)
+    assert interface_manager is not None

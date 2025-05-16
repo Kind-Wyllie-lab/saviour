@@ -1,0 +1,35 @@
+{
+    "rfid": {
+        "reader_type": "rc522",
+        "bus": 0,
+        "device": 0,
+        "gpio_rst": 25,
+        "gpio_irq": 24,
+        "read_interval_ms": 500,
+        "continuous_read": true,
+        "debounce_time_ms": 2000,
+        "read_sensitivity": 0.5
+    },
+    "tags": {
+        "cache_enabled": true,
+        "cache_timeout_minutes": 30,
+        "known_tags_file": "known_tags.json",
+        "tag_format": "hex",
+        "log_unknown_tags": true,
+        "auto_register_unknown": false
+    },
+    "events": {
+        "on_tag_read": {
+            "enabled": true,
+            "trigger_commands": true,
+            "log_event": true,
+            "send_to_controller": true
+        },
+        "on_tag_removed": {
+            "enabled": true,
+            "trigger_commands": true,
+            "log_event": true,
+            "send_to_controller": true
+        }
+    }
+} 

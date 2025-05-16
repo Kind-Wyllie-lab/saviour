@@ -1,0 +1,59 @@
+{
+    "module": {
+        "heartbeat_interval": 60,
+        "samplerate": 200,
+        "type": "rfid",
+        "status_reporting": true,
+        "error_retry_count": 3,
+        "error_retry_delay": 5
+    },
+    "service": {
+        "port": 5000,
+        "service_type": "_module._tcp.local.",
+        "announce": true
+    },
+    "communication": {
+        "command_socket_port": 5555,
+        "status_socket_port": 5556,
+        "data_format": "json",
+        "compression": false
+    },
+    "health_monitor": {
+        "cpu_check_enabled": true,
+        "memory_check_enabled": true,
+        "disk_check_enabled": true,
+        "warning_threshold_cpu": 80,
+        "warning_threshold_memory": 80,
+        "warning_threshold_disk": 80
+    },
+    "file_transfer": {
+        "max_retries": 3,
+        "chunk_size": 65536,
+        "timeout": 30
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s",
+        "to_file": false,
+        "max_file_size_mb": 10,
+        "backup_count": 3
+    },
+    "network": {
+        "reconnect_attempts": 5,
+        "reconnect_delay": 5,
+        "timeout": 10
+    },
+    "power": {
+        "low_power_mode_enabled": false,
+        "auto_shutdown_on_idle": false,
+        "idle_timeout_minutes": 30
+    },
+    "rfid": {
+        "reader_type": "rc522",
+        "bus": 0,
+        "device": 0,
+        "gpio_rst": 25,
+        "gpio_irq": 24,
+        "new_setting": "This is a new value"
+    }
+}

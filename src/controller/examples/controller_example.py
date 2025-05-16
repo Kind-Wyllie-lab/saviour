@@ -22,7 +22,7 @@ def main():
     print(f"  Manual control: {controller.get_config('controller.manual_control')}")
     print(f"  Health monitor interval: {controller.get_config('health_monitor.heartbeat_interval')}s")
     print(f"  Data export interval: {controller.get_config('data_export.export_interval')}s")
-    
+
     try:
         # Start the main loop
         controller.start()

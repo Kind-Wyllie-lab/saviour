@@ -15,6 +15,7 @@ import time
 import logging
 from typing import Callable, Dict, Any, Optional
 import threading
+import os
 
 class ModuleHealthManager:
     """
@@ -22,18 +23,23 @@ class ModuleHealthManager:
     """
     def __init__(self, logger: logging.Logger, 
                  config_manager=None,
-                 communication_manager=None):
+                 communication_manager=None,
+                 start_time=None):
         
         # Imported managers from module.py
         self.logger = logger
         self.config_manager = config_manager
         self.communication_manager = communication_manager
+        if start_time is None:
+            self.start_time = time.time()
+        else:
+            self.start_time = start_time
 
         # Heartbeat parameters
         self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval", 30)
         self.heartbeats_active = False
     
-    def start_heartbeats(self, heartbeat_callback: Callable[[], Dict[str, Any]], interval: float = 1.0) -> bool:
+    def start_heartbeats(self) -> bool:
         """Start sending periodic heartbeats to the controller
         
         Args:
@@ -47,45 +53,74 @@ class ModuleHealthManager:
             self.logger.info("Heartbeats already active")
             return False
             
-        if not self.controller_ip:
+        if not self.communication_manager.controller_ip:
             self.logger.error("Cannot start heartbeats: not connected to controller")
             return False
             
         self.heartbeats_active = True
-        self.heartbeat_interval = interval
         self.heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, 
-            args=(heartbeat_callback,),
+            target=self._heartbeat_loop,
             daemon=True
         )
         self.heartbeat_thread.start()
         return True
 
-    def _heartbeat_loop(self, heartbeat_callback: Callable[[], Dict[str, Any]]):
-        """Internal method: Loop sending heartbeats until stopped
-        
-        Args:
-            heartbeat_callback: Function that returns the heartbeat data to send
-        """
+    def _heartbeat_loop(self):
+        """Internal method: Loop sending heartbeats until stopped"""
         self.logger.info("Heartbeat thread started")
+        last_heartbeat_time = 0
+        check_interval = 0.1  # Check for stop flag every 100ms
+        
         while self.heartbeats_active:
-            try:
-                self.logger.info("Sending heartbeat")
-                status = heartbeat_callback()
-                self.send_status(status)
-            except Exception as e:
-                self.logger.error(f"Error sending heartbeat: {e}")
-            time.sleep(self.heartbeat_interval)
+            current_time = time.time()
+            # Check if it's time to send a heartbeat
+            if current_time - last_heartbeat_time >= self.heartbeat_interval:
+                try:
+                    self.logger.info("Sending heartbeat")
+                    status = self.get_health()
+                    self.communication_manager.send_status(status)
+                    last_heartbeat_time = current_time
+                except Exception as e:
+                    self.logger.error(f"Error sending heartbeat: {e}")
+            
+            # Sleep for a short interval rather than the full heartbeat interval
+            # This allows for quicker response to stop requests
+            time.sleep(check_interval)
+    
+    def get_health(self):
+        """Get health metrics for the module to be sent as heartbeat"""
+        return {
+            "timestamp": time.time(),
+            'cpu_temp': self.get_cpu_temp(),
+            'cpu_usage': psutil.cpu_percent(),
+            'memory_usage': psutil.virtual_memory().percent,
+            'uptime': time.time() - self.start_time if self.start_time else 0,
+            'disk_space': psutil.disk_usage('/').percent # Free disk space
+        }
+
+    def get_cpu_temp(self):
+        """Get CPU temperature"""
+        try:
+            temp = os.popen("vcgencmd measure_temp").readline()
+            return float(temp.replace("temp=","").replace("'C\n",""))
+        except:
+            return None            
 
     def stop_heartbeats(self):
         """Stop sending heartbeats"""
         self.heartbeats_active = False
         self.logger.info("Heartbeat flag set to false")
-        # No need to join the thread - it will exit by itself
+        
+        # Ensure the thread has stopped
+        if hasattr(self, 'heartbeat_thread') and self.heartbeat_thread and self.heartbeat_thread.is_alive():
+            self.logger.info("Waiting for heartbeat thread to stop...")
+            self.heartbeat_thread.join(timeout=1.0)
+            if self.heartbeat_thread.is_alive():
+                self.logger.warning("Heartbeat thread did not stop cleanly - continuing shutdown")
+        
+        self.logger.info("Heartbeat thread stopped")
     
     def cleanup(self): # TODO: is this redundant with the stop_heartbeats method?
         """Clean up resources"""
-        self.heartbeats_active = False
-        self.logger.info("Heartbeat flag set to false")
-        # No need to join the thread - it will exit by itself
+        self.stop_heartbeats()
         

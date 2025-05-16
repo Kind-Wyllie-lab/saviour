@@ -37,7 +37,7 @@ class ModuleCommunicationManager:
         
         # Control flags
         self.command_listener_running = False
-        self.heartbeats_active = False # TODO: move to health manager
+        # self.heartbeats_active = False # TODO: move to health manager
         self.last_command = None
         
         # Controller connection info
@@ -167,81 +167,58 @@ class ModuleCommunicationManager:
         self.status_socket.send_string(message)
         self.logger.info(f"Data sent: {message}")
 
-    def start_heartbeats(self, heartbeat_callback: Callable[[], Dict[str, Any]], interval: float = 1.0) -> bool:
-        """Start sending periodic heartbeats to the controller
-        
-        Args:
-            heartbeat_callback: Function that returns the heartbeat data to send
-            interval: Time between heartbeats in seconds
-            
-        Returns:
-            bool: True if heartbeats were started successfully
-        """
-        if self.heartbeats_active:
-            self.logger.info("Heartbeats already active")
-            return False
-            
-        if not self.controller_ip:
-            self.logger.error("Cannot start heartbeats: not connected to controller")
-            return False
-            
-        self.heartbeats_active = True
-        self.heartbeat_interval = interval
-        self.heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, 
-            args=(heartbeat_callback,),
-            daemon=True
-        )
-        self.heartbeat_thread.start()
-        return True
-
-    def _heartbeat_loop(self, heartbeat_callback: Callable[[], Dict[str, Any]]):
-        """Internal method: Loop sending heartbeats until stopped
-        
-        Args:
-            heartbeat_callback: Function that returns the heartbeat data to send
-        """
-        self.logger.info("Heartbeat thread started")
-        while self.heartbeats_active:
-            try:
-                self.logger.info("Sending heartbeat")
-                status = heartbeat_callback()
-                self.send_status(status)
-            except Exception as e:
-                self.logger.error(f"Error sending heartbeat: {e}")
-            time.sleep(self.heartbeat_interval)
-
-    def stop_heartbeats(self):
-        """Stop sending heartbeats"""
-        self.heartbeats_active = False
-        self.logger.info("Heartbeat flag set to false")
-        # No need to join the thread - it will exit by itself
-
     def cleanup(self):
         """Clean up ZMQ connections"""
         self.logger.info(f"Cleaning up communication manager for module {self.module_id}")
         
         # Stop threads
-        self.heartbeats_active = False
         self.command_listener_running = False
         
         # Give threads time to stop
         time.sleep(0.5)
         
-        # Clean up ZeroMQ connections
+        # Clean up ZeroMQ connections - important to do this in the right order
         try:
-            if hasattr(self, 'command_socket'):
-                self.logger.info("Closing command socket")
-                self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
-                self.command_socket.close()
-            if hasattr(self, 'status_socket'):
-                self.logger.info("Closing status socket")
-                self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second timeout
-                self.status_socket.close()
-            if hasattr(self, 'context'):
-                self.logger.info("Terminating ZeroMQ context")
-                self.context.term()
+            # Step 1: Set all sockets to non-blocking with zero linger time
+            if hasattr(self, 'command_socket') and self.command_socket:
+                self.logger.info("Setting command socket linger to 0")
+                self.command_socket.setsockopt(zmq.LINGER, 0)
                 
+            if hasattr(self, 'status_socket') and self.status_socket:
+                self.logger.info("Setting status socket linger to 0")
+                self.status_socket.setsockopt(zmq.LINGER, 0)
+            
+            # Step 2: Close all sockets
+            if hasattr(self, 'command_socket') and self.command_socket:
+                self.logger.info("Closing command socket")
+                self.command_socket.close()
+                self.command_socket = None
+                
+            if hasattr(self, 'status_socket') and self.status_socket:
+                self.logger.info("Closing status socket")
+                self.status_socket.close()
+                self.status_socket = None
+            
+            # Step 3: Wait a bit for ZMQ to clean up internal resources
+            time.sleep(0.1)
+            
+            # Step 4: Terminate context
+            if hasattr(self, 'context') and self.context:
+                self.logger.info("Terminating ZeroMQ context")
+                # First try to terminate with timeout
+                try:
+                    self.context.term()
+                except Exception as e:
+                    self.logger.warning(f"Normal context termination failed: {e}. Trying forced shutdown.")
+                    # If term() hangs or fails, try destroy with timeout
+                    try:
+                        if hasattr(self.context, 'destroy'):
+                            self.context.destroy(linger=0)
+                    except Exception as e2:
+                        self.logger.error(f"Forced context shutdown failed: {e2}")
+                
+                self.context = None
+            
             # Reset connection state
             self.controller_ip = None
             self.controller_port = None

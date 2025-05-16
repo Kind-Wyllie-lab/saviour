@@ -109,10 +109,7 @@ class ModuleServiceManager:
                 
                 # Start heartbeats if module is running
                 if self.module.is_running:
-                    self.module.communication_manager.start_heartbeats(
-                        self.module.get_health,
-                        self.module.heartbeat_interval
-                    )
+                    self.module.health_manager.start_heartbeats()
                     
                 self.logger.info("Connection to controller established")
             else:

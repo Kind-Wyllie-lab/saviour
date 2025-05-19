@@ -6,7 +6,7 @@ Controller PTP Manager
 The PTP manager is responsible for initializing and managing PTP functions.
 Important things to note about PTP on raspberry pi 5:
 - By default, systemd-timesyncd is used to sync the system clock. It must be disabled for PTP to work.
-- PTP updates every second or so (I think). 
+- PTP updates every second or so (I think).
 """
 
 

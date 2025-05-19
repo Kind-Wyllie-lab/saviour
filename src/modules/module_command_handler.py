@@ -99,9 +99,13 @@ class ModuleCommandHandler:
             
             case "stop_stream":
                 self._handle_stop_stream()
-            
+
+            case "ptp_status":
+                self._handle_ptp_status()
+
             case _:
                 self._handle_unknown_command(command)
+
     
     def _handle_get_status(self):
         """Handle get_status command"""
@@ -175,6 +179,16 @@ class ModuleCommandHandler:
                 break
             
             time.sleep(self.samplerate/1000)
+
+    def _handle_ptp_status(self):
+        """Return PTP information to the controller"""
+        print("Command identified as ptp_status")
+        if 'ptp_status' in self.callbacks:
+            ptp_status = str(self.callbacks['ptp_status']())
+            self.communication_manager.send_status(ptp_status)
+        else:
+            self.logger.error("No read_data callback provided")
+            self.communication_manager.send_data("Error: Module not configured for data reading")
     
     def cleanup(self):
         """Clean up resources used by the command handler"""

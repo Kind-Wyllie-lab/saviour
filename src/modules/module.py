@@ -35,7 +35,7 @@ from src.modules.module_communication_manager import ModuleCommunicationManager
 import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
-
+from src.modules.module_ptp_manager import PTPManager, PTPRole
 
 class Module:
     """
@@ -83,8 +83,6 @@ class Module:
             config_manager=self.config_manager,
             communication_manager=self.communication_manager
         )
-        
-        # Command handler - manages command processing
         self.command_handler = ModuleCommandHandler(
             self.logger,
             self.module_id,
@@ -94,6 +92,9 @@ class Module:
             config_manager=self.config_manager,
             start_time=None # Will be set during start()
         )
+        self.ptp_manager = PTPManager(
+            logger=self.logger,
+            role=PTPRole.SLAVE)
         
         # Set the callback in the communication manager to use the command handler
         self.communication_manager.command_callback = self.command_handler.handle_command
@@ -103,7 +104,8 @@ class Module:
             'read_data': self.read_fake_data,
             'stream_data': self.stream_data,
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'samplerate': self.config_manager.get("module.samplerate", 200)
+            'samplerate': self.config_manager.get("module.samplerate", 200),
+            'ptp_status': self.ptp_manager.get_status()
         })
         
         # Lazy import and initialization of ServiceManager to avoid circular imports
@@ -160,6 +162,9 @@ class Module:
                 
                 # Start sending heartbeats
                 self.health_manager.start_heartbeats()
+
+                # Start PTP
+                self.ptp_manager.start()
             
         return True
 
@@ -246,15 +251,7 @@ class Module:
             'digital': digital_in,
             'analog': analog_in
         }
-            
-    
-    # PTP methods
-    def status_ptp(self) -> bool:
-        """
-        Get PTP status.
-        """
-        # TODO: Implement PTP status
-        return True
+
 
     def send_file(self, filepath: str, remote_path: str = None) -> bool:
         """Send a file to the controller"""

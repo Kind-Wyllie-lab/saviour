@@ -29,7 +29,7 @@ import numpy as np
 
 
 # Import managers
-from src.modules.module_file_transfer import ModuleFileTransfer
+from src.modules.module_file_transfer_manager import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
 import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager

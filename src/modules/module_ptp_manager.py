@@ -79,6 +79,7 @@ class PTPManager:
         self.status = 'not running'
         self.last_sync_time = None
         self.last_offset = None
+        self.last_freq = None
         self.active_ptp4l_processes = None
         self.active_phc2sys_processes = None
 
@@ -193,6 +194,12 @@ class PTPManager:
         # Ensure timesyncd is disabled, or else phc2sys won't work!
         self._stop_timesyncd()
 
+        # Check for any active ptp processes
+        self._check_ptp_running()
+
+        # Kill them so we start clean
+        self._kill_ptp_processes()
+
         # Start ptp4l with error capture
         try:
             self.ptp4l_proc = subprocess.Popen(
@@ -206,7 +213,7 @@ class PTPManager:
             
             # Check if process started successfully
             time.sleep(0.5)  # Give it a moment to start
-            if self.ptp4l_proc.poll() is not None:
+            if self.ptp4l_proc.poll() is not None: # poll() checks the process has terminated.
                 error = self.ptp4l_proc.stderr.read()
                 raise PTPError(f"ptp4l failed to start: {error}")
             
@@ -243,7 +250,6 @@ class PTPManager:
 
     def _monitor(self):
         while self.running:
-            print("RUNNING!")
             for proc, name in [(self.ptp4l_proc, 'ptp4l'), (self.phc2sys_proc, 'phc2sys')]:
                 if proc and proc.poll() is not None:
                     error = proc.stderr.read() if proc.stderr else "No error output"
@@ -258,6 +264,7 @@ class PTPManager:
                     self.logger.debug(f"{name}: {line}")
                     
                     # Parse offset information
+                    # TODO: Distinguish ptp4l and phc2sys offset
                     if 'master offset' in line or 'offset' in line:
                         try:
                             # Extract offset value from line
@@ -268,7 +275,16 @@ class PTPManager:
                             self.logger.info(f"PTP offset: {self.last_offset} ns")
                         except (IndexError, ValueError):
                             self.logger.warning(f"Could not parse offset from line: {line}")
-                    
+
+                    # Parse freq correction information
+                    if 'freq' in line:
+                        try:
+                            # Extract freq correction from line
+                            freq_str = line.split('freq')[1].split()[0]
+                            self.last_freq = int(freq_str)
+                        except(IndexError, ValueError):
+                            self.logger.warning(f"Could not parse freq from line: {line}")
+
                     # Check for successful sync
                     if 'synchronized' in line.lower():
                         self.status = 'synchronized'
@@ -340,6 +356,7 @@ class PTPManager:
             'status': self.status,
             'last_sync': self.last_sync_time,
             'last_offset': self.last_offset,
+            'last_freq': self.last_freq,
             'interface': self.interface
         }
 

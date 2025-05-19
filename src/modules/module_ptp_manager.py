@@ -1,43 +1,55 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Module PTP Manager
+
+The PTP manager is responsible for initializing and managing PTP functions.
+Important things to note about PTP on raspberry pi 5:
+- By default, systemd-timesyncd is used to sync the system clock. It must be disabled for PTP to work.
+- PTP updates every 
+"""
+
+
 import subprocess
 import threading
 import time
 import logging
 import os
 import sys
+import tempfile
+import re
 from enum import Enum
+from typing import Callable, Dict, Any, Optional
 
 class PTPRole(Enum):
     MASTER = "master"
     SLAVE = "slave"
 
-class PTPError(Exception):
+class PTPError(Exception): # We define a custom error class
     pass
 
 class PTPManager:
-    def __init__(self, role=PTPRole.MASTER, interface='eth0', master_address=None, log_path=None):
+    def __init__(self,
+                 role=PTPRole.MASTER,
+                 interface='eth0',
+                 logger: logging.Logger = None):
+
+        """Initialize the PTP manager
+
+        Args:
+            logger: Logger instance
+            interface: The network interface, typically eth0
+            role: The PTP role - slave for modules, master for controllers
+        """
+
         # Check for root privileges first
         if os.geteuid() != 0:
             raise PTPError("This program must be run as root (use sudo). PTP requires root privileges to adjust system time.")
-            
+
+        # Assign basic params
         self.role = role
         self.interface = interface
-        self.master_address = master_address # Is this actually needed?
-        self.log_path = log_path or '/tmp/ptp_manager.log'
-        
-        # Configure logging first
-        self.logger = logging.getLogger('PTPManager')
-        self.logger.setLevel(logging.DEBUG)
-        
-        # Add console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-        self.logger.addHandler(console_handler)
-        
-        # Add file handler if path provided
-        if log_path:
-            file_handler = logging.FileHandler(log_path)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            self.logger.addHandler(file_handler)
+        self.logger = logger
         
         # Check for required packages
         self._check_required_packages()
@@ -45,16 +57,20 @@ class PTPManager:
         # Validate interface
         self._validate_interface()
         
+        # Create temporary config file
+        self.config_file = self._create_config_file()
+        
         # Configure ptp4l arguments based on role
         if role == PTPRole.MASTER:
-            self.ptp4l_args = ['ptp4l', '-i', interface, '-m', '-l', '6']
-            # Updated phc2sys args to use autoconfiguration
-            self.phc2sys_args = ['phc2sys', '-a'] #, '-r', '-w', '-l', '6'
+            self.ptp4l_args = ['ptp4l', '-i', interface, '-m', '-l', '6', '-f', self.config_file]
+            # For master, use autoconfiguration with system clock sync
+            self.phc2sys_args = ['phc2sys', '-a', '-r', '-r']  # -r twice to consider system clock as time source
         else:
-            if not master_address:
-                raise ValueError("master_address is required for slave mode")
-            self.ptp4l_args = ['ptp4l', '-i', interface, '-s', master_address, '-l', '6']
-            self.phc2sys_args = ['phc2sys', '-s', interface, '-w', '-l', '6']
+            # self.ptp4l_args = ['ptp4l', '-i', interface, '-s',  '-l', '6', '-f', self.config_file]
+            self.ptp4l_args = ['ptp4l', '-i', interface, '-s', '-m']
+            # For slave, use manual configuration with the interface as master
+            # self.phc2sys_args = ['phc2sys', '-s', interface, '-w', '-l', '6']
+            self.phc2sys_args = ['phc2sys', '-s', '/dev/ptp0', '-w', '-m']
         
         self.ptp4l_proc = None
         self.phc2sys_proc = None
@@ -63,6 +79,8 @@ class PTPManager:
         self.status = 'not running'
         self.last_sync_time = None
         self.last_offset = None
+        self.active_ptp4l_processes = None
+        self.active_phc2sys_processes = None
 
     def _check_required_packages(self):
         """Check if required PTP packages are installed."""
@@ -102,16 +120,76 @@ class PTPManager:
         except subprocess.CalledProcessError:
             self.logger.warning(f"Could not check PTP support for {self.interface}")
 
+    def _create_config_file(self):
+        """Create a temporary configuration file for ptp4l."""
+        config_content = f"""
+        [global]
+        verbose               1
+        time_stamping        hardware
+        tx_timestamp_timeout 1
+        logAnnounceInterval  1
+        logSyncInterval      0
+        logMinDelayReqInterval 0
+        """
+        # Create temporary file
+        fd, path = tempfile.mkstemp(prefix='ptp4l_', suffix='.conf')
+        with os.fdopen(fd, 'w') as f:
+            f.write(config_content)
+        self.logger.debug(f"Created PTP config file at {path}")
+        return path
+
+    def _stop_timesyncd(self):
+        """
+        systemd-timesyncd is a ntp daemon which I have found runs by default on raspberry pi 5.
+        It will interfere with phc2sys function if it is running.
+        This should be made to happen during setup, but we might as well do it here as well.
+        """
+        self.logger.info("Attempting to stop systemd.timesyncd")
+        try:
+            subprocess.Popen(["sudo",
+                              "systemctl",
+                              "stop",
+                              "systemd-timesyncd"])
+
+        except Exception as e:
+            self.logger.error(f"Failed to stop timesyncd: {str(e)}")
+            raise
+
+    def _check_ptp_running(self):
+        """
+        Checks if ptp4l or phc2sys is running.
+        """
+
+        p = re.compile('\d+') # The regex pattern that will be used to find processes
+
+        output, _ = subprocess.Popen(["pgrep","ptp4l"],stdout=subprocess.PIPE).communicate()
+        self.active_ptp4l_processes = p.findall(str(output))
+
+        output, _ = subprocess.Popen(["pgrep","phc2sys"],stdout=subprocess.PIPE).communicate()
+        self.active_phc2sys_processes = p.findall(str(output))
+
+    def _kill_ptp_processes(self):
+        """
+        Kill all active ptp4l and phc2sys processes. Part of cleanup procedure.
+        """
+        # TODO: Implement this
+        pass
+
     def start(self):
         self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")
-        
+
+        # Ensure timesyncd is disabled, or else phc2sys won't work!
+        self._stop_timesyncd()
+
         # Start ptp4l with error capture
         try:
             self.ptp4l_proc = subprocess.Popen(
                 self.ptp4l_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
             )
             
             # Check if process started successfully
@@ -127,7 +205,9 @@ class PTPManager:
                 self.phc2sys_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
             )
             
             # Check if process started successfully
@@ -151,6 +231,7 @@ class PTPManager:
 
     def _monitor(self):
         while self.running:
+            print("RUNNING!")
             for proc, name in [(self.ptp4l_proc, 'ptp4l'), (self.phc2sys_proc, 'phc2sys')]:
                 if proc and proc.poll() is not None:
                     error = proc.stderr.read() if proc.stderr else "No error output"
@@ -161,7 +242,8 @@ class PTPManager:
                 
                 line = proc.stdout.readline() if proc and proc.stdout else ''
                 if line:
-                    self.logger.debug(f"{name}: {line.strip()}")
+                    line = line.strip()
+                    self.logger.debug(f"{name}: {line}")
                     
                     # Parse offset information
                     if 'master offset' in line or 'offset' in line:
@@ -171,13 +253,47 @@ class PTPManager:
                             self.last_offset = float(offset_str)
                             self.last_sync_time = time.time()
                             self.status = 'synchronized'
+                            self.logger.info(f"PTP offset: {self.last_offset} ns")
                         except (IndexError, ValueError):
-                            self.logger.warning(f"Could not parse offset from line: {line.strip()}")
+                            self.logger.warning(f"Could not parse offset from line: {line}")
+                    
+                    # Check for successful sync
+                    if 'synchronized' in line.lower():
+                        self.status = 'synchronized'
+                        self.logger.info("PTP synchronized successfully")
+                    
+                    # Check for port state changes
+                    if 'port state' in line.lower():
+                        self.logger.info(f"PTP port state change: {line}")
+                        if 'LISTENING' in line:
+                            self.status = 'listening'
+                        elif 'UNCALIBRATED' in line:
+                            self.status = 'uncalibrated'
+                        elif 'SLAVE' in line:
+                            self.status = 'slave'
+                        elif 'MASTER' in line:
+                            self.status = 'master'
                     
                     # Check for errors
                     if 'FAULT' in line or 'error' in line.lower():
                         self.status = 'error'
-                        self.logger.error(f"PTP error detected: {line.strip()}")
+                        self.logger.error(f"PTP error detected: {line}")
+                    
+                    # Check for clock selection
+                    if 'selected' in line and 'PTP clock' in line:
+                        self.logger.info(f"PTP clock selected: {line}")
+                    
+                    # Check for frequency adjustment
+                    if 'frequency' in line and 'adjustment' in line:
+                        self.logger.info(f"PTP frequency adjustment: {line}")
+                    
+                    # Check for announce messages
+                    if 'announce' in line.lower():
+                        self.logger.debug(f"PTP announce: {line}")
+                    
+                    # Check for sync messages
+                    if 'sync' in line.lower() and 'message' in line.lower():
+                        self.logger.debug(f"PTP sync message: {line}")
             
             time.sleep(0.1)
 
@@ -196,6 +312,12 @@ class PTPManager:
                 self.phc2sys_proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.phc2sys_proc.kill()
+        
+        # Clean up config file
+        try:
+            os.remove(self.config_file)
+        except OSError:
+            pass
         
         self.status = 'stopped'
         self.logger.info("Stopped PTP processes.")

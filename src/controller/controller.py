@@ -18,72 +18,30 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 import datetime
 import logging # for logging and debugging
-import supabase # for supabase client, the external database
-import uuid # for unique id generation
 from dataclasses import dataclass # to define Module dataclass
 from typing import List, Dict, Any # for type hinting
 import asyncio # for asyncio
 
 # Networking and synchronization
-import socket # for network communication
 import threading # for concurrent operations
-from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery
-import zmq # for zeromq communication
 
-# Local modules
+# Local managers
 import src.controller.controller_service_manager as service_manager
 import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
-
-
-# Supabase
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) # supabase client object which is used to interact with the database
-
-# Optional: For NWB format support
-try:
-    import pynwb
-    from pynwb import NWBFile, NWBHDF5IO
-    NWB_AVAILABLE = True
-except ImportError:
-    NWB_AVAILABLE = False
-    logging.warning("PyNWB not available. NWB file export will be disabled.")
-
+import src.controller.controller_data_export_manager as data_export_manager
+import src.controller.controller_interface_manager as interface_manager
+import src.controller.controller_health_monitor as health_monitor
+import src.controller.controller_buffer_manager as buffer_manager
+import src.controller.controller_config_manager as config_manager
     
 # Habitat Controller Class
 class Controller:
     """Main controller class for the habitat system"""
     
-    def __init__(self):
+    def __init__(self, config_file_path: str = None):
         """Initialize the controller with default values"""
-
-        # Parameters
-        self.module_data = {} # store data from modules before exporting to database
-        self.export_interval = 10 # the interval at which to export data to the database
-        self.max_buffer_size = 1000 # the maximum size of the buffer before exporting to database
-        self.commands = ["get_status", "get_data", "start_stream", "stop_stream", "record_video"] # list of commands
-        
-        # Control flags
-        self.manual_control = True # whether to run in manual control mode
-        self.print_received_data = False # whether to print received data
-        self.is_exporting = False # whether the controller is currently exporting data to the database
-        self.is_health_exporting = False # whether the controller is currently exporting health data to the database
-        self.is_running = True  # Add flag for listener thread
-        self.health_export_interval = 10 # the interval at which to export health data to the database
-        
-        # ZeroMQ setup
-        # for sending commands to modules
-        self.context = zmq.Context() # context object to contain all sockets
-        self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
-        self.command_socket.bind("tcp://*:5555") # bind the socket to a port
-
-        # for receiving status updates from modules
-        self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
-        self.status_socket.subscribe("status/") # subscribe to status updates
-        self.status_socket.subscribe("data/") # subscribe to data updates
-        self.status_socket.bind("tcp://*:5556") # bind the socket to a port
 
         # Setup logging
         self.logger = logging.getLogger()
@@ -96,204 +54,78 @@ class Controller:
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
+            
+        # Initialize config manager
+        self.config_manager = config_manager.ControllerConfigManager(self.logger, config_file_path)
 
-        # Health monitoring
-        self.module_health = {} # dictionary to store the health of each module
-        self.heartbeat_interval = 30 # the interval at which to check the health of each module
-        self.heartbeat_timeout = 3 * self.heartbeat_interval # the timeout for a heartbeat
+        # Parameters from config
+        self.max_buffer_size = self.config_manager.get("controller.max_buffer_size")
+        self.commands = self.config_manager.get("controller.commands")
+        
+        # Control flags from config
+        self.manual_control = self.config_manager.get("controller.manual_control")
+        self.print_received_data = self.config_manager.get("controller.print_received_data")
+        self.is_running = True  # Add flag for listener thread
 
         # Managers
-        self.service_manager = service_manager.ControllerServiceManager(self.logger)
+        self.service_manager = service_manager.ControllerServiceManager(self.logger, self.config_manager)
         self.session_manager = session_manager.SessionManager()
-        # self.communication_manager = communication_manager.ControllerCommunicationManager(self.logger)
+        self.communication_manager = communication_manager.ControllerCommunicationManager(
+            self.logger,
+            status_callback=self.handle_status_update,
+            data_callback=self.handle_data_update
+        )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
+        self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger, self.config_manager)
+        
+        # Initialize health monitor with configuration
+        heartbeat_interval = self.config_manager.get("health_monitor.heartbeat_interval")
+        heartbeat_timeout = self.config_manager.get("health_monitor.heartbeat_timeout")
+        self.health_monitor = health_monitor.ControllerHealthMonitor(
+            self.logger, 
+            heartbeat_interval=heartbeat_interval,
+            heartbeat_timeout=heartbeat_timeout
+        )
+        
+        self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
+        self.interface_manager = interface_manager.ControllerInterfaceManager(self)
 
-        # Start the zmq listener thread
-        self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
-        self.listener_thread.start()
-
-        # Start the data auto export thread
-        threading.Thread(target=self.periodic_export, daemon=True).start()
-
-        # Start the health monitoring thread
-        threading.Thread(target=self.monitor_module_health, daemon=True).start()
-
-        # Start the health data auto export thread
-        threading.Thread(target=self.periodic_health_export, daemon=True).start()
-
-
-    # ZeroMQ methods
-    def send_command(self, module_id: str, command: str):
-        """Send a command to a specific module"""
-        message = f"cmd/{module_id} {command}"
-        self.command_socket.send_string(message)
-        self.logger.info(f"Command sent: {message}")
-
-    def listen_for_updates(self):
-        """Listen for status and data updates from modules"""
-        while self.is_running:  # Check is_running flag
-            try:
-                message = self.status_socket.recv_string()
-                topic, data = message.split(' ', 1)
-                self.logger.debug(f"Received update: {message}")
-                # Handle different topics
-                if topic.startswith('status/'):
-                    self.handle_status_update(topic, data)
-                elif topic.startswith('data/'):
-                    self.handle_data_update(topic, data)
-            except Exception as e:
-                if self.is_running:  # Only log errors if we're still running
-                    self.logger.error(f"Error handling update: {e}")
-                time.sleep(0.1)  # Add small delay to prevent tight loop on error
+        # Start health monitoring
+        self.health_monitor.start_monitoring()
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
+        print() # New line  
         self.logger.info(f"Status update received from module {topic} with data: {data}")
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data) # Convert string data to dictionary
-
-            # Update local health tracking
-            self.module_health[module_id] = {
-                'last_heartbeat': status_data['timestamp'],  # Use the module's timestamp
-                'status': 'online',
-                'cpu_temp': status_data['cpu_temp'],
-                'cpu_usage': status_data['cpu_usage'],
-                'memory_usage': status_data['memory_usage'],
-                'uptime': status_data['uptime'],
-                'disk_space': status_data['disk_space']
-            }
-            self.logger.info(f"Module {module_id} is online with status: {self.module_health[module_id]}")   
+            
+            # Update health monitoring through health monitor
+            self.health_monitor.update_module_health(module_id, status_data)
 
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
             
     def handle_data_update(self, topic: str, data: str):
         """Buffer incoming data from modules"""
+        print() # New line  
         self.logger.info(f"Data update received from module {topic} with data: {data}")
-        module_id = topic.split('/')[1] # get module id from topic
-        timestamp = time.time() # time at which the data was received
+        module_id = topic.split('/')[1]
         
-        # store in local buffer
-        if module_id not in self.module_data: # if module id not in buffer, create a new buffer entry
-            self.module_data[module_id] = []
-
-        # append data to buffer
-        self.module_data[module_id].append({
-            "timestamp": timestamp,
-            "data": data,
-            #"type": self.modules[module_id].type
-        })
-
-        # prevent buffer from growing too large
-        if len(self.module_data[module_id]) > self.max_buffer_size:
+        # Add data to buffer
+        buffer_ok = self.buffer_manager.add_data(module_id, data)
+        
+        # If buffer is getting full, export to database
+        if not buffer_ok:
             self.logger.warning(f"Buffer for module {module_id} is too large. Exporting to database.")
-            self.export_buffered_data(module_id)
+            self.data_export_manager.export_module_data(
+                self.buffer_manager.get_module_data(), 
+                self.service_manager
+            )
 
         if self.print_received_data:
-            print(f"Data update received from module {module_id} with data: {self.module_data[module_id]}")
-
-    # Database methods
-    def export_buffered_data(self):
-        """Export the local buffer to the database"""
-        try:
-            for module_id, data_list in self.module_data.items(): # for each module in the buffer
-                if data_list:  # If there's data to upload
-                    # find the module type by seaching through the modules list
-                    module_type = next((module.type for module in self.service_manager.modules if module.id == module_id), 'unknown')
-                    self.logger.debug(f"Preparing to upload for module: {module_id}, type: {module_type}")
-                    self.logger.debug(f"Data to upload: {data_list}")
-
-                    # format data for upload    
-                    records = [{
-                        "module_id": module_id,
-                        "module_type": module_type,
-                        "timestamp": item['timestamp'],
-                        "data": item['data']
-                    } for item in data_list]
-                    self.logger.debug(f"Records formatted for upload: {records}")
-
-                    # upload data to database
-                    response = supabase_client.table("controller_test").insert(records).execute()
-                    self.logger.debug(f"Supabase response: {response}")
-
-                    # Clear uploaded data from buffer
-                    self.module_data[module_id] = []
-                    
-        except Exception as e:
-            self.logger.error(f"Failed to upload data: {e}")
-            print(f"DEBUG - Full error: {str(e)}")
-        
-    def periodic_export(self):
-        """Periodically export the local buffer to the database"""
-        self.logger.debug("Periodic export function called")
-        while True:
-            while self.is_exporting:
-                self.logger.debug("Periodic export function saw that is_exporting is true")
-                try:
-                    self.logger.info("Starting periodic export from buffer...")
-                    self.export_buffered_data()
-                    self.logger.info("Periodic export completed successfully")
-                except Exception as e:
-                    self.logger.error(f"Error during periodic export: {e}")
-                time.sleep(self.export_interval)
-        
-    # Monitor health
-    def monitor_module_health(self):
-        """Monitor the health of each module"""
-        while True: 
-            current_time = time.time() # get current time to compare to last heartbeat
-            for module_id in list(self.module_health.keys()): # iterate over all modules
-                last_heartbeat = self.module_health[module_id]['last_heartbeat'] # get last heartbeat time
-                if current_time - last_heartbeat > self.heartbeat_timeout: # if the last heartbeat was more than 3 intervals ago
-                    self.logger.warning(f"Module {module_id} has not sent a heartbeat in the last {self.heartbeat_timeout} seconds. Marking as offline.")
-                    self.module_health[module_id]['status'] = 'offline'
-            time.sleep(1)
-                    
-    def export_health_data(self):
-        """Export the local health data to the database"""
-        self.logger.debug("Export health data function called")
-        if not self.module_health:
-            self.logger.debug("Export health data function saw that module_health is empty")
-            self.logger.info("No health data to export")
-            return
-
-        try:
-            self.logger.debug("Export health data function saw that module_health is not empty")
-            records = [
-                {
-                    "module_id": module_id,
-                    "timestamp": health["last_heartbeat"],
-                    "status": health["status"],
-                    "cpu_temp": health["cpu_temp"],
-                    "cpu_usage": health["cpu_usage"],
-                    "memory_usage": health["memory_usage"],
-                    "disk_space": health["disk_space"],
-                    "uptime": health["uptime"]
-                }
-                for module_id, health in self.module_health.items()
-            ]
-        
-            response=supabase_client.table("module_health").insert(records).execute()
-            self.logger.debug(f"Uploaded {len(records)} health records to Supabase")
-            self.logger.debug(f"Supabase response: {response}")
-            self.logger.debug("Export health data function saw that supabase response is good")
-
-        except Exception as e:
-            self.logger.debug("Export health data function saw that there was an error exporting health data")
-            self.logger.error(f"Error exporting health data: {e}")
-                
-    def periodic_health_export(self):
-        """Periodically export the local health data to the database"""
-        self.logger.debug("Periodic health export function called")
-        while True:
-            if self.is_health_exporting:
-                self.logger.debug("Periodic health export function saw is_health_exporting is true")
-                try:
-                    self.export_health_data()
-                except Exception as e:
-                    self.logger.error(f"Error exporting health data: {e}")
-                time.sleep(self.health_export_interval)
+            print(f"Data update received from module {module_id} with data: {self.buffer_manager.get_module_data(module_id)}")
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
@@ -301,20 +133,18 @@ class Controller:
         
         try:
             # Stop all threads by setting flags
-            self.is_running = False  # Stop the listener thread
-            self.is_exporting = False
-            self.is_health_exporting = False
+            self.is_running = False
             
-            # Give threads time to stop
-            time.sleep(0.5)
+            # Stop health monitoring
+            self.health_monitor.stop_monitoring()
             
-            # Clean up module health tracking
+            # Clean up health monitoring
             self.logger.info("Cleaning up module health tracking")
-            self.module_health.clear()
+            self.health_monitor.clear_all_health()
             
             # Clean up module data buffer
             self.logger.info("Cleaning up module data buffer")
-            self.module_data.clear()
+            self.buffer_manager.clear_module_data()
             
             # Clean up modules list
             self.logger.info("Cleaning up modules list")
@@ -323,37 +153,14 @@ class Controller:
             # Clean up service manager
             self.service_manager.cleanup()
             
+            # Clean up communication manager
+            self.communication_manager.cleanup()
+            
+            # Clean up data export manager
+            self.data_export_manager.stop_all_exports()
+            
             # Give modules time to detect the controller is gone
             time.sleep(1)
-            
-            # Now clean up ZeroMQ sockets
-            try:
-                # First set LINGER on all sockets
-                if hasattr(self, 'command_socket'):
-                    self.logger.info("Setting LINGER on command socket")
-                    self.command_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
-                if hasattr(self, 'status_socket'):
-                    self.logger.info("Setting LINGER on status socket")
-                    self.status_socket.setsockopt(zmq.LINGER, 1000)  # 1 second
-
-                # Then close all sockets
-                if hasattr(self, 'command_socket'):
-                    self.logger.info("Closing command socket")
-                    self.command_socket.close()
-                if hasattr(self, 'status_socket'):
-                    self.logger.info("Closing status socket")
-                    self.status_socket.close()
-
-                # Give sockets time to fully close
-                time.sleep(0.5)
-
-                # Finally terminate the context
-                if hasattr(self, 'context'):
-                    self.logger.info("Terminating ZeroMQ context")
-                    self.context.term()
-
-            except Exception as e:
-                self.logger.error(f"Error during ZeroMQ cleanup: {e}")
             
             self.logger.info("Controller stopped successfully")
             return True
@@ -394,91 +201,50 @@ class Controller:
             self.logger.error(f"Failed to start file transfer server: {e}")
             return False
 
-        # Start the server
+        # Start the appropriate control mode
         if self.manual_control:
-            self.logger.info("Starting manual control loop")
-            while True:
-                # Get user input
-                print("\nEnter a command (type help for list of commands): ", end='', flush=True)
-                try:
-                    user_input = input().strip()
-                    if not user_input:
-                        continue
-                        
-                    match user_input:
-                        case "help":
-                            print("Available commands:")
-                            print("  help - Show this help message")
-                            print("  quit - Quit the manual control loop")
-                            print("  list - List available modules discovered by zeroconf")
-                            print("  supabase get test - Test retrieving a couple entries from supabase")
-                            print("  supabase export - Export the local buffer to the database")
-                            print("  zmq send - Send a command to a specific module via zeromq")
-                            print("  read buffer - Read the local buffer for a given module")
-                            print("  size buffer - Print the size of the local buffer for a given module")
-                            print("  start export - Periodically export the local buffer to the database")
-                            print("  stop export - Stop the periodic export of the local buffer to the database ")
-                            print("  start health export - Periodically export the local health data to the database")
-                            print("  stop health export - Stop the periodic export of the local health data to the database")
-                            print("  health status - Print the health status of all modules")
-                            print("  check export - Check if the controller is currently exporting data to the database")
-                            print("  session_id  - Generate a session_id")
-                        case "quit":
-                            self.logger.info("Quitting manual control loop")
-                            break
-                        case "list":
-                            print("Available modules:")
-                            for module in self.service_manager.modules:
-                                print(f"  ID: {module.id}, Type: {module.type}, IP: {module.ip}")
-                            if not self.service_manager.modules:
-                                print("No modules found")
-                        case "zmq send":
-                            # send a command to module from list of modules
-                            if not self.service_manager.modules:
-                                print("No modules available")
-                                continue
-                                
-                            print("\nAvailable modules:")
-                            for i, module in enumerate(self.service_manager.modules, 1):
-                                print(f"{i}. {module.name}")
-                            
-                            try:
-                                module_idx = int(input("\nChosen module: ").strip()) - 1
-                                if not 0 <= module_idx < len(self.service_manager.modules):
-                                    print("Invalid module selection")
-                                    continue
-                                    
-                                print("\nAvailable commands:")
-                                for i, cmd in enumerate(self.commands, 1):
-                                    print(f"{i}. {cmd}")
-                                    
-                                cmd_idx = int(input("\nChosen command: ").strip()) - 1
-                                if not 0 <= cmd_idx < len(self.commands):
-                                    print("Invalid command selection")
-                                    continue
-                                    
-                                self.send_command(self.service_manager.modules[module_idx].id, self.commands[cmd_idx])
-                            except ValueError:
-                                print("Invalid input - please enter a number")
-                                continue
-                        case "health status":
-                            print("\nModule Health Status:")
-                            if not self.module_health:
-                                print("No modules reporting health data")
-                            for module_id, health in self.module_health.items():
-                                print(f"\nModule: {module_id}")
-                                print(f"Status: {health['status']}")
-                                print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
-                                print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
-                                print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
-                                print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
-                                print(f"Uptime: {health.get('uptime', 'N/A')}s")
-                                print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
-                except Exception as e:
-                    self.logger.error(f"Error handling input: {e}")
+            self.interface_manager.run_manual_control()
         else:
             print("Starting automatic loop (not implemented yet)")
             # @TODO: Implement automatic loop
 
         return True
         
+    def get_config(self, key: str, default: Any = None) -> Any:
+        """
+        Get a configuration value
+        
+        Args:
+            key: Configuration key path (e.g., "controller.max_buffer_size")
+            default: Default value if key doesn't exist
+            
+        Returns:
+            Configuration value
+        """
+        return self.config_manager.get(key, default)
+        
+    def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
+        """
+        Set a configuration value
+        
+        Args:
+            key: Configuration key path (e.g., "controller.max_buffer_size")
+            value: Value to set
+            persist: Whether to save to config file
+            
+        Returns:
+            True if successful
+        """
+        # Update local variable if applicable
+        if key == "controller.max_buffer_size":
+            self.max_buffer_size = value
+            self.buffer_manager.max_buffer_size = value
+        elif key == "controller.manual_control":
+            self.manual_control = value
+        elif key == "controller.print_received_data":
+            self.print_received_data = value
+        elif key == "controller.commands":
+            self.commands = value
+        
+        # Update in config manager
+        return self.config_manager.set(key, value, persist) 

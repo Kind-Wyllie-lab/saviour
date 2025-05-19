@@ -368,23 +368,3 @@ class PTPManager:
     def get_ptp_time(self):
         # If PTP is synced to system clock, just use time.time()
         return time.time()
-
-# Example usage:
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
-    
-    try:
-        # Example as master
-        master = PTPManager(role=PTPRole.MASTER, interface='eth0')
-        master.start()
-        
-        while True:
-            status = master.get_status()
-            print(f"PTP status: {status}")
-            time.sleep(2)
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        master.stop()
-    except PTPError as e:
-        print(f"Error: {e}")
-        sys.exit(1)

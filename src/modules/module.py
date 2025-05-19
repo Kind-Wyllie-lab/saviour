@@ -149,12 +149,14 @@ class Module:
         else:
             self.is_running = True
             self.start_time = time.time()
+            self.logger.info(f"Module started at {self.start_time}")
             
             # Update start time in command handler
             self.command_handler.start_time = self.start_time
             
             # Start command listener thread if controller is discovered
             if self.service_manager.controller_ip:
+                self.logger.info(f"Attempting to connect to controller at {self.service_manager.controller_ip}")
                 # Connect to the controller
                 self.communication_manager.connect(
                     self.service_manager.controller_ip,
@@ -163,7 +165,6 @@ class Module:
                 self.communication_manager.start_command_listener()
 
                 # Start PTP
-                print("starting ptp...")
                 self.ptp_manager.start()
 
                 # Start sending heartbeats

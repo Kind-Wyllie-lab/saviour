@@ -44,7 +44,7 @@ class PTPManager:
 
         # Check for root privileges first
         if os.geteuid() != 0:
-            raise PTPError("This program must be run as root (use sudo). PTP requires root privileges to adjust system time.")
+            raise PTPError("(PTP MANAGER) This program must be run as root (use sudo). PTP requires root privileges to adjust system time.")
 
         # Assign basic params
         self.role = role
@@ -95,31 +95,31 @@ class PTPManager:
                 missing_packages.append(package)
         
         if missing_packages:
-            raise PTPError(f"Missing required packages: {', '.join(missing_packages)}. "
+            raise PTPError(f"(PTP MANAGER) Missing required packages: {', '.join(missing_packages)}. "
                           f"Please install them using: sudo apt-get install linuxptp")
 
     def _validate_interface(self):
         """Check if the interface exists and supports PTP."""
         # Check if interface exists
         if not os.path.exists(f'/sys/class/net/{self.interface}'):
-            raise PTPError(f"Interface {self.interface} does not exist")
+            raise PTPError(f"(PTP MANAGER) Interface {self.interface} does not exist")
         
         # Check if interface is up
         try:
             with open(f'/sys/class/net/{self.interface}/operstate', 'r') as f:
                 if f.read().strip() != 'up':
-                    self.logger.warning(f"Interface {self.interface} is not up")
+                    self.logger.warning(f"(PTP MANAGER) Interface {self.interface} is not up")
         except IOError:
-            self.logger.warning(f"Could not check interface {self.interface} state")
+            self.logger.warning(f"(PTP MANAGER) Could not check interface {self.interface} state")
         
         # Check if interface supports PTP
         try:
             result = subprocess.run(['ethtool', '-T', self.interface], 
                                   capture_output=True, text=True)
             if 'PTP Hardware Clock' not in result.stdout:
-                self.logger.warning(f"Interface {self.interface} may not support PTP hardware timestamping")
+                self.logger.warning(f"(PTP MANAGER) Interface {self.interface} may not support PTP hardware timestamping")
         except subprocess.CalledProcessError:
-            self.logger.warning(f"Could not check PTP support for {self.interface}")
+            self.logger.warning(f"(PTP MANAGER) Could not check PTP support for {self.interface}")
 
     def _create_config_file(self):
         """Create a temporary configuration file for ptp4l."""
@@ -136,7 +136,7 @@ class PTPManager:
         fd, path = tempfile.mkstemp(prefix='ptp4l_', suffix='.conf')
         with os.fdopen(fd, 'w') as f:
             f.write(config_content)
-        self.logger.debug(f"Created PTP config file at {path}")
+        self.logger.debug(f"(PTP MANAGER) Created PTP config file at {path}")
         return path
 
     def _stop_timesyncd(self):
@@ -145,7 +145,7 @@ class PTPManager:
         It will interfere with phc2sys function if it is running.
         This should be made to happen during setup, but we might as well do it here as well.
         """
-        self.logger.info("Attempting to stop systemd.timesyncd")
+        self.logger.info("(PTP MANAGER) Attempting to stop systemd.timesyncd")
         try:
             subprocess.Popen(["sudo",
                               "systemctl",
@@ -153,7 +153,7 @@ class PTPManager:
                               "systemd-timesyncd"])
 
         except Exception as e:
-            self.logger.error(f"Failed to stop timesyncd: {str(e)}")
+            self.logger.error(f"(PTP MANAGER) Failed to stop timesyncd: {str(e)}")
             raise
 
     def _check_ptp_running(self):
@@ -184,13 +184,13 @@ class PTPManager:
         else:
             cmd.append("kill")
             cmd.reverse() # Reverse so that kill comes at the front - process order shouldn't matter here
-            self.logger.info(f"Killing all ptp processes with command: {cmd}")
+            self.logger.info(f"(PTP MANAGER) Killing all ptp processes with command: {cmd}")
             subprocess.Popen(cmd)
 
 
     def start(self):
         print("ptp.start()")
-        self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")
+        self.logger.info(f"(PTP MANAGER) Starting PTP in {self.role.value} mode on {self.interface}")
 
         # Ensure timesyncd is disabled, or else phc2sys won't work!
         self._stop_timesyncd()
@@ -216,9 +216,9 @@ class PTPManager:
             time.sleep(0.5)  # Give it a moment to start
             if self.ptp4l_proc.poll() is not None: # poll() checks the process has terminated.
                 error = self.ptp4l_proc.stderr.read()
-                raise PTPError(f"ptp4l failed to start: {error}")
+                raise PTPError(f"(PTP MANAGER) ptp4l failed to start: {error}")
             
-            self.logger.info("ptp4l started successfully")
+            self.logger.info("(PTP MANAGER) ptp4l started successfully")
             
             # Start phc2sys
             self.phc2sys_proc = subprocess.Popen(
@@ -235,12 +235,12 @@ class PTPManager:
             if self.phc2sys_proc.poll() is not None:
                 error = self.phc2sys_proc.stderr.read()
                 self.ptp4l_proc.terminate()
-                raise PTPError(f"phc2sys failed to start: {error}")
+                raise PTPError(f"(PTP MANAGER) phc2sys failed to start: {error}")
             
-            self.logger.info("phc2sys started successfully")
+            self.logger.info("(PTP MANAGER) phc2sys started successfully")
             
         except Exception as e:
-            self.logger.error(f"Failed to start PTP processes: {str(e)}")
+            self.logger.error(f"(PTP MANAGER) Failed to start PTP processes: {str(e)}")
             self.stop()
             raise
         
@@ -255,7 +255,7 @@ class PTPManager:
                 if proc and proc.poll() is not None:
                     error = proc.stderr.read() if proc.stderr else "No error output"
                     self.status = f'{name} stopped'
-                    self.logger.error(f"{name} process stopped unexpectedly! Error: {error}")
+                    self.logger.error(f"(PTP MANAGER) {name} process stopped unexpectedly! Error: {error}")
                     self.running = False
                     return
                 
@@ -273,9 +273,9 @@ class PTPManager:
                             self.last_offset = float(offset_str)
                             self.last_sync_time = time.time()
                             self.status = 'synchronized'
-                            self.logger.info(f"PTP offset: {self.last_offset} ns")
+                            self.logger.info(f"(PTP MANAGER) PTP offset: {self.last_offset} ns")
                         except (IndexError, ValueError):
-                            self.logger.warning(f"Could not parse offset from line: {line}")
+                            self.logger.warning(f"(PTP MANAGER) Could not parse offset from line: {line}")
 
                     # Parse freq correction information
                     if 'freq' in line:
@@ -284,16 +284,16 @@ class PTPManager:
                             freq_str = line.split('freq')[1].split()[0]
                             self.last_freq = int(freq_str)
                         except(IndexError, ValueError):
-                            self.logger.warning(f"Could not parse freq from line: {line}")
+                            self.logger.warning(f"(PTP MANAGER) Could not parse freq from line: {line}")
 
                     # Check for successful sync
                     if 'synchronized' in line.lower():
                         self.status = 'synchronized'
-                        self.logger.info("PTP synchronized successfully")
+                        self.logger.info("(PTP MANAGER) PTP synchronized successfully")
                     
                     # Check for port state changes
                     if 'port state' in line.lower():
-                        self.logger.info(f"PTP port state change: {line}")
+                        self.logger.info(f"(PTP MANAGER) PTP port state change: {line}")
                         if 'LISTENING' in line:
                             self.status = 'listening'
                         elif 'UNCALIBRATED' in line:
@@ -306,23 +306,23 @@ class PTPManager:
                     # Check for errors
                     if 'FAULT' in line or 'error' in line.lower():
                         self.status = 'error'
-                        self.logger.error(f"PTP error detected: {line}")
+                        self.logger.error(f"(PTP MANAGER) PTP error detected: {line}")
                     
                     # Check for clock selection
                     if 'selected' in line and 'PTP clock' in line:
-                        self.logger.info(f"PTP clock selected: {line}")
+                        self.logger.info(f"(PTP MANAGER) PTP clock selected: {line}")
                     
                     # Check for frequency adjustment
                     if 'frequency' in line and 'adjustment' in line:
-                        self.logger.info(f"PTP frequency adjustment: {line}")
+                        self.logger.info(f"(PTP MANAGER) PTP frequency adjustment: {line}")
                     
                     # Check for announce messages
                     if 'announce' in line.lower():
-                        self.logger.debug(f"PTP announce: {line}")
+                        self.logger.debug(f"(PTP MANAGER) PTP announce: {line}")
                     
                     # Check for sync messages
                     if 'sync' in line.lower() and 'message' in line.lower():
-                        self.logger.debug(f"PTP sync message: {line}")
+                        self.logger.debug(f"(PTP MANAGER) PTP sync message: {line}")
             
             time.sleep(0.1)
 
@@ -349,7 +349,7 @@ class PTPManager:
             pass
         
         self.status = 'stopped'
-        self.logger.info("Stopped PTP processes.")
+        self.logger.info("(PTP MANAGER) Stopped PTP processes.")
 
     def get_status(self):
         return {

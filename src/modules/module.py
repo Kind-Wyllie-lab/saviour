@@ -83,6 +83,9 @@ class Module:
             config_manager=self.config_manager,
             communication_manager=self.communication_manager
         )
+        self.ptp_manager = PTPManager(
+            logger=self.logger,
+            role=PTPRole.SLAVE)
         self.command_handler = ModuleCommandHandler(
             self.logger,
             self.module_id,
@@ -90,11 +93,10 @@ class Module:
             communication_manager=self.communication_manager,
             health_manager=self.health_manager,
             config_manager=self.config_manager,
+            ptp_manager=self.ptp_manager,
             start_time=None # Will be set during start()
         )
-        self.ptp_manager = PTPManager(
-            logger=self.logger,
-            role=PTPRole.SLAVE)
+
         
         # Set the callback in the communication manager to use the command handler
         self.communication_manager.command_callback = self.command_handler.handle_command
@@ -159,12 +161,15 @@ class Module:
                     self.service_manager.controller_port
                 )
                 self.communication_manager.start_command_listener()
-                
+
+                # Start PTP
+                print("starting ptp...")
+                self.ptp_manager.start()
+
                 # Start sending heartbeats
                 self.health_manager.start_heartbeats()
 
-                # Start PTP
-                self.ptp_manager.start()
+
             
         return True
 

@@ -189,6 +189,7 @@ class PTPManager:
 
 
     def start(self):
+        print("ptp.start()")
         self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")
 
         # Ensure timesyncd is disabled, or else phc2sys won't work!

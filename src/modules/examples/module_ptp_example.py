@@ -11,6 +11,8 @@ def main():
     ptp = PTPManager(role=PTPRole.SLAVE,
                             logger=logging.getLogger("testlogger"))
 
+
+
     ptp.start()
 
     try:

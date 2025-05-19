@@ -14,8 +14,7 @@ def test_camera_module_type():
     camera = CameraModule()
     assert(camera.module_type == "camera")
     # cleanup
-    camera.zeroconf.unregister_service(camera.service_info)
-    camera.zeroconf.close()
+    camera.service_manager.cleanup()
 
 def test_camera_module_start_stop():
     """Test that module can start and stop"""
@@ -28,6 +27,7 @@ def test_camera_module_start_stop():
     time.sleep(0.5)
     assert camera.is_running == False
     # cleanup
+    camera.service_manager.cleanup()
 
 def test_camera_module_id():
     from src.modules.camera_module import CameraModule
@@ -36,8 +36,7 @@ def test_camera_module_id():
     short_id = mac[-4:]  # Takes last 4 characters
     assert(camera.module_id == f"camera_{short_id}")
     # cleanup
-    camera.zeroconf.unregister_service(camera.service_info)
-    camera.zeroconf.close()
+    camera.service_manager.cleanup()
 
 def test_camera_module_record_video():
     from src.modules.camera_module import CameraModule
@@ -46,9 +45,7 @@ def test_camera_module_record_video():
     time.sleep(1) # Give time for file to be created
     assert(os.path.exists(f"{filename}"))
     # cleanup
-    camera.zeroconf.unregister_service(camera.service_info)
-    camera.zeroconf.close()
-
+    camera.service_manager.cleanup()
 
 
 

@@ -45,7 +45,7 @@ class ControllerInterfaceManager:
             case "list":
                 self.list_modules()
             case "zmq send":
-                self.send_zmq_command()
+                self.handle_zmq_command()
             case "health status":
                 self.show_health_status()
             case "supabase export":
@@ -92,73 +92,73 @@ class ControllerInterfaceManager:
         if not self.controller.service_manager.modules:
             print("No modules found")
     
-def send_zmq_command(self):
-    """Handle ZMQ command sending"""
-    if not self.controller.service_manager.modules:
-        print("No modules available")
-        return
+    def handle_zmq_command(self):
+        """Handle ZMQ command sending"""
+        if not self.controller.service_manager.modules:
+            print("No modules available")
+            return
+            
+        print("\nAvailable modules:")
+        for i, module in enumerate(self.controller.service_manager.modules, 1):
+            print(f"{i}. {module.name}")
         
-    print("\nAvailable modules:")
-    for i, module in enumerate(self.controller.service_manager.modules, 1):
-        print(f"{i}. {module.name}")
-    
-    try:
-        module_idx = int(input("\nChosen module: ").strip()) - 1
-        if not 0 <= module_idx < len(self.controller.service_manager.modules):
-            print("Invalid module selection")
-            return
-            
-        print("\nAvailable commands:")
-        for i, cmd in enumerate(self.controller.commands, 1):
-            print(f"{i}. {cmd}")
-            
-        cmd_idx = int(input("\nChosen command: ").strip()) - 1
-        if not 0 <= cmd_idx < len(self.controller.commands):
-            print("Invalid command selection")
-            return
-            
-        # Special handling for update_camera_settings command
-        if self.controller.commands[cmd_idx] == "update_camera_settings":
-            print("\nEnter camera settings (one per line, format: key=value):")
-            print("Available settings:")
-            print("  width=<pixels>")
-            print("  height=<pixels>")
-            print("  fps=<frames_per_second>")
-            print("  streaming.enabled=<true/false>")
-            print("  streaming.port=<port_number>")
-            print("Enter empty line when done")
-            
-            params = {}
-            while True:
-                line = input().strip()
-                if not line:
-                    break
-                try:
-                    key, value = line.split('=')
-                    # Convert value to appropriate type
-                    if value.lower() in ('true', 'false'):
-                        value = value.lower() == 'true'
-                    elif value.isdigit():
-                        value = int(value)
-                    params[key.strip()] = value
-                except ValueError:
-                    print("Invalid format. Use key=value")
-                    continue
-            
-            # Send the command with parameters
-            self.controller.communication_manager.send_command(
-                self.controller.service_manager.modules[module_idx].id,
-                "update_camera_settings",
-                params
-            )
-        else:
-            # Handle other commands as before
-            self.controller.communication_manager.send_command(
-                self.controller.service_manager.modules[module_idx].id, 
-                self.controller.commands[cmd_idx]
-            )
-    except ValueError:
-        print("Invalid input - please enter a number")
+        try:
+            module_idx = int(input("\nChosen module: ").strip()) - 1
+            if not 0 <= module_idx < len(self.controller.service_manager.modules):
+                print("Invalid module selection")
+                return
+                
+            print("\nAvailable commands:")
+            for i, cmd in enumerate(self.controller.commands, 1):
+                print(f"{i}. {cmd}")
+                
+            cmd_idx = int(input("\nChosen command: ").strip()) - 1
+            if not 0 <= cmd_idx < len(self.controller.commands):
+                print("Invalid command selection")
+                return
+                
+            # Special handling for update_camera_settings command
+            if self.controller.commands[cmd_idx] == "update_camera_settings":
+                print("\nEnter camera settings (one per line, format: key=value):")
+                print("Available settings:")
+                print("  width=<pixels>")
+                print("  height=<pixels>")
+                print("  fps=<frames_per_second>")
+                print("  streaming.enabled=<true/false>")
+                print("  streaming.port=<port_number>")
+                print("Enter empty line when done")
+                
+                params = {}
+                while True:
+                    line = input().strip()
+                    if not line:
+                        break
+                    try:
+                        key, value = line.split('=')
+                        # Convert value to appropriate type
+                        if value.lower() in ('true', 'false'):
+                            value = value.lower() == 'true'
+                        elif value.isdigit():
+                            value = int(value)
+                        params[key.strip()] = value
+                    except ValueError:
+                        print("Invalid format. Use key=value")
+                        continue
+                
+                # Send the command with parameters
+                self.controller.communication_manager.send_command(
+                    self.controller.service_manager.modules[module_idx].id,
+                    "update_camera_settings",
+                    params
+                )
+            else:
+                # Handle other commands as before
+                self.controller.communication_manager.send_command(
+                    self.controller.service_manager.modules[module_idx].id, 
+                    self.controller.commands[cmd_idx]
+                )
+        except ValueError:
+            print("Invalid input - please enter a number")
     
     def show_health_status(self):
         """Display health status of all modules"""

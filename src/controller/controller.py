@@ -103,8 +103,13 @@ class Controller:
         try:
             status_data = eval(data) # Convert string data to dictionary
             
-            # Update health monitoring through health monitor
-            self.health_monitor.update_module_health(module_id, status_data)
+            # Check if this is a heartbeat update
+            if 'timestamp' in status_data:
+                # This is a heartbeat update, send to health monitor
+                self.health_monitor.update_module_health(module_id, status_data)
+            else:
+                # This is a command status update, just log it
+                self.logger.info(f"Command status from {module_id}: {status_data}")
 
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")

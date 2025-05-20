@@ -94,6 +94,7 @@ class ModuleHealthManager:
         """Get health metrics for the module to be sent as heartbeat"""
         ptp_status = self.get_ptp_offsets()
         return {
+            "type": "heartbeat",  # Add type field to identify heartbeat status
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
             'cpu_usage': psutil.cpu_percent(),

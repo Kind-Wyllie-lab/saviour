@@ -101,16 +101,13 @@ class Controller:
         self.logger.info(f"Status update received from module {topic} with data: {data}")
         module_id = topic.split('/')[1] # get module id from topic
         try:
-            status_data = eval(data) # Convert string data to dictionary
-            
-            # Check if this is a heartbeat update
-            if 'timestamp' in status_data:
-                # This is a heartbeat update, send to health monitor
-                self.health_monitor.update_module_health(module_id, status_data)
-            else:
-                # This is a command status update, just log it
-                self.logger.info(f"Command status from {module_id}: {status_data}")
-
+            status_data = eval(data)
+            status_type = status_data.get('type', 'unknown')
+            match status_type:
+                case 'heartbeat':
+                    self.health_monitor.update_module_health(module_id, status_data)
+                case _:
+                    self.logger.info(f"Command status from {module_id}: {status_data}")
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
             

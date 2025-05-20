@@ -17,10 +17,12 @@ def main():
 
     ptp._check_ptp_running()
 
-    
-    print(f"{ptp.active_ptp4l_processes}, {ptp.active_phc2sys_processes}")
 
-    list
+    print(f"Active ptp processes: {ptp.active_ptp4l_processes}, {ptp.active_phc2sys_processes}")
+
+    ptp._kill_ptp_processes()
+
+
 
 
 

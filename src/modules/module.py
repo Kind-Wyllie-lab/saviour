@@ -97,7 +97,9 @@ class Module:
             start_time=None # Will be set during start()
         )
 
-        
+        # Bind health manager's callback to the ptp_manager method
+        self.health_manager.get_ptp_offsets = self.ptp_manager.get_status
+
         # Set the callback in the communication manager to use the command handler
         self.communication_manager.command_callback = self.command_handler.handle_command
         

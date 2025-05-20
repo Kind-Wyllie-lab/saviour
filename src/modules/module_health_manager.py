@@ -24,7 +24,8 @@ class ModuleHealthManager:
     def __init__(self, logger: logging.Logger, 
                  config_manager=None,
                  communication_manager=None,
-                 start_time=None):
+                 start_time=None,
+                 ptp_callback=None):
         
         # Imported managers from module.py
         self.logger = logger
@@ -34,6 +35,8 @@ class ModuleHealthManager:
             self.start_time = time.time()
         else:
             self.start_time = start_time
+
+        self.get_ptp_offsets = ptp_callback
 
         # Heartbeat parameters
         self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval", 30)
@@ -89,13 +92,16 @@ class ModuleHealthManager:
     
     def get_health(self):
         """Get health metrics for the module to be sent as heartbeat"""
+        ptp_status = self.get_ptp_offsets()
         return {
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
             'cpu_usage': psutil.cpu_percent(),
             'memory_usage': psutil.virtual_memory().percent,
             'uptime': time.time() - self.start_time if self.start_time else 0,
-            'disk_space': psutil.disk_usage('/').percent # Free disk space
+            'disk_space': psutil.disk_usage('/').percent, # Free disk space
+            'ptp_offset': ptp_status['last_offset'],
+            'ptp_freq': ptp_status['last_freq']
         }
 
     def get_cpu_temp(self):

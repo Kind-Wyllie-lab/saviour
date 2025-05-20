@@ -151,6 +151,18 @@ class ControllerInterfaceManager:
                     self.controller.service_manager.modules[module_idx].id,
                     command_str
                 )
+            # Special handling for record_video command
+            elif self.controller.commands[cmd_idx] == "record_video":
+                try:
+                    duration = int(input("\nEnter recording duration in seconds (0 for continuous): ").strip())
+                    # Send the command with duration parameter
+                    command_str = f"record_video {duration}"
+                    self.controller.communication_manager.send_command(
+                        self.controller.service_manager.modules[module_idx].id,
+                        command_str
+                    )
+                except ValueError:
+                    print("Invalid duration - please enter a number")
             else:
                 # Handle other commands as before
                 self.controller.communication_manager.send_command(

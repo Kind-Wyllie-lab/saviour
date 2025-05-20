@@ -29,7 +29,7 @@ class CameraCommandHandler(ModuleCommandHandler):
         """Handle camera-specific commands while preserving base functionality"""
         
         # Handle camera-specific commands
-        match command:
+        match command.split()[0]:  # Split and take first word to match command
             case "start_recording":
                 if 'start_recording' in self.callbacks:
                     result = self.callbacks['start_recording']()
@@ -50,18 +50,27 @@ class CameraCommandHandler(ModuleCommandHandler):
 
             case "record_video":
                 if 'record_video' in self.callbacks:
-                    length = kwargs.get('length', 10)  # Default 10 seconds
-                    filename = self.callbacks['record_video'](length)
-                    if filename:
-                        self.communication_manager.send_status({ # Is this a duplicate with record_video?
-                            "video_recorded": True,
-                            "filename": filename,
-                            "length": length
-                        })
-                    else:
+                    try:
+                        # Extract duration from command string
+                        duration_str = command.split(' ', 1)[1]  # Get everything after the command name
+                        duration = int(duration_str)
+                        filename = self.callbacks['record_video'](duration)
+                        if filename:
+                            self.communication_manager.send_status({
+                                "type": "video_recording_complete",
+                                "filename": filename,
+                                "length": duration
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "video_recording_failed",
+                                "error": "Recording failed"
+                            })
+                    except (ValueError, IndexError) as e:
+                        self.logger.error(f"Error parsing record duration: {e}")
                         self.communication_manager.send_status({
-                            "video_recorded": False,
-                            "error": "Recording failed"
+                            "type": "video_recording_failed",
+                            "error": "Invalid duration format"
                         })
                 else:
                     self.logger.error("No record_video callback provided")
@@ -89,17 +98,36 @@ class CameraCommandHandler(ModuleCommandHandler):
                 return
 
             case "update_camera_settings":
-                # Extract parameters from command string
                 try:
+                    # Extract parameters from command string
                     params_str = command.split(' ', 1)[1]  # Get everything after the command name
                     params = eval(params_str)  # Convert string representation back to dict
-                    self.handle_update_camera_settings(params)
+                    if 'handle_update_camera_settings' in self.callbacks:
+                        success = self.callbacks['handle_update_camera_settings'](params)
+                        if success:
+                            self.communication_manager.send_status({
+                                "type": "camera_settings_updated",
+                                "settings": params,
+                                "success": True
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "camera_settings_update_failed",
+                                "error": "Failed to update settings"
+                            })
+                    else:
+                        self.logger.error("No handle_update_camera_settings callback provided")
+                        self.communication_manager.send_status({
+                            "type": "camera_settings_update_failed",
+                            "error": "Module not configured for camera settings"
+                        })
                 except Exception as e:
                     self.logger.error(f"Error parsing camera settings: {e}")
                     self.communication_manager.send_status({
                         "type": "camera_settings_update_failed",
                         "error": str(e)
                     })
+                return
 
         # If not a camera-specific command, pass to parent class
         super().handle_command(command, **kwargs)
@@ -159,11 +187,17 @@ class CameraModule(Module):
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'record_video': self.record_video,
-            'export_video': self.export_video
+            'export_video': self.export_video,
+            'handle_update_camera_settings': self.handle_update_camera_settings
         })
 
     def record_video(self, length: int = 10):
-        """Record a video with session management"""
+        """Record a video for a specific duration"""
+        if length == 0:
+            # If length is 0, start continuous recording
+            return self.start_recording()
+        
+        # Otherwise, record for specified duration
         self.logger.info(f"Starting video recording for {length} seconds")
         
         # Generate session ID if not exists
@@ -211,11 +245,12 @@ class CameraModule(Module):
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
                 # Send status update
-                self.communication_manager.send_status({ # Is this a duplicate with 
+                self.communication_manager.send_status({
                     "type": "video_recording_complete",
                     "filename": filename,
                     "length": length,
-                    "session_id": self.stream_session_id
+                    "session_id": self.stream_session_id,
+                    "timestamp": datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                 })
                 return filename
             else:
@@ -275,52 +310,110 @@ class CameraModule(Module):
             return False
 
     def start_recording(self):
-        """Start recording a video stream"""
-        self.logger.info("Starting video recording")
-        
-        filename = f"{self.video_folder}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_test')}.{self.video_filetype}"
-
-        # TODO: Implement video recording
+        """Start continuous video recording"""
         if self.is_recording:
-            self.logger.info("Video recording already in progress")
+            self.logger.info("Already recording")
             return False
-        else:
-            self.is_recording = True
-            return True
-
+        
+        # Generate session ID if not exists
+        if not self.stream_session_id:
+            self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+        
+        # Create filename using session ID and timestamp
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{self.video_folder}/{self.stream_session_id}_{timestamp}.{self.video_filetype}"
+        
+        # Ensure recording directory exists
+        os.makedirs(self.video_folder, exist_ok=True)
+        
         # Get camera settings from config
         fps = self.config_manager.get("camera.fps", 100)
         width = self.config_manager.get("camera.width", 1280)
         height = self.config_manager.get("camera.height", 720)
         codec = self.config_manager.get("camera.codec", "h264")
+        profile = self.config_manager.get("camera.profile", "high")
         level = self.config_manager.get("camera.level", 4.2)
-
+        intra = self.config_manager.get("camera.intra", 30)
+        
+        # Build command with config settings
         cmd = [
             "rpicam-vid",
-            "-t", "0",
             "--framerate", str(fps),
             "--width", str(width),
             "--height", str(height),
-            "-o", f"{filename}",
+            "-t", "0",  # 0 means record until stopped
+            "-o", filename,
             "--nopreview",
             "--level", str(level),
             "--codec", codec,
+            "--profile", profile,
+            "--intra", str(intra)
         ]
 
-        subprocess.run(cmd)
-    
-    def stop_recording(self):
-        """Stop recording a video stream"""
-        self.logger.info("Stopping video recording")
-        
-        # TODO: Implement video recording
-        if self.is_recording:
-            self.is_recording = False
+        self.logger.info(f"Starting continuous recording to {filename}")
+        self.logger.info(f"Command: {' '.join(cmd)}")
+
+        try:
+            # Start the recording process
+            self.recording_process = subprocess.Popen(cmd)
+            self.is_recording = True
+            self.current_filename = filename
+            self.recording_start_time = time.time()
+            
+            # Send status update
+            self.communication_manager.send_status({
+                "type": "recording_started",
+                "filename": filename,
+                "session_id": self.stream_session_id,
+                "timestamp": timestamp
+            })
             return True
-        else:
-            self.logger.info("Video recording not in progress")
+        except Exception as e:
+            self.logger.error(f"Error starting recording: {e}")
+            self.communication_manager.send_status({
+                "type": "recording_start_failed",
+                "error": str(e)
+            })
+            return False
+
+    def stop_recording(self):
+        """Stop continuous video recording"""
+        if not self.is_recording:
+            self.logger.info("Not recording")
             return False
         
+        try:
+            if self.recording_process:
+                # Send SIGTERM to gracefully stop recording
+                self.recording_process.terminate()
+                # Wait up to 5 seconds for process to finish
+                self.recording_process.wait(timeout=5)
+                
+            # Calculate duration
+            duration = time.time() - self.recording_start_time
+            
+            self.is_recording = False
+            self.communication_manager.send_status({
+                "type": "recording_stopped",
+                "filename": self.current_filename,
+                "session_id": self.stream_session_id,
+                "duration": duration,
+                "timestamp": datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            })
+            return True
+        except subprocess.TimeoutExpired:
+            # If process doesn't stop gracefully, force kill
+            self.recording_process.kill()
+            self.logger.warning("Recording process force killed")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error stopping recording: {e}")
+            self.communication_manager.send_status({
+                "type": "recording_stop_failed",
+                "error": str(e)
+            })
+            return False
+
     def get_controller_ip(self) -> str:
         """Get the controller's IP address"""
         return self.controller_ip

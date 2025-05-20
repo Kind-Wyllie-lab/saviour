@@ -83,6 +83,11 @@ class PTPManager:
         self.active_ptp4l_processes = None
         self.active_phc2sys_processes = None
 
+        # Warning limits
+        # TODO: Thresholds in config files.
+        self.offset_warning_threshold = 10000 # If offsets are larger than this value, a warning will be displayed.
+        self.freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
+
     def _check_required_packages(self):
         """Check if required PTP packages are installed."""
         required_packages = ['ptp4l', 'phc2sys']
@@ -331,7 +336,14 @@ class PTPManager:
                     # Check for sync messages
                     if 'sync' in line.lower() and 'message' in line.lower():
                         self.logger.debug(f"(PTP MANAGER) PTP sync message: {line}")
-            
+
+                    # Check for excessively high freq/offset
+                    if self.last_offset is not None:
+                        if abs(self.last_offset) > self.offset_warning_threshold:
+                            self.logger.warning(f"(PTP MANAGER) Warning: offset {self.last_offset} exceeded threshold value {self.offset_warning_threshold}")
+                    if self.last_freq is not None:
+                        if abs(self.last_freq) > self.freq_warning_threshold:
+                            self.logger.warning(f"(PTP MANAGER) Warning: freq {self.last_freq} exceeded threshold value {self.freq_warning_threshold}")
             time.sleep(0.1)
 
     def stop(self):

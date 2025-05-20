@@ -88,6 +88,19 @@ class CameraCommandHandler(ModuleCommandHandler):
                     self.communication_manager.send_status({"error": "Module not configured for video export"})
                 return
 
+            case "update_camera_settings":
+                # Extract parameters from command string
+                try:
+                    params_str = command.split(' ', 1)[1]  # Get everything after the command name
+                    params = eval(params_str)  # Convert string representation back to dict
+                    self.handle_update_camera_settings(params)
+                except Exception as e:
+                    self.logger.error(f"Error parsing camera settings: {e}")
+                    self.communication_manager.send_status({
+                        "type": "camera_settings_update_failed",
+                        "error": str(e)
+                    })
+
         # If not a camera-specific command, pass to parent class
         super().handle_command(command, **kwargs)
 

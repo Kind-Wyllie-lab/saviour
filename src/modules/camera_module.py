@@ -80,19 +80,40 @@ class CameraCommandHandler(ModuleCommandHandler):
 
             case "export_video":
                 if 'export_video' in self.callbacks:
-                    filename = kwargs.get('filename')
-                    length = kwargs.get('length', 10)
-                    if not filename:
+                    try:
+                        # Extract parameters from command string
+                        params_str = command.split(' ', 1)[1]  # Get everything after the command name
+                        params = eval(params_str)  # Convert string representation back to dict
+                        
+                        filename = params.get('filename')
+                        if not filename:
+                            self.communication_manager.send_status({
+                                "type": "video_export_failed",
+                                "error": "No filename provided for export"
+                            })
+                            return
+                            
+                        # Optional length parameter
+                        length = params.get('length', 0)
+                        
+                        success = self.callbacks['export_video'](filename, length)
+                        if success:
+                            self.communication_manager.send_status({
+                                "type": "video_export_complete",
+                                "filename": filename,
+                                "length": length
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "video_export_failed",
+                                "error": "Failed to export video"
+                            })
+                    except Exception as e:
+                        self.logger.error(f"Error parsing export parameters: {e}")
                         self.communication_manager.send_status({
-                            "error": "No filename provided for export"
+                            "type": "video_export_failed",
+                            "error": str(e)
                         })
-                        return
-                    
-                    success = self.callbacks['export_video'](filename, length)
-                    self.communication_manager.send_status({
-                        "video_exported": success,
-                        "filename": filename
-                    })
                 else:
                     self.logger.error("No export_video callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for video export"})
@@ -128,6 +149,53 @@ class CameraCommandHandler(ModuleCommandHandler):
                         "type": "camera_settings_update_failed",
                         "error": str(e)
                     })
+                return
+
+            case "list_recordings":
+                if 'list_recordings' in self.callbacks:
+                    try:
+                        recordings = self.callbacks['list_recordings']()
+                        self.communication_manager.send_status({
+                            "type": "recordings_list",
+                            "recordings": recordings
+                        })
+                    except Exception as e:
+                        self.logger.error(f"Error listing recordings: {e}")
+                        self.communication_manager.send_status({
+                            "type": "recordings_list_failed",
+                            "error": str(e)
+                        })
+                else:
+                    self.logger.error("No list_recordings callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for listing recordings"})
+                return
+
+            case "clear_recordings":
+                if 'clear_recordings' in self.callbacks:
+                    try:
+                        # Extract parameters from command string
+                        params_str = command.split(' ', 1)[1] if len(command.split()) > 1 else "{}"
+                        params = eval(params_str)  # Convert string representation back to dict
+                        
+                        # Get optional parameters
+                        older_than = params.get('older_than')  # Optional timestamp
+                        keep_latest = params.get('keep_latest', 0)  # Optional number of latest to keep
+                        
+                        result = self.callbacks['clear_recordings'](older_than, keep_latest)
+                        self.communication_manager.send_status({
+                            "type": "recordings_cleared",
+                            "deleted_count": result.get('deleted_count', 0),
+                            "kept_count": result.get('kept_count', 0)
+                        })
+                    except Exception as e:
+                        self.logger.error(f"Error clearing recordings: {e}")
+                        self.communication_manager.send_status({
+                            "type": "recordings_clear_failed",
+                            "error": str(e)
+                        })
+                else:
+                    self.logger.error("No clear_recordings callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for clearing recordings"})
                 return
 
         # If not a camera-specific command, pass to parent class
@@ -189,7 +257,9 @@ class CameraModule(Module):
             'stop_recording': self.stop_recording,
             'record_video': self.record_video,
             'export_video': self.export_video,
-            'handle_update_camera_settings': self.handle_update_camera_settings
+            'handle_update_camera_settings': self.handle_update_camera_settings,
+            'list_recordings': self.list_recordings,
+            'clear_recordings': self.clear_recordings
         })
 
     def record_video(self, length: int = 10):
@@ -484,6 +554,85 @@ class CameraModule(Module):
                 "error": str(e)
             })
             return False
+        
+    def list_recordings(self):
+        """List all recorded videos with metadata"""
+        try:
+            recordings = []
+            if not os.path.exists(self.video_folder):
+                return recordings
+                
+            for filename in os.listdir(self.video_folder):
+                if filename.endswith(f".{self.video_filetype}"):
+                    filepath = os.path.join(self.video_folder, filename)
+                    stat = os.stat(filepath)
+                    recordings.append({
+                        "filename": filename,
+                        "path": filepath,
+                        "size": stat.st_size,
+                        "created": stat.st_ctime,
+                        "modified": stat.st_mtime,
+                        "session_id": filename.split('.')[0]  # Extract session ID from filename
+                    })
+            
+            # Sort by creation time, newest first
+            recordings.sort(key=lambda x: x["created"], reverse=True)
+            return recordings
+            
+        except Exception as e:
+            self.logger.error(f"Error listing recordings: {e}")
+            raise
+
+    def clear_recordings(self, older_than: int = None, keep_latest: int = 0):
+        """Clear old recordings
+        
+        Args:
+            older_than: Optional timestamp - delete recordings older than this
+            keep_latest: Optional number of latest recordings to keep
+            
+        Returns:
+            dict with deleted_count and kept_count
+        """
+        try:
+            if not os.path.exists(self.video_folder):
+                return {"deleted_count": 0, "kept_count": 0}
+                
+            # Get list of recordings
+            recordings = self.list_recordings()
+            if not recordings:
+                return {"deleted_count": 0, "kept_count": 0}
+                
+            # Sort by creation time, newest first
+            recordings.sort(key=lambda x: x["created"], reverse=True)
+            
+            deleted_count = 0
+            kept_count = 0
+            
+            # Keep the latest N recordings if specified
+            if keep_latest > 0:
+                kept_recordings = recordings[:keep_latest]
+                recordings = recordings[keep_latest:]
+                kept_count = len(kept_recordings)
+            
+            # Delete recordings older than timestamp if specified
+            for recording in recordings:
+                if older_than and recording["created"] >= older_than:
+                    continue
+                    
+                try:
+                    os.remove(recording["path"])
+                    deleted_count += 1
+                except Exception as e:
+                    self.logger.error(f"Error deleting recording {recording['filename']}: {e}")
+            
+            return {
+                "deleted_count": deleted_count,
+                "kept_count": kept_count
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error clearing recordings: {e}")
+            raise
         
         
     

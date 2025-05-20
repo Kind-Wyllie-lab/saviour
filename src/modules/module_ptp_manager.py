@@ -172,8 +172,20 @@ class PTPManager:
         """
         Kill all active ptp4l and phc2sys processes. Part of cleanup procedure.
         """
-        # TODO: Implement this
-        pass
+        cmd = [] # Empty array for command arguments
+        for proc in self.active_ptp4l_processes:
+            cmd.append(proc)
+        for proc in self.active_phc2sys_processes:
+            cmd.append(proc)
+        if not cmd:
+            self.logger.info("Did not find any active processes to kill.")
+            pass
+        else:
+            cmd.append("kill")
+            cmd.reverse() # Reverse so that kill comes at the front - process order shouldn't matter here
+            self.logger.info(f"Killing all ptp processes with command: {cmd}")
+            subprocess.Popen(cmd)
+
 
     def start(self):
         self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")

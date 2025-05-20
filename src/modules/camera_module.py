@@ -21,6 +21,7 @@ from src.modules.module_command_handler import ModuleCommandHandler
 import logging
 import numpy as np
 import base64
+import signal
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
@@ -195,14 +196,17 @@ class CameraModule(Module):
         """Record a video for a specific duration"""
         if length == 0:
             # If length is 0, start continuous recording
-            return self.start_recording()
+            filename = self.start_recording()
+            if filename:
+                # Don't send completion message for continuous recording
+                return filename
+            return None
         
         # Otherwise, record for specified duration
         self.logger.info(f"Starting video recording for {length} seconds")
         
-        # Generate session ID if not exists
-        if not self.stream_session_id:
-            self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+        # Generate new session ID for this recording
+        self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
         
         # Create filename using just the session ID
         filename = f"{self.video_folder}/{self.stream_session_id}.{self.video_filetype}"
@@ -231,7 +235,8 @@ class CameraModule(Module):
             "--level", str(level),
             "--codec", codec,
             "--profile", profile,
-            "--intra", str(intra)
+            "--intra", str(intra),
+            "--inline"  # Enable inline headers for better streaming
         ]
 
         self.logger.info(f"Recording video to {filename}")
@@ -249,8 +254,7 @@ class CameraModule(Module):
                     "type": "video_recording_complete",
                     "filename": filename,
                     "length": length,
-                    "session_id": self.stream_session_id,
-                    "timestamp": datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                    "session_id": self.stream_session_id
                 })
                 return filename
             else:
@@ -315,13 +319,11 @@ class CameraModule(Module):
             self.logger.info("Already recording")
             return False
         
-        # Generate session ID if not exists
-        if not self.stream_session_id:
-            self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+        # Generate new session ID for this recording
+        self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
         
-        # Create filename using session ID and timestamp
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{self.video_folder}/{self.stream_session_id}_{timestamp}.{self.video_filetype}"
+        # Create filename using just the session ID
+        filename = f"{self.video_folder}/{self.stream_session_id}.{self.video_filetype}"
         
         # Ensure recording directory exists
         os.makedirs(self.video_folder, exist_ok=True)
@@ -347,7 +349,9 @@ class CameraModule(Module):
             "--level", str(level),
             "--codec", codec,
             "--profile", profile,
-            "--intra", str(intra)
+            "--intra", str(intra),
+            "--inline",  # Enable inline headers for better streaming
+            "--segment", "0"  # Disable segmentation
         ]
 
         self.logger.info(f"Starting continuous recording to {filename}")
@@ -364,17 +368,16 @@ class CameraModule(Module):
             self.communication_manager.send_status({
                 "type": "recording_started",
                 "filename": filename,
-                "session_id": self.stream_session_id,
-                "timestamp": timestamp
+                "session_id": self.stream_session_id
             })
-            return True
+            return filename
         except Exception as e:
             self.logger.error(f"Error starting recording: {e}")
             self.communication_manager.send_status({
                 "type": "recording_start_failed",
                 "error": str(e)
             })
-            return False
+            return None
 
     def stop_recording(self):
         """Stop continuous video recording"""
@@ -384,10 +387,26 @@ class CameraModule(Module):
         
         try:
             if self.recording_process:
-                # Send SIGTERM to gracefully stop recording
-                self.recording_process.terminate()
-                # Wait up to 5 seconds for process to finish
-                self.recording_process.wait(timeout=5)
+                # Send SIGINT (Ctrl+C) first to allow graceful shutdown
+                self.recording_process.send_signal(signal.SIGINT)
+                
+                # Give it a moment to clean up
+                time.sleep(1)
+                
+                # Check if process is still running
+                if self.recording_process.poll() is None:
+                    # If still running, try SIGTERM
+                    self.recording_process.terminate()
+                    time.sleep(0.5)
+                    
+                    if self.recording_process.poll() is None:
+                        # If still running, force kill
+                        self.logger.warning("Recording process did not terminate gracefully, force killing")
+                        self.recording_process.kill()
+                        time.sleep(0.5)
+                
+                # Wait for process to finish
+                self.recording_process.wait()
                 
             # Calculate duration
             duration = time.time() - self.recording_start_time
@@ -397,15 +416,9 @@ class CameraModule(Module):
                 "type": "recording_stopped",
                 "filename": self.current_filename,
                 "session_id": self.stream_session_id,
-                "duration": duration,
-                "timestamp": datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                "duration": duration
             })
             return True
-        except subprocess.TimeoutExpired:
-            # If process doesn't stop gracefully, force kill
-            self.recording_process.kill()
-            self.logger.warning("Recording process force killed")
-            return False
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             self.communication_manager.send_status({

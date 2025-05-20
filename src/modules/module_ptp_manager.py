@@ -87,6 +87,7 @@ class PTPManager:
         # TODO: Thresholds in config files.
         self.offset_warning_threshold = 10000 # If offsets are larger than this value, a warning will be displayed.
         self.freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
+        self.threshold_flag = False
 
     def _check_required_packages(self):
         """Check if required PTP packages are installed."""
@@ -193,7 +194,7 @@ class PTPManager:
         for proc in self.active_phc2sys_processes:
             cmd.append(proc)
         if not cmd:
-            self.logger.info("Did not find any active processes to kill.")
+            self.logger.info("(PTP MANAGER) Did not find any active processes to kill.")
             pass
         else:
             cmd.append("kill")
@@ -341,9 +342,16 @@ class PTPManager:
                     if self.last_offset is not None:
                         if abs(self.last_offset) > self.offset_warning_threshold:
                             self.logger.warning(f"(PTP MANAGER) Warning: offset {self.last_offset} exceeded threshold value {self.offset_warning_threshold}")
+                            self.threshold_flag = True
                     if self.last_freq is not None:
                         if abs(self.last_freq) > self.freq_warning_threshold:
                             self.logger.warning(f"(PTP MANAGER) Warning: freq {self.last_freq} exceeded threshold value {self.freq_warning_threshold}")
+                            self.threshold_flag = True
+                    if self.threshold_flag == True:
+                        if self.last_freq is not None and self.last_offset is not None:
+                            if abs(self.last_freq) < self.freq_warning_threshold and abs(self.last_offset) < self.offset_warning_threshold:
+                                self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.last_freq} and {self.last_offset}")
+                                self.threshold_flag = False
             time.sleep(0.1)
 
     def stop(self):

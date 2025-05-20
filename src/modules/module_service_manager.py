@@ -83,10 +83,10 @@ class ModuleServiceManager:
             
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            self.logger.info(f"Controller discovered. info={info}")
+            self.logger.info(f"(SERVICE MANAGER) Controller discovered. info={info}")
             self.controller_ip = socket.inet_ntoa(info.addresses[0])
             self.controller_port = info.port
-            self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
+            self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Initialize file transfer with the correct IP
             if not self.module.file_transfer:
@@ -95,29 +95,38 @@ class ModuleServiceManager:
                     from src.modules.module_file_transfer import ModuleFileTransfer
                     self.module.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
                 except Exception as e:
-                    self.logger.error(f"Error initializing file transfer: {e}")
+                    self.logger.error(f"(SERVICE MANAGER) Error initializing file transfer: {e}")
             
             # Only connect if we're not already connected
             if not self.module.communication_manager.controller_ip:
-                self.logger.info("Connecting to controller...")
-                
+                self.logger.info("(SERVICE MANAGER) Connecting to controller...")
+
+                # TODO: Should these things happen here, or should they get triggered in the main program?
+
                 # Connect the communication manager
+                self.logger.info("(SERVICE MANAGER) Starting communication manager")
                 self.module.communication_manager.connect(self.controller_ip, self.controller_port)
                 
                 # Start the command listener
+                self.logger.info("(SERVICE MANAGER) Calling start_command_listener()")
                 self.module.communication_manager.start_command_listener()
                 
                 # Start heartbeats if module is running
                 if self.module.is_running:
+                    self.logger.info("(SERVICE MANAGER) Calling start_heartbeats()")
                     self.module.health_manager.start_heartbeats()
+
+                # Start PTP
+                self.logger.info("(SERVICE MANAGER) Starting PTP manager")
+                self.module.ptp_manager.start()
                     
-                self.logger.info("Connection to controller established")
+                self.logger.info("(SERVICE MANAGER) Connection to controller established")
             else:
-                self.logger.info("Already connected to controller")
+                self.logger.info("(SERVICE MANAGER) Already connected to controller")
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
-        self.logger.warning("Lost connection to controller")
+        self.logger.warning("(SERVICE MANAGER) Lost connection to controller")
         
         # Clean up communication
         self.module.communication_manager.cleanup()
@@ -125,11 +134,11 @@ class ModuleServiceManager:
         # Reset controller connection state
         self.controller_ip = None
         self.controller_port = None
-        self.logger.info("Controller connection state reset")
+        self.logger.info("(SERVICE MANAGER) Controller connection state reset")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
-        self.logger.info(f"Service updated: {name}")
+        self.logger.info(f"(SERVICE MANAGER) Service updated: {name}")
     
 
     def cleanup(self):
@@ -139,9 +148,9 @@ class ModuleServiceManager:
         if self.service_browser:
             try:
                 self.service_browser.cancel()
-                self.logger.info("Service browser cancelled")
+                self.logger.info("(SERVICE MANAGER) Service browser cancelled")
             except Exception as e:
-                self.logger.error(f"Error canceling service browser: {e}")
+                self.logger.error(f"(SERVICE MANAGER) Error canceling service browser: {e}")
             self.service_browser = None
         # unregister the service
         if self.zeroconf:
@@ -149,7 +158,7 @@ class ModuleServiceManager:
                 self.zeroconf.unregister_service(self.service_info) # unregister the service
                 time.sleep(1)
                 self.zeroconf.close()
-                self.logger.info("Zeroconf service unregistered and closed")
+                self.logger.info("(SERVICE MANAGER) Zeroconf service unregistered and closed")
             except Exception as e:
-                self.logger.error(f"Error unregistering service: {e}")  
+                self.logger.error(f"(SERVICE MANAGER) Error unregistering service: {e}")
             self.zeroconf = None

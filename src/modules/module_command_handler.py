@@ -33,6 +33,7 @@ class ModuleCommandHandler:
                  communication_manager=None,
                  health_manager=None,
                  config_manager=None,
+                 ptp_manager=None,
                  start_time=None):
         """
         Initialize the command handler
@@ -52,6 +53,7 @@ class ModuleCommandHandler:
         self.communication_manager = communication_manager
         self.health_manager = health_manager
         self.config_manager = config_manager
+        self.ptp_manager = ptp_manager
         self.start_time = start_time
         
         # Control flags and parameters
@@ -99,9 +101,13 @@ class ModuleCommandHandler:
             
             case "stop_stream":
                 self._handle_stop_stream()
-            
+
+            case "ptp_status":
+                self._handle_ptp_status()
+
             case _:
                 self._handle_unknown_command(command)
+
     
     def _handle_get_status(self):
         """Handle get_status command"""
@@ -113,7 +119,9 @@ class ModuleCommandHandler:
                 "cpu_usage": psutil.cpu_percent(),
                 "memory_usage": psutil.virtual_memory().percent,
                 "uptime": time.time() - self.start_time if self.start_time else 0,
-                "disk_space": psutil.disk_usage('/').percent
+                "disk_space": psutil.disk_usage('/').percent,
+                "ptp_offset": self.ptp_manager.last_offset,
+                "ptp_freq": self.ptp_manager.last_freq
             }
             self.communication_manager.send_status(status)
         except Exception as e:
@@ -175,6 +183,17 @@ class ModuleCommandHandler:
                 break
             
             time.sleep(self.samplerate/1000)
+
+    def _handle_ptp_status(self):
+        """Return PTP information to the controller"""
+        print("Command identified as ptp_status")
+        if 'ptp_status' in self.callbacks:
+            ptp_status = str(self.callbacks['ptp_status']())
+            print(ptp_status)
+            # self.communication_manager.send_status(ptp_status)
+        else:
+            self.logger.error("No read_data callback provided")
+            self.communication_manager.send_data("Error: Module not configured for data reading")
     
     def cleanup(self):
         """Clean up resources used by the command handler"""

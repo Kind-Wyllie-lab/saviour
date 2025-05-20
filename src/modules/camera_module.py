@@ -197,13 +197,28 @@ class CameraModule(Module):
             
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
+                # Send status update
+                self.send_status({
+                    "type": "video_recording_complete",
+                    "filename": filename,
+                    "length": length,
+                    "session_id": self.stream_session_id
+                })
                 return filename
             else:
                 self.logger.error(f"Video recording failed with return code {process.returncode}")
+                self.send_status({
+                    "type": "video_recording_failed",
+                    "error": f"Recording failed with return code {process.returncode}"
+                })
                 return None
                 
         except Exception as e:
             self.logger.error(f"Error during video recording: {e}")
+            self.send_status({
+                "type": "video_recording_failed",
+                "error": str(e)
+            })
             return None
 
     def export_video(self, filename: str, length: int):
@@ -213,28 +228,37 @@ class CameraModule(Module):
             controller_ip = self.get_controller_ip()
             if not controller_ip:
                 self.logger.error("Could not find controller IP")
+                self.send_status({
+                    "type": "video_export_failed",
+                    "error": "Could not find controller IP"
+                })
                 return False
                 
             # Send the file
             success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
             if success:
                 self.logger.info(f"Video file sent successfully to controller")
-                
-                # Send status update to controller
                 self.send_status({
                     "type": "video_export_complete",
-                    "timestamp": time.time(),
                     "filename": filename,
                     "session_id": self.stream_session_id,
-                    "duration": length
+                    "length": length
                 })
                 return True
             else:
                 self.logger.error("Failed to send video file to controller")
+                self.send_status({
+                    "type": "video_export_failed",
+                    "error": "Failed to send video file"
+                })
                 return False
                 
         except Exception as e:
             self.logger.error(f"Error exporting video file: {e}")
+            self.send_status({
+                "type": "video_export_failed",
+                "error": str(e)
+            })
             return False
 
     def start_recording(self):

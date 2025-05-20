@@ -98,7 +98,7 @@ class Controller:
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         print() # New line  
-        self.logger.info(f"Status update received from module {topic} with data: {data}")
+        # self.logger.info(f"Status update received from module {topic} with data: {data}") # Not necessary....
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data)

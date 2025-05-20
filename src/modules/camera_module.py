@@ -198,7 +198,7 @@ class CameraModule(Module):
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
                 # Send status update
-                self.send_status({
+                self.communication_manager.send_status({
                     "type": "video_recording_complete",
                     "filename": filename,
                     "length": length,
@@ -207,7 +207,7 @@ class CameraModule(Module):
                 return filename
             else:
                 self.logger.error(f"Video recording failed with return code {process.returncode}")
-                self.send_status({
+                self.communication_manager.send_status({
                     "type": "video_recording_failed",
                     "error": f"Recording failed with return code {process.returncode}"
                 })
@@ -215,7 +215,7 @@ class CameraModule(Module):
                 
         except Exception as e:
             self.logger.error(f"Error during video recording: {e}")
-            self.send_status({
+            self.communication_manager.send_status({
                 "type": "video_recording_failed",
                 "error": str(e)
             })
@@ -228,7 +228,7 @@ class CameraModule(Module):
             controller_ip = self.get_controller_ip()
             if not controller_ip:
                 self.logger.error("Could not find controller IP")
-                self.send_status({
+                self.communication_manager.send_status({
                     "type": "video_export_failed",
                     "error": "Could not find controller IP"
                 })
@@ -238,7 +238,7 @@ class CameraModule(Module):
             success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
             if success:
                 self.logger.info(f"Video file sent successfully to controller")
-                self.send_status({
+                self.communication_manager.send_status({
                     "type": "video_export_complete",
                     "filename": filename,
                     "session_id": self.stream_session_id,
@@ -247,7 +247,7 @@ class CameraModule(Module):
                 return True
             else:
                 self.logger.error("Failed to send video file to controller")
-                self.send_status({
+                self.communication_manager.send_status({
                     "type": "video_export_failed",
                     "error": "Failed to send video file"
                 })
@@ -255,7 +255,7 @@ class CameraModule(Module):
                 
         except Exception as e:
             self.logger.error(f"Error exporting video file: {e}")
-            self.send_status({
+            self.communication_manager.send_status({
                 "type": "video_export_failed",
                 "error": str(e)
             })

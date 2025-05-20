@@ -117,6 +117,8 @@ class ControllerInterfaceManager:
                 print("Invalid command selection")
                 return
                 
+            # Special commands
+
             # Special handling for update_camera_settings command
             if self.controller.commands[cmd_idx] == "update_camera_settings":
                 print("\nEnter camera settings (one per line, format: key=value):")
@@ -151,6 +153,7 @@ class ControllerInterfaceManager:
                     self.controller.service_manager.modules[module_idx].id,
                     command_str
                 )
+
             # Special handling for record_video command
             elif self.controller.commands[cmd_idx] == "record_video":
                 try:
@@ -163,6 +166,17 @@ class ControllerInterfaceManager:
                     )
                 except ValueError:
                     print("Invalid duration - please enter a number")
+            # Special handling for export_video command
+            elif self.controller.commands[cmd_idx] == "export_video":
+                try:
+                    filename = input("\nEnter the filename for the exported video: ").strip()
+                    command_str = f"export_video {filename}"
+                    self.controller.communication_manager.send_command(
+                        self.controller.service_manager.modules[module_idx].id,
+                        command_str
+                    )
+                except ValueError:
+                    self.logger.error("(INTERFACE MANAGER) Invalid input - please enter a valid filename")
             else:
                 # Handle other commands as before
                 self.controller.communication_manager.send_command(

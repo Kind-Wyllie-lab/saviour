@@ -3,8 +3,20 @@
         "max_buffer_size": 2000,
         "manual_control": true,
         "print_received_data": false,
-        "commands": ["get_status", "get_data", "start_stream", "stop_stream", "record_video", "stop_recording", "export_video", "ptp_status", "custom_command", "update_camera_settings"]
-    },
+        "commands": ["get_status",
+        "get_data",
+        "start_stream",
+        "stop_stream",
+        "record_video",
+        "stop_recording",
+        "export_video",
+        "ptp_status",
+        "custom_command",
+        "update_camera_settings",
+        "list_recordings",
+        "clear_recordings",
+        "show_buffer"
+    ]},
     "service": {
         "port": 5000,
         "service_type": "_controller._tcp.local.",

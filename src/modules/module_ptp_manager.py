@@ -341,16 +341,16 @@ class PTPManager:
                     # Check for excessively high freq/offset
                     if self.last_offset is not None:
                         if abs(self.last_offset) > self.offset_warning_threshold:
-                            self.logger.warning(f"(PTP MANAGER) Warning: offset {self.last_offset} exceeded threshold value {self.offset_warning_threshold}")
+                            self.logger.warning(f"(PTP MANAGER) Warning: offset {self.last_offset}ns exceeded threshold value {self.offset_warning_threshold}ns")
                             self.threshold_flag = True
                     if self.last_freq is not None:
                         if abs(self.last_freq) > self.freq_warning_threshold:
-                            self.logger.warning(f"(PTP MANAGER) Warning: freq {self.last_freq} exceeded threshold value {self.freq_warning_threshold}")
+                            self.logger.warning(f"(PTP MANAGER) Warning: freq {self.last_freq}ppb exceeded threshold value {self.freq_warning_threshold}ppb")
                             self.threshold_flag = True
                     if self.threshold_flag == True:
                         if self.last_freq is not None and self.last_offset is not None:
                             if abs(self.last_freq) < self.freq_warning_threshold and abs(self.last_offset) < self.offset_warning_threshold:
-                                self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.last_freq} and {self.last_offset}")
+                                self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.last_freq}ppb and {self.last_offset}ns")
                                 self.threshold_flag = False
             time.sleep(0.1)
 

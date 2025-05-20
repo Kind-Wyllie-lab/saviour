@@ -86,16 +86,19 @@ class Module:
         self.ptp_manager = PTPManager(
             logger=self.logger,
             role=PTPRole.SLAVE)
-        self.command_handler = ModuleCommandHandler(
-            self.logger,
-            self.module_id,
-            self.module_type,
-            communication_manager=self.communication_manager,
-            health_manager=self.health_manager,
-            config_manager=self.config_manager,
-            ptp_manager=self.ptp_manager,
-            start_time=None # Will be set during start()
-        )
+
+        # Initialize command handler if not already set
+        if not hasattr(self, 'command_handler'):
+            self.command_handler = ModuleCommandHandler(
+                self.logger,
+                self.module_id,
+                self.module_type,
+                communication_manager=self.communication_manager,
+                health_manager=self.health_manager,
+                config_manager=self.config_manager,
+                ptp_manager=self.ptp_manager,
+                start_time=None # Will be set during start()
+            )
 
         # Bind health manager's callback to the ptp_manager method
         self.health_manager.get_ptp_offsets = self.ptp_manager.get_status

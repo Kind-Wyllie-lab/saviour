@@ -98,7 +98,6 @@ class Controller:
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         print() # New line  
-        # self.logger.info(f"Status update received from module {topic} with data: {data}") # Not necessary....
         module_id = topic.split('/')[1] # get module id from topic
         try:
             status_data = eval(data)
@@ -107,6 +106,10 @@ class Controller:
                 case 'heartbeat':
                     self.logger.info(f"(CONTROLLER) Heartbeat received from {module_id}")
                     self.health_monitor.update_module_health(module_id, status_data)
+                case 'camera_settings_updated':
+                    self.logger.info(f"(CONTROLLER) Camera settings updated for {module_id}: {status_data['settings']}")
+                case 'camera_settings_update_failed':
+                    self.logger.error(f"(CONTROLLER) Failed to update camera settings for {module_id}: {status_data['error']}")
                 case _:
                     self.logger.info(f"(CONTROLLER) Command status from {module_id}: {status_data}")
         except Exception as e:

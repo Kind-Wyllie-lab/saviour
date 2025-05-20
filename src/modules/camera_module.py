@@ -53,7 +53,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                     length = kwargs.get('length', 10)  # Default 10 seconds
                     filename = self.callbacks['record_video'](length)
                     if filename:
-                        self.communication_manager.send_status({
+                        self.communication_manager.send_status({ # Is this a duplicate with record_video?
                             "video_recorded": True,
                             "filename": filename,
                             "length": length
@@ -198,7 +198,7 @@ class CameraModule(Module):
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
                 # Send status update
-                self.communication_manager.send_status({
+                self.communication_manager.send_status({ # Is this a duplicate with 
                     "type": "video_recording_complete",
                     "filename": filename,
                     "length": length,

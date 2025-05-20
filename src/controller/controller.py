@@ -105,6 +105,7 @@ class Controller:
             status_type = status_data.get('type', 'unknown')
             match status_type:
                 case 'heartbeat':
+                    self.logger.info(f"Heartbeat received from {module_id}")
                     self.health_monitor.update_module_health(module_id, status_data)
                 case _:
                     self.logger.info(f"Command status from {module_id}: {status_data}")

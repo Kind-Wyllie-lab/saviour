@@ -17,11 +17,72 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 from src.modules.module import Module
+from src.modules.module_command_handler import ModuleCommandHandler
+import logging
+
+class CameraCommandHandler(ModuleCommandHandler):
+    """Command handler specific to camera functionality"""
+    
+    def handle_command(self, command: str, **kwargs):
+        """Handle camera-specific commands while preserving base functionality"""
+        
+        # Handle camera-specific commands
+        match command:
+            case "start_recording":
+                if 'start_recording' in self.callbacks:
+                    result = self.callbacks['start_recording']()
+                    self.communication_manager.send_status({"recording_started": result})
+                else:
+                    self.logger.error("No start_recording callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for recording"})
+                return
+
+            case "stop_recording":
+                if 'stop_recording' in self.callbacks:
+                    result = self.callbacks['stop_recording']()
+                    self.communication_manager.send_status({"recording_stopped": result})
+                else:
+                    self.logger.error("No stop_recording callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for recording"})
+                return
+
+            case "record_video":
+                if 'record_video' in self.callbacks:
+                    length = kwargs.get('length', 10)  # Default 10 seconds
+                    result = self.callbacks['record_video'](length)
+                    self.communication_manager.send_status({"video_recorded": result is not None, "filename": result})
+                else:
+                    self.logger.error("No record_video callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for video recording"})
+                return
+
+        # If not a camera-specific command, pass to parent class
+        super().handle_command(command, **kwargs)
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None, config_file_path=None):
+        # Initialize command handler first
+        self.command_handler = CameraCommandHandler(
+            logging.getLogger(f"{module_type}"),
+            None,  # module_id will be set after super().__init__
+            module_type,
+            None,  # communication_manager will be set after super().__init__
+            None,  # health_manager will be set after super().__init__
+            None,  # config_manager will be set after super().__init__
+            None,  # ptp_manager will be set after super().__init__
+            None   # start_time will be set after super().__init__
+        )
+        
         # Call the parent class constructor
         super().__init__(module_type, config, config_file_path)
+        
+        # Update command handler with proper references
+        self.command_handler.module_id = self.module_id
+        self.command_handler.communication_manager = self.communication_manager
+        self.command_handler.health_manager = self.health_manager
+        self.command_handler.config_manager = self.config_manager
+        self.command_handler.ptp_manager = self.ptp_manager
+        self.command_handler.start_time = self.start_time
         
         # Camera specific variables
         self.video_folder = "rec"
@@ -43,39 +104,17 @@ class CameraModule(Module):
         # State flags
         self.is_recording = False
 
-
-    def handle_command(self, command, **kwargs):
-        """Handle camera-specific commands while preserving base module functionality"""
-
-        # Handle camera-specific commands
-        match command:
-            case "start_recording":
-                output_video = kwargs.get('output_video', 'recording.h264')
-                output_timestamps = kwargs.get('output_timestamps', 'timestamps.txt')
-                fps = kwargs.get('fps', self.config_manager.get('camera.fps', 30))
-                return self.start_recording(output_video, output_timestamps, fps)
-                
-            case "stop_recording":
-                return self.stop_recording()
-
-            case "record_video":
-                # Get recording parameters from kwargs or use defaults
-                length = kwargs.get('length', 3)  # Default 10 seconds
-                self.logger.info(f"Received record_video command with length={length}s")
-                
-                # Start recording
-                filename = self.record_video(length)
-                
-                if filename:
-                    self.logger.info(f"Video recording completed: {filename}")
-                    return True
-                else:
-                    self.logger.error("Video recording failed")
-                    return False
-                
-            # If not a camera-specific command, pass to parent class
-            case _:
-                return super().handle_command(command, **kwargs)
+        # Set up camera-specific callbacks for the command handler
+        self.command_handler.set_callbacks({
+            'read_data': self.read_fake_camera_frame,
+            'stream_data': self.stream_data,
+            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
+            'samplerate': self.config_manager.get("module.samplerate", 200),
+            'ptp_status': self.ptp_manager.get_status,
+            'start_recording': self.start_recording,
+            'stop_recording': self.stop_recording,
+            'record_video': self.record_video
+        })
 
     def record_video(self, length: int = 10, send_to_controller: bool = True):
         """Record a video with session management"""

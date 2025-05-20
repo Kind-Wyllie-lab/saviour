@@ -29,13 +29,13 @@ import numpy as np
 
 
 # Import managers
-from src.modules.module_file_transfer import ModuleFileTransfer
+from src.modules.module_file_transfer_manager import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
 import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
-
+from src.modules.module_ptp_manager import PTPManager, PTPRole
 
 class Module:
     """
@@ -83,8 +83,9 @@ class Module:
             config_manager=self.config_manager,
             communication_manager=self.communication_manager
         )
-        
-        # Command handler - manages command processing
+        self.ptp_manager = PTPManager(
+            logger=self.logger,
+            role=PTPRole.SLAVE)
         self.command_handler = ModuleCommandHandler(
             self.logger,
             self.module_id,
@@ -92,9 +93,13 @@ class Module:
             communication_manager=self.communication_manager,
             health_manager=self.health_manager,
             config_manager=self.config_manager,
+            ptp_manager=self.ptp_manager,
             start_time=None # Will be set during start()
         )
-        
+
+        # Bind health manager's callback to the ptp_manager method
+        self.health_manager.get_ptp_offsets = self.ptp_manager.get_status
+
         # Set the callback in the communication manager to use the command handler
         self.communication_manager.command_callback = self.command_handler.handle_command
         
@@ -103,7 +108,8 @@ class Module:
             'read_data': self.read_fake_data,
             'stream_data': self.stream_data,
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'samplerate': self.config_manager.get("module.samplerate", 200)
+            'samplerate': self.config_manager.get("module.samplerate", 200),
+            'ptp_status': self.ptp_manager.get_status()
         })
         
         # Lazy import and initialization of ServiceManager to avoid circular imports
@@ -145,21 +151,28 @@ class Module:
         else:
             self.is_running = True
             self.start_time = time.time()
+            self.logger.info(f"Module started at {self.start_time}")
             
             # Update start time in command handler
             self.command_handler.start_time = self.start_time
             
             # Start command listener thread if controller is discovered
             if self.service_manager.controller_ip:
+                self.logger.info(f"Attempting to connect to controller at {self.service_manager.controller_ip}")
                 # Connect to the controller
                 self.communication_manager.connect(
                     self.service_manager.controller_ip,
                     self.service_manager.controller_port
                 )
                 self.communication_manager.start_command_listener()
-                
+
+                # Start PTP
+                self.ptp_manager.start()
+
                 # Start sending heartbeats
                 self.health_manager.start_heartbeats()
+
+
             
         return True
 
@@ -246,15 +259,7 @@ class Module:
             'digital': digital_in,
             'analog': analog_in
         }
-            
-    
-    # PTP methods
-    def status_ptp(self) -> bool:
-        """
-        Get PTP status.
-        """
-        # TODO: Implement PTP status
-        return True
+
 
     def send_file(self, filepath: str, remote_path: str = None) -> bool:
         """Send a file to the controller"""

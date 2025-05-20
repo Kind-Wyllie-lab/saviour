@@ -35,6 +35,7 @@ import src.controller.controller_interface_manager as interface_manager
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
 import src.controller.controller_config_manager as config_manager
+import src.controller.controller_ptp_manager as ptp_manager
     
 # Habitat Controller Class
 class Controller:
@@ -77,6 +78,7 @@ class Controller:
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
         self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger, self.config_manager)
+        self.ptp_manager = ptp_manager.PTPManager(logger=self.logger,role=ptp_manager.PTPRole.MASTER)
         
         # Initialize health monitor with configuration
         heartbeat_interval = self.config_manager.get("health_monitor.heartbeat_interval")
@@ -188,7 +190,11 @@ class Controller:
             # Start the file transfer server
             self.logger.info("Starting file transfer server...")
             loop.run_until_complete(self.file_transfer.start())
-            
+
+            # Start PTP
+            self.logger.info("Starting PTP manager...")
+            self.ptp_manager.start()
+
             # Keep the event loop running
             def run_event_loop():
                 loop.run_forever()

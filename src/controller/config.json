@@ -3,7 +3,7 @@
         "max_buffer_size": 2000,
         "manual_control": true,
         "print_received_data": false,
-        "commands": ["get_status", "get_data", "start_stream", "stop_stream", "record_video", "custom_command"]
+        "commands": ["get_status", "get_data", "start_stream", "stop_stream", "record_video", "ptp_status", "custom_command"]
     },
     "service": {
         "port": 5000,

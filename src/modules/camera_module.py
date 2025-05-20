@@ -19,6 +19,8 @@ import time
 from src.modules.module import Module
 from src.modules.module_command_handler import ModuleCommandHandler
 import logging
+import numpy as np
+import base64
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
@@ -48,7 +50,7 @@ class CameraCommandHandler(ModuleCommandHandler):
 
             case "record_video":
                 if 'record_video' in self.callbacks:
-                    length = kwargs.get('length', 10)  # Default 10 seconds
+                    length = kwargs.get('length', 5)  # Default 10 seconds
                     result = self.callbacks['record_video'](length)
                     self.communication_manager.send_status({"video_recorded": result is not None, "filename": result})
                 else:
@@ -106,7 +108,7 @@ class CameraModule(Module):
 
         # Set up camera-specific callbacks for the command handler
         self.command_handler.set_callbacks({
-            'read_data': self.read_fake_camera_frame,
+            'read_data': super().read_fake_data,  # Use base module's read_fake_data
             'stream_data': self.stream_data,
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
             'samplerate': self.config_manager.get("module.samplerate", 200),
@@ -285,6 +287,13 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error setting camera parameters: {e}")
             return False
+        
+    def read_fake_camera_frame(self):
+        """Generate fake camera frame data"""
+        # Create random 640x480 RGB frame
+        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        # Convert to base64 string for safe transmission
+        return base64.b64encode(frame.tobytes()).decode('utf-8')
         
         
     

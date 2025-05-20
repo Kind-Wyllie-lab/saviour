@@ -86,8 +86,7 @@ class ModuleCommandHandler:
         Args:
             command: The command string to process
         """
-        self.logger.info(f"Handling command: {command}")
-        print(f"Command: {command}")
+        self.logger.info(f"(COMMAND HANDLER) Handling command: {command}") 
         
         match command:
             case "get_status":
@@ -111,7 +110,7 @@ class ModuleCommandHandler:
     
     def _handle_get_status(self):
         """Handle get_status command"""
-        print("Command identified as get_status")
+        self.logger.info("(COMMAND HANDLER) Command identified as get_status")
         try:
             status = {
                 "timestamp": time.time(),
@@ -132,7 +131,7 @@ class ModuleCommandHandler:
     
     def _handle_get_data(self):
         """Handle get_data command"""
-        print("Command identified as get_data")
+        self.logger.info("(COMMAND HANDLER) Command identified as get_data")
         if 'read_data' in self.callbacks:
             data = str(self.callbacks['read_data']())
             self.communication_manager.send_data(data)
@@ -142,7 +141,7 @@ class ModuleCommandHandler:
     
     def _handle_start_stream(self):
         """Handle start_stream command"""
-        print("Command identified as start_stream")
+        self.logger.info("(COMMAND HANDLER) Command identified as start_stream")
         if not self.streaming:  # Only start if not already streaming
             if 'stream_data' in self.callbacks and 'generate_session_id' in self.callbacks:
                 self.streaming = True
@@ -156,7 +155,7 @@ class ModuleCommandHandler:
     
     def _handle_stop_stream(self):
         """Handle stop_stream command"""
-        print("Command identified as stop_stream")
+        self.logger.info("(COMMAND HANDLER) Command identified as stop_stream")
         self.streaming = False  # Thread will stop on next loop
         if self.stream_thread: # If there is a thread still
             self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
@@ -164,7 +163,7 @@ class ModuleCommandHandler:
     
     def _handle_unknown_command(self, command: str):
         """Handle unrecognized command"""
-        print(f"Command {command} not recognized")
+        self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
         self.communication_manager.send_data("Command not recognized")
     
     def _stream_data_thread(self):
@@ -186,10 +185,10 @@ class ModuleCommandHandler:
 
     def _handle_ptp_status(self):
         """Return PTP information to the controller"""
-        print("Command identified as ptp_status")
+        self.logger.info("(COMMAND HANDLER) Command identified as ptp_status")
         if 'ptp_status' in self.callbacks:
             ptp_status = str(self.callbacks['ptp_status']())
-            print(ptp_status)
+            self.logger.info(ptp_status)
             # self.communication_manager.send_status(ptp_status)
         else:
             self.logger.error("No read_data callback provided")

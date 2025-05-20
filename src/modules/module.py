@@ -147,21 +147,21 @@ class Module:
         Returns:
             bool: True if the module started successfully, False otherwise.
         """
-        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        self.logger.info(f"(MODULE) Starting {self.module_type} module {self.module_id}")
         if self.is_running:
-            self.logger.info("Module already running")
+            self.logger.info("(MODULE) Module already running")
             return False
         else:
             self.is_running = True
             self.start_time = time.time()
-            self.logger.info(f"Module started at {self.start_time}")
+            self.logger.info(f"(MODULE) Module started at {self.start_time}")
             
             # Update start time in command handler
             self.command_handler.start_time = self.start_time
             
             # Start command listener thread if controller is discovered
             if self.service_manager.controller_ip:
-                self.logger.info(f"Attempting to connect to controller at {self.service_manager.controller_ip}")
+                self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service_manager.controller_ip}")
                 # Connect to the controller
                 self.communication_manager.connect(
                     self.service_manager.controller_ip,
@@ -188,35 +188,35 @@ class Module:
         Returns:
             bool: True if the module stopped successfully, False otherwise.
         """
-        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"(MODULE) Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         if not self.is_running:
-            self.logger.info("Module already stopped")
+            self.logger.info("(MODULE) Module already stopped")
             return False
 
         try:
             # First: Clean up command handler (stops streaming and thread)
-            self.logger.info("Cleaning up command handler...")
+            self.logger.info("(MODULE) Cleaning up command handler...")
             self.command_handler.cleanup()
             
             # Second: Stop the health manager (and its heartbeat thread)
-            self.logger.info("Stopping health manager...")
+            self.logger.info("(MODULE) Stopping health manager...")
             self.health_manager.stop_heartbeats()
 
             # Third: Stop the service manager (doesn't use ZMQ directly)
-            self.logger.info("Cleaning up service manager...")
+            self.logger.info("(MODULE) Cleaning up service manager...")
             self.service_manager.cleanup()
             
             # Fourth: Stop the communication manager (ZMQ cleanup)
-            self.logger.info("Cleaning up communication manager...")
+            self.logger.info("(MODULE) Cleaning up communication manager...")
             self.communication_manager.cleanup()
 
         except Exception as e:
-            self.logger.error(f"Error stopping module: {e}")
+            self.logger.error(f"(MODULE) Error stopping module: {e}")
             return False
 
         # Confirm the module is stopped
         self.is_running = False
-        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"(MODULE) Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
 
     def generate_module_id(self, module_type: str) -> str:

@@ -145,11 +145,11 @@ class ControllerInterfaceManager:
                         print("Invalid format. Use key=value")
                         continue
                 
-                # Send the command with parameters
+                # Send the command with parameters as a string
+                command_str = f"update_camera_settings {str(params)}"
                 self.controller.communication_manager.send_command(
                     self.controller.service_manager.modules[module_idx].id,
-                    "update_camera_settings",
-                    params
+                    command_str
                 )
             else:
                 # Handle other commands as before

@@ -50,12 +50,42 @@ class CameraCommandHandler(ModuleCommandHandler):
 
             case "record_video":
                 if 'record_video' in self.callbacks:
-                    length = kwargs.get('length', 5)  # Default 10 seconds
-                    result = self.callbacks['record_video'](length)
-                    self.communication_manager.send_status({"video_recorded": result is not None, "filename": result})
+                    length = kwargs.get('length', 10)  # Default 10 seconds
+                    filename = self.callbacks['record_video'](length)
+                    if filename:
+                        self.communication_manager.send_status({
+                            "video_recorded": True,
+                            "filename": filename,
+                            "length": length
+                        })
+                    else:
+                        self.communication_manager.send_status({
+                            "video_recorded": False,
+                            "error": "Recording failed"
+                        })
                 else:
                     self.logger.error("No record_video callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for video recording"})
+                return
+
+            case "export_video":
+                if 'export_video' in self.callbacks:
+                    filename = kwargs.get('filename')
+                    length = kwargs.get('length', 10)
+                    if not filename:
+                        self.communication_manager.send_status({
+                            "error": "No filename provided for export"
+                        })
+                        return
+                    
+                    success = self.callbacks['export_video'](filename, length)
+                    self.communication_manager.send_status({
+                        "video_exported": success,
+                        "filename": filename
+                    })
+                else:
+                    self.logger.error("No export_video callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for video export"})
                 return
 
         # If not a camera-specific command, pass to parent class
@@ -115,10 +145,11 @@ class CameraModule(Module):
             'ptp_status': self.ptp_manager.get_status,
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
-            'record_video': self.record_video
+            'record_video': self.record_video,
+            'export_video': self.export_video
         })
 
-    def record_video(self, length: int = 10, send_to_controller: bool = True):
+    def record_video(self, length: int = 10):
         """Record a video with session management"""
         self.logger.info(f"Starting video recording for {length} seconds")
         
@@ -166,11 +197,7 @@ class CameraModule(Module):
             
             if process.returncode == 0:
                 self.logger.info(f"Video recording completed successfully: {filename}")
-                
-                # Send the video file to the controller
-                if send_to_controller:
-                    self.send_video_file(filename, length)
-
+                return filename
             else:
                 self.logger.error(f"Video recording failed with return code {process.returncode}")
                 return None
@@ -178,39 +205,37 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error during video recording: {e}")
             return None
-    
-        return filename
 
-    def send_video_file(self, filename: str, length: int):
-        # Send the video file to the controller
+    def export_video(self, filename: str, length: int):
+        """Export a recorded video to the controller"""
         try:
             # Get controller IP from zeroconf
             controller_ip = self.get_controller_ip()
             if not controller_ip:
                 self.logger.error("Could not find controller IP")
-                return None
+                return False
                 
             # Send the file
             success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
             if success:
                 self.logger.info(f"Video file sent successfully to controller")
+                
+                # Send status update to controller
+                self.send_status({
+                    "type": "video_export_complete",
+                    "timestamp": time.time(),
+                    "filename": filename,
+                    "session_id": self.stream_session_id,
+                    "duration": length
+                })
+                return True
             else:
                 self.logger.error("Failed to send video file to controller")
-                return None
+                return False
                 
         except Exception as e:
-            self.logger.error(f"Error sending video file: {e}")
-            return None
-        
-        # Send status update to controller
-        self.send_status({
-            "type": "video_recording_complete",
-            "timestamp": time.time(),
-            "filename": filename,
-            "session_id": self.stream_session_id,
-            "duration": length
-        })
-        return filename
+            self.logger.error(f"Error exporting video file: {e}")
+            return False
 
     def start_recording(self):
         """Start recording a video stream"""

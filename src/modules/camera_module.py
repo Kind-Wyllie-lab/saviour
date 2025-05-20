@@ -344,5 +344,27 @@ class CameraModule(Module):
         # Convert to base64 string for safe transmission
         return base64.b64encode(frame.tobytes()).decode('utf-8')
         
+    def handle_update_camera_settings(self, params: dict) -> bool:
+        """Handle update_camera_settings command"""
+        try:
+            # Update camera parameters
+            success = self.set_camera_parameters(params)
+            
+            # Send status update
+            self.communication_manager.send_status({
+                "type": "camera_settings_updated",
+                "settings": params,
+                "success": success
+            })
+            
+            return success
+        except Exception as e:
+            self.logger.error(f"Error updating camera settings: {e}")
+            self.communication_manager.send_status({
+                "type": "camera_settings_update_failed",
+                "error": str(e)
+            })
+            return False
+        
         
     

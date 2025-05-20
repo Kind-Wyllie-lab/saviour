@@ -143,17 +143,26 @@ class PTPManager:
         """
         systemd-timesyncd is a ntp daemon which I have found runs by default on raspberry pi 5.
         It will interfere with phc2sys function if it is running.
+        It's also necessary to stop ntp. This is achieved with timedatectl set-ntp false. Make sure to run it as sudo.
         This should be made to happen during setup, but we might as well do it here as well.
         """
         self.logger.info("(PTP MANAGER) Attempting to stop systemd.timesyncd")
         try:
-            subprocess.Popen(["sudo",
+            subprocess.run(["sudo",
                               "systemctl",
                               "stop",
                               "systemd-timesyncd"])
-
         except Exception as e:
             self.logger.error(f"(PTP MANAGER) Failed to stop timesyncd: {str(e)}")
+            raise
+        self.logger.info("(PTP MANAGER) Attempting to stop timedatectl ntp")
+        try:
+            subprocess.run(["sudo",
+                              "timedatectl",
+                              "set-ntp",
+                              "false"])
+        except Exception as e:
+            self.logger.error(f"(PTP MANAGER) Failed to stop timedatectl ntp: {str(e)}")
             raise
 
     def _check_ptp_running(self):
@@ -189,7 +198,6 @@ class PTPManager:
 
 
     def start(self):
-        print("ptp.start()")
         self.logger.info(f"(PTP MANAGER) Starting PTP in {self.role.value} mode on {self.interface}")
 
         # Ensure timesyncd is disabled, or else phc2sys won't work!
@@ -273,7 +281,7 @@ class PTPManager:
                             self.last_offset = float(offset_str)
                             self.last_sync_time = time.time()
                             self.status = 'synchronized'
-                            self.logger.info(f"(PTP MANAGER) PTP offset: {self.last_offset} ns")
+                            self.logger.debug(f"(PTP MANAGER) PTP offset: {self.last_offset} ns")
                         except (IndexError, ValueError):
                             self.logger.warning(f"(PTP MANAGER) Could not parse offset from line: {line}")
 

@@ -20,7 +20,7 @@ class ControllerInterfaceManager:
     
     def run_manual_control(self):
         """Run the manual control loop"""
-        self.logger.info("Starting manual control loop")
+        self.logger.info("(INTERFACE MANAGER) Starting manual CLI control loop")
         while True:
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
@@ -32,7 +32,7 @@ class ControllerInterfaceManager:
                 self.handle_command(user_input)
                     
             except Exception as e:
-                self.logger.error(f"Error handling input: {e}")
+                self.logger.error(f"(INTERFACE MANAGER) Error handling input: {e}")
     
     def handle_command(self, command):
         """Handle a single command"""
@@ -40,7 +40,7 @@ class ControllerInterfaceManager:
             case "help":
                 self.show_help()
             case "quit":
-                self.logger.info("Quitting manual control loop")
+                self.logger.info("(INTERFACE MANAGER) Quitting manual control loop")
                 return False  # Signal to exit
             case "list":
                 self.list_modules()
@@ -65,7 +65,7 @@ class ControllerInterfaceManager:
             case "show buffer":
                 self.handle_show_buffer()
             case _:
-                print(f"Unknown command: {command}. Type 'help' for available commands.")
+                self.logger.error(f"(INTERFACE MANAGER) Unknown command: {command}. Type 'help' for available commands.")
     
     def show_help(self):
         """Display available commands"""

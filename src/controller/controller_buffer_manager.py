@@ -94,14 +94,14 @@ class ControllerBufferManager:
             if module_id:
                 if module_id in self.module_data:
                     self.module_data[module_id].clear()
-                    self.logger.debug(f"Cleared data for module {module_id}")
+                    self.logger.debug(f"(BUFFER MANAGER) Cleared data for module {module_id}")
             else:
                 for mid in self.module_data:
                     self.module_data[mid].clear()
-                self.logger.debug("Cleared all module data")
+                self.logger.debug("(BUFFER MANAGER) Cleared all module data")
             return True
         except Exception as e:
-            self.logger.error(f"Error clearing module data: {e}")
+            self.logger.error(f"(BUFFER MANAGER) Error clearing module data: {e}")
             return False
     
     def is_buffer_full(self, module_id: str) -> bool:

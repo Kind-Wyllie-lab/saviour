@@ -53,11 +53,11 @@ class ModuleHealthManager:
             bool: True if heartbeats were started successfully
         """
         if self.heartbeats_active:
-            self.logger.info("Heartbeats already active")
+            self.logger.info("(HEALTH MANAGER) Heartbeats already active")
             return False
             
         if not self.communication_manager.controller_ip:
-            self.logger.error("Cannot start heartbeats: not connected to controller")
+            self.logger.error("(HEALTH MANAGER) Cannot start heartbeats: not connected to controller")
             return False
             
         self.heartbeats_active = True
@@ -70,7 +70,7 @@ class ModuleHealthManager:
 
     def _heartbeat_loop(self):
         """Internal method: Loop sending heartbeats until stopped"""
-        self.logger.info("Heartbeat thread started")
+        self.logger.info("(HEALTH MANAGER) Heartbeat thread started")
         last_heartbeat_time = 0
         check_interval = 0.1  # Check for stop flag every 100ms
         
@@ -79,12 +79,12 @@ class ModuleHealthManager:
             # Check if it's time to send a heartbeat
             if current_time - last_heartbeat_time >= self.heartbeat_interval:
                 try:
-                    self.logger.info("Sending heartbeat")
+                    self.logger.info("(HEALTH MANAGER) Sending heartbeat")
                     status = self.get_health()
                     self.communication_manager.send_status(status)
                     last_heartbeat_time = current_time
                 except Exception as e:
-                    self.logger.error(f"Error sending heartbeat: {e}")
+                    self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
             
             # Sleep for a short interval rather than the full heartbeat interval
             # This allows for quicker response to stop requests
@@ -115,16 +115,16 @@ class ModuleHealthManager:
     def stop_heartbeats(self):
         """Stop sending heartbeats"""
         self.heartbeats_active = False
-        self.logger.info("Heartbeat flag set to false")
+        self.logger.info("(HEALTH MANAGER) Heartbeat flag set to false")
         
         # Ensure the thread has stopped
         if hasattr(self, 'heartbeat_thread') and self.heartbeat_thread and self.heartbeat_thread.is_alive():
-            self.logger.info("Waiting for heartbeat thread to stop...")
+            self.logger.info("(HEALTH MANAGER) Waiting for heartbeat thread to stop...")
             self.heartbeat_thread.join(timeout=1.0)
             if self.heartbeat_thread.is_alive():
-                self.logger.warning("Heartbeat thread did not stop cleanly - continuing shutdown")
+                self.logger.warning("(HEALTH MANAGER) Heartbeat thread did not stop cleanly - continuing shutdown")
         
-        self.logger.info("Heartbeat thread stopped")
+        self.logger.info("(HEALTH MANAGER) Heartbeat thread stopped")
     
     def cleanup(self): # TODO: is this redundant with the stop_heartbeats method?
         """Clean up resources"""

@@ -76,16 +76,16 @@ class ModuleCommunicationManager:
                 status_port = 5556
             
             # Set up command subscription
-            self.logger.info(f"Module ID: {self.module_id}")
-            self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
+            self.logger.info(f"(COMMUNICATION MANAGER) Module ID: {self.module_id}")
+            self.logger.info(f"(COMMUNICATION MANAGER) Subscribing to topic: cmd/{self.module_id}")
             self.command_socket.subscribe(f"cmd/{self.module_id}")
             
             # Connect sockets
-            self.logger.info(f"Attempting to connect command socket to tcp://{controller_ip}:{command_port}")
+            self.logger.info(f"(COMMUNICATION MANAGER) Attempting to connect command socket to tcp://{controller_ip}:{command_port}")
             self.command_socket.connect(f"tcp://{controller_ip}:{command_port}")
-            self.logger.info(f"Attempting to connect status socket to tcp://{controller_ip}:{status_port}")
+            self.logger.info(f"(COMMUNICATION MANAGER) Attempting to connect status socket to tcp://{controller_ip}:{status_port}")
             self.status_socket.connect(f"tcp://{controller_ip}:{status_port}")
-            self.logger.info(f"Connected to controller command socket at {controller_ip}:{command_port}, status socket at {controller_ip}:{status_port}")
+            self.logger.info(f"(COMMUNICATION MANAGER) Connected to controller command socket at {controller_ip}:{command_port}, status socket at {controller_ip}:{status_port}")
             
             return True
         except Exception as e:
@@ -99,44 +99,44 @@ class ModuleCommunicationManager:
             bool: True if the listener was started successfully
         """
         if self.command_listener_running:
-            self.logger.info("Command listener already running")
+            self.logger.info("(COMMUNICATION MANAGER) Command listener already running")
             return False
         
         if not self.controller_ip:
-            self.logger.error("Cannot start command listener: not connected to controller")
+            self.logger.error("(COMMUNICATION MANAGER) Cannot start command listener: not connected to controller")
             return False
         
         self.command_listener_running = True
         self.command_thread = threading.Thread(target=self.listen_for_commands, daemon=True)
         self.command_thread.start()
-        self.logger.info("Command listener thread started")
+        self.logger.info("(COMMUNICATION MANAGER) Command listener thread started")
         return True
 
     def listen_for_commands(self):
         """Listen for commands from the controller"""
-        self.logger.info("Starting command listener thread")
+        self.logger.info("(COMMUNICATION MANAGER) Starting command listener thread")
         while self.command_listener_running:
             try:
-                self.logger.info("Waiting for command...")
+                self.logger.info("(COMMUNICATION MANAGER) Waiting for command...")
                 message = self.command_socket.recv_string()
-                self.logger.info(f"Raw message received: {message}")
+                self.logger.info(f"(COMMUNICATION MANAGER) Raw message received: {message}")
                 topic, command = message.split(' ', 1)
-                self.logger.info(f"Parsed topic: {topic}, command: {command}")
+                self.logger.info(f"(COMMUNICATION MANAGER) Parsed topic: {topic}, command: {command}")
                 
                 # Store the command immediately after parsing
                 self.last_command = command
-                self.logger.info(f"Stored command: {self.last_command}")
+                self.logger.info(f"(COMMUNICATION MANAGER) Stored command: {self.last_command}")
                 
                 # Call the command handler if available
                 if self.command_callback:
                     try:
                         self.command_callback(command)
                     except Exception as e:
-                        self.logger.error(f"Error handling command: {e}")
+                        self.logger.error(f"(COMMUNICATION MANAGER) Error handling command: {e}")
                         # Don't re-raise the exception, just log it and continue
             except Exception as e:
                 if self.command_listener_running:  # Only log if we're still supposed to be running
-                    self.logger.error(f"Error receiving command: {e}")
+                    self.logger.error(f"(COMMUNICATION MANAGER) Error receiving command: {e}")
                 time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
     def send_status(self, status_data: Dict[str, Any]):
@@ -146,12 +146,12 @@ class ModuleCommunicationManager:
             status_data: Dictionary containing status information
         """
         if not self.controller_ip:
-            self.logger.warning("Cannot send status: not connected to controller")
+            self.logger.warning("(COMMUNICATION MANAGER) Cannot send status: not connected to controller")
             return
             
         message = f"status/{self.module_id} {status_data}"
         self.status_socket.send_string(message)
-        self.logger.info(f"Status sent: {message}")
+        self.logger.info(f"(COMMUNICATION MANAGER) Status sent: {message}")
 
     def send_data(self, data: Any):
         """Send data to the controller
@@ -160,16 +160,16 @@ class ModuleCommunicationManager:
             data: Data to send to the controller
         """
         if not self.controller_ip:
-            self.logger.warning("Cannot send data: not connected to controller")
+            self.logger.warning("(COMMUNICATION MANAGER) Cannot send data: not connected to controller")
             return
             
         message = f"data/{self.module_id} {data}"
         self.status_socket.send_string(message)
-        self.logger.info(f"Data sent: {message}")
+        self.logger.info(f"(COMMUNICATION MANAGER) Data sent: {message}")
 
     def cleanup(self):
         """Clean up ZMQ connections"""
-        self.logger.info(f"Cleaning up communication manager for module {self.module_id}")
+        self.logger.info(f"(COMMUNICATION MANAGER) Cleaning up communication manager for module {self.module_id}")
         
         # Stop threads
         self.command_listener_running = False
@@ -181,21 +181,21 @@ class ModuleCommunicationManager:
         try:
             # Step 1: Set all sockets to non-blocking with zero linger time
             if hasattr(self, 'command_socket') and self.command_socket:
-                self.logger.info("Setting command socket linger to 0")
+                self.logger.info("(COMMUNICATION MANAGER) Setting command socket linger to 0")
                 self.command_socket.setsockopt(zmq.LINGER, 0)
                 
             if hasattr(self, 'status_socket') and self.status_socket:
-                self.logger.info("Setting status socket linger to 0")
+                self.logger.info("(COMMUNICATION MANAGER) Setting status socket linger to 0")
                 self.status_socket.setsockopt(zmq.LINGER, 0)
             
             # Step 2: Close all sockets
             if hasattr(self, 'command_socket') and self.command_socket:
-                self.logger.info("Closing command socket")
+                self.logger.info("(COMMUNICATION MANAGER) Closing command socket")
                 self.command_socket.close()
                 self.command_socket = None
                 
             if hasattr(self, 'status_socket') and self.status_socket:
-                self.logger.info("Closing status socket")
+                self.logger.info("(COMMUNICATION MANAGER) Closing status socket")
                 self.status_socket.close()
                 self.status_socket = None
             
@@ -204,18 +204,18 @@ class ModuleCommunicationManager:
             
             # Step 4: Terminate context
             if hasattr(self, 'context') and self.context:
-                self.logger.info("Terminating ZeroMQ context")
+                self.logger.info("(COMMUNICATION MANAGER) Terminating ZeroMQ context")
                 # First try to terminate with timeout
                 try:
                     self.context.term()
                 except Exception as e:
-                    self.logger.warning(f"Normal context termination failed: {e}. Trying forced shutdown.")
+                    self.logger.warning(f"(COMMUNICATION MANAGER) Normal context termination failed: {e}. Trying forced shutdown.")
                     # If term() hangs or fails, try destroy with timeout
                     try:
                         if hasattr(self.context, 'destroy'):
                             self.context.destroy(linger=0)
                     except Exception as e2:
-                        self.logger.error(f"Forced context shutdown failed: {e2}")
+                        self.logger.error(f"(COMMUNICATION MANAGER) Forced context shutdown failed: {e2}")
                 
                 self.context = None
             
@@ -228,15 +228,15 @@ class ModuleCommunicationManager:
             self.command_socket = self.context.socket(zmq.SUB)
             self.status_socket = self.context.socket(zmq.PUB)
             
-            self.logger.info("ZeroMQ resources cleaned up and recreated")
+            self.logger.info("(COMMUNICATION MANAGER) ZeroMQ resources cleaned up and recreated")
             
         except Exception as e:
-            self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
+            self.logger.error(f"(COMMUNICATION MANAGER) Error cleaning up ZeroMQ resources: {e}")
             # Try to recreate the sockets even if cleanup fails
             try:
                 self.context = zmq.Context()
                 self.command_socket = self.context.socket(zmq.SUB)
                 self.status_socket = self.context.socket(zmq.PUB)
-                self.logger.info("ZeroMQ resources recreated after error")
+                self.logger.info("(COMMUNICATION MANAGER) ZeroMQ resources recreated after error")
             except Exception as e2:
-                self.logger.error(f"Failed to recreate ZeroMQ resources: {e2}") 
+                self.logger.error(f"(COMMUNICATION MANAGER) Failed to recreate ZeroMQ resources: {e2}") 

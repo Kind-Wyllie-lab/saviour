@@ -20,7 +20,7 @@ class ModuleFileTransfer:
         self.controller_ip = controller_ip
         self.logger = logger
         self.timeout = ClientTimeout(total=30)  # 30 second timeout
-        self.logger.info(f"Initialized file transfer with controller IP: {self.controller_ip}")
+        self.logger.info(f"(FILE TRANSFER) Initialized file transfer with controller IP: {self.controller_ip}")
 
     async def send_file(self, filepath: str, remote_path: str = None):
         """Send a file to the controller"""
@@ -30,7 +30,7 @@ class ModuleFileTransfer:
 
         try:
             file_size = os.path.getsize(filepath)
-            self.logger.info(f"Sending file to controller: {filepath} ({file_size/1024/1024:.1f}MB)")
+            self.logger.info(f"(FILE TRANSFER) Sending file to controller: {filepath} ({file_size/1024/1024:.1f}MB)")
             
             # Read the file
             with open(filepath, 'rb') as f:
@@ -43,11 +43,11 @@ class ModuleFileTransfer:
                 
                 async with session.post(f'http://{self.controller_ip}:8080/upload', data=form) as response:
                     if response.status == 200:
-                        self.logger.info("File uploaded successfully")
+                        self.logger.info(f"(FILE TRANSFER) File uploaded successfully")
                         return True
                     else:
                         text = await response.text()
-                        self.logger.error(f"Upload failed with status {response.status}: {text}")
+                        self.logger.error(f"(FILE TRANSFER) Upload failed with status {response.status}: {text}")
                         return False
                 
                 # Should we close the session here?

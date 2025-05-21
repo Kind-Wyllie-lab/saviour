@@ -138,6 +138,22 @@ class Module:
         # Data parameters - Thread
         self.stream_thread = None
 
+    def controller_discovered(self, controller_ip: str, controller_port: int):
+        """Callback when controller is discovered via zeroconf"""
+        self.logger.info(f"(MODULE) Controller discovered at {controller_ip}:{controller_port}")
+        
+        # Initialize file transfer
+        try:
+            from src.modules.module_file_transfer_manager import ModuleFileTransfer
+            self.file_transfer = ModuleFileTransfer(
+                controller_ip=controller_ip,
+                logger=self.logger
+            )
+            self.logger.info("(MODULE) File transfer initialized")
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error initializing file transfer: {e}")
+            self.file_transfer = None
+
     def start(self) -> bool:
         """
         Start the module.

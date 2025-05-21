@@ -23,6 +23,9 @@ import numpy as np
 import base64
 import signal
 import shutil
+from picamera2 import Picamera2
+from picamera2.encoders import H264Encoder
+import threading
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
@@ -314,7 +317,10 @@ class CameraModule(Module):
         
         # Camera specific variables
         self.video_folder = "rec"
-        self.video_filetype = self.config_manager.get("camera.file_format", "mp4")
+        self.video_filetype = self.config_manager.get("camera.file_format", "h264")
+        
+        # Initialize camera
+        self.picam2 = Picamera2()
         
         # Default camera config if not in config manager
         if not self.config_manager.get("camera"):
@@ -326,12 +332,16 @@ class CameraModule(Module):
                 "profile": "high",
                 "level": 4.2,
                 "intra": 30,
-                "file_format": "mp4"
+                "file_format": "h264"
             })
-
+            
+        # Configure camera
+        self.configure_camera()
+        
         # State flags
         self.is_recording = False
         self.nas_mounted = False
+        self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
         self.command_handler.set_callbacks({
@@ -351,6 +361,35 @@ class CameraModule(Module):
             'mount_nas': self.mount_nas,
             'unmount_nas': self.unmount_nas
         })
+
+    def configure_camera(self):
+        """Configure the camera with current settings"""
+        try:
+            # Get camera settings from config
+            fps = self.config_manager.get("camera.fps", 100)
+            width = self.config_manager.get("camera.width", 1280)
+            height = self.config_manager.get("camera.height", 720)
+            
+            # Create video configuration
+            config = self.picam2.create_video_configuration(
+                main={"size": (width, height), "format": "RGB888"},
+                lores={"size": (640, 480), "format": "YUV420"},
+                controls={"FrameDurationLimits": (int(1000000/fps), int(1000000/fps))}  # Convert fps to microseconds
+            )
+            
+            # Apply configuration
+            self.picam2.configure(config)
+            
+            # Create encoder with current settings
+            bitrate = self.config_manager.get("camera.bitrate", 10000000)
+            self.encoder = H264Encoder(bitrate=bitrate)
+            
+            self.logger.info("Camera configured successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error configuring camera: {e}")
+            return False
 
     def record_video(self, length: int = 10):
         """Record a video for a specific duration"""
@@ -374,57 +413,42 @@ class CameraModule(Module):
         # Ensure recording directory exists
         os.makedirs(self.video_folder, exist_ok=True)
         
-        # Get camera settings from config
-        fps = self.config_manager.get("camera.fps", 100)
-        width = self.config_manager.get("camera.width", 1280)
-        height = self.config_manager.get("camera.height", 720)
-        codec = self.config_manager.get("camera.codec", "h264")
-        profile = self.config_manager.get("camera.profile", "high")
-        level = self.config_manager.get("camera.level", 4.2)
-        intra = self.config_manager.get("camera.intra", 30)
-        
-        # Build command with config settings
-        cmd = [
-            "rpicam-vid",
-            "--framerate", str(fps),
-            "--width", str(width),
-            "--height", str(height),
-            "-t", f"{length}s",
-            "-o", filename,
-            "--nopreview",
-            "--level", str(level),
-            "--codec", codec,
-            "--profile", profile,
-            "--intra", str(intra),
-            "--inline"  # Enable inline headers for better streaming
-        ]
-
-        self.logger.info(f"Recording video to {filename}")
-        self.logger.info(f"Command: {' '.join(cmd)}")
-
         try:
-            # Execute the command
-            process = subprocess.Popen(cmd)
-            process.wait()  # Wait for recording to complete
+            # Start recording
+            self.picam2.start_recording(self.encoder, filename)
+            self.logger.info(f"Recording started to {filename}")
             
-            if process.returncode == 0:
-                self.logger.info(f"Video recording completed successfully: {filename}")
-                # Send status update
-                self.communication_manager.send_status({
-                    "type": "video_recording_complete",
-                    "filename": filename,
-                    "length": length,
-                    "session_id": self.stream_session_id
-                })
-                return filename
-            else:
-                self.logger.error(f"Video recording failed with return code {process.returncode}")
-                self.communication_manager.send_status({
-                    "type": "video_recording_failed",
-                    "error": f"Recording failed with return code {process.returncode}"
-                })
-                return None
-                
+            # Record and capture FrameWallClock during recording
+            start_time = time.time()
+            self.frame_times = []
+            
+            while time.time() - start_time < length:
+                metadata = self.picam2.capture_metadata()
+                frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+                if frame_wall_clock != 'No data':
+                    self.frame_times.append(frame_wall_clock)
+            
+            # Stop recording
+            self.picam2.stop_recording()
+            
+            # Save timestamps
+            timestamps_file = f"{self.video_folder}/{self.stream_session_id}_timestamps.txt"
+            np.savetxt(timestamps_file, self.frame_times)
+            
+            self.logger.info(f"Video recording completed successfully: {filename}")
+            self.logger.info(f"Captured {len(self.frame_times)} frames")
+            
+            # Send status update
+            self.communication_manager.send_status({
+                "type": "video_recording_complete",
+                "filename": filename,
+                "length": length,
+                "session_id": self.stream_session_id,
+                "frame_count": len(self.frame_times)
+            })
+            
+            return filename
+            
         except Exception as e:
             self.logger.error(f"Error during video recording: {e}")
             self.communication_manager.send_status({
@@ -529,41 +553,18 @@ class CameraModule(Module):
         # Ensure recording directory exists
         os.makedirs(self.video_folder, exist_ok=True)
         
-        # Get camera settings from config
-        fps = self.config_manager.get("camera.fps", 100)
-        width = self.config_manager.get("camera.width", 1280)
-        height = self.config_manager.get("camera.height", 720)
-        codec = self.config_manager.get("camera.codec", "h264")
-        profile = self.config_manager.get("camera.profile", "high")
-        level = self.config_manager.get("camera.level", 4.2)
-        intra = self.config_manager.get("camera.intra", 30)
-        
-        # Build command with config settings
-        cmd = [
-            "rpicam-vid",
-            "--framerate", str(fps),
-            "--width", str(width),
-            "--height", str(height),
-            "-t", "0",  # 0 means record until stopped
-            "-o", filename,
-            "--nopreview",
-            "--level", str(level),
-            "--codec", codec,
-            "--profile", profile,
-            "--intra", str(intra),
-            "--inline",  # Enable inline headers for better streaming
-            "--segment", "0"  # Disable segmentation
-        ]
-
-        self.logger.info(f"Starting continuous recording to {filename}")
-        self.logger.info(f"Command: {' '.join(cmd)}")
-
         try:
-            # Start the recording process
-            self.recording_process = subprocess.Popen(cmd)
+            # Start recording
+            self.picam2.start_recording(self.encoder, filename)
             self.is_recording = True
             self.current_filename = filename
             self.recording_start_time = time.time()
+            self.frame_times = []
+            
+            # Start frame capture thread
+            self.capture_thread = threading.Thread(target=self._capture_frames)
+            self.capture_thread.daemon = True
+            self.capture_thread.start()
             
             # Send status update
             self.communication_manager.send_status({
@@ -571,7 +572,9 @@ class CameraModule(Module):
                 "filename": filename,
                 "session_id": self.stream_session_id
             })
+            
             return filename
+            
         except Exception as e:
             self.logger.error(f"Error starting recording: {e}")
             self.communication_manager.send_status({
@@ -579,7 +582,19 @@ class CameraModule(Module):
                 "error": str(e)
             })
             return None
-    
+
+    def _capture_frames(self):
+        """Background thread to capture frame timestamps"""
+        while self.is_recording:
+            try:
+                metadata = self.picam2.capture_metadata()
+                frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+                if frame_wall_clock != 'No data':
+                    self.frame_times.append(frame_wall_clock)
+            except Exception as e:
+                self.logger.error(f"Error capturing frame metadata: {e}")
+                time.sleep(0.001)  # Small delay to prevent CPU spinning
+
     def stop_recording(self):
         """Stop continuous video recording"""
         if not self.is_recording:
@@ -587,39 +602,33 @@ class CameraModule(Module):
             return False
         
         try:
-            if self.recording_process:
-                # Send SIGINT (Ctrl+C) first to allow graceful shutdown
-                self.recording_process.send_signal(signal.SIGINT)
-                
-                # Give it a moment to clean up
-                time.sleep(1)
-                
-                # Check if process is still running
-                if self.recording_process.poll() is None:
-                    # If still running, try SIGTERM
-                    self.recording_process.terminate()
-                    time.sleep(0.5)
-                    
-                    if self.recording_process.poll() is None:
-                        # If still running, force kill
-                        self.logger.warning("Recording process did not terminate gracefully, force killing")
-                        self.recording_process.kill()
-                        time.sleep(0.5)
-                
-                # Wait for process to finish
-                self.recording_process.wait()
-                
+            # Stop recording
+            self.picam2.stop_recording()
+            
+            # Stop frame capture thread
+            self.is_recording = False
+            if hasattr(self, 'capture_thread'):
+                self.capture_thread.join(timeout=1.0)
+            
             # Calculate duration
             duration = time.time() - self.recording_start_time
             
-            self.is_recording = False
+            # Save timestamps
+            timestamps_file = f"{self.video_folder}/{self.stream_session_id}_timestamps.txt"
+            np.savetxt(timestamps_file, self.frame_times)
+            
+            self.logger.info(f"Recording stopped. Captured {len(self.frame_times)} frames")
+            
             self.communication_manager.send_status({
                 "type": "recording_stopped",
                 "filename": self.current_filename,
                 "session_id": self.stream_session_id,
-                "duration": duration
+                "duration": duration,
+                "frame_count": len(self.frame_times)
             })
+            
             return True
+            
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             self.communication_manager.send_status({
@@ -627,7 +636,7 @@ class CameraModule(Module):
                 "error": str(e)
             })
             return False
-        
+
     def get_controller_ip(self) -> str:
         """Get the controller's IP address"""
         if not hasattr(self, 'service_manager'):

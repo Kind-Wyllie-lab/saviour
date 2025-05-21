@@ -235,14 +235,14 @@ class PTPManager:
         # Start ptp4l with error capture
         try:
             self.ptp4l_proc = subprocess.Popen(
-                self.ptp4l_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,  # Line buffered
-                universal_newlines=True
-            )
-            
+                    self.ptp4l_args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,  # Line buffered
+                    universal_newlines=True
+                )
+                
             # Check if process started successfully
             time.sleep(0.5)  # Give it a moment to start
             if self.ptp4l_proc.poll() is not None: # poll() checks the process has terminated.
@@ -253,13 +253,13 @@ class PTPManager:
             
             # Start phc2sys
             self.phc2sys_proc = subprocess.Popen(
-                self.phc2sys_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,  # Line buffered
-                universal_newlines=True
-            )
+                    self.phc2sys_args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,  # Line buffered
+                    universal_newlines=True
+                )
             
             # Check if process started successfully
             time.sleep(0.5)

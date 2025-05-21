@@ -22,6 +22,7 @@ import logging
 import numpy as np
 import base64
 import signal
+import shutil
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
@@ -98,15 +99,17 @@ class CameraCommandHandler(ModuleCommandHandler):
                             })
                             return
                             
-                        # Optional length parameter
+                        # Optional parameters
                         length = params.get('length', 0)
+                        destination = params.get('destination', 'controller')
                         
-                        success = self.callbacks['export_video'](filename, length)
+                        success = self.callbacks['export_video'](filename, length, destination)
                         if success:
                             self.communication_manager.send_status({
                                 "type": "video_export_complete",
                                 "filename": filename,
-                                "length": length
+                                "length": length,
+                                "destination": destination
                             })
                         else:
                             self.communication_manager.send_status({
@@ -203,6 +206,84 @@ class CameraCommandHandler(ModuleCommandHandler):
                     self.communication_manager.send_status({"error": "Module not configured for clearing recordings"})
                 return
 
+            case "export_to_nas":
+                if 'export_to_nas' in self.callbacks:
+                    try:
+                        # Extract filename from command string if provided
+                        filename = command.split(' ', 1)[1] if len(command.split()) > 1 else None
+                        
+                        success = self.callbacks['export_to_nas'](filename)
+                        if success:
+                            self.communication_manager.send_status({
+                                "type": "nas_export_complete",
+                                "filename": filename if filename else "all"
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "nas_export_failed",
+                                "error": "Failed to export to NAS"
+                            })
+                    except Exception as e:
+                        self.logger.error(f"Error exporting to NAS: {e}")
+                        self.communication_manager.send_status({
+                            "type": "nas_export_failed",
+                            "error": str(e)
+                        })
+                else:
+                    self.logger.error("No export_to_nas callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for NAS export"})
+                return
+
+            case "mount_nas":
+                if 'mount_nas' in self.callbacks:
+                    try:
+                        success = self.callbacks['mount_nas']()
+                        if success:
+                            self.communication_manager.send_status({
+                                "type": "nas_mounted",
+                                "success": True
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "nas_mount_failed",
+                                "error": "Failed to mount NAS"
+                            })
+                    except Exception as e:
+                        self.logger.error(f"Error mounting NAS: {e}")
+                        self.communication_manager.send_status({
+                            "type": "nas_mount_failed",
+                            "error": str(e)
+                        })
+                else:
+                    self.logger.error("No mount_nas callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for NAS operations"})
+                return
+
+            case "unmount_nas":
+                if 'unmount_nas' in self.callbacks:
+                    try:
+                        success = self.callbacks['unmount_nas']()
+                        if success:
+                            self.communication_manager.send_status({
+                                "type": "nas_unmounted",
+                                "success": True
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "nas_unmount_failed",
+                                "error": "Failed to unmount NAS"
+                            })
+                    except Exception as e:
+                        self.logger.error(f"Error unmounting NAS: {e}")
+                        self.communication_manager.send_status({
+                            "type": "nas_unmount_failed",
+                            "error": str(e)
+                        })
+                else:
+                    self.logger.error("No unmount_nas callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for NAS operations"})
+                return
+
         # If not a camera-specific command, pass to parent class
         super().handle_command(command, **kwargs)
 
@@ -250,6 +331,7 @@ class CameraModule(Module):
 
         # State flags
         self.is_recording = False
+        self.nas_mounted = False
 
         # Set up camera-specific callbacks for the command handler
         self.command_handler.set_callbacks({
@@ -264,7 +346,10 @@ class CameraModule(Module):
             'export_video': self.export_video,
             'handle_update_camera_settings': self.handle_update_camera_settings,
             'list_recordings': self.list_recordings,
-            'clear_recordings': self.clear_recordings
+            'clear_recordings': self.clear_recordings,
+            'export_to_nas': self.export_to_nas,
+            'mount_nas': self.mount_nas,
+            'unmount_nas': self.unmount_nas
         })
 
     def record_video(self, length: int = 10):
@@ -347,9 +432,18 @@ class CameraModule(Module):
                 "error": str(e)
             })
             return None
-
-    def export_video(self, filename: str, length: int = 0):
-        """Export a video to the controller"""
+    
+    def export_video(self, filename: str, length: int = 0, destination: str = "controller"):
+        """Export a video to the specified destination
+        
+        Args:
+            filename: Name of the file to export
+            length: Optional length of the video
+            destination: Where to export to - "controller" or "nas"
+            
+        Returns:
+            bool: True if export successful
+        """
         try:
             # Ensure the file exists
             filepath = os.path.join(self.video_folder, filename)
@@ -360,35 +454,57 @@ class CameraModule(Module):
                     "error": f"File not found: {filename}"
                 })
                 return False
-                
-            # Get controller IP from zeroconf
-            controller_ip = self.get_controller_ip()
-            if not controller_ip:
-                self.logger.error("Could not find controller IP")
-                self.communication_manager.send_status({
-                    "type": "video_export_failed",
-                    "error": "Could not find controller IP"
-                })
-                return False
-                
-            # Send the file
-            success = self.send_file(filepath, f"videos/{filename}")
-            if success:
-                self.logger.info(f"Video file sent successfully to controller")
-                self.communication_manager.send_status({
-                    "type": "video_export_complete",
-                    "filename": filename,
-                    "session_id": self.stream_session_id,
-                    "length": length
-                })
-                return True
+
+            if destination.lower() == "nas":
+                # Export to NAS
+                success = self.export_to_nas(filename)
+                if success:
+                    self.logger.info(f"Video file exported successfully to NAS")
+                    self.communication_manager.send_status({
+                        "type": "video_export_complete",
+                        "filename": filename,
+                        "session_id": self.stream_session_id,
+                        "length": length,
+                        "destination": "nas"
+                    })
+                    return True
+                else:
+                    self.logger.error("Failed to export video file to NAS")
+                    self.communication_manager.send_status({
+                        "type": "video_export_failed",
+                        "error": "Failed to export to NAS"
+                    })
+                    return False
             else:
-                self.logger.error("Failed to send video file to controller")
-                self.communication_manager.send_status({
-                    "type": "video_export_failed",
-                    "error": "Failed to send video file"
-                })
-                return False
+                # Export to controller
+                controller_ip = self.get_controller_ip()
+                if not controller_ip:
+                    self.logger.error("Could not find controller IP")
+                    self.communication_manager.send_status({
+                        "type": "video_export_failed",
+                        "error": "Could not find controller IP"
+                    })
+                    return False
+                    
+                # Send the file
+                success = self.send_file(filepath, f"videos/{filename}")
+                if success:
+                    self.logger.info(f"Video file sent successfully to controller")
+                    self.communication_manager.send_status({
+                        "type": "video_export_complete",
+                        "filename": filename,
+                        "session_id": self.stream_session_id,
+                        "length": length,
+                        "destination": "controller"
+                    })
+                    return True
+                else:
+                    self.logger.error("Failed to send video file to controller")
+                    self.communication_manager.send_status({
+                        "type": "video_export_failed",
+                        "error": "Failed to send video file"
+                    })
+                    return False
                 
         except Exception as e:
             self.logger.error(f"Error exporting video file: {e}")
@@ -463,7 +579,7 @@ class CameraModule(Module):
                 "error": str(e)
             })
             return None
-
+    
     def stop_recording(self):
         """Stop continuous video recording"""
         if not self.is_recording:
@@ -511,7 +627,7 @@ class CameraModule(Module):
                 "error": str(e)
             })
             return False
-
+        
     def get_controller_ip(self) -> str:
         """Get the controller's IP address"""
         if not hasattr(self, 'service_manager'):
@@ -651,6 +767,146 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error clearing recordings: {e}")
             raise
+
+    def mount_nas(self) -> bool:
+        """Mount the NAS share"""
+        if not self.config_manager.get("nas.enabled", False):
+            self.logger.error("NAS export is not enabled in config")
+            return False
+            
+        try:
+            # Get NAS config
+            host = self.config_manager.get("nas.host")
+            share = self.config_manager.get("nas.share")
+            mount_point = self.config_manager.get("nas.mount_point")
+            
+            # Get credentials from environment
+            username = os.getenv('NAS_USERNAME')
+            password = os.getenv('NAS_PASSWORD')
+            
+            if not username or not password:
+                self.logger.error("NAS credentials not found in environment variables")
+                return False
+            
+            # Create mount point if it doesn't exist
+            os.makedirs(mount_point, exist_ok=True)
+            
+            # Build mount command
+            mount_cmd = ["sudo", "mount", "-t", "cifs"]
+            mount_cmd.extend(["-o", f"username={username},password={password}"])
+            mount_cmd.extend([f"//{host}/{share}", mount_point])
+            
+            # Execute mount command
+            result = subprocess.run(mount_cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                self.nas_mounted = True
+                self.logger.info(f"NAS mounted successfully at {mount_point}")
+                return True
+            else:
+                self.logger.error(f"Failed to mount NAS: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error mounting NAS: {e}")
+            return False
+
+    def unmount_nas(self) -> bool:
+        """Unmount the NAS share"""
+        if not self.nas_mounted:
+            return True
+            
+        try:
+            mount_point = self.config_manager.get("nas.mount_point")
+            result = subprocess.run(["sudo", "umount", mount_point], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.nas_mounted = False
+                self.logger.info("NAS unmounted successfully")
+                return True
+            else:
+                self.logger.error(f"Failed to unmount NAS: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error unmounting NAS: {e}")
+            return False
+
+    def export_to_nas(self, filename: str = None) -> bool:
+        """Export video(s) to NAS
+        
+        Args:
+            filename: Optional specific file to export. If None, exports all recordings.
+            
+        Returns:
+            bool: True if export successful
+        """
+        if not self.config_manager.get("nas.enabled", False):
+            self.logger.error("NAS export is not enabled in config")
+            return False
+            
+        try:
+            # Mount NAS if not already mounted
+            if not self.nas_mounted:
+                if not self.mount_nas():
+                    return False
+                    
+            # Get NAS config
+            mount_point = self.config_manager.get("nas.mount_point")
+            export_folder = self.config_manager.get("nas.export_folder")
+            export_path = os.path.join(mount_point, export_folder)
+            
+            # Create export folder if it doesn't exist
+            os.makedirs(export_path, exist_ok=True)
+            
+            if filename:
+                # Export specific file
+                source = os.path.join(self.video_folder, filename)
+                if not os.path.exists(source):
+                    self.logger.error(f"File not found: {source}")
+                    return False
+                    
+                dest = os.path.join(export_path, filename)
+                shutil.copy2(source, dest)
+                self.logger.info(f"Exported {filename} to NAS")
+                
+            else:
+                # Export all recordings
+                exported = 0
+                for file in os.listdir(self.video_folder):
+                    if file.endswith(f".{self.video_filetype}"):
+                        source = os.path.join(self.video_folder, file)
+                        dest = os.path.join(export_path, file)
+                        shutil.copy2(source, dest)
+                        exported += 1
+                        
+                self.logger.info(f"Exported {exported} files to NAS")
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error exporting to NAS: {e}")
+            return False
+        finally:
+            # Unmount NAS if we mounted it
+            if not self.nas_mounted:
+                self.unmount_nas()
+
+    def stop(self) -> bool:
+        """Stop the module and cleanup"""
+        try:
+            # Stop recording if active
+            if self.is_recording:
+                self.stop_recording()
+                
+            # Unmount NAS if mounted
+            if self.nas_mounted:
+                self.unmount_nas()
+                
+            # Call parent stop
+            return super().stop()
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping module: {e}")
+            return False
         
         
     

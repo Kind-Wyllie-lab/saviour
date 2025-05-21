@@ -25,7 +25,7 @@ class ControllerInterfaceManager:
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
             try:
-                user_input = input().strip()
+            user_input = input().strip()
                 if not user_input:
                     continue
                         
@@ -170,13 +170,22 @@ class ControllerInterfaceManager:
             elif self.controller.commands[cmd_idx] == "export_video":
                 try:
                     filename = input("\nEnter the filename for the exported video: ").strip()
-                    command_str = f"export_video {filename}"
+                    destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
+                    if not destination:
+                        destination = "controller"
+                    elif destination not in ["controller", "nas"]:
+                        print("Invalid destination. Using 'controller'")
+                        destination = "controller"
+                    
+                    command_str = f'export_video {{"filename": "{filename}", "destination": "{destination}"}}'
                     self.controller.communication_manager.send_command(
                         self.controller.service_manager.modules[module_idx].id,
                         command_str
                     )
-                except ValueError:
-                    self.logger.error("(INTERFACE MANAGER) Invalid input - please enter a valid filename")
+                except ValueError as e:
+                    self.logger.error(f"(INTERFACE MANAGER) Invalid input: {e}")
+                except Exception as e:
+                    self.logger.error(f"(INTERFACE MANAGER) Error during export: {e}")
             else:
                 # Handle other commands as before
                 self.controller.communication_manager.send_command(

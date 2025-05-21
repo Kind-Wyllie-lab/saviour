@@ -97,8 +97,8 @@ class ModuleServiceManager:
         
         # Clean up communication
         self.module.communication_manager.cleanup()
-        
-        # Reset controller connection state
+            
+            # Reset controller connection state
         self.controller_ip = None
         self.controller_port = None
         self.logger.info("(SERVICE MANAGER) Controller connection state reset")

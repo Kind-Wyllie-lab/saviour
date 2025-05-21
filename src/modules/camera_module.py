@@ -40,7 +40,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                     result = self.callbacks['start_recording']()
                     self.communication_manager.send_status({"recording_started": result})
                 else:
-                    self.logger.error("No start_recording callback provided")
+                    self.logger.error("(COMMAND HANDLER) No start_recording callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for recording"})
                 return
 
@@ -49,7 +49,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                     result = self.callbacks['stop_recording']()
                     self.communication_manager.send_status({"recording_stopped": result})
                 else:
-                    self.logger.error("No stop_recording callback provided")
+                    self.logger.error("(COMMAND HANDLER) No stop_recording callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for recording"})
                 return
 
@@ -72,13 +72,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                                 "error": "Recording failed"
                             })
                     except (ValueError, IndexError) as e:
-                        self.logger.error(f"Error parsing record duration: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error parsing record duration: {e}")
                         self.communication_manager.send_status({
                             "type": "video_recording_failed",
                             "error": "Invalid duration format"
                         })
                 else:
-                    self.logger.error("No record_video callback provided")
+                    self.logger.error("(COMMAND HANDLER) No record_video callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for video recording"})
                 return
 
@@ -120,13 +120,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                                 "error": "Failed to export video"
                             })
                     except Exception as e:
-                        self.logger.error(f"Error parsing export parameters: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error parsing export parameters: {e}")
                         self.communication_manager.send_status({
                             "type": "video_export_failed",
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("No export_video callback provided")
+                    self.logger.error("(COMMAND HANDLER) No export_video callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for video export"})
                 return
 
@@ -149,13 +149,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                                 "error": "Failed to update settings"
                             })
                     else:
-                        self.logger.error("No handle_update_camera_settings callback provided")
+                        self.logger.error("(COMMAND HANDLER) No handle_update_camera_settings callback provided")
                         self.communication_manager.send_status({
                             "type": "camera_settings_update_failed",
                             "error": "Module not configured for camera settings"
                         })
                 except Exception as e:
-                    self.logger.error(f"Error parsing camera settings: {e}")
+                    self.logger.error(f"(COMMAND HANDLER) Error parsing camera settings: {e}")
                     self.communication_manager.send_status({
                         "type": "camera_settings_update_failed",
                         "error": str(e)
@@ -171,13 +171,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                             "recordings": recordings
                         })
                     except Exception as e:
-                        self.logger.error(f"Error listing recordings: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error listing recordings: {e}")
                         self.communication_manager.send_status({
                             "type": "recordings_list_failed",
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("No list_recordings callback provided")
+                    self.logger.error("(COMMAND HANDLER) No list_recordings callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for listing recordings"})
                 return
 
@@ -199,13 +199,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                             "kept_count": result.get('kept_count', 0)
                         })
                     except Exception as e:
-                        self.logger.error(f"Error clearing recordings: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error clearing recordings: {e}")
                         self.communication_manager.send_status({
                             "type": "recordings_clear_failed",
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("No clear_recordings callback provided")
+                    self.logger.error("(COMMAND HANDLER) No clear_recordings callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for clearing recordings"})
                 return
 
@@ -227,13 +227,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                                 "error": "Failed to export to NAS"
                             })
                     except Exception as e:
-                        self.logger.error(f"Error exporting to NAS: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error exporting to NAS: {e}")
                         self.communication_manager.send_status({
                             "type": "nas_export_failed",
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("No export_to_nas callback provided")
+                    self.logger.error("(COMMAND HANDLER) No export_to_nas callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for NAS export"})
                 return
 
@@ -252,13 +252,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                                 "error": "Failed to mount NAS"
                             })
                     except Exception as e:
-                        self.logger.error(f"Error mounting NAS: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error mounting NAS: {e}")
                         self.communication_manager.send_status({
                             "type": "nas_mount_failed",
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("No mount_nas callback provided")
+                    self.logger.error("(COMMAND HANDLER) No mount_nas callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for NAS operations"})
                 return
 
@@ -277,13 +277,13 @@ class CameraCommandHandler(ModuleCommandHandler):
                                 "error": "Failed to unmount NAS"
                             })
                     except Exception as e:
-                        self.logger.error(f"Error unmounting NAS: {e}")
+                        self.logger.error(f"(COMMAND HANDLER) Error unmounting NAS: {e}")
                         self.communication_manager.send_status({
                             "type": "nas_unmount_failed",
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("No unmount_nas callback provided")
+                    self.logger.error("(COMMAND HANDLER) No unmount_nas callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for NAS operations"})
                 return
 
@@ -321,6 +321,10 @@ class CameraModule(Module):
         
         # Initialize camera
         self.picam2 = Picamera2()
+
+        # Get camera modes
+        self.camera_modes = self.picam2.sensor_modes
+        self.logger.info(f"(MODULE) Camera modes: {self.camera_modes}")
         
         # Default camera config if not in config manager
         if not self.config_manager.get("camera"):
@@ -337,7 +341,7 @@ class CameraModule(Module):
             
         # Configure camera
         self.configure_camera()
-        
+
         # State flags
         self.is_recording = False
         self.nas_mounted = False
@@ -372,9 +376,10 @@ class CameraModule(Module):
             
             # Create video configuration
             config = self.picam2.create_video_configuration(
-                main={"size": (width, height), "format": "RGB888"},
-                lores={"size": (640, 480), "format": "YUV420"},
-                controls={"FrameDurationLimits": (int(1000000/fps), int(1000000/fps))}  # Convert fps to microseconds
+                main={"size": (width, height)} # From camera_timestamp_demo.py
+                # main={"size": (width, height), "format": "RGB888"},
+                # lores={"size": (640, 480), "format": "YUV420"},
+                # controls={"FrameDurationLimits": (int(1000000/fps), int(1000000/fps))}  # Convert fps to microseconds
             )
             
             # Apply configuration
@@ -382,15 +387,20 @@ class CameraModule(Module):
             
             # Create encoder with current settings
             bitrate = self.config_manager.get("camera.bitrate", 10000000)
-            self.encoder = H264Encoder(bitrate=bitrate)
+            self.encoder = H264Encoder(
+                bitrate=bitrate,
+                # repeat=True,  # Repeat SPS/PPS headers
+                # iperiod=30,   # Key frame interval
+                # framerate=fps
+            )
             
-            self.logger.info("Camera configured successfully")
+            self.logger.info("(MODULE) Camera configured successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f"Error configuring camera: {e}")
+            self.logger.error(f"(MODULE) Error configuring camera: {e}")
             return False
-
+                
     def record_video(self, length: int = 10):
         """Record a video for a specific duration"""
         if length == 0:
@@ -402,7 +412,7 @@ class CameraModule(Module):
             return None
         
         # Otherwise, record for specified duration
-        self.logger.info(f"Starting video recording for {length} seconds")
+        self.logger.info(f"(MODULE) Starting video recording for {length} seconds")
         
         # Generate new session ID for this recording
         self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
@@ -416,7 +426,7 @@ class CameraModule(Module):
         try:
             # Start recording
             self.picam2.start_recording(self.encoder, filename)
-            self.logger.info(f"Recording started to {filename}")
+            self.logger.info(f"(MODULE) Recording started to {filename}")
             
             # Record and capture FrameWallClock during recording
             start_time = time.time()
@@ -435,8 +445,8 @@ class CameraModule(Module):
             timestamps_file = f"{self.video_folder}/{self.stream_session_id}_timestamps.txt"
             np.savetxt(timestamps_file, self.frame_times)
             
-            self.logger.info(f"Video recording completed successfully: {filename}")
-            self.logger.info(f"Captured {len(self.frame_times)} frames")
+            self.logger.info(f"(MODULE) Video recording completed successfully: {filename}")
+            self.logger.info(f"(MODULE) Captured {len(self.frame_times)} frames")
             
             # Send status update
             self.communication_manager.send_status({
@@ -448,9 +458,9 @@ class CameraModule(Module):
             })
             
             return filename
-            
+                
         except Exception as e:
-            self.logger.error(f"Error during video recording: {e}")
+            self.logger.error(f"(MODULE) Error during video recording: {e}")
             self.communication_manager.send_status({
                 "type": "video_recording_failed",
                 "error": str(e)
@@ -472,7 +482,7 @@ class CameraModule(Module):
             # Ensure the video file exists
             filepath = os.path.join(self.video_folder, filename)
             if not os.path.exists(filepath):
-                self.logger.error(f"Video file not found: {filepath}")
+                self.logger.error(f"(MODULE) Video file not found: {filepath}")
                 self.communication_manager.send_status({
                     "type": "video_export_failed",
                     "error": f"File not found: {filename}"
@@ -492,7 +502,7 @@ class CameraModule(Module):
                     if os.path.exists(timestamp_filepath):
                         self.export_to_nas(timestamp_filename)
                     
-                    self.logger.info(f"Video file and timestamps exported successfully to NAS")
+                    self.logger.info(f"(MODULE) Video file and timestamps exported successfully to NAS")
                     self.communication_manager.send_status({
                         "type": "video_export_complete",
                         "filename": filename,
@@ -503,7 +513,7 @@ class CameraModule(Module):
                     })
                     return True
                 else:
-                    self.logger.error("Failed to export video file to NAS")
+                    self.logger.error("(MODULE) Failed to export video file to NAS")
                     self.communication_manager.send_status({
                         "type": "video_export_failed",
                         "error": "Failed to export to NAS"
@@ -512,8 +522,8 @@ class CameraModule(Module):
             else:
                 # Export to controller
                 controller_ip = self.get_controller_ip()
-                if not controller_ip:
-                    self.logger.error("Could not find controller IP")
+            if not controller_ip:
+                    self.logger.error("(MODULE) Could not find controller IP")
                     self.communication_manager.send_status({
                         "type": "video_export_failed",
                         "error": "Could not find controller IP"
@@ -521,13 +531,13 @@ class CameraModule(Module):
                     return False
                     
                 # Send the video file
-                success = self.send_file(filepath, f"videos/{filename}")
-                if success:
+            success = self.send_file(filepath, f"videos/{filename}")
+            if success:
                     # Also send timestamp file if it exists
                     if os.path.exists(timestamp_filepath):
                         self.send_file(timestamp_filepath, f"videos/{timestamp_filename}")
                     
-                    self.logger.info(f"Video file and timestamps sent successfully to controller")
+                    self.logger.info(f"(MODULE) Video file and timestamps sent successfully to controller")
                     self.communication_manager.send_status({
                         "type": "video_export_complete",
                         "filename": filename,
@@ -537,8 +547,8 @@ class CameraModule(Module):
                         "has_timestamps": os.path.exists(timestamp_filepath)
                     })
                     return True
-                else:
-                    self.logger.error("Failed to send video file to controller")
+            else:
+                    self.logger.error("(MODULE) Failed to send video file to controller")
                     self.communication_manager.send_status({
                         "type": "video_export_failed",
                         "error": "Failed to send video file"
@@ -546,7 +556,7 @@ class CameraModule(Module):
                     return False
                 
         except Exception as e:
-            self.logger.error(f"Error exporting video file: {e}")
+            self.logger.error(f"(MODULE) Error exporting video file: {e}")
             self.communication_manager.send_status({
                 "type": "video_export_failed",
                 "error": str(e)
@@ -556,7 +566,7 @@ class CameraModule(Module):
     def start_recording(self):
         """Start continuous video recording"""
         if self.is_recording:
-            self.logger.info("Already recording")
+            self.logger.info("(MODULE) Already recording")
             return False
         
         # Generate new session ID for this recording
@@ -591,7 +601,7 @@ class CameraModule(Module):
             return filename
             
         except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
+            self.logger.error(f"(MODULE) Error starting recording: {e}")
             self.communication_manager.send_status({
                 "type": "recording_start_failed",
                 "error": str(e)
@@ -609,11 +619,11 @@ class CameraModule(Module):
             except Exception as e:
                 self.logger.error(f"Error capturing frame metadata: {e}")
                 time.sleep(0.001)  # Small delay to prevent CPU spinning
-
+    
     def stop_recording(self):
         """Stop continuous video recording"""
         if not self.is_recording:
-            self.logger.info("Not recording")
+            self.logger.info("(MODULE) Not recording")
             return False
         
         try:
@@ -632,7 +642,7 @@ class CameraModule(Module):
             timestamps_file = f"{self.video_folder}/{self.stream_session_id}_timestamps.txt"
             np.savetxt(timestamps_file, self.frame_times)
             
-            self.logger.info(f"Recording stopped. Captured {len(self.frame_times)} frames")
+            self.logger.info(f"(MODULE) Recording stopped. Captured {len(self.frame_times)} frames")
             
             self.communication_manager.send_status({
                 "type": "recording_stopped",
@@ -645,17 +655,17 @@ class CameraModule(Module):
             return True
             
         except Exception as e:
-            self.logger.error(f"Error stopping recording: {e}")
+            self.logger.error(f"(MODULE) Error stopping recording: {e}")
             self.communication_manager.send_status({
                 "type": "recording_stop_failed",
                 "error": str(e)
             })
             return False
-
+        
     def get_controller_ip(self) -> str:
         """Get the controller's IP address"""
         if not hasattr(self, 'service_manager'):
-            self.logger.error("Service manager not initialized")
+            self.logger.error("(MODULE) Service manager not initialized")
             return None
         return self.service_manager.controller_ip
         
@@ -678,10 +688,10 @@ class CameraModule(Module):
             if 'file_format' in params:
                 self.video_filetype = params['file_format']
                 
-            self.logger.info(f"Camera parameters updated: {params}")
+            self.logger.info(f"(MODULE) Camera parameters updated: {params}")
             return True
         except Exception as e:
-            self.logger.error(f"Error setting camera parameters: {e}")
+            self.logger.error(f"(MODULE) Error setting camera parameters: {e}")
             return False
         
     def read_fake_camera_frame(self):
@@ -706,7 +716,7 @@ class CameraModule(Module):
             
             return success
         except Exception as e:
-            self.logger.error(f"Error updating camera settings: {e}")
+            self.logger.error(f"(MODULE) Error updating camera settings: {e}")
             self.communication_manager.send_status({
                 "type": "camera_settings_update_failed",
                 "error": str(e)
@@ -738,7 +748,7 @@ class CameraModule(Module):
             return recordings
             
         except Exception as e:
-            self.logger.error(f"Error listing recordings: {e}")
+            self.logger.error(f"(MODULE) Error listing recordings: {e}")
             raise
 
     def clear_recordings(self, older_than: int = None, keep_latest: int = 0):
@@ -781,7 +791,7 @@ class CameraModule(Module):
                     os.remove(recording["path"])
                     deleted_count += 1
                 except Exception as e:
-                    self.logger.error(f"Error deleting recording {recording['filename']}: {e}")
+                    self.logger.error(f"(MODULE) Error deleting recording {recording['filename']}: {e}")
             
             return {
                 "deleted_count": deleted_count,
@@ -789,13 +799,13 @@ class CameraModule(Module):
             }
             
         except Exception as e:
-            self.logger.error(f"Error clearing recordings: {e}")
+            self.logger.error(f"(MODULE) Error clearing recordings: {e}")
             raise
 
     def mount_nas(self) -> bool:
         """Mount the NAS share"""
         if not self.config_manager.get("nas.enabled", False):
-            self.logger.error("NAS export is not enabled in config")
+            self.logger.error("(MODULE) NAS export is not enabled in config")
             return False
             
         try:
@@ -809,7 +819,7 @@ class CameraModule(Module):
             password = os.getenv('NAS_PASSWORD')
             
             if not username or not password:
-                self.logger.error("NAS credentials not found in environment variables")
+                self.logger.error("(MODULE) NAS credentials not found in environment variables")
                 return False
             
             # Create mount point if it doesn't exist
@@ -824,14 +834,14 @@ class CameraModule(Module):
             result = subprocess.run(mount_cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 self.nas_mounted = True
-                self.logger.info(f"NAS mounted successfully at {mount_point}")
+                self.logger.info(f"(MODULE) NAS mounted successfully at {mount_point}")
                 return True
             else:
-                self.logger.error(f"Failed to mount NAS: {result.stderr}")
+                self.logger.error(f"(MODULE) Failed to mount NAS: {result.stderr}")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"Error mounting NAS: {e}")
+            self.logger.error(f"(MODULE) Error mounting NAS: {e}")
             return False
 
     def unmount_nas(self) -> bool:
@@ -844,14 +854,14 @@ class CameraModule(Module):
             result = subprocess.run(["sudo", "umount", mount_point], capture_output=True, text=True)
             if result.returncode == 0:
                 self.nas_mounted = False
-                self.logger.info("NAS unmounted successfully")
+                self.logger.info("(MODULE) NAS unmounted successfully")
                 return True
             else:
-                self.logger.error(f"Failed to unmount NAS: {result.stderr}")
+                self.logger.error(f"(MODULE) Failed to unmount NAS: {result.stderr}")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"Error unmounting NAS: {e}")
+            self.logger.error(f"(MODULE) Error unmounting NAS: {e}")
             return False
 
     def export_to_nas(self, filename: str = None) -> bool:
@@ -864,7 +874,7 @@ class CameraModule(Module):
             bool: True if export successful
         """
         if not self.config_manager.get("nas.enabled", False):
-            self.logger.error("NAS export is not enabled in config")
+            self.logger.error("(MODULE) NAS export is not enabled in config")
             return False
             
         try:
@@ -885,12 +895,12 @@ class CameraModule(Module):
                 # Export specific file
                 source = os.path.join(self.video_folder, filename)
                 if not os.path.exists(source):
-                    self.logger.error(f"File not found: {source}")
+                    self.logger.error(f"(MODULE) File not found: {source}")
                     return False
                     
                 dest = os.path.join(export_path, filename)
                 shutil.copy2(source, dest)
-                self.logger.info(f"Exported {filename} to NAS")
+                self.logger.info(f"(MODULE) Exported {filename} to NAS")
                 
             else:
                 # Export all recordings
@@ -902,12 +912,12 @@ class CameraModule(Module):
                         shutil.copy2(source, dest)
                         exported += 1
                         
-                self.logger.info(f"Exported {exported} files to NAS")
+                self.logger.info(f"(MODULE) Exported {exported} files to NAS")
                 
             return True
             
         except Exception as e:
-            self.logger.error(f"Error exporting to NAS: {e}")
+            self.logger.error(f"(MODULE) Error exporting to NAS: {e}")
             return False
         finally:
             # Unmount NAS if we mounted it
@@ -929,7 +939,7 @@ class CameraModule(Module):
             return super().stop()
             
         except Exception as e:
-            self.logger.error(f"Error stopping module: {e}")
+            self.logger.error(f"(MODULE) Error stopping module: {e}")
             return False
         
         

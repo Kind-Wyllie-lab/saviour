@@ -140,19 +140,51 @@ class Module:
 
     def controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
-        self.logger.info(f"(MODULE) Controller discovered at {controller_ip}:{controller_port}")
-        
-        # Initialize file transfer
+        self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
+        self.logger.info(f"(MODULE) Module will now initialize the necessary managers")
+        # Only proceed if we're not already connected
+        if self.communication_manager.controller_ip:
+            self.logger.info("(MODULE) Already connected to controller")
+            return
+            
         try:
+            # 1. Initialize file transfer
+            self.logger.info("(MODULE) Initializing file transfer")
             from src.modules.module_file_transfer_manager import ModuleFileTransfer
             self.file_transfer = ModuleFileTransfer(
                 controller_ip=controller_ip,
                 logger=self.logger
             )
             self.logger.info("(MODULE) File transfer initialized")
+            
+            # 2. Connect communication manager
+            self.logger.info("(MODULE) Connecting communication manager to controller")
+            self.communication_manager.connect(controller_ip, controller_port)
+            self.logger.info("(MODULE) Communication manager connected to controller")
+            
+            # 3. Start command listener
+            self.logger.info("(MODULE) Requesting communication manager to start command listener")
+            self.communication_manager.start_command_listener()
+            self.logger.info("(MODULE) Command listener started")
+            
+            # 4. Start heartbeats if module is running
+            if self.is_running:
+                self.logger.info("(MODULE) Requesting health manager to start heartbeats")
+                self.health_manager.start_heartbeats()
+                self.logger.info("(MODULE) Heartbeats started")
+            
+            # 5. Start PTP
+            self.logger.info("(MODULE) Starting PTP manager")
+            self.ptp_manager.start()
+            
+            self.logger.info("(MODULE) Controller connection and initialization complete")
+            
         except Exception as e:
-            self.logger.error(f"(MODULE) Error initializing file transfer: {e}")
+            self.logger.error(f"(MODULE) Error during controller initialization: {e}")
+            # Clean up any partial initialization
+            self.communication_manager.cleanup()
             self.file_transfer = None
+            raise
 
     def start(self) -> bool:
         """

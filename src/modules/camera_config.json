@@ -1,0 +1,27 @@
+{
+    "camera": {
+        "fps": 100,
+        "width": 1280,
+        "height": 720,
+        "codec": "h264",
+        "profile": "high",
+        "level": 4.2,
+        "intra": 30,
+        "file_format": "mp4"
+    },
+    "recording": {
+        "video_folder": "rec",
+        "max_recordings": 100,
+        "auto_cleanup": true,
+        "cleanup_age_days": 7,
+        "keep_latest": 10
+    },
+    "nas": {
+        "enabled": true,
+        "host": "192.168.0.16",
+        "share": "data",
+        "mount_point": "/mnt/nas",
+        "auto_export": false,
+        "export_folder": "videos"
+    }
+} 

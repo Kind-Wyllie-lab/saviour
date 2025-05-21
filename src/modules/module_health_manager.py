@@ -62,7 +62,7 @@ class ModuleHealthManager:
             
         self.heartbeats_active = True
         self.heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
+            target=self._heartbeat_loop, 
             daemon=True
         )
         self.heartbeat_thread.start()
@@ -79,12 +79,12 @@ class ModuleHealthManager:
             # Check if it's time to send a heartbeat
             if current_time - last_heartbeat_time >= self.heartbeat_interval:
                 try:
-                    self.logger.info("(HEALTH MANAGER) Sending heartbeat")
-                    status = self.get_health()
-                    self.communication_manager.send_status(status)
-                    last_heartbeat_time = current_time
+                        self.logger.info("(HEALTH MANAGER) Sending heartbeat")
+                        status = self.get_health()
+                        self.communication_manager.send_status(status)
+                        last_heartbeat_time = current_time
                 except Exception as e:
-                    self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
+                        self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
             
             # Sleep for a short interval rather than the full heartbeat interval
             # This allows for quicker response to stop requests

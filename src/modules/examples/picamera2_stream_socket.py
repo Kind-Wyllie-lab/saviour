@@ -16,12 +16,14 @@ from libcamera import controls
 # Initialize camera with low latency settings
 picam2 = Picamera2()
 
+fps = 25
+
 # Configure for low latency
 video_config = picam2.create_video_configuration(
     main={"size": (1280, 720)},
     controls={
         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,
-        "FrameDurationLimits": (33333, 33333),  # 30fps
+        "FrameDurationLimits": (int(1000000/fps), int(1000000/fps)),  # 30fps
         "AwbMode": controls.AwbModeEnum.Indoor,  # Faster AWB
         "AeEnable": False,  # Disable auto exposure for lower latency
         "AnalogueGain": 2.0  # Fixed gain

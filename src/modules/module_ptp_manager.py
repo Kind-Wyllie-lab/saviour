@@ -170,6 +170,23 @@ class PTPManager:
         except Exception as e:
             self.logger.error(f"(PTP MANAGER) Failed to stop timedatectl ntp: {str(e)}")
             raise
+    
+    def _start_timesyncd(self):
+        """
+        Resume timesyncd and ntp on cleanup - clock will drift otherwise.
+        """
+        try:
+            self.logger.info("(PTP MANAGER) Attempting to start systemd.timesyncd")
+            subprocess.run(["sudo", "systemctl", "start", "systemd-timesyncd"])
+        except Exception as e:
+            self.logger.error(f"(PTP MANAGER) Failed to start systemd.timesyncd: {str(e)}")
+            raise
+        try:
+            self.logger.info("(PTP MANAGER) Attempting to start timedatectl ntp")
+            subprocess.run(["sudo", "timedatectl", "set-ntp", "true"])  
+        except Exception as e:
+            self.logger.error(f"(PTP MANAGER) Failed to start timedatectlntp: {str(e)}")
+            raise
 
     def _check_ptp_running(self):
         """
@@ -355,29 +372,58 @@ class PTPManager:
             time.sleep(0.1)
 
     def stop(self):
+        """Stop PTP processes and clean up"""
+        self.logger.info("(PTP MANAGER) Stopping PTP processes...")
         self.running = False
-        if self.ptp4l_proc:
-            self.ptp4l_proc.terminate()
-            try:
-                self.ptp4l_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.ptp4l_proc.kill()
-        
+
+        # Stop monitoring thread first
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=1.0)
+
+        # Stop processes in reverse order (phc2sys first, then ptp4l)
         if self.phc2sys_proc:
-            self.phc2sys_proc.terminate()
             try:
-                self.phc2sys_proc.wait(timeout=5)
+                self.phc2sys_proc.terminate()
+                self.phc2sys_proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
+                self.logger.warning("(PTP MANAGER) phc2sys did not terminate gracefully, killing...")
                 self.phc2sys_proc.kill()
-        
+                self.phc2sys_proc.wait()
+            except Exception as e:
+                self.logger.error(f"(PTP MANAGER) Error stopping phc2sys: {e}")
+
+        if self.ptp4l_proc:
+            try:
+                self.ptp4l_proc.terminate()
+                self.ptp4l_proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.logger.warning("(PTP MANAGER) ptp4l did not terminate gracefully, killing...")
+                self.ptp4l_proc.kill()
+                self.ptp4l_proc.wait()
+            except Exception as e:
+                self.logger.error(f"(PTP MANAGER) Error stopping ptp4l: {e}")
+
         # Clean up config file
         try:
-            os.remove(self.config_file)
-        except OSError:
-            pass
-        
+            if hasattr(self, 'config_file') and os.path.exists(self.config_file):
+                os.remove(self.config_file)
+        except OSError as e:
+            self.logger.error(f"(PTP MANAGER) Error removing config file: {e}")
+
+        # Always try to restart timesyncd, even if other cleanup failed
+        try:
+            self._start_timesyncd()
+        except Exception as e:
+            self.logger.error(f"(PTP MANAGER) Failed to restart timesyncd: {e}")
+            # Try one more time after a short delay
+            time.sleep(1)
+            try:
+                self._start_timesyncd()
+            except Exception as e:
+                self.logger.error(f"(PTP MANAGER) Second attempt to restart timesyncd failed: {e}")
+
         self.status = 'stopped'
-        self.logger.info("(PTP MANAGER) Stopped PTP processes.")
+        self.logger.info("(PTP MANAGER) PTP processes stopped and cleanup completed.")
 
     def get_status(self):
         return {

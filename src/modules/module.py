@@ -202,11 +202,15 @@ class Module:
             self.logger.info("(MODULE) Stopping health manager...")
             self.health_manager.stop_heartbeats()
 
-            # Third: Stop the service manager (doesn't use ZMQ directly)
+            # Third: Stop PTP manager
+            self.logger.info("(MODULE) Stopping PTP manager...")
+            self.ptp_manager.stop()
+
+            # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("(MODULE) Cleaning up service manager...")
             self.service_manager.cleanup()
             
-            # Fourth: Stop the communication manager (ZMQ cleanup)
+            # Fifth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("(MODULE) Cleaning up communication manager...")
             self.communication_manager.cleanup()
 

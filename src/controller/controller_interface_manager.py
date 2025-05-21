@@ -25,7 +25,7 @@ class ControllerInterfaceManager:
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
             try:
-            user_input = input().strip()
+                user_input = input().strip()
                 if not user_input:
                     continue
                         

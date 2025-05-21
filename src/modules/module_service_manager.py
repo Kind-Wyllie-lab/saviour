@@ -90,33 +90,6 @@ class ModuleServiceManager:
             
             # Notify module that controller was discovered
             self.module.controller_discovered(self.controller_ip, self.controller_port)
-            
-            # Only connect if we're not already connected
-            if not self.module.communication_manager.controller_ip:
-                self.logger.info("(SERVICE MANAGER) Connecting to controller...")
-
-                # TODO: Should these things happen here, or should they get triggered in the main program?
-
-                # Connect the communication manager
-                self.logger.info("(SERVICE MANAGER) Starting communication manager")
-                self.module.communication_manager.connect(self.controller_ip, self.controller_port)
-                
-                # Start the command listener
-                self.logger.info("(SERVICE MANAGER) Calling start_command_listener()")
-                self.module.communication_manager.start_command_listener()
-                
-                # Start heartbeats if module is running
-                if self.module.is_running:
-                    self.logger.info("(SERVICE MANAGER) Calling start_heartbeats()")
-                    self.module.health_manager.start_heartbeats()
-
-                # Start PTP
-                self.logger.info("(SERVICE MANAGER) Starting PTP manager")
-                self.module.ptp_manager.start()
-                    
-                self.logger.info("(SERVICE MANAGER) Connection to controller established")
-            else:
-                self.logger.info("(SERVICE MANAGER) Already connected to controller")
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""

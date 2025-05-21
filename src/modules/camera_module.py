@@ -82,7 +82,12 @@ class CameraCommandHandler(ModuleCommandHandler):
                 if 'export_video' in self.callbacks:
                     try:
                         # Extract parameters from command string
-                        params_str = command.split(' ', 1)[1]  # Get everything after the command name
+                        params_str = command.split(' ', 1)[1] if len(command.split()) > 1 else "{}"
+                        
+                        # If it's just a filename without JSON format, wrap it in a dict
+                        if not params_str.startswith('{'):
+                            params_str = f'{{"filename": "{params_str}"}}'
+                            
                         params = eval(params_str)  # Convert string representation back to dict
                         
                         filename = params.get('filename')
@@ -343,9 +348,19 @@ class CameraModule(Module):
             })
             return None
 
-    def export_video(self, filename: str, length: int):
-        """Export a recorded video to the controller"""
+    def export_video(self, filename: str, length: int = 0):
+        """Export a video to the controller"""
         try:
+            # Ensure the file exists
+            filepath = os.path.join(self.video_folder, filename)
+            if not os.path.exists(filepath):
+                self.logger.error(f"Video file not found: {filepath}")
+                self.communication_manager.send_status({
+                    "type": "video_export_failed",
+                    "error": f"File not found: {filename}"
+                })
+                return False
+                
             # Get controller IP from zeroconf
             controller_ip = self.get_controller_ip()
             if not controller_ip:
@@ -357,7 +372,7 @@ class CameraModule(Module):
                 return False
                 
             # Send the file
-            success = self.send_file(filename, f"videos/{os.path.basename(filename)}")
+            success = self.send_file(filepath, f"videos/{filename}")
             if success:
                 self.logger.info(f"Video file sent successfully to controller")
                 self.communication_manager.send_status({
@@ -499,7 +514,10 @@ class CameraModule(Module):
 
     def get_controller_ip(self) -> str:
         """Get the controller's IP address"""
-        return self.controller_ip
+        if not hasattr(self, 'service_manager'):
+            self.logger.error("Service manager not initialized")
+            return None
+        return self.service_manager.controller_ip
         
     def set_camera_parameters(self, params: dict) -> bool:
         """

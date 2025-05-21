@@ -88,14 +88,8 @@ class ModuleServiceManager:
             self.controller_port = info.port
             self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
-            # Initialize file transfer with the correct IP
-            if not self.module.file_transfer:
-                # Try to get the IP of the controller
-                try:
-                    from src.modules.module_file_transfer import ModuleFileTransfer
-                    self.module.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
-                except Exception as e:
-                    self.logger.error(f"(SERVICE MANAGER) Error initializing file transfer: {e}")
+            # Notify module that controller was discovered
+            self.module.controller_discovered(self.controller_ip, self.controller_port)
             
             # Only connect if we're not already connected
             if not self.module.communication_manager.controller_ip:

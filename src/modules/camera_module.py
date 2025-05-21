@@ -469,7 +469,7 @@ class CameraModule(Module):
             bool: True if export successful
         """
         try:
-            # Ensure the file exists
+            # Ensure the video file exists
             filepath = os.path.join(self.video_folder, filename)
             if not os.path.exists(filepath):
                 self.logger.error(f"Video file not found: {filepath}")
@@ -479,17 +479,27 @@ class CameraModule(Module):
                 })
                 return False
 
+            # Get the timestamp file path
+            session_id = filename.split('.')[0]  # Remove extension
+            timestamp_filename = f"{session_id}_timestamps.txt"
+            timestamp_filepath = os.path.join(self.video_folder, timestamp_filename)
+
             if destination.lower() == "nas":
                 # Export to NAS
                 success = self.export_to_nas(filename)
                 if success:
-                    self.logger.info(f"Video file exported successfully to NAS")
+                    # Also export timestamp file if it exists
+                    if os.path.exists(timestamp_filepath):
+                        self.export_to_nas(timestamp_filename)
+                    
+                    self.logger.info(f"Video file and timestamps exported successfully to NAS")
                     self.communication_manager.send_status({
                         "type": "video_export_complete",
                         "filename": filename,
                         "session_id": self.stream_session_id,
                         "length": length,
-                        "destination": "nas"
+                        "destination": "nas",
+                        "has_timestamps": os.path.exists(timestamp_filepath)
                     })
                     return True
                 else:
@@ -510,16 +520,21 @@ class CameraModule(Module):
                     })
                     return False
                     
-                # Send the file
+                # Send the video file
                 success = self.send_file(filepath, f"videos/{filename}")
                 if success:
-                    self.logger.info(f"Video file sent successfully to controller")
+                    # Also send timestamp file if it exists
+                    if os.path.exists(timestamp_filepath):
+                        self.send_file(timestamp_filepath, f"videos/{timestamp_filename}")
+                    
+                    self.logger.info(f"Video file and timestamps sent successfully to controller")
                     self.communication_manager.send_status({
                         "type": "video_export_complete",
                         "filename": filename,
                         "session_id": self.stream_session_id,
                         "length": length,
-                        "destination": "controller"
+                        "destination": "controller",
+                        "has_timestamps": os.path.exists(timestamp_filepath)
                     })
                     return True
                 else:

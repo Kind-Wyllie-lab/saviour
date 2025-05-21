@@ -568,11 +568,11 @@ class CameraModule(Module):
                     stat = os.stat(filepath)
                     recordings.append({
                         "filename": filename,
-                        "path": filepath,
+                        # "path": filepath,
                         "size": stat.st_size,
-                        "created": stat.st_ctime,
-                        "modified": stat.st_mtime,
-                        "session_id": filename.split('.')[0]  # Extract session ID from filename
+                        "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                        # "modified": stat.st_mtime,
+                        # "session_id": filename.split('.')[0]  # Extract session ID from filename
                     })
             
             # Sort by creation time, newest first

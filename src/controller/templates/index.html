@@ -24,6 +24,13 @@
             .then(data => { // With response data...
                 const moduleList = document.getElementById('module-list'); // Get the module list element
                 moduleList.innerHTML = ''; // Clear existing list
+            
+                // If no modules are found, alert the user and return
+                if (data.modules.length === 0) {
+                    alert('No modules found!');
+                    moduleList.innerHTML = '<p>No modules available</p>';
+                    return;
+                }
                 
                 data.modules.forEach(module => { // For each module in the response...
                     const moduleDiv = document.createElement('div'); // Create a new div element
@@ -41,5 +48,40 @@
                 document.getElementById('module-list').innerHTML = 'Error loading modules'; // Update the module list with an error message
             });
     }
+
+    function updateModuleList() {
+        fetch('/api/list_modules')
+            .then(response => response.json())
+            .then(data => {
+                const moduleList = document.getElementById('module-list');
+                moduleList.innerHTML = '';
+                
+                if (data.modules.length === 0) {
+                    moduleList.innerHTML = '<p>No modules found</p>';
+                    return;
+                }
+                
+                data.modules.forEach(module => {
+                    const moduleDiv = document.createElement('div');
+                    moduleDiv.className = 'module-item';
+                    moduleDiv.innerHTML = `
+                        <p>ID: ${module.id}</p>
+                        <p>Type: ${module.type}</p>
+                        <p>IP: ${module.ip}</p>
+                    `;
+                    moduleList.appendChild(moduleDiv);
+                });
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('module-list').innerHTML = 'Error loading modules';
+            });
+    }
+
+    // Update immediately when page loads
+    updateModuleList();
+
+    // Then update every 5 seconds
+    setInterval(updateModuleList, 5000);
 </script>
 {% endblock %} 

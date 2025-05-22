@@ -1,7 +1,7 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from web_interface_manager import WebInterfaceManager
+from src.controller.controller_web_interface_manager import WebInterfaceManager
 import logging
 
 test_logger = logging.getLogger(__name__)

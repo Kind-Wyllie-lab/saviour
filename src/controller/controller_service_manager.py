@@ -42,7 +42,7 @@ class ControllerServiceManager():
             self.ip = os.popen('hostname -I').read().split()[0]
 
         # Get service configuration from config manager if available
-        service_port = 5000  # Default value
+        service_port = 5353 # Default value #TODO: Read this from config_manager
         service_type = "_controller._tcp.local."
         service_name = "controller._controller._tcp.local."
         
@@ -62,6 +62,8 @@ class ControllerServiceManager():
         )
         self.zeroconf.register_service(self.service_info) # register the service with the above info
         self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services"
+
+        self.logger.info(f"(SERVICE MANAGER) Controller service registered with service info: {self.service_info}")
 
     def cleanup(self):
         """Cleanup zeroconf resources"""

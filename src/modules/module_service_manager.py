@@ -50,7 +50,7 @@ class ModuleServiceManager:
             self.ip = os.popen('hostname -I').read().split()[0]
         
         # Get service configuration from config manager if available
-        service_port = 5000  # Default value
+        service_port = 5353 # Default value
         service_type = "_module._tcp.local."  # Use standard service type format
         service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
         
@@ -73,6 +73,8 @@ class ModuleServiceManager:
         )
         self.zeroconf.register_service(self.service_info) # register the service with the above info
         self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self) # Browse for habitat_module services"
+
+        self.logger.info(f"(SERVICE MANAGER) Module service registered with service info: {self.service_info}")
     
         # zeroconf methods
     def add_service(self, zeroconf, service_type, name):

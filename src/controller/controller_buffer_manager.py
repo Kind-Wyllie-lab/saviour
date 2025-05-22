@@ -23,6 +23,9 @@ class ControllerBufferManager:
         # Module data storage
         self.module_data = {}
         
+        # PTP history storage
+        self.ptp_history = {}
+        
     def add_data(self, module_id: str, data: Any) -> bool:
         """
         Add data to the buffer for a specific module
@@ -118,3 +121,85 @@ class ControllerBufferManager:
             return False
             
         return len(self.module_data[module_id]) >= self.max_buffer_size 
+    
+    def add_ptp_history(self, module_id: str, ptp_data: dict) -> bool:
+        """
+        Add PTP history data for a specific module
+        
+        Args:
+            module_id: ID of the module
+            ptp_data: PTP status data including history
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            # Initialize history for this module if it doesn't exist
+            if module_id not in self.ptp_history:
+                self.ptp_history[module_id] = {
+                    'ptp4l_history': {
+                        'timestamps': [],
+                        'offsets': [],
+                        'freqs': []
+                    },
+                    'phc2sys_history': {
+                        'timestamps': [],
+                        'offsets': [],
+                        'freqs': []
+                    }
+                }
+            
+            # Update current values
+            if 'ptp4l_history' in ptp_data:
+                self.ptp_history[module_id]['ptp4l_history'] = ptp_data['ptp4l_history']
+            if 'phc2sys_history' in ptp_data:
+                self.ptp_history[module_id]['phc2sys_history'] = ptp_data['phc2sys_history']
+                
+            return True
+        except Exception as e:
+            self.logger.error(f"(BUFFER MANAGER) Error adding PTP history: {e}")
+            return False
+            
+    def get_ptp_history(self, module_id: Optional[str] = None) -> Dict:
+        """
+        Get PTP history for a specific module or all modules
+        
+        Args:
+            module_id: Optional ID to get history for specific module
+            
+        Returns:
+            Dict: PTP history dictionary
+        """
+        if module_id:
+            return {module_id: self.ptp_history.get(module_id, {})}
+        return self.ptp_history
+        
+    def clear_ptp_history(self, module_id: Optional[str] = None) -> bool:
+        """
+        Clear PTP history for a specific module or all modules
+        
+        Args:
+            module_id: Optional ID to clear specific module history
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            if module_id:
+                if module_id in self.ptp_history:
+                    self.ptp_history[module_id] = {
+                        'ptp4l_history': {'timestamps': [], 'offsets': [], 'freqs': []},
+                        'phc2sys_history': {'timestamps': [], 'offsets': [], 'freqs': []}
+                    }
+                    self.logger.debug(f"(BUFFER MANAGER) Cleared PTP history for module {module_id}")
+            else:
+                for mid in self.ptp_history:
+                    self.ptp_history[mid] = {
+                        'ptp4l_history': {'timestamps': [], 'offsets': [], 'freqs': []},
+                        'phc2sys_history': {'timestamps': [], 'offsets': [], 'freqs': []}
+                    }
+                self.logger.debug("(BUFFER MANAGER) Cleared all PTP history")
+            return True
+        except Exception as e:
+            self.logger.error(f"(BUFFER MANAGER) Error clearing PTP history: {e}")
+            return False

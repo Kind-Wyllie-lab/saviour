@@ -199,6 +199,8 @@ class ModuleCommandHandler:
         self.logger.info("(COMMAND HANDLER) Command identified as ptp_status")
         if self.ptp_manager:
             ptp_status = self.ptp_manager.get_status()
+            # add type to the status
+            ptp_status['type'] = 'ptp_status'
             self.communication_manager.send_status(ptp_status)
         else:
             self.logger.error("No PTP manager available")

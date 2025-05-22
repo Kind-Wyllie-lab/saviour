@@ -107,6 +107,9 @@ class Controller:
                 case 'heartbeat':
                     self.logger.info(f"(CONTROLLER) Heartbeat received from {module_id}")
                     self.health_monitor.update_module_health(module_id, status_data)
+                case 'ptp_status':
+                    self.logger.info(f"(CONTROLLER) PTP status received from {module_id}: {status_data}")
+                    self.buffer_manager.add_ptp_history(module_id, status_data)
                 case 'camera_settings_updated':
                     self.logger.info(f"(CONTROLLER) Camera settings updated for {module_id}: {status_data['settings']}")
                 case 'camera_settings_update_failed':

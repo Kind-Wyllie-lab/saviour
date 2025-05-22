@@ -69,6 +69,7 @@ class Module:
             self.logger.addHandler(console_handler)
 
         # Managers
+        self.logger.info(f"(MODULE) Initializing managers")
         self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
         self.config = config or {} # Store direct config reference for backwards compatibility
         self.file_transfer = None  # Will be initialized when controller is discovered
@@ -201,7 +202,7 @@ class Module:
             return False
         else:
             self.is_running = True
-            self.start_time = time.time()
+            self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
             self.logger.info(f"(MODULE) Module started at {self.start_time}")
             
             # Update start time in command handler

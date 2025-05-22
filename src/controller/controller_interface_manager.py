@@ -20,19 +20,19 @@ class ControllerInterfaceManager:
     
     def run_manual_control(self):
         """Run the manual control loop"""
-        self.logger.info("Starting manual control loop")
+        self.logger.info("(INTERFACE MANAGER) Starting manual CLI control loop")
         while True:
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
             try:
-                user_input = input().strip()
+            user_input = input().strip()
                 if not user_input:
                     continue
                         
                 self.handle_command(user_input)
                     
             except Exception as e:
-                self.logger.error(f"Error handling input: {e}")
+                self.logger.error(f"(INTERFACE MANAGER) Error handling input: {e}")
     
     def handle_command(self, command):
         """Handle a single command"""
@@ -40,12 +40,12 @@ class ControllerInterfaceManager:
             case "help":
                 self.show_help()
             case "quit":
-                self.logger.info("Quitting manual control loop")
+                self.logger.info("(INTERFACE MANAGER) Quitting manual control loop")
                 return False  # Signal to exit
             case "list":
                 self.list_modules()
             case "zmq send":
-                self.send_zmq_command()
+                self.handle_zmq_command()
             case "health status":
                 self.show_health_status()
             case "supabase export":
@@ -65,7 +65,7 @@ class ControllerInterfaceManager:
             case "show buffer":
                 self.handle_show_buffer()
             case _:
-                print(f"Unknown command: {command}. Type 'help' for available commands.")
+                self.logger.error(f"(INTERFACE MANAGER) Unknown command: {command}. Type 'help' for available commands.")
     
     def show_help(self):
         """Display available commands"""
@@ -92,7 +92,7 @@ class ControllerInterfaceManager:
         if not self.controller.service_manager.modules:
             print("No modules found")
     
-    def send_zmq_command(self):
+    def handle_zmq_command(self):
         """Handle ZMQ command sending"""
         if not self.controller.service_manager.modules:
             print("No modules available")
@@ -117,10 +117,81 @@ class ControllerInterfaceManager:
                 print("Invalid command selection")
                 return
                 
-            self.controller.communication_manager.send_command(
-                self.controller.service_manager.modules[module_idx].id, 
-                self.controller.commands[cmd_idx]
-            )
+            # Special commands
+
+            # Special handling for update_camera_settings command
+            if self.controller.commands[cmd_idx] == "update_camera_settings":
+                print("\nEnter camera settings (one per line, format: key=value):")
+                print("Available settings:")
+                print("  width=<pixels>")
+                print("  height=<pixels>")
+                print("  fps=<frames_per_second>")
+                print("  streaming.enabled=<true/false>")
+                print("  streaming.port=<port_number>")
+                print("Enter empty line when done")
+                
+                params = {}
+                while True:
+                    line = input().strip()
+                    if not line:
+                        break
+                    try:
+                        key, value = line.split('=')
+                        # Convert value to appropriate type
+                        if value.lower() in ('true', 'false'):
+                            value = value.lower() == 'true'
+                        elif value.isdigit():
+                            value = int(value)
+                        params[key.strip()] = value
+                    except ValueError:
+                        print("Invalid format. Use key=value")
+                        continue
+                
+                # Send the command with parameters as a string
+                command_str = f"update_camera_settings {str(params)}"
+                self.controller.communication_manager.send_command(
+                    self.controller.service_manager.modules[module_idx].id,
+                    command_str
+                )
+
+            # Special handling for record_video command
+            elif self.controller.commands[cmd_idx] == "record_video":
+                try:
+                    duration = int(input("\nEnter recording duration in seconds (0 for continuous): ").strip())
+                    # Send the command with duration parameter
+                    command_str = f"record_video {duration}"
+                    self.controller.communication_manager.send_command(
+                        self.controller.service_manager.modules[module_idx].id,
+                        command_str
+                    )
+                except ValueError:
+                    print("Invalid duration - please enter a number")
+            # Special handling for export_video command
+            elif self.controller.commands[cmd_idx] == "export_video":
+                try:
+                    filename = input("\nEnter the filename for the exported video: ").strip()
+                    destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
+                    if not destination:
+                        destination = "controller"
+                    elif destination not in ["controller", "nas"]:
+                        print("Invalid destination. Using 'controller'")
+                        destination = "controller"
+                    
+                    command_str = f'export_video {{"filename": "{filename}", "destination": "{destination}"}}'
+                    self.controller.communication_manager.send_command(
+                        self.controller.service_manager.modules[module_idx].id,
+                        command_str
+                    )
+                except ValueError as e:
+                    self.logger.error(f"(INTERFACE MANAGER) Invalid input: {e}")
+                except Exception as e:
+                    self.logger.error(f"(INTERFACE MANAGER) Error during export: {e}")
+            else:
+                # Handle other commands as before
+                self.controller.communication_manager.send_command(
+                    self.controller.service_manager.modules[module_idx].id, 
+                    self.controller.commands[cmd_idx]
+                )
         except ValueError:
             print("Invalid input - please enter a number")
     

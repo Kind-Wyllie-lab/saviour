@@ -179,7 +179,7 @@ class PTPManager:
         for proc in self.active_phc2sys_processes:
             cmd.append(proc)
         if not cmd:
-            self.logger.info("Did not find any active processes to kill.")
+            self.logger.info("(PTP MANAGER) Did not find any active processes to kill.")
             pass
         else:
             cmd.append("kill")

@@ -51,11 +51,11 @@ class ControllerHealthMonitor:
                 'disk_space': status_data.get('disk_space', 0)
             }
             
-            self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
+            self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")
             return True
             
         except Exception as e:
-            self.logger.error(f"Error updating health for module {module_id}: {e}")
+            self.logger.error(f"(HEALTH MONITOR) Error updating health for module {module_id}: {e}")
             return False
     
     def get_module_health(self, module_id: Optional[str] = None) -> Dict:
@@ -160,12 +160,12 @@ class ControllerHealthMonitor:
         self.is_monitoring = False
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5)
-        self.logger.info("Stopped health monitoring")
+        self.logger.info("(HEALTH MONITOR) Stopped health monitoring")
     
     def clear_all_health(self):
         """Clear all health data"""
         self.module_health.clear()
-        self.logger.info("Cleared all health data")
+        self.logger.info("(HEALTH MONITOR) Cleared all health data")
     
     def get_health_summary(self) -> Dict[str, Any]:
         """

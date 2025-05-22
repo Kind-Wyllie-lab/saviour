@@ -88,41 +88,8 @@ class ModuleServiceManager:
             self.controller_port = info.port
             self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
-            # Initialize file transfer with the correct IP
-            if not self.module.file_transfer:
-                # Try to get the IP of the controller
-                try:
-                    from src.modules.module_file_transfer import ModuleFileTransfer
-                    self.module.file_transfer = ModuleFileTransfer(self.controller_ip, self.logger)
-                except Exception as e:
-                    self.logger.error(f"(SERVICE MANAGER) Error initializing file transfer: {e}")
-            
-            # Only connect if we're not already connected
-            if not self.module.communication_manager.controller_ip:
-                self.logger.info("(SERVICE MANAGER) Connecting to controller...")
-
-                # TODO: Should these things happen here, or should they get triggered in the main program?
-
-                # Connect the communication manager
-                self.logger.info("(SERVICE MANAGER) Starting communication manager")
-                self.module.communication_manager.connect(self.controller_ip, self.controller_port)
-                
-                # Start the command listener
-                self.logger.info("(SERVICE MANAGER) Calling start_command_listener()")
-                self.module.communication_manager.start_command_listener()
-                
-                # Start heartbeats if module is running
-                if self.module.is_running:
-                    self.logger.info("(SERVICE MANAGER) Calling start_heartbeats()")
-                    self.module.health_manager.start_heartbeats()
-
-                # Start PTP
-                self.logger.info("(SERVICE MANAGER) Starting PTP manager")
-                self.module.ptp_manager.start()
-                    
-                self.logger.info("(SERVICE MANAGER) Connection to controller established")
-            else:
-                self.logger.info("(SERVICE MANAGER) Already connected to controller")
+            # Notify module that controller was discovered
+            self.module.controller_discovered(self.controller_ip, self.controller_port)
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
@@ -130,8 +97,8 @@ class ModuleServiceManager:
         
         # Clean up communication
         self.module.communication_manager.cleanup()
-        
-        # Reset controller connection state
+            
+            # Reset controller connection state
         self.controller_ip = None
         self.controller_port = None
         self.logger.info("(SERVICE MANAGER) Controller connection state reset")

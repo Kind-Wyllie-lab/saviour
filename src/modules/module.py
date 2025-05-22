@@ -187,6 +187,17 @@ class Module:
             self.file_transfer = None
             raise
 
+    def controller_disconnected(self):
+        """Callback when controller is disconnected"""
+        self.logger.info("(MODULE) Controller disconnected")
+        self.ptp_manager.stop()
+        self.communication_manager.cleanup()
+        self.file_transfer = None
+        self.is_running = False
+        self.streaming = False
+        self.stream_thread = None
+        
+
     def start(self) -> bool:
         """
         Start the module.

@@ -25,9 +25,17 @@ class ControllerInterfaceManager:
             self.web_interface = True # Flag to indicate if the web interface is enabled
             self.web_interface_manager = WebInterfaceManager(self.logger, self.controller.config_manager)
             
+            # Register callbacks
+            self.web_interface_manager.register_callbacks(
+                get_modules=self._get_modules,
+                get_ptp_history=self._get_ptp_history
+            )
+            
             # Register callback for module discovery
             if hasattr(self.controller, 'service_manager'):
+                self.logger.info(f"(INTERFACE MANAGER) Registering module discovery callback")
                 self.controller.service_manager.on_module_discovered = self._on_module_discovered
+                self.controller.service_manager.on_module_removed = self._on_module_discovered  # Use same callback for removal
         else:
             self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to False")
             self.web_interface = False
@@ -47,6 +55,13 @@ class ControllerInterfaceManager:
         if self.web_interface == True:
             self.logger.info(f"(INTERFACE MANAGER) Starting web interface")
             self.web_interface_manager.start()
+            
+            # Register callback for module discovery
+            if hasattr(self.controller, 'service_manager'):
+                self.logger.info(f"(INTERFACE MANAGER) Registering module discovery callback")
+                self.controller.service_manager.on_module_discovered = self._on_module_discovered
+                self.controller.service_manager.on_module_removed = self._on_module_discovered
+                self.logger.info(f"(INTERFACE MANAGER) Module discovery callback registered")
             
             # Update web interface with initial module list
             if hasattr(self.controller, 'service_manager'):
@@ -386,5 +401,43 @@ class ControllerInterfaceManager:
 
     def _on_module_discovered(self, module):
         """Callback when a new module is discovered"""
+        self.logger.info(f"(INTERFACE MANAGER) Module discovered: {module.id}")
         if self.web_interface:
-            self.web_interface_manager.update_modules(self.controller.service_manager.modules)
+            self.logger.info(f"(INTERFACE MANAGER) Notifying web interface of module update")
+            try:
+                self.web_interface_manager.notify_module_update()
+                self.logger.info(f"(INTERFACE MANAGER) Successfully notified web interface")
+            except Exception as e:
+                self.logger.error(f"(INTERFACE MANAGER) Error notifying web interface: {e}")
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled, skipping module update notification")
+
+    def _on_ptp_update(self):
+        """Callback when PTP data is updated"""
+        self.logger.info(f"(INTERFACE MANAGER) PTP data updated")
+        if self.web_interface:
+            self.logger.info(f"(INTERFACE MANAGER) Notifying web interface of PTP update")
+            self.web_interface_manager.notify_ptp_update()
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled, skipping PTP update notification")
+
+    def _get_modules(self):
+        """Callback to get module list"""
+        modules = []
+        for module in self.controller.service_manager.modules:
+            # Convert module to dict and ensure all keys are strings
+            module_dict = {
+                'id': module.id,
+                'type': module.type,
+                'ip': module.ip,
+                'port': module.port,
+                'properties': {k.decode() if isinstance(k, bytes) else k: 
+                             v.decode() if isinstance(v, bytes) else v 
+                             for k, v in module.properties.items()}
+            }
+            modules.append(module_dict)
+        return modules
+
+    def _get_ptp_history(self):
+        """Callback to get PTP history"""
+        return self.controller.buffer_manager.get_ptp_history()

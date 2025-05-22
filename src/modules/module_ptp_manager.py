@@ -282,6 +282,7 @@ class PTPManager:
             raise
 
     def _monitor(self):
+        """Monitor PTP processes and log their output"""
         while self.running:
             for proc, name in [(self.ptp4l_proc, 'ptp4l'), (self.phc2sys_proc, 'phc2sys')]:
                 if proc and proc.poll() is not None:
@@ -294,7 +295,6 @@ class PTPManager:
                 line = proc.stdout.readline() if proc and proc.stdout else ''
                 if line:
                     line = line.strip()
-                    self.logger.debug(f"{name}: {line}")
                     
                     # Parse offset information
                     # TODO: Distinguish ptp4l and phc2sys offset
@@ -305,9 +305,8 @@ class PTPManager:
                             self.last_offset = float(offset_str)
                             self.last_sync_time = time.time()
                             self.status = 'synchronized'
-                            self.logger.debug(f"(PTP MANAGER) PTP offset: {self.last_offset} ns")
                         except (IndexError, ValueError):
-                            self.logger.warning(f"(PTP MANAGER) Could not parse offset from line: {line}")
+                            pass
 
                     # Parse freq correction information
                     if 'freq' in line:
@@ -316,7 +315,7 @@ class PTPManager:
                             freq_str = line.split('freq')[1].split()[0]
                             self.last_freq = int(freq_str)
                         except(IndexError, ValueError):
-                            self.logger.warning(f"(PTP MANAGER) Could not parse freq from line: {line}")
+                            pass
 
                     # Check for successful sync
                     if 'synchronized' in line.lower():
@@ -325,7 +324,6 @@ class PTPManager:
                     
                     # Check for port state changes
                     if 'port state' in line.lower():
-                        self.logger.info(f"(PTP MANAGER) PTP port state change: {line}")
                         if 'LISTENING' in line:
                             self.status = 'listening'
                         elif 'UNCALIBRATED' in line:
@@ -343,18 +341,6 @@ class PTPManager:
                     # Check for clock selection
                     if 'selected' in line and 'PTP clock' in line:
                         self.logger.info(f"(PTP MANAGER) PTP clock selected: {line}")
-                    
-                    # Check for frequency adjustment
-                    if 'frequency' in line and 'adjustment' in line:
-                        self.logger.info(f"(PTP MANAGER) PTP frequency adjustment: {line}")
-                    
-                    # Check for announce messages
-                    if 'announce' in line.lower():
-                        self.logger.debug(f"(PTP MANAGER) PTP announce: {line}")
-                    
-                    # Check for sync messages
-                    if 'sync' in line.lower() and 'message' in line.lower():
-                        self.logger.debug(f"(PTP MANAGER) PTP sync message: {line}")
 
                     # Check for excessively high freq/offset
                     if self.last_offset is not None:
@@ -370,7 +356,7 @@ class PTPManager:
                             if abs(self.last_freq) < self.freq_warning_threshold and abs(self.last_offset) < self.offset_warning_threshold:
                                 self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.last_freq}ppb and {self.last_offset}ns")
                                 self.threshold_flag = False
-            time.sleep(0.1)
+            time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
 
     def stop(self):
         """Stop PTP processes and clean up"""

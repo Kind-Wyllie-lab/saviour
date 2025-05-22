@@ -112,15 +112,24 @@ class ModuleCommandHandler:
         """Handle get_status command"""
         self.logger.info("(COMMAND HANDLER) Command identified as get_status")
         try:
+            # Get PTP status first
+            ptp_status = self.ptp_manager.get_status()
+            
+            # Calculate uptime safely
+            current_time = time.time()
+            uptime = 0.0
+            if self.start_time and isinstance(self.start_time, (int, float)):
+                uptime = current_time - float(self.start_time)
+            
             status = {
-                "timestamp": time.time(),
+                "timestamp": current_time,
                 "cpu_temp": self.health_manager.get_cpu_temp(),
                 "cpu_usage": psutil.cpu_percent(),
                 "memory_usage": psutil.virtual_memory().percent,
-                "uptime": time.time() - self.start_time if self.start_time else 0,
+                "uptime": uptime,
                 "disk_space": psutil.disk_usage('/').percent,
-                "ptp_offset": self.ptp_manager.last_offset,
-                "ptp_freq": self.ptp_manager.last_freq
+                "ptp_offset": ptp_status.get('last_offset'),
+                "ptp_freq": ptp_status.get('last_freq')
             }
             self.communication_manager.send_status(status)
         except Exception as e:

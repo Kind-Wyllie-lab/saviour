@@ -53,6 +53,7 @@ class ControllerHealthMonitor:
         """
         try:
             self.module_health[module_id] = {
+                'timestamp': status_data['timestamp'],
                 'last_heartbeat': status_data['timestamp'],
                 'status': 'online',
                 'cpu_temp': status_data.get('cpu_temp', 0),

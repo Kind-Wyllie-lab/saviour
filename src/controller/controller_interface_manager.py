@@ -105,6 +105,8 @@ class ControllerInterfaceManager:
                 self.handle_session_id()
             case "show buffer":
                 self.handle_show_buffer()
+            case "show ptp history":
+                self.handle_show_ptp_history()
             case _:
                 self.logger.error(f"(INTERFACE MANAGER) Unknown command: {command}. Type 'help' for available commands.")
     
@@ -125,6 +127,7 @@ class ControllerInterfaceManager:
         print("  check export - Check if the controller is currently exporting data to the database")
         print("  session_id - Generate a session_id")
         print("  show buffer - Print the current contents of the data buffer")
+        print("  show ptp history - Print the current PTP history")
     
     def list_modules(self):
         """List all discovered modules"""
@@ -367,6 +370,18 @@ class ControllerInterfaceManager:
             print(f"Module {module_id}: {len(data_list)} entries")
             for entry in data_list:
                 print(f"  {entry}")
+    
+    def handle_show_ptp_history(self):
+        """Display the current PTP history"""
+        history = self.controller.buffer_manager.get_ptp_history()
+        if not history:
+            print("PTP history is empty.")
+            return
+        print("Current PTP History:")
+        for module_id, history_data in history.items():
+            print(f"Module {module_id}:")
+            for entry in history_data:
+                print(f"  {entry}") 
 
     def _on_module_discovered(self, module):
         """Callback when a new module is discovered"""

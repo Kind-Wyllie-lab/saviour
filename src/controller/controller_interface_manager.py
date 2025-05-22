@@ -11,12 +11,19 @@ Handles user interaction with the habitat controller, including:
 
 import logging
 import time
+from flask import Flask, render_template
+from flask_socketio import SocketIO
+
 
 class ControllerInterfaceManager:
     def __init__(self, controller):
         """Initialize the controller interface"""
-        self.controller = controller
+        self.controller = controller # Pass through the controller object so we can access logger, config, module data etc
         self.logger = controller.logger
+
+        if self.controller.config.get("interface", "web") == "web":
+            self.web_interface = True # Flag to indicate if the web interface is enabled
+
     
     def run_manual_control(self):
         """Run the manual control loop"""
@@ -25,7 +32,7 @@ class ControllerInterfaceManager:
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
             try:
-            user_input = input().strip()
+                user_input = input().strip()
                 if not user_input:
                     continue
                         

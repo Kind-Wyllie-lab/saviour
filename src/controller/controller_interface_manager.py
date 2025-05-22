@@ -87,6 +87,8 @@ class ControllerInterfaceManager:
                 self.handle_zmq_command()
             case "health status":
                 self.show_health_status()
+            case "health history":
+                self.handle_health_history()
             case "supabase export":
                 self.handle_supabase_export()
             case "start export":
@@ -115,6 +117,7 @@ class ControllerInterfaceManager:
         print("  supabase export - Export the local buffer to the database")
         print("  zmq send - Send a command to a specific module via zeromq")
         print("  health status - Print the health status of all modules")
+        print("  health history - Show historical health data (usage: health history --module <id> [--metric <name>] [--limit <n>] [--window <seconds>])")
         print("  start export - Periodically export the local buffer to the database")
         print("  stop export - Stop the periodic export of the local buffer to the database")
         print("  start health export - Periodically export the local health data to the database")
@@ -251,6 +254,57 @@ class ControllerInterfaceManager:
             print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
             print(f"Uptime: {health.get('uptime', 'N/A')}s")
             print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
+    
+    def handle_health_history(self):
+        """Handle health history command"""
+        # Get command arguments
+        args = input("\nEnter health history options (--module <id> [--metric <name>] [--limit <n>] [--window <seconds>]): ").strip()
+        
+        # Parse arguments
+        import argparse
+        parser = argparse.ArgumentParser(description='Health history command')
+        parser.add_argument('--module', required=True, help='Module ID to show history for')
+        parser.add_argument('--metric', help='Specific metric to show stats for')
+        parser.add_argument('--limit', type=int, help='Number of records to show')
+        parser.add_argument('--window', type=int, default=3600, 
+                          help='Time window in seconds for stats (default: 3600)')
+        
+        try:
+            args = parser.parse_args(args.split())
+        except SystemExit:
+            return
+        except Exception as e:
+            print(f"Error parsing arguments: {e}")
+            return
+
+        # Get history for module
+        history = self.controller.health_monitor.get_module_health_history(args.module, args.limit)
+        if not history:
+            print(f"No history found for module {args.module}")
+            return
+            
+        if args.metric:
+            # Print stats for specific metric
+            stats = self.controller.health_monitor.get_module_health_stats(args.module, args.metric, args.window)
+            if not stats:
+                print(f"No {args.metric} data found for module {args.module} in the last {args.window} seconds")
+                return
+                
+            print(f"\n{args.metric} statistics for module {args.module} (last {args.window} seconds):")
+            print(f"  Min: {stats['min']}")
+            print(f"  Max: {stats['max']}")
+            print(f"  Avg: {stats['avg']:.2f}")
+            print(f"  Latest: {stats['latest']}")
+            print(f"  Samples: {stats['samples']}")
+        else:
+            # Print full history
+            print(f"\nHealth history for module {args.module}:")
+            for record in reversed(history):  # Most recent first
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(record['timestamp']))
+                print(f"\n{timestamp}:")
+                for key, value in record.items():
+                    if key != 'timestamp':
+                        print(f"  {key}: {value}")
     
     def handle_supabase_export(self):
         """Handle manual supabase export"""

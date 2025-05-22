@@ -52,9 +52,8 @@ class ControllerHealthMonitor:
             bool: True if update was successful
         """
         try:
-            # Create current health record
-            current_health = {
-                'timestamp': status_data['timestamp'],
+            self.module_health[module_id] = {
+                'last_heartbeat': status_data['timestamp'],
                 'status': 'online',
                 'cpu_temp': status_data.get('cpu_temp', 0),
                 'cpu_usage': status_data.get('cpu_usage', 0),
@@ -65,15 +64,7 @@ class ControllerHealthMonitor:
                 'ptp_freq': status_data.get('ptp_freq')
             }
             
-            # Update current health
-            self.module_health[module_id] = current_health
-            
-            # Update historical data
-            if module_id not in self.module_health_history:
-                self.module_health_history[module_id] = deque(maxlen=self.history_size)
-            self.module_health_history[module_id].append(current_health)
-            
-            self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {current_health}")
+            self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")
             return True
             
         except Exception as e:

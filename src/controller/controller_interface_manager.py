@@ -21,9 +21,13 @@ class ControllerInterfaceManager:
         self.controller = controller # Pass through the controller object so we can access logger, config, module data etc
         self.logger = controller.logger
 
-        # if self.controller.config.get("interface", "web") == "web":
-        #     self.web_interface = True # Flag to indicate if the web interface is enabled
-
+        # Check if the web interface is enabled
+        if self.controller.config_manager.get("web_interface.enabled") == True:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface enabled")
+            self.web_interface = True # Flag to indicate if the web interface is enabled
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled")
+            self.web_interface = False
     
     def run_manual_control(self):
         """Run the manual control loop"""

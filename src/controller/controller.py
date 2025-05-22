@@ -56,6 +56,7 @@ class Controller:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
             
+        self.logger.info(f"(CONTROLLER) Initializing managers")
         # Initialize config manager
         self.config_manager = config_manager.ControllerConfigManager(self.logger, config_file_path)
 

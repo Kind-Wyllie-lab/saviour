@@ -7,5 +7,5 @@ import logging
 test_logger = logging.getLogger(__name__)
 
 web_interface_manager = WebInterfaceManager(logger=test_logger)
-web_interface_manager.test = True
+# web_interface_manager.test = True
 web_interface_manager.start_web_interface()

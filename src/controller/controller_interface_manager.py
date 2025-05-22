@@ -378,10 +378,11 @@ class ControllerInterfaceManager:
             print("PTP history is empty.")
             return
         print("Current PTP History:")
-        for module_id, history_data in history.items():
-            print(f"Module {module_id}:")
-            for entry in history_data:
-                print(f"  {entry}") 
+        print(history)
+        # for module_id, history_data in history.items():
+        #     print(f"Module {module_id}:")
+        #     for entry in history_data:
+        #         print(f"  {entry}") 
 
     def _on_module_discovered(self, module):
         """Callback when a new module is discovered"""

@@ -96,9 +96,7 @@ class ModuleServiceManager:
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("(SERVICE MANAGER) Lost connection to controller")
-        
-        # Clean up communication
-        self.module.communication_manager.cleanup()
+        self.module.controller_disconnected()
             
             # Reset controller connection state
         self.controller_ip = None

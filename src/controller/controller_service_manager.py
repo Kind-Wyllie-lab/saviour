@@ -92,6 +92,11 @@ class ControllerServiceManager():
             )
             self.modules.append(module)
             self.logger.info(f"(SERVICE MANAGER) Discovered module: {module}")
+            
+            # Call the callback if it exists
+            if self.on_module_discovered:
+                self.logger.info(f"(SERVICE MANAGER) Calling module discovery callback")
+                self.on_module_discovered(module)
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""

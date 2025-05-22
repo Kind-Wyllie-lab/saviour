@@ -43,8 +43,9 @@
         "level": "INFO",
         "format": "%(asctime)s - %(levelname)s - %(message)s"
     },
-    "web_interface": {
-        "enabled": true,
-        "port": 5001
+    "interface": {
+        "cli": true,
+        "web_interface": true,
+        "web_interface_port": 5001
     }
 } 

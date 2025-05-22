@@ -217,12 +217,9 @@ class Controller:
             self.logger.error(f"(CONTROLLER) Failed to start file transfer server: {e}")
             return False
 
-        # Start the appropriate control mode
-        if self.manual_control:
-            self.interface_manager.run_manual_control()
-        else:
-            self.logger.info("(CONTROLLER) Starting automatic loop (not implemented yet)")
-            # @TODO: Implement automatic loop
+        # Start the interface manager
+        self.logger.info("(CONTROLLER) Starting interface manager")
+        self.interface_manager.start()
 
         return True
         

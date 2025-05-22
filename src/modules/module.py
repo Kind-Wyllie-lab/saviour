@@ -218,15 +218,14 @@ class Module:
                 )
                 self.communication_manager.start_command_listener()
 
-                # Start PTP
-                time.sleep(0.1)
-                self.ptp_manager.start()
+                # Start PTP only if it's not already running
+                if not self.ptp_manager.running:
+                    time.sleep(0.1)
+                    self.ptp_manager.start()
 
                 # Start sending heartbeats
                 time.sleep(0.1)
                 self.health_manager.start_heartbeats()
-
-
             
         return True
 

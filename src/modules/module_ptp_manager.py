@@ -70,7 +70,7 @@ class PTPManager:
             self.ptp4l_args = ['ptp4l', '-i', interface, '-s', '-m']
             # For slave, use manual configuration with the interface as master
             # self.phc2sys_args = ['phc2sys', '-s', interface, '-w', '-l', '6']
-            self.phc2sys_args = ['phc2sys', '-s', '/dev/ptp0', '-w', '-m']
+            self.phc2sys_args = ['phc2sys', '-s', '/dev/ptp0', '-w', '-m']  
         
         self.ptp4l_proc = None
         self.phc2sys_proc = None
@@ -78,16 +78,28 @@ class PTPManager:
         self.running = False
         self.status = 'not running'
         self.last_sync_time = None
-        self.last_offset = None
-        self.last_freq = None
+        
+        # Separate tracking for ptp4l and phc2sys values
+        self.ptp4l_offset = None
+        self.ptp4l_freq = None
+        self.phc2sys_offset = None
+        self.phc2sys_freq = None
+        
+        # For backward compatibility
+        self.last_offset = None  # Will be set to ptp4l_offset
+        self.last_freq = None    # Will be set to ptp4l_freq
+        
         self.active_ptp4l_processes = None
         self.active_phc2sys_processes = None
 
         # Warning limits
         # TODO: Thresholds in config files.
-        self.offset_warning_threshold = 10000 # If offsets are larger than this value, a warning will be displayed.
-        self.freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
-        self.threshold_flag = False
+        self.ptp4l_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
+        self.ptp4l_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
+        self.phc2sys_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
+        self.phc2sys_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
+        self.ptp4l_threshold_flag = False
+        self.phc2sys_threshold_flag = False
 
     def _check_required_packages(self):
         """Check if required PTP packages are installed."""
@@ -295,6 +307,7 @@ class PTPManager:
                 line = proc.stdout.readline() if proc and proc.stdout else ''
                 if line:
                     line = line.strip()
+                    # self.logger.debug(f"(PTP MANAGER) {name} line: {line}")
                     
                     # Parse offset information
                     # TODO: Distinguish ptp4l and phc2sys offset
@@ -302,9 +315,20 @@ class PTPManager:
                         try:
                             # Extract offset value from line
                             offset_str = line.split('offset')[1].split()[0]
-                            self.last_offset = float(offset_str)
+                            offset_value = float(offset_str)
+                            
+                            if name == 'ptp4l':
+                                self.ptp4l_offset = offset_value
+                                self.last_offset = offset_value  # For backward compatibility
+                            else:  # phc2sys
+                                self.phc2sys_offset = offset_value
+                            
                             self.last_sync_time = time.time()
                             self.status = 'synchronized'
+                            
+                            # Log the offset with source identification
+                            self.logger.debug(f"(PTP MANAGER) {name} offset: {offset_value} ns")
+                            
                         except (IndexError, ValueError):
                             pass
 
@@ -313,7 +337,17 @@ class PTPManager:
                         try:
                             # Extract freq correction from line
                             freq_str = line.split('freq')[1].split()[0]
-                            self.last_freq = int(freq_str)
+                            freq_value = int(freq_str)
+                            
+                            if name == 'ptp4l':
+                                self.ptp4l_freq = freq_value
+                                self.last_freq = freq_value  # For backward compatibility
+                            else:  # phc2sys
+                                self.phc2sys_freq = freq_value
+                            
+                            # Log the frequency with source identification
+                            self.logger.debug(f"(PTP MANAGER) {name} frequency correction: {freq_value} ppb")
+                            
                         except(IndexError, ValueError):
                             pass
 
@@ -324,6 +358,7 @@ class PTPManager:
                     
                     # Check for port state changes
                     if 'port state' in line.lower():
+                        self.logger.info(f"(PTP MANAGER) PTP port state change: {line}")
                         if 'LISTENING' in line:
                             self.status = 'listening'
                         elif 'UNCALIBRATED' in line:
@@ -343,19 +378,37 @@ class PTPManager:
                         self.logger.info(f"(PTP MANAGER) PTP clock selected: {line}")
 
                     # Check for excessively high freq/offset
-                    if self.last_offset is not None:
-                        if abs(self.last_offset) > self.offset_warning_threshold:
-                            self.logger.warning(f"(PTP MANAGER) Warning: offset {self.last_offset}ns exceeded threshold value {self.offset_warning_threshold}ns")
-                            self.threshold_flag = True
-                    if self.last_freq is not None:
-                        if abs(self.last_freq) > self.freq_warning_threshold:
-                            self.logger.warning(f"(PTP MANAGER) Warning: freq {self.last_freq}ppb exceeded threshold value {self.freq_warning_threshold}ppb")
-                            self.threshold_flag = True
-                    if self.threshold_flag == True:
-                        if self.last_freq is not None and self.last_offset is not None:
-                            if abs(self.last_freq) < self.freq_warning_threshold and abs(self.last_offset) < self.offset_warning_threshold:
-                                self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.last_freq}ppb and {self.last_offset}ns")
-                                self.threshold_flag = False
+                    if name == 'ptp4l':  # Only check ptp4l values for warnings
+                        if self.ptp4l_offset is not None:
+                            if abs(self.ptp4l_offset) > self.ptp4l_offset_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: ptp4l offset {self.ptp4l_offset}ns exceeded threshold value {self.ptp4l_offset_warning_threshold}ns")
+                                self.ptp4l_threshold_flag = True
+                        if self.ptp4l_freq is not None:
+                            if abs(self.ptp4l_freq) > self.ptp4l_freq_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: ptp4l freq {self.ptp4l_freq}ppb exceeded threshold value {self.freq_warning_threshold}ppb")
+                                self.ptp4l_threshold_flag = True
+                        if self.ptp4l_threshold_flag == True:
+                            if self.ptp4l_freq is not None and self.ptp4l_offset is not None:
+                                if abs(self.ptp4l_freq) < self.ptp4l_freq_warning_threshold and abs(self.ptp4l_offset) < self.ptp4l_offset_warning_threshold:
+                                    self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.ptp4l_freq}ppb and {self.ptp4l_offset}ns")
+                                    self.ptp4l_threshold_flag = False
+                    elif name == 'phc2sys':
+                        if self.phc2sys_offset is not None:
+                            if abs(self.phc2sys_offset) > self.phc2sys_offset_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: phc2sys offset {self.phc2sys_offset}ns exceeded threshold value {self.phc2sys_offset_warning_threshold}ns")
+                                self.phc2sys_threshold_flag = True  
+                        if self.phc2sys_freq is not None:
+                            if abs(self.phc2sys_freq) > self.phc2sys_freq_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: phc2sys freq {self.phc2sys_freq}ppb exceeded threshold value {self.phc2sys_freq_warning_threshold}ppb")
+                                self.phc2sys_threshold_flag = True
+                        if self.phc2sys_threshold_flag == True:
+                            if self.phc2sys_freq is not None and self.phc2sys_offset is not None:
+                                if abs(self.phc2sys_freq) < self.phc2sys_freq_warning_threshold and abs(self.phc2sys_offset) < self.phc2sys_offset_warning_threshold:
+                                    self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.phc2sys_freq}ppb and {self.phc2sys_offset}ns")
+                                    self.phc2sys_threshold_flag = False
+                                
+                                
+                                
             time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
 
     def stop(self):
@@ -417,8 +470,10 @@ class PTPManager:
             'role': self.role.value,
             'status': self.status,
             'last_sync': self.last_sync_time,
-            'last_offset': self.last_offset,
-            'last_freq': self.last_freq,
+            'ptp4l_offset': self.ptp4l_offset,
+            'ptp4l_freq': self.ptp4l_freq,
+            'phc2sys_offset': self.phc2sys_offset,
+            'phc2sys_freq': self.phc2sys_freq,
             'interface': self.interface
         }
 

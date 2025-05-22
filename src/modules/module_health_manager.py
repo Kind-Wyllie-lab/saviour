@@ -101,8 +101,10 @@ class ModuleHealthManager:
             'memory_usage': psutil.virtual_memory().percent,
             'uptime': time.time() - self.start_time if self.start_time else 0,
             'disk_space': psutil.disk_usage('/').percent, # Free disk space
-            'ptp_offset': ptp_status['last_offset'],
-            'ptp_freq': ptp_status['last_freq']
+            'ptp4l_offset': ptp_status.get('ptp4l_offset'),
+            'ptp4l_freq': ptp_status.get('ptp4l_freq'),
+            'phc2sys_offset': ptp_status.get('phc2sys_offset'),
+            'phc2sys_freq': ptp_status.get('phc2sys_freq')
         }
 
     def get_cpu_temp(self):

@@ -128,8 +128,10 @@ class ModuleCommandHandler:
                 "memory_usage": psutil.virtual_memory().percent,
                 "uptime": uptime,
                 "disk_space": psutil.disk_usage('/').percent,
-                "ptp_offset": ptp_status.get('last_offset'),
-                "ptp_freq": ptp_status.get('last_freq')
+                "ptp4l_offset": ptp_status.get('ptp4l_offset'),
+                "ptp4l_freq": ptp_status.get('ptp4l_freq'),
+                "phc2sys_offset": ptp_status.get('phc2sys_offset'),
+                "phc2sys_freq": ptp_status.get('phc2sys_freq')
             }
             self.communication_manager.send_status(status)
         except Exception as e:

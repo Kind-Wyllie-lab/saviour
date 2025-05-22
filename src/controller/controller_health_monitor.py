@@ -61,8 +61,10 @@ class ControllerHealthMonitor:
                 'memory_usage': status_data.get('memory_usage', 0),
                 'uptime': status_data.get('uptime', 0),
                 'disk_space': status_data.get('disk_space', 0),
-                'ptp_offset': status_data.get('ptp_offset'),
-                'ptp_freq': status_data.get('ptp_freq')
+                'ptp4l_offset': status_data.get('ptp4l_offset'),
+                'ptp4l_freq': status_data.get('ptp4l_freq'),
+                'phc2sys_offset': status_data.get('phc2sys_offset'),
+                'phc2sys_freq': status_data.get('phc2sys_freq')
             }
             
             self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")
@@ -247,7 +249,7 @@ class ControllerHealthMonitor:
         # Calculate average health metrics across all online modules
         avg_metrics = {}
         if online_modules:
-            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp_offset', 'ptp_freq']
+            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset', 'ptp4l_freq']
             for metric in metrics:
                 values = []
                 for module_id in online_modules:

@@ -197,13 +197,12 @@ class ModuleCommandHandler:
     def _handle_ptp_status(self):
         """Return PTP information to the controller"""
         self.logger.info("(COMMAND HANDLER) Command identified as ptp_status")
-        if 'ptp_status' in self.callbacks:
-            ptp_status = str(self.callbacks['ptp_status']())
-            self.logger.info(ptp_status)
-            # self.communication_manager.send_status(ptp_status)
+        if self.ptp_manager:
+            ptp_status = self.ptp_manager.get_status()
+            self.communication_manager.send_status(ptp_status)
         else:
-            self.logger.error("No read_data callback provided")
-            self.communication_manager.send_data("Error: Module not configured for data reading")
+            self.logger.error("No PTP manager available")
+            self.communication_manager.send_status({"error": "PTP manager not available"})
     
     def cleanup(self):
         """Clean up resources used by the command handler"""

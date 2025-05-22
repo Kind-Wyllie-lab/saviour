@@ -48,7 +48,9 @@ class ControllerHealthMonitor:
                 'cpu_usage': status_data.get('cpu_usage', 0),
                 'memory_usage': status_data.get('memory_usage', 0),
                 'uptime': status_data.get('uptime', 0),
-                'disk_space': status_data.get('disk_space', 0)
+                'disk_space': status_data.get('disk_space', 0),
+                'ptp_offset': status_data.get('ptp_offset'),
+                'ptp_freq': status_data.get('ptp_freq')
             }
             
             self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")

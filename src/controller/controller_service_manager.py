@@ -34,6 +34,7 @@ class ControllerServiceManager():
         # Module tracking
         self.modules = []
         self.module_health = {}
+        self.on_module_discovered = None  # Callback for module discovery
 
         # Get the ip address of the controller
         if os.name == 'nt': # Windows

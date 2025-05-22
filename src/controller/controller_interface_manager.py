@@ -11,9 +11,7 @@ Handles user interaction with the habitat controller, including:
 
 import logging
 import time
-from flask import Flask, render_template
-from flask_socketio import SocketIO
-from src.controller.web_interface_manager import WebInterfaceManager
+from src.controller.controller_web_interface_manager import WebInterfaceManager
 
 class ControllerInterfaceManager:
     def __init__(self, controller):
@@ -25,7 +23,11 @@ class ControllerInterfaceManager:
         if self.controller.config_manager.get("interface.web_interface") == True:
             self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to True")
             self.web_interface = True # Flag to indicate if the web interface is enabled
-            self.web_interface_manager = WebInterfaceManager(self.logger)
+            self.web_interface_manager = WebInterfaceManager(self.logger, self.controller.config_manager)
+            
+            # Register callback for module discovery
+            if hasattr(self.controller, 'service_manager'):
+                self.controller.service_manager.on_module_discovered = self._on_module_discovered
         else:
             self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to False")
             self.web_interface = False
@@ -40,10 +42,17 @@ class ControllerInterfaceManager:
     def start(self):
         """Start the interface manager"""
         self.logger.info(f"(INTERFACE MANAGER) Starting interface manager")
-        if self.web_interface == True:
-            self.logger.info(f"(INTERFACE MANAGER) Starting web interface (NOT YET IMPLEMENTED...)")
-            # self.web_interface_manager.start()
         
+        # Start web interface if enabled
+        if self.web_interface == True:
+            self.logger.info(f"(INTERFACE MANAGER) Starting web interface")
+            self.web_interface_manager.start()
+            
+            # Update web interface with initial module list
+            if hasattr(self.controller, 'service_manager'):
+                self.web_interface_manager.update_modules(self.controller.service_manager.modules)
+        
+        # Start CLI if enabled
         if self.cli_interface == True:
             self.logger.info(f"(INTERFACE MANAGER) Starting manual control loop")
             self.run_manual_control()
@@ -304,3 +313,8 @@ class ControllerInterfaceManager:
             print(f"Module {module_id}: {len(data_list)} entries")
             for entry in data_list:
                 print(f"  {entry}")
+
+    def _on_module_discovered(self, module):
+        """Callback when a new module is discovered"""
+        if self.web_interface:
+            self.web_interface_manager.update_modules(self.controller.service_manager.modules)

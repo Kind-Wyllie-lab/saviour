@@ -40,5 +40,12 @@
         "transport": "rtsp",
         "quality": "medium",
         "overlay_status": false
+    },
+    "nas": {
+        "enabled": true,
+        "host": "192.168.0.16",
+        "share": "data",
+        "mount_point": "/mnt/nas",
+        "export_folder": "videos"
     }
 }

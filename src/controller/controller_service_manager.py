@@ -76,7 +76,7 @@ class ControllerServiceManager():
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
-        self.logger.info(f"Discovered module: {name}")
+        self.logger.info(f"(SERVICE MANAGER) Discovered module: {name}")
         info = zeroconf.get_service_info(service_type, name)
         if info:
             module = Module(
@@ -88,25 +88,25 @@ class ControllerServiceManager():
                 properties=info.properties
             )
             self.modules.append(module)
-            self.logger.info(f"Discovered module: {module}")
+            self.logger.info(f"(SERVICE MANAGER) Discovered module: {module}")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
-        self.logger.info(f"Service updated: {name}")
+        self.logger.info(f"(SERVICE MANAGER) Service updated: {name}")
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
-        self.logger.info(f"Removing module: {name}")
+        self.logger.info(f"(SERVICE MANAGER) Removing module: {name}")
         # Find the module being removed
         module_to_remove = next((module for module in self.modules if module.name == name), None)
         if module_to_remove:
             # Clean up health tracking
             if module_to_remove.id in self.module_health:
-                self.logger.info(f"Removing health tracking for module {module_to_remove.id}")
+                self.logger.info(f"(SERVICE MANAGER) Removing health tracking for module {module_to_remove.id}")
                 del self.module_health[module_to_remove.id]
             # Remove from modules list
             self.modules = [module for module in self.modules if module.name != name]
-            self.logger.info(f"Module {module_to_remove.id} removed from tracking")
+            self.logger.info(f"(SERVICE MANAGER) Module {module_to_remove.id} removed from tracking")
 
 
 

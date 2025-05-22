@@ -48,7 +48,7 @@ class ControllerCommunicationManager:
         """Send a command to a specific module"""
         message = f"cmd/{module_id} {command}"
         self.command_socket.send_string(message)
-        self.logger.info(f"Command sent: {message}")
+        self.logger.info(f"(COMMUNICATION MANAGER) Command sent: {message}")
 
     def listen_for_updates(self):
         """Listen for status and data updates from modules"""
@@ -57,7 +57,7 @@ class ControllerCommunicationManager:
                 # Use a timeout on recv to allow checking is_running flag
                 message = self.status_socket.recv_string(zmq.NOBLOCK)
                 topic, data = message.split(' ', 1)
-                self.logger.debug(f"Received update: {message}")
+                self.logger.debug(f"(COMMUNICATION MANAGER) Received update: {message}")
                 
                 if topic.startswith('status/'):
                     self.handle_status_update(topic, data)
@@ -72,7 +72,7 @@ class ControllerCommunicationManager:
                 break
             except Exception as e:
                 if self.is_running:  # Only log errors if we're still running
-                    self.logger.error(f"Error handling update: {e}")
+                    self.logger.error(f"(COMMUNICATION MANAGER) Error handling update: {e}")
                 break
 
     def handle_status_update(self, topic: str, data: str):
@@ -87,7 +87,7 @@ class ControllerCommunicationManager:
 
     def cleanup(self):
         """Clean up ZMQ connections and export any remaining data"""
-        self.logger.info("Cleaning up controller communication manager...")
+        self.logger.info("(COMMUNICATION MANAGER) Cleaning up controller communication manager...")
         
         # First, stop the listener thread
         self.is_running = False
@@ -99,17 +99,17 @@ class ControllerCommunicationManager:
         # Now clean up ZeroMQ sockets
         try:
             if hasattr(self, 'command_socket'):
-                self.logger.info("Closing command socket")
+                self.logger.info("(COMMUNICATION MANAGER) Closing command socket")
                 self.command_socket.setsockopt(zmq.LINGER, 1000)
                 self.command_socket.close()
             if hasattr(self, 'status_socket'):
-                self.logger.info("Closing status socket")
+                self.logger.info("(COMMUNICATION MANAGER) Closing status socket")
                 self.status_socket.setsockopt(zmq.LINGER, 1000)
                 self.status_socket.close()
             if hasattr(self, 'context'):
-                self.logger.info("Terminating ZeroMQ context")
+                self.logger.info("(COMMUNICATION MANAGER) Terminating ZeroMQ context")
                 self.context.term()
         except Exception as e:
-            self.logger.error(f"Error during ZeroMQ cleanup: {e}")
+            self.logger.error(f"(COMMUNICATION MANAGER) Error during ZeroMQ cleanup: {e}")
 
-        self.logger.info("Controller communication manager cleanup complete")
+        self.logger.info("(COMMUNICATION MANAGER) Controller communication manager cleanup complete")

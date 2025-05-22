@@ -11,7 +11,7 @@ class ControllerFileTransfer:
         #self.upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
         self.upload_dir = "uploads/"
         os.makedirs(self.upload_dir, exist_ok=True)
-        self.logger.info(f"Initialized file transfer server with upload directory: {self.upload_dir}")
+        self.logger.info(f"(FILE TRANSFER MANAGER) Initialized file transfer server with upload directory: {self.upload_dir}")
 
     async def handle_upload(self, request):
         """Handle receiving a file from the module"""
@@ -36,11 +36,11 @@ class ControllerFileTransfer:
             with open(filepath, 'wb') as f:
                 f.write(data)
             
-            self.logger.info(f'File saved with unique name: {filepath}')
+            self.logger.info(f'(FILE TRANSFER MANAGER) File saved with unique name: {filepath}')
             return web.Response(text='File uploaded successfully')
             
         except Exception as e:
-            self.logger.error(f'Error handling upload: {e}')
+            self.logger.error(f'(FILE TRANSFER MANAGER) Error handling upload: {e}')
             return web.Response(status=500, text=str(e))
 
     async def start(self):
@@ -49,10 +49,10 @@ class ControllerFileTransfer:
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', 8080)
         await site.start()
-        self.logger.info("File transfer server started on 0.0.0.0:8080")
+        self.logger.info("(FILE TRANSFER MANAGER) File transfer server started on 0.0.0.0:8080")
 
     async def stop(self):
         """Stop the file transfer server"""
         runner = web.AppRunner(self.app)
         await runner.cleanup()
-        self.logger.info("File transfer server stopped")
+        self.logger.info("(FILE TRANSFER MANAGER) File transfer server stopped")

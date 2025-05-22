@@ -86,16 +86,19 @@ class Module:
         self.ptp_manager = PTPManager(
             logger=self.logger,
             role=PTPRole.SLAVE)
-        self.command_handler = ModuleCommandHandler(
-            self.logger,
-            self.module_id,
-            self.module_type,
-            communication_manager=self.communication_manager,
-            health_manager=self.health_manager,
-            config_manager=self.config_manager,
-            ptp_manager=self.ptp_manager,
-            start_time=None # Will be set during start()
-        )
+
+        # Initialize command handler if not already set
+        if not hasattr(self, 'command_handler'):
+            self.command_handler = ModuleCommandHandler(
+                self.logger,
+                self.module_id,
+                self.module_type,
+                communication_manager=self.communication_manager,
+                health_manager=self.health_manager,
+                config_manager=self.config_manager,
+                ptp_manager=self.ptp_manager,
+                start_time=None # Will be set during start()
+            )
 
         # Bind health manager's callback to the ptp_manager method
         self.health_manager.get_ptp_offsets = self.ptp_manager.get_status
@@ -135,6 +138,54 @@ class Module:
         # Data parameters - Thread
         self.stream_thread = None
 
+    def controller_discovered(self, controller_ip: str, controller_port: int):
+        """Callback when controller is discovered via zeroconf"""
+        self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
+        self.logger.info(f"(MODULE) Module will now initialize the necessary managers")
+        # Only proceed if we're not already connected
+        if self.communication_manager.controller_ip:
+            self.logger.info("(MODULE) Already connected to controller")
+            return
+            
+        try:
+            # 1. Initialize file transfer
+            self.logger.info("(MODULE) Initializing file transfer")
+            from src.modules.module_file_transfer_manager import ModuleFileTransfer
+            self.file_transfer = ModuleFileTransfer(
+                controller_ip=controller_ip,
+                logger=self.logger
+            )
+            self.logger.info("(MODULE) File transfer initialized")
+            
+            # 2. Connect communication manager
+            self.logger.info("(MODULE) Connecting communication manager to controller")
+            self.communication_manager.connect(controller_ip, controller_port)
+            self.logger.info("(MODULE) Communication manager connected to controller")
+            
+            # 3. Start command listener
+            self.logger.info("(MODULE) Requesting communication manager to start command listener")
+            self.communication_manager.start_command_listener()
+            self.logger.info("(MODULE) Command listener started")
+            
+            # 4. Start heartbeats if module is running
+            if self.is_running:
+                self.logger.info("(MODULE) Requesting health manager to start heartbeats")
+                self.health_manager.start_heartbeats()
+                self.logger.info("(MODULE) Heartbeats started")
+            
+            # 5. Start PTP
+            self.logger.info("(MODULE) Starting PTP manager")
+            self.ptp_manager.start()
+            
+            self.logger.info("(MODULE) Controller connection and initialization complete")
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error during controller initialization: {e}")
+            # Clean up any partial initialization
+            self.communication_manager.cleanup()
+            self.file_transfer = None
+            raise
+
     def start(self) -> bool:
         """
         Start the module.
@@ -144,21 +195,21 @@ class Module:
         Returns:
             bool: True if the module started successfully, False otherwise.
         """
-        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
+        self.logger.info(f"(MODULE) Starting {self.module_type} module {self.module_id}")
         if self.is_running:
-            self.logger.info("Module already running")
+            self.logger.info("(MODULE) Module already running")
             return False
         else:
             self.is_running = True
             self.start_time = time.time()
-            self.logger.info(f"Module started at {self.start_time}")
+            self.logger.info(f"(MODULE) Module started at {self.start_time}")
             
             # Update start time in command handler
             self.command_handler.start_time = self.start_time
             
             # Start command listener thread if controller is discovered
             if self.service_manager.controller_ip:
-                self.logger.info(f"Attempting to connect to controller at {self.service_manager.controller_ip}")
+                self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service_manager.controller_ip}")
                 # Connect to the controller
                 self.communication_manager.connect(
                     self.service_manager.controller_ip,
@@ -185,35 +236,39 @@ class Module:
         Returns:
             bool: True if the module stopped successfully, False otherwise.
         """
-        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"(MODULE) Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         if not self.is_running:
-            self.logger.info("Module already stopped")
+            self.logger.info("(MODULE) Module already stopped")
             return False
 
         try:
             # First: Clean up command handler (stops streaming and thread)
-            self.logger.info("Cleaning up command handler...")
+            self.logger.info("(MODULE) Cleaning up command handler...")
             self.command_handler.cleanup()
             
             # Second: Stop the health manager (and its heartbeat thread)
-            self.logger.info("Stopping health manager...")
+            self.logger.info("(MODULE) Stopping health manager...")
             self.health_manager.stop_heartbeats()
 
-            # Third: Stop the service manager (doesn't use ZMQ directly)
-            self.logger.info("Cleaning up service manager...")
+            # Third: Stop PTP manager
+            self.logger.info("(MODULE) Stopping PTP manager...")
+            self.ptp_manager.stop()
+
+            # Fourth: Stop the service manager (doesn't use ZMQ directly)
+            self.logger.info("(MODULE) Cleaning up service manager...")
             self.service_manager.cleanup()
             
-            # Fourth: Stop the communication manager (ZMQ cleanup)
-            self.logger.info("Cleaning up communication manager...")
+            # Fifth: Stop the communication manager (ZMQ cleanup)
+            self.logger.info("(MODULE) Cleaning up communication manager...")
             self.communication_manager.cleanup()
 
         except Exception as e:
-            self.logger.error(f"Error stopping module: {e}")
+            self.logger.error(f"(MODULE) Error stopping module: {e}")
             return False
 
         # Confirm the module is stopped
         self.is_running = False
-        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"(MODULE) Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
 
     def generate_module_id(self, module_type: str) -> str:

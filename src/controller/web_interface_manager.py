@@ -34,36 +34,28 @@ class WebInterfaceManager:
         def index():
             return render_template('index.html')
         
-        # Camera page
-        @self.app.route('/camera')
-        def camera():
-            return render_template('camera.html')
-        
-        # Status page
-        @self.app.route('/status')
-        def status():
-            return render_template('status.html')
-        
         # API endpoints
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
+            self.logger.info(f"(WEB INTERFACE MANAGER) Listing modules")
             if self.test==True:
+                self.logger.info(f"(WEB INTERFACE MANAGER) In test mode: listing dummy modules")
                 modules=[
                     {"id": "camera_XYZ", "type": "camera", "ip": "192.168.1.XY"},
                     {"id": "camera_ABC", "type": "camera", "ip": "192.168.1.AB"},
                     {"id": "camera_DEF", "type": "camera", "ip": "192.168.1.DE"},
                 ]
             else:
-                # TODO: Implement this
-                modules = []
-                # for module in self.controller.service_manager.modules:
-            #     modules.append({
-            #         "id": module.id,
-            #         "type": module.type,
-            #         "ip": module.ip
-            #     })
+                modules = self.get_modules()
             return jsonify({"modules": modules})
     
+    def get_modules(self):
+        """Get the list of modules"""
+        return self._modules if hasattr(self, '_modules') else [] # Should we return the empty list if no modules are found? Or should we raise an error?
+    
+    def update_modules(self, modules: list):
+        """Update the list of modules from the controller service manager"""
+        self._modules = modules
     def start_web_interface(self):
         """Start the web interface"""
         self.app.run(host='0.0.0.0', port=8080, debug=True)

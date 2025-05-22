@@ -13,7 +13,7 @@ import logging
 import time
 from flask import Flask, render_template
 from flask_socketio import SocketIO
-
+from src.controller.web_interface_manager import WebInterfaceManager
 
 class ControllerInterfaceManager:
     def __init__(self, controller):
@@ -21,14 +21,33 @@ class ControllerInterfaceManager:
         self.controller = controller # Pass through the controller object so we can access logger, config, module data etc
         self.logger = controller.logger
 
-        # Check if the web interface is enabled
-        if self.controller.config_manager.get("web_interface.enabled") == True:
-            self.logger.info(f"(INTERFACE MANAGER) Web interface enabled")
+        # Check which interfaces are enabled
+        if self.controller.config_manager.get("interface.web_interface") == True:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to True")
             self.web_interface = True # Flag to indicate if the web interface is enabled
+            self.web_interface_manager = WebInterfaceManager(self.logger)
         else:
-            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled")
+            self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to False")
             self.web_interface = False
+
+        if self.controller.config_manager.get("interface.cli") == True:
+            self.logger.info(f"(INTERFACE MANAGER) CLI interface flag set to True")
+            self.cli_interface = True
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) CLI interface flag set to False")
+            self.cli_interface = False
     
+    def start(self):
+        """Start the interface manager"""
+        self.logger.info(f"(INTERFACE MANAGER) Starting interface manager")
+        if self.web_interface == True:
+            self.logger.info(f"(INTERFACE MANAGER) Starting web interface (NOT YET IMPLEMENTED...)")
+            # self.web_interface_manager.start()
+        
+        if self.cli_interface == True:
+            self.logger.info(f"(INTERFACE MANAGER) Starting manual control loop")
+            self.run_manual_control()
+
     def run_manual_control(self):
         """Run the manual control loop"""
         self.logger.info("(INTERFACE MANAGER) Starting manual CLI control loop")

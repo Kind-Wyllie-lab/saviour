@@ -240,7 +240,8 @@ class PTPManager:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,  # Line buffered
-                    universal_newlines=True
+                    universal_newlines=True,
+                    env=dict(os.environ, TERM='dumb')  # Disable ANSI escape sequences
                 )
                 
             # Check if process started successfully
@@ -258,27 +259,27 @@ class PTPManager:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,  # Line buffered
-                    universal_newlines=True
+                    universal_newlines=True,
+                    env=dict(os.environ, TERM='dumb')  # Disable ANSI escape sequences
                 )
-            
+                
             # Check if process started successfully
-            time.sleep(0.5)
+            time.sleep(0.5)  # Give it a moment to start
             if self.phc2sys_proc.poll() is not None:
                 error = self.phc2sys_proc.stderr.read()
-                self.ptp4l_proc.terminate()
                 raise PTPError(f"(PTP MANAGER) phc2sys failed to start: {error}")
             
             self.logger.info("(PTP MANAGER) phc2sys started successfully")
             
+            # Start monitoring thread
+            self.running = True
+            self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
+            self.monitor_thread.start()
+            
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to start PTP processes: {str(e)}")
+            self.logger.error(f"(PTP MANAGER) Error starting PTP: {e}")
             self.stop()
             raise
-        
-        self.running = True
-        self.status = 'starting'
-        self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
-        self.monitor_thread.start()
 
     def _monitor(self):
         while self.running:

@@ -87,7 +87,9 @@ class ModuleConfigManager:
         
         # Set module-specific config file path if not provided
         if not config_file_path:
-            config_file_path = os.path.join(os.path.dirname(__file__), f"{module_type}_config.json")
+            config_file_path = os.path.join(os.path.dirname(__file__), f"config/{module_type}_config.json")
+        
+        self.logger.info(f"(CONFIG MANAGER) Module of type {module_type} set to use config file path: {config_file_path}")
         
         self.config_file_path = config_file_path
         
@@ -95,6 +97,8 @@ class ModuleConfigManager:
         self.base_config_file_path = os.path.join(os.path.dirname(__file__), "base_module_config.json")
         
         self.config = self._load_config()
+
+        self.logger.info(f"(CONFIG MANAGER) Module config loaded: {self.config}")
         
     def _load_config(self) -> Dict[str, Any]:
         """

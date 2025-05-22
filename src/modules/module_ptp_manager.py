@@ -32,7 +32,8 @@ class PTPManager:
     def __init__(self,
                  role=PTPRole.MASTER,
                  interface='eth0',
-                 logger: logging.Logger = None):
+                 logger: logging.Logger = None,
+                 history_size=1000):  # Store last 1000 values by default
 
         """Initialize the PTP manager
 
@@ -40,6 +41,7 @@ class PTPManager:
             logger: Logger instance
             interface: The network interface, typically eth0
             role: The PTP role - slave for modules, master for controllers
+            history_size: Number of historical values to keep
         """
 
         # Check for root privileges first
@@ -50,6 +52,19 @@ class PTPManager:
         self.role = role
         self.interface = interface
         self.logger = logger
+        
+        # History tracking
+        self.history_size = history_size
+        self.ptp4l_history = {
+            'timestamps': [],
+            'offsets': [],
+            'freqs': []
+        }
+        self.phc2sys_history = {
+            'timestamps': [],
+            'offsets': [],
+            'freqs': []
+        }
         
         # Check for required packages
         self._check_required_packages()
@@ -231,6 +246,21 @@ class PTPManager:
             self.logger.info(f"(PTP MANAGER) Killing all ptp processes with command: {cmd}")
             subprocess.Popen(cmd)
 
+    def _add_to_history(self, history_dict, timestamp, offset=None, freq=None):
+        """Add values to history, maintaining the specified size limit"""
+        history_dict['timestamps'].append(timestamp)
+        if offset is not None:
+            history_dict['offsets'].append(offset)
+        if freq is not None:
+            history_dict['freqs'].append(freq)
+            
+        # Trim history if it exceeds size limit
+        if len(history_dict['timestamps']) > self.history_size:
+            history_dict['timestamps'].pop(0)
+            if len(history_dict['offsets']) > 0:
+                history_dict['offsets'].pop(0)
+            if len(history_dict['freqs']) > 0:
+                history_dict['freqs'].pop(0)
 
     def start(self):
         self.logger.info(f"(PTP MANAGER) Starting PTP in {self.role.value} mode on {self.interface}")
@@ -307,23 +337,24 @@ class PTPManager:
                 line = proc.stdout.readline() if proc and proc.stdout else ''
                 if line:
                     line = line.strip()
-                    # self.logger.debug(f"(PTP MANAGER) {name} line: {line}")
                     
                     # Parse offset information
-                    # TODO: Distinguish ptp4l and phc2sys offset
                     if 'master offset' in line or 'offset' in line:
                         try:
                             # Extract offset value from line
                             offset_str = line.split('offset')[1].split()[0]
                             offset_value = float(offset_str)
+                            current_time = time.time()
                             
                             if name == 'ptp4l':
                                 self.ptp4l_offset = offset_value
                                 self.last_offset = offset_value  # For backward compatibility
+                                self._add_to_history(self.ptp4l_history, current_time, offset=offset_value)
                             else:  # phc2sys
                                 self.phc2sys_offset = offset_value
+                                self._add_to_history(self.phc2sys_history, current_time, offset=offset_value)
                             
-                            self.last_sync_time = time.time()
+                            self.last_sync_time = current_time
                             self.status = 'synchronized'
                             
                             # Log the offset with source identification
@@ -338,12 +369,15 @@ class PTPManager:
                             # Extract freq correction from line
                             freq_str = line.split('freq')[1].split()[0]
                             freq_value = int(freq_str)
+                            current_time = time.time()
                             
                             if name == 'ptp4l':
                                 self.ptp4l_freq = freq_value
                                 self.last_freq = freq_value  # For backward compatibility
+                                self._add_to_history(self.ptp4l_history, current_time, freq=freq_value)
                             else:  # phc2sys
                                 self.phc2sys_freq = freq_value
+                                self._add_to_history(self.phc2sys_history, current_time, freq=freq_value)
                             
                             # Log the frequency with source identification
                             self.logger.debug(f"(PTP MANAGER) {name} frequency correction: {freq_value} ppb")
@@ -466,6 +500,7 @@ class PTPManager:
         self.logger.info("(PTP MANAGER) PTP processes stopped and cleanup completed.")
 
     def get_status(self):
+        """Get current PTP status and history"""
         return {
             'role': self.role.value,
             'status': self.status,
@@ -474,7 +509,9 @@ class PTPManager:
             'ptp4l_freq': self.ptp4l_freq,
             'phc2sys_offset': self.phc2sys_offset,
             'phc2sys_freq': self.phc2sys_freq,
-            'interface': self.interface
+            'interface': self.interface,
+            'ptp4l_history': self.ptp4l_history,
+            'phc2sys_history': self.phc2sys_history
         }
 
     def is_synchronized(self, timeout=5):

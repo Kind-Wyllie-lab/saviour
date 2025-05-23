@@ -10,7 +10,7 @@
         "record_video",
         "start_recording",
         "stop_recording",
-        "export_video",
+        "export_recordings",
         "ptp_status",
         "custom_command",
         "update_camera_settings",

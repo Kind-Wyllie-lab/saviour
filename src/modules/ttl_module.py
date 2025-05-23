@@ -54,22 +54,17 @@ class TTLModule(Module):
         self.command_handler.start_time = self.start_time
 
         # TTL specific variables
-        # TODO: get these from config
-        self.ttl_pins = {
-            "ttl1": {"pin": 16, "mode": "in"},
-            "ttl2": {"pin": 20, "mode": "out"},
-            "ttl3": {"pin": 21, "mode": "out"},
-        }
+        self.ttl_input_pins = self.config_manager.get("digital_inputs.pins")
+        self.ttl_output_pins = self.config_manager.get("digital_outputs.pins")
 
         # Initialize GPIO
         self.output_pins = []
         self.input_pins = []
 
-        for pin in self.ttl_pins.values():
-            if pin["mode"] == "in":
-                self.input_pins.append(gpiozero.Button(pin["pin"], bounce_time=0)) # Use a Button object to represent the input pins, set bounce time to 0 to avoid debouncing
-            elif pin["mode"] == "out":
-                self.output_pins.append(gpiozero.LED(pin["pin"]))  # Use an LED object to represent the output pins
+        for pin in self.ttl_input_pins:
+            self.input_pins.append(gpiozero.Button(pin, bounce_time=0)) # Use a Button object to represent the input pins, set bounce time to 0 to avoid debouncing
+        for pin in self.ttl_output_pins:
+            self.output_pins.append(gpiozero.LED(pin))  # Use an LED object to represent the output pins
         
         # Buffer to timestamp TTL events
         self.ttl_event_buffer = [] # List of tuples (timestamp, pin)
@@ -83,10 +78,8 @@ class TTLModule(Module):
         self.logger.info(f"Starting to record all input pins")
         for pin in self.input_pins:
             self.start_recording_on_output_pin(pin)
-            self.logger.info(f"Started monitoring input pin {pin.pin}")
     
     def start_recording_on_output_pin(self, pin):
-        self.logger.info(f"Starting to record on output pin {pin.pin}")
         pin.when_pressed = self._handle_input_pin_low
         pin.when_released = self._handle_input_pin_high
         self.logger.info(f"Started monitoring output pin {pin.pin}")

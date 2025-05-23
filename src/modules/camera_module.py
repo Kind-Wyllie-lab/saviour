@@ -97,8 +97,8 @@ class CameraCommandHandler(ModuleCommandHandler):
                     self.communication_manager.send_status({"error": "Module not configured for video recording"})
                 return
 
-            case "export_video":
-                if 'export_video' in self.callbacks:
+            case "export_recordings":
+                if 'export_recordings' in self.callbacks:
                     try:
                         # Extract parameters from command string
                         params_str = command.split(' ', 1)[1] if len(command.split()) > 1 else "{}"
@@ -121,7 +121,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                         length = params.get('length', 0)
                         destination = params.get('destination', 'controller')
                         
-                        success = self.callbacks['export_video'](filename, length, destination)
+                        success = self.callbacks['export_recordings'](filename, length, destination)
                         if success:
                             self.communication_manager.send_status({
                                 "type": "video_export_complete",
@@ -141,7 +141,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                             "error": str(e)
                         })
                 else:
-                    self.logger.error("(COMMAND HANDLER) No export_video callback provided")
+                    self.logger.error("(COMMAND HANDLER) No export_recordings callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for video export"})
                 return
 
@@ -333,6 +333,7 @@ class CameraModule(Module):
         # Camera specific variables
         self.video_folder = self.config_manager.get("video_folder")
         self.video_filetype = self.config_manager.get("camera.file_format", "h264")
+        self.latest_recording = None
 
         # Initialize camera
         self.picam2 = Picamera2()
@@ -374,10 +375,11 @@ class CameraModule(Module):
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'record_video': self.record_video,
-            'export_video': self.export_video,
+            'export_recordings': self.export_recordings,
             'handle_update_camera_settings': self.handle_update_camera_settings,
             'list_recordings': self.list_recordings,
             'clear_recordings': self.clear_recordings,
+            'get_latest_recording': self.get_latest_recording,
             'export_to_nas': self.export_to_nas,
             'mount_nas': self.mount_nas,
             'unmount_nas': self.unmount_nas
@@ -436,6 +438,7 @@ class CameraModule(Module):
         
         # Create filename using just the session ID
         filename = f"{self.video_folder}/{self.stream_session_id}.{self.video_filetype}"
+        self.latest_recording = filename
         
         # Ensure recording directory exists
         os.makedirs(self.video_folder, exist_ok=True)
@@ -484,7 +487,7 @@ class CameraModule(Module):
             })
             return None
     
-    def export_video(self, filename: str, length: int = 0, destination: str = "controller"):
+    def export_recordings(self, filename: str, length: int = 0, destination: str = "controller"):
         """Export a video to the specified destination
         
         Args:
@@ -496,6 +499,23 @@ class CameraModule(Module):
             bool: True if export successful
         """
         try:
+            if filename == "all":
+                # Export all recordings
+                for recording in self.list_recordings():
+                    if destination.lower() == "nas":
+                        self.export_to_nas(recording["filename"])
+                    else:
+                        self.send_file(recording["path"], f"videos/{recording['filename']}")
+                return True
+            elif filename == "latest":
+                # Export latest recording
+                latest_recording = self.get_latest_recording()
+                if destination.lower() == "nas":
+                    self.export_to_nas(latest_recording["filename"])
+                else:
+                    self.send_file(latest_recording["path"], f"videos/{latest_recording['filename']}")
+                return True
+                
             # Ensure the video file exists
             filepath = os.path.join(self.video_folder, filename)
             if not os.path.exists(filepath):
@@ -960,4 +980,6 @@ class CameraModule(Module):
             return False
         
         
-    
+    def get_latest_recording(self):
+        """Get the latest recording"""
+        return self.latest_recording

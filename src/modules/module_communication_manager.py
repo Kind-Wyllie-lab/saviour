@@ -79,6 +79,8 @@ class ModuleCommunicationManager:
             self.logger.info(f"(COMMUNICATION MANAGER) Module ID: {self.module_id}")
             self.logger.info(f"(COMMUNICATION MANAGER) Subscribing to topic: cmd/{self.module_id}")
             self.command_socket.subscribe(f"cmd/{self.module_id}")
+            self.logger.info(f"(COMMUNICATION MANAGER) Subscribing to topic: cmd/all")
+            self.command_socket.subscribe(f"cmd/all")
             
             # Connect sockets
             self.logger.info(f"(COMMUNICATION MANAGER) Attempting to connect command socket to tcp://{controller_ip}:{command_port}")

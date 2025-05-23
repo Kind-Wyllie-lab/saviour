@@ -9,7 +9,7 @@ ttl = TTLModule()
 
 def main():
     ttl.start()
-    ttl.start_recording_all_input_pins()
+    # ttl.start_recording_all_input_pins()
     # Keep running until interrupted
     try:
         while True:
@@ -17,6 +17,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
         ttl._print_ttl_event_buffer()
+        ttl._save_ttl_event_buffer_to_file()
         ttl.stop()
 
 if __name__ == "__main__":

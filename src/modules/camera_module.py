@@ -504,16 +504,20 @@ class CameraModule(Module):
                 for recording in self.list_recordings():
                     if destination.lower() == "nas":
                         self.export_to_nas(recording["filename"])
+                        self.export_to_nas(f"{recording['filename']}_timestamps.txt")
                     else:
                         self.send_file(recording["path"], f"videos/{recording['filename']}")
+                        self.send_file(f"{recording['filename']}_timestamps.txt", f"videos/{recording['filename']}_timestamps.txt")
                 return True
             elif filename == "latest":
                 # Export latest recording
                 latest_recording = self.get_latest_recording()
                 if destination.lower() == "nas":
                     self.export_to_nas(latest_recording["filename"])
+                    self.export_to_nas(f"{latest_recording['filename']}_timestamps.txt")
                 else:
                     self.send_file(latest_recording["path"], f"videos/{latest_recording['filename']}")
+                    self.send_file(f"{latest_recording['filename']}_timestamps.txt", f"videos/{latest_recording['filename']}_timestamps.txt")
                 return True
                 
             # Ensure the video file exists

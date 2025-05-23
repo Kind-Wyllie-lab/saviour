@@ -11,12 +11,13 @@ from datetime import datetime
 import logging
 
 class PulseGenerator:
-    def __init__(self, pin=17, min_delay=1.0, max_delay=5.0):
+    def __init__(self, pin=16, min_delay=1.0, max_delay=5.0, pulse_duration=0.001):
         self.pin = pin
         self.min_delay = min_delay
         self.max_delay = max_delay
         self.timestamps = []
         self.running = False
+        self.pulse_duration = pulse_duration
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -29,13 +30,13 @@ class PulseGenerator:
     def generate_pulse(self):
         """Generate a single low pulse"""
         # Record timestamp before going low
-        timestamp = datetime.now()
+        timestamp = time.time_ns()
         self.timestamps.append(timestamp)
         self.logger.info(f"Sending low pulse at {timestamp}")
-        
+        print(f"Sending low pulse at {timestamp}")
         # Send the pulse
         self.led.off()
-        time.sleep(0.1)  # Hold low for 100ms
+        time.sleep(self.pulse_duration)  # Hold low for 1ms
         self.led.on()
         
     def start(self):
@@ -63,10 +64,10 @@ class PulseGenerator:
 
 def main():
     # Example usage
-    generator = PulseGenerator(pin=17)  # Using GPIO17 as example
+    generator = PulseGenerator(pin=16, pulse_duration=0.001)  # Using GPIO16 as example
     
     try:
-        print("Starting pulse generator. Press Ctrl+C to stop.")
+        print("Starting pulse generator on GPIO16. Press Ctrl+C to stop.")
         generator.start()
             
     except KeyboardInterrupt:

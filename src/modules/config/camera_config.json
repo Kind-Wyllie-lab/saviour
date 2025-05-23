@@ -20,7 +20,7 @@
         "contrast": 0,
         "brightness": 50,
         "quality": 75,
-        "video_folder": "recordings",
+        "video_folder": "rec"
         "image_folder": "images"
     },
     "recording": {

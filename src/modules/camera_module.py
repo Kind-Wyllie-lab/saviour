@@ -316,7 +316,7 @@ class CameraModule(Module):
         self.command_handler.start_time = self.start_time
         
         # Camera specific variables
-        self.video_folder = "rec"
+        self.video_folder = self.config_manager.get("camera.video_folder", "rec")
         self.video_filetype = self.config_manager.get("camera.file_format", "h264")
 
         # Initialize camera

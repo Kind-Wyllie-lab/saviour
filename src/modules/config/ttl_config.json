@@ -12,5 +12,6 @@
     "digital_outputs": {
         "pins": [20, 21],
         "default_state": "high"
-    }
+    },
+    "recording_folder": "rec"
 } 

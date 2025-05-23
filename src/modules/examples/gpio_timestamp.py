@@ -6,36 +6,31 @@ The pin should be normally high (pulled up) and go low when triggered.
 
 import time
 from gpiozero import Button
-from datetime import datetime
-import threading
-import queue
 import logging
 
 class GPIOMonitor:
-    def __init__(self, pin=17, pull_up=True, bouncetime=0.1):
+    def __init__(self, pin=16, pull_up=True):
         self.pin = pin
         self.pull_up = pull_up
-        self.bouncetime = bouncetime
-        self.timestamps = []
         self.running = False
-        self.event_queue = queue.Queue()
+        self.timestamps = []  # Keep track of all timestamps
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
         
-        # Create button with pull-up and debounce
+        # Create button with pull-up, no debounce
         self.button = Button(
             pin,
             pull_up=pull_up,
-            bounce_time=bouncetime
+            bounce_time=None  # Disable debouncing
         )
         
     def _on_pin_low(self):
         """Callback when pin goes low"""
-        timestamp = datetime.now()
-        self.timestamps.append(timestamp)
-        self.event_queue.put(timestamp)
+        timestamp = time.time_ns()
+        self.timestamps.append(timestamp)  # Store timestamp
+        print(f"Pin {self.pin} went low at {timestamp}")  # Print in real-time
         self.logger.info(f"Pin {self.pin} went low at {timestamp}")
         
     def start(self):
@@ -53,28 +48,18 @@ class GPIOMonitor:
     def get_timestamps(self):
         """Get list of recorded timestamps"""
         return self.timestamps.copy()
-        
-    def get_latest_event(self):
-        """Get the most recent event from the queue"""
-        try:
-            return self.event_queue.get_nowait()
-        except queue.Empty:
-            return None
 
 def main():
     # Example usage
-    monitor = GPIOMonitor(pin=17)  # Using GPIO17 as example
+    monitor = GPIOMonitor(pin=16)  # Using GPIO16
     
     try:
         monitor.start()
-        print("Monitoring pin 17. Press Ctrl+C to stop.")
+        print("Monitoring pin 16. Press Ctrl+C to stop.")
         
-        while True:
-            # Check for new events
-            event = monitor.get_latest_event()
-            if event:
-                print(f"New event at: {event}")
-            time.sleep(0.1)
+        # Keep the program running
+        while monitor.running:
+            time.sleep(0.1)  # Just to prevent CPU spinning
             
     except KeyboardInterrupt:
         print("\nStopping...")

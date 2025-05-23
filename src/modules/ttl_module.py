@@ -33,14 +33,14 @@ class TTLCommandHandler(ModuleCommandHandler):
             case "start_recording":
                 if "start_recording" in self.callbacks:
                     result = self.callbacks['start_recording']()
-                    self.communication_manager.send_status({"recording_started": result})
+                    self.communication_manager.send_status(result)
                 else:
                     self.logger.error("(COMMAND HANDLER) No start_recording callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for recording"})
             case "stop_recording":  
                 if "stop_recording" in self.callbacks:
                     result = self.callbacks['stop_recording']()
-                    self.communication_manager.send_status({"recording_stopped": result})
+                    self.communication_manager.send_status(result)
                 else:
                     self.logger.error("(COMMAND HANDLER) No stop_recording callback provided")
                     self.communication_manager.send_status({"error": "Module not configured for recording"})
@@ -130,14 +130,26 @@ class TTLModule(Module):
             self.recording_start_time = time.time()
             self.recording = True
             self.start_recording_all_input_pins()
-            return True
+            result = {
+                "recording_started": True,
+                "recording_start_time": self.recording_start_time,
+                "recording_stop_time": self.recording_stop_time, 
+                "filename": f"ttl_event_buffer_{self.recording_start_time}.txt"
+            }
+            return result
         else:
             self.logger.info(f"Starting to record on output pin {pins}")
             self.recording_stop_time = None
             self.recording_start_time = time.time()
             self.recording = True
             self.start_recording_on_output_pin(pins)
-            return True
+            result = {
+                "recording_started": True,
+                "recording_start_time": self.recording_start_time,
+                "recording_stop_time": self.recording_stop_time, 
+                "filename": f"ttl_event_buffer_{self.recording_start_time}.txt"
+            }
+            return result
 
     def start_recording_all_input_pins(self):
         self.logger.info(f"Starting to record all input pins")
@@ -150,12 +162,25 @@ class TTLModule(Module):
         self.logger.info(f"Started monitoring output pin {pin.pin}")
 
     def stop_recording(self):
-        self.logger.info(f"Stopping recording")
-        self.recording_stop_time = time.time()
-        self.recording = False
-        self.stop_recording_all_input_pins()
-        self._save_ttl_event_buffer_to_file(filename=f"ttl_event_buffer_{self.recording_start_time}.txt")
-        return True
+        if not self.recording:
+            self.logger.error(f"No recording to stop")
+            return {
+                "recording_stopped": False,
+                "error": "No recording to stop"
+            }
+        else:
+            self.logger.info(f"Stopping recording")
+            self.recording_stop_time = time.time()
+            self.recording = False
+            self.stop_recording_all_input_pins()
+            self._save_ttl_event_buffer_to_file(filename=f"{self.recording_folder}/ttl_event_buffer_{self.recording_start_time}.txt")
+            result = {
+                "recording_stopped": True,
+                "recording_start_time": self.recording_start_time,
+                "recording_stop_time": self.recording_stop_time, 
+                "filename": f"ttl_event_buffer_{self.recording_start_time}.txt"
+            }
+            return result
     
     def stop_recording_all_input_pins(self):
         self.logger.info(f"Stopping to record all input pins")

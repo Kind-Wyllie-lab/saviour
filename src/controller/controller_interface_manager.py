@@ -233,9 +233,9 @@ class ControllerInterfaceManager:
                 except ValueError:
                     print("Invalid duration - please enter a number")
             # Special handling for export_video command
-            elif self.controller.commands[cmd_idx] == "export_video":
+            elif self.controller.commands[cmd_idx] == "export_recordings":
                 try:
-                    filename = input("\nEnter the filename for the exported video: ").strip()
+                    filename = input("\nEnter the filename for the exported video ('all' for all recordings, 'latest' for latest recording): ").strip()
                     destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
                     if not destination:
                         destination = "controller"
@@ -243,7 +243,7 @@ class ControllerInterfaceManager:
                         print("Invalid destination. Using 'controller'")
                         destination = "controller"
                     
-                    command_str = f'export_video {{"filename": "{filename}", "destination": "{destination}"}}'
+                    command_str = f'export_recordings {{"filename": "{filename}", "destination": "{destination}"}}'
                     self.controller.communication_manager.send_command(
                         module_id,
                         command_str

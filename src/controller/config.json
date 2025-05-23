@@ -8,6 +8,7 @@
         "start_stream",
         "stop_stream",
         "record_video",
+        "start_recording",
         "stop_recording",
         "export_video",
         "ptp_status",

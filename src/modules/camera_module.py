@@ -37,11 +37,26 @@ class CameraCommandHandler(ModuleCommandHandler):
         match command.split()[0]:  # Split and take first word to match command
             case "start_recording":
                 if 'start_recording' in self.callbacks:
-                    result = self.callbacks['start_recording']()
-                    self.communication_manager.send_status({"recording_started": result})
+                    try:
+                        # result = self.callbacks['start_recording']()
+                        filename = self.callbacks['record_video'](0) # I'm just going to use the record_video callback for now assuming it runs forever.
+                        if filename:
+                            self.communication_manager.send_status({
+                                "type": "video_recording_complete",
+                                "filename": filename,
+                                "length": 0
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "video_recording_failed",
+                                "error": "Recording failed"
+                            })
+                    except Exception as e:
+                        self.logger.error(f"(COMMAND HANDLER) Error starting recording: {e}")
+                        self.communication_manager.send_status({"error": "Module not configured for recording"})
                 else:
-                    self.logger.error("(COMMAND HANDLER) No start_recording callback provided")
-                    self.communication_manager.send_status({"error": "Module not configured for recording"})
+                    self.logger.error("(COMMAND HANDLER) No record_video callback provided")
+                    self.communication_manager.send_status({"error": "Module not configured for video recording"})
                 return
 
             case "stop_recording":

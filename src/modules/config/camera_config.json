@@ -20,7 +20,6 @@
         "contrast": 0,
         "brightness": 50,
         "quality": 75,
-        "video_folder": "rec",
         "image_folder": "images"
     },
     "recording": {
@@ -47,5 +46,6 @@
         "share": "data",
         "mount_point": "/mnt/nas",
         "export_folder": "videos"
-    }
+    },
+    "video_folder": "rec"
 }

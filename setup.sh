@@ -77,4 +77,14 @@ pip install -e .
 echo "=== Setup Complete! ==="
 echo "All system dependencies are installed and virtual environment is ready."
 echo "To activate the environment, run: source env/bin/activate"
-echo "Note: You may need to reboot your Raspberry Pi for camera changes to take effect." 
+echo "Note: You may need to reboot your Raspberry Pi for camera changes to take effect."
+
+# Ask if user wants to run tests
+read -p "Would you like to run the test suite now? (y/n) " -n 1 -r
+echo    # Move to a new line
+if [[ $REPLY =~ ^[Yy]$ ]]
+then
+    echo "Running test suite..."
+    pytest
+    echo "Tests completed!"
+fi 

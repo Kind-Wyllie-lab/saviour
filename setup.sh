@@ -1,7 +1,7 @@
 #!/bin/bash
-# setup_system_deps.sh
-# Install system-level dependencies for the habitat project
-# Usage: bash setup_system_deps.sh
+# setup.sh
+# Install system dependencies and set up virtual environment for the habitat project
+# Usage: bash setup.sh
 
 set -e
 
@@ -30,6 +30,7 @@ is_installed() {
     dpkg -s "$1" &> /dev/null
 }
 
+echo "=== Installing System Dependencies ==="
 # Update package list
 sudo apt-get update
 
@@ -50,5 +51,30 @@ if ! grep -q "camera_auto_detect=1" /boot/config.txt; then
     echo "Camera interface enabled. A reboot may be required."
 fi
 
-echo "All required system dependencies are installed."
-echo "Note: You may need to reboot your Raspberry Pi for all changes to take effect." 
+echo "=== Setting up Virtual Environment ==="
+# Remove existing environment if it exists
+if [ -d "env" ]; then
+    echo "Removing existing virtual environment..."
+    rm -rf env
+fi
+
+# Create new virtual environment with system packages
+echo "Creating new virtual environment with system packages..."
+python3 -m venv env --system-site-packages
+
+# Activate the environment
+echo "Activating virtual environment..."
+source env/bin/activate
+
+# Upgrade pip
+echo "Upgrading pip..."
+pip install --upgrade pip
+
+# Install the project in editable mode
+echo "Installing project in editable mode..."
+pip install -e .
+
+echo "=== Setup Complete! ==="
+echo "All system dependencies are installed and virtual environment is ready."
+echo "To activate the environment, run: source env/bin/activate"
+echo "Note: You may need to reboot your Raspberry Pi for camera changes to take effect." 

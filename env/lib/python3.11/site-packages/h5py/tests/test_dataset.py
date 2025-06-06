@@ -49,12 +49,19 @@ class TestRepr(BaseDataset):
         Feature: repr(Dataset) behaves sensibly
     """
 
-    def test_repr_open(self):
+    def test_repr_basic(self):
+        ds = self.f.create_dataset('foo', (4,), dtype='int32')
+        assert repr(ds) == '<HDF5 dataset "foo": shape (4,), type "<i4">'
+
+    def test_repr_closed(self):
         """ repr() works on live and dead datasets """
         ds = self.f.create_dataset('foo', (4,))
-        self.assertIsInstance(repr(ds), str)
         self.f.close()
-        self.assertIsInstance(repr(ds), str)
+        assert repr(ds) == '<Closed HDF5 dataset>'
+
+    def test_repr_anonymous(self):
+        ds = self.f.create_dataset(None, (4,), dtype='int32')
+        assert repr(ds) == '<HDF5 dataset (anonymous): shape (4,), type "<i4">'
 
 
 class TestCreateShape(BaseDataset):
@@ -263,6 +270,18 @@ class TestReadDirectly:
         arr = np.ones((10, 10), order='F')
         with pytest.raises(TypeError):
             dset.read_direct(arr)
+
+    def test_zero_length(self, writable_file):
+        shape = (0, 20)
+        dset = writable_file.create_dataset("dset", shape, dtype=np.int64)
+        arr = np.zeros(shape, dtype=np.int64)
+        dset.read_direct(arr)
+
+        # We should still get an error if the shape is wrong
+        arr2 = np.zeros((0, 25), dtype=np.int64)
+        with pytest.raises(TypeError):
+            dset.read_direct(arr2)
+
 
 class TestWriteDirectly:
 

@@ -13,9 +13,7 @@ from jsonschema.exceptions import FormatError
 _FormatCheckCallable = typing.Callable[[object], bool]
 #: A format checker callable.
 _F = typing.TypeVar("_F", bound=_FormatCheckCallable)
-_RaisesType = typing.Union[
-    typing.Type[Exception], typing.Tuple[typing.Type[Exception], ...],
-]
+_RaisesType = typing.Union[type[Exception], tuple[type[Exception], ...]]
 
 _RE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$", re.ASCII)
 
@@ -274,6 +272,10 @@ with suppress(ImportError):
         draft7="hostname",
         draft201909="hostname",
         draft202012="hostname",
+        # fqdn.FQDN("") raises a ValueError due to a bug
+        # however, it's not clear when or if that will be fixed, so catch it
+        # here for now
+        raises=ValueError,
     )
     def is_host_name(instance: object) -> bool:
         if not isinstance(instance, str):

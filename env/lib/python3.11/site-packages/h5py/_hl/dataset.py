@@ -254,7 +254,7 @@ class AsTypeView(AbstractView):
     """
     def __init__(self, dset, dtype):
         super().__init__(dset)
-        self._dtype = numpy.dtype(dtype)
+        self._dtype = dtype
 
     @property
     def dtype(self):
@@ -437,6 +437,18 @@ class Dataset(HLObject):
 
         >>> double_precision = dataset.astype('f8')[0:100:2]
         """
+        dtype = numpy.dtype(dtype)
+        if dtype == self.dtype:
+            return self
+
+        if dtype.kind == "T":
+            string_info = h5t.check_string_dtype(self.dtype)
+            if string_info is None:
+                raise TypeError(
+                    f"dset.astype({dtype}) can only be used on datasets with "
+                    "an HDF5 string datatype"
+                )
+
         return AsTypeView(self, dtype)
 
     def asstr(self, encoding=None, errors='strict'):
@@ -447,6 +459,12 @@ class Dataset(HLObject):
         The parameters have the same meaning as in ``bytes.decode()``.
         If ``encoding`` is unspecified, it will use the encoding in the HDF5
         datatype (either ascii or utf-8).
+
+        .. note::
+           On NumPy 2.0 and later, it is recommended to use native NumPy
+           variable-width strings instead:
+
+           >>> str_array = dataset.astype('T')[:]
         """
         string_info = h5t.check_string_dtype(self.dtype)
         if string_info is None:
@@ -1115,17 +1133,15 @@ class Dataset(HLObject):
     @with_phil
     def __repr__(self):
         if not self:
-            r = '<Closed HDF5 dataset>'
+            return "<Closed HDF5 dataset>"
+
+        if self.name is None:
+            name = "(anonymous)"
         else:
-            if self.name is None:
-                namestr = '("anonymous")'
-            else:
-                name = pp.basename(pp.normpath(self.name))
-                namestr = '"%s"' % (name if name != '' else '/')
-            r = '<HDF5 dataset %s: shape %s, type "%s">' % (
-                namestr, self.shape, self.dtype.str
-            )
-        return r
+            name = pp.basename(pp.normpath(self.name))
+            name = f'"{name}"'
+
+        return f'<HDF5 dataset {name}: shape {self.shape}, type "{self.dtype.str}">'
 
     if hasattr(h5d.DatasetID, "refresh"):
         @with_phil

@@ -159,14 +159,20 @@ class ControllerInterfaceManager:
             return
             
         print("\nAvailable modules:")
+        print("0. All modules")
         for i, module in enumerate(self.controller.service_manager.modules, 1):
             print(f"{i}. {module.name}")
         
         try:
-            module_idx = int(input("\nChosen module: ").strip()) - 1
-            if not 0 <= module_idx < len(self.controller.service_manager.modules):
-                print("Invalid module selection")
-                return
+            user_input = input("\nChosen module: ").strip()
+            if user_input == "0":
+                module_id = "all"
+            else:
+                module_idx = int(user_input) - 1
+                if not 0 <= module_idx < len(self.controller.service_manager.modules):
+                    print("Invalid module selection")
+                    return
+                module_id = self.controller.service_manager.modules[module_idx].id
                 
             print("\nAvailable commands:")
             for i, cmd in enumerate(self.controller.commands, 1):
@@ -210,7 +216,7 @@ class ControllerInterfaceManager:
                 # Send the command with parameters as a string
                 command_str = f"update_camera_settings {str(params)}"
                 self.controller.communication_manager.send_command(
-                    self.controller.service_manager.modules[module_idx].id,
+                    module_id,
                     command_str
                 )
 
@@ -221,15 +227,15 @@ class ControllerInterfaceManager:
                     # Send the command with duration parameter
                     command_str = f"record_video {duration}"
                     self.controller.communication_manager.send_command(
-                        self.controller.service_manager.modules[module_idx].id,
+                        module_id,
                         command_str
                     )
                 except ValueError:
                     print("Invalid duration - please enter a number")
             # Special handling for export_video command
-            elif self.controller.commands[cmd_idx] == "export_video":
+            elif self.controller.commands[cmd_idx] == "export_recordings":
                 try:
-                    filename = input("\nEnter the filename for the exported video: ").strip()
+                    filename = input("\nEnter the filename for the exported video ('all' for all recordings, 'latest' for latest recording): ").strip()
                     destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
                     if not destination:
                         destination = "controller"
@@ -237,9 +243,9 @@ class ControllerInterfaceManager:
                         print("Invalid destination. Using 'controller'")
                         destination = "controller"
                     
-                    command_str = f'export_video {{"filename": "{filename}", "destination": "{destination}"}}'
+                    command_str = f'export_recordings {{"filename": "{filename}", "destination": "{destination}"}}'
                     self.controller.communication_manager.send_command(
-                        self.controller.service_manager.modules[module_idx].id,
+                        module_id,
                         command_str
                     )
                 except ValueError as e:
@@ -249,7 +255,7 @@ class ControllerInterfaceManager:
             else:
                 # Handle other commands as before
                 self.controller.communication_manager.send_command(
-                    self.controller.service_manager.modules[module_idx].id, 
+                    module_id, 
                     self.controller.commands[cmd_idx]
                 )
         except ValueError:

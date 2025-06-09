@@ -419,7 +419,7 @@ class PTPManager:
                                 self.ptp4l_threshold_flag = True
                         if self.ptp4l_freq is not None:
                             if abs(self.ptp4l_freq) > self.ptp4l_freq_warning_threshold:
-                                self.logger.warning(f"(PTP MANAGER) Warning: ptp4l freq {self.ptp4l_freq}ppb exceeded threshold value {self.freq_warning_threshold}ppb")
+                                self.logger.warning(f"(PTP MANAGER) Warning: ptp4l freq {self.ptp4l_freq}ppb exceeded threshold value {self.ptp4l_freq_warning_threshold}ppb")
                                 self.ptp4l_threshold_flag = True
                         if self.ptp4l_threshold_flag == True:
                             if self.ptp4l_freq is not None and self.ptp4l_offset is not None:

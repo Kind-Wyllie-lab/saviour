@@ -1,0 +1,17 @@
+{
+    "ttl_io": {
+        "interface_type": "gpio",
+        "i2c_address": 0,
+        "spi_bus": 0,
+        "spi_device": 0
+    },
+    "digital_inputs": {
+        "pins": [16],
+        "pull_up": true
+    },
+    "digital_outputs": {
+        "pins": [20, 21],
+        "default_state": "high"
+    },
+    "recording_folder": "rec"
+} 

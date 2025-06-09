@@ -34,6 +34,7 @@ class ControllerServiceManager():
         # Module tracking
         self.modules = []
         self.module_health = {}
+        self.on_module_discovered = None  # Callback for module discovery
 
         # Get the ip address of the controller
         if os.name == 'nt': # Windows
@@ -42,7 +43,7 @@ class ControllerServiceManager():
             self.ip = os.popen('hostname -I').read().split()[0]
 
         # Get service configuration from config manager if available
-        service_port = 5000  # Default value
+        service_port = 5353 # Default value #TODO: Read this from config_manager
         service_type = "_controller._tcp.local."
         service_name = "controller._controller._tcp.local."
         
@@ -62,6 +63,8 @@ class ControllerServiceManager():
         )
         self.zeroconf.register_service(self.service_info) # register the service with the above info
         self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services"
+
+        self.logger.info(f"(SERVICE MANAGER) Controller service registered with service info: {self.service_info}")
 
     def cleanup(self):
         """Cleanup zeroconf resources"""
@@ -89,6 +92,11 @@ class ControllerServiceManager():
             )
             self.modules.append(module)
             self.logger.info(f"(SERVICE MANAGER) Discovered module: {module}")
+            
+            # Call the callback if it exists
+            if self.on_module_discovered:
+                self.logger.info(f"(SERVICE MANAGER) Calling module discovery callback")
+                self.on_module_discovered(module)
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""

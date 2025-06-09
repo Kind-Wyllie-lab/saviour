@@ -112,15 +112,26 @@ class ModuleCommandHandler:
         """Handle get_status command"""
         self.logger.info("(COMMAND HANDLER) Command identified as get_status")
         try:
+            # Get PTP status first
+            ptp_status = self.ptp_manager.get_status()
+            
+            # Calculate uptime safely
+            current_time = time.time()
+            uptime = 0.0
+            if self.start_time and isinstance(self.start_time, (int, float)):
+                uptime = current_time - float(self.start_time)
+            
             status = {
-                "timestamp": time.time(),
+                "timestamp": current_time,
                 "cpu_temp": self.health_manager.get_cpu_temp(),
                 "cpu_usage": psutil.cpu_percent(),
                 "memory_usage": psutil.virtual_memory().percent,
-                "uptime": time.time() - self.start_time if self.start_time else 0,
+                "uptime": uptime,
                 "disk_space": psutil.disk_usage('/').percent,
-                "ptp_offset": self.ptp_manager.last_offset,
-                "ptp_freq": self.ptp_manager.last_freq
+                "ptp4l_offset": ptp_status.get('ptp4l_offset'),
+                "ptp4l_freq": ptp_status.get('ptp4l_freq'),
+                "phc2sys_offset": ptp_status.get('phc2sys_offset'),
+                "phc2sys_freq": ptp_status.get('phc2sys_freq')
             }
             self.communication_manager.send_status(status)
         except Exception as e:
@@ -186,13 +197,14 @@ class ModuleCommandHandler:
     def _handle_ptp_status(self):
         """Return PTP information to the controller"""
         self.logger.info("(COMMAND HANDLER) Command identified as ptp_status")
-        if 'ptp_status' in self.callbacks:
-            ptp_status = str(self.callbacks['ptp_status']())
-            self.logger.info(ptp_status)
-            # self.communication_manager.send_status(ptp_status)
+        if self.ptp_manager:
+            ptp_status = self.ptp_manager.get_status()
+            # add type to the status
+            ptp_status['type'] = 'ptp_status'
+            self.communication_manager.send_status(ptp_status)
         else:
-            self.logger.error("No read_data callback provided")
-            self.communication_manager.send_data("Error: Module not configured for data reading")
+            self.logger.error("No PTP manager available")
+            self.communication_manager.send_status({"error": "PTP manager not available"})
     
     def cleanup(self):
         """Clean up resources used by the command handler"""

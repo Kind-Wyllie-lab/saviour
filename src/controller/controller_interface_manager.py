@@ -11,13 +11,67 @@ Handles user interaction with the habitat controller, including:
 
 import logging
 import time
+from src.controller.controller_web_interface_manager import WebInterfaceManager
 
 class ControllerInterfaceManager:
     def __init__(self, controller):
         """Initialize the controller interface"""
-        self.controller = controller
+        self.controller = controller # Pass through the controller object so we can access logger, config, module data etc
         self.logger = controller.logger
+
+        # Check which interfaces are enabled
+        if self.controller.config_manager.get("interface.web_interface") == True:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to True")
+            self.web_interface = True # Flag to indicate if the web interface is enabled
+            self.web_interface_manager = WebInterfaceManager(self.logger, self.controller.config_manager)
+            
+            # Register callbacks
+            self.web_interface_manager.register_callbacks(
+                get_modules=self._get_modules,
+                get_ptp_history=self._get_ptp_history
+            )
+            
+            # Register callback for module discovery
+            if hasattr(self.controller, 'service_manager'):
+                self.logger.info(f"(INTERFACE MANAGER) Registering module discovery callback")
+                self.controller.service_manager.on_module_discovered = self._on_module_discovered
+                self.controller.service_manager.on_module_removed = self._on_module_discovered  # Use same callback for removal
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to False")
+            self.web_interface = False
+
+        if self.controller.config_manager.get("interface.cli") == True:
+            self.logger.info(f"(INTERFACE MANAGER) CLI interface flag set to True")
+            self.cli_interface = True
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) CLI interface flag set to False")
+            self.cli_interface = False
     
+    def start(self):
+        """Start the interface manager"""
+        self.logger.info(f"(INTERFACE MANAGER) Starting interface manager")
+        
+        # Start web interface if enabled
+        if self.web_interface == True:
+            self.logger.info(f"(INTERFACE MANAGER) Starting web interface")
+            self.web_interface_manager.start()
+            
+            # Register callback for module discovery
+            if hasattr(self.controller, 'service_manager'):
+                self.logger.info(f"(INTERFACE MANAGER) Registering module discovery callback")
+                self.controller.service_manager.on_module_discovered = self._on_module_discovered
+                self.controller.service_manager.on_module_removed = self._on_module_discovered
+                self.logger.info(f"(INTERFACE MANAGER) Module discovery callback registered")
+            
+            # Update web interface with initial module list
+            if hasattr(self.controller, 'service_manager'):
+                self.web_interface_manager.update_modules(self.controller.service_manager.modules)
+        
+        # Start CLI if enabled
+        if self.cli_interface == True:
+            self.logger.info(f"(INTERFACE MANAGER) Starting manual control loop")
+            self.run_manual_control()
+
     def run_manual_control(self):
         """Run the manual control loop"""
         self.logger.info("(INTERFACE MANAGER) Starting manual CLI control loop")
@@ -25,7 +79,7 @@ class ControllerInterfaceManager:
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
             try:
-            user_input = input().strip()
+                user_input = input().strip()
                 if not user_input:
                     continue
                         
@@ -48,6 +102,8 @@ class ControllerInterfaceManager:
                 self.handle_zmq_command()
             case "health status":
                 self.show_health_status()
+            case "health history":
+                self.handle_health_history()
             case "supabase export":
                 self.handle_supabase_export()
             case "start export":
@@ -64,6 +120,8 @@ class ControllerInterfaceManager:
                 self.handle_session_id()
             case "show buffer":
                 self.handle_show_buffer()
+            case "show ptp history":
+                self.handle_show_ptp_history()
             case _:
                 self.logger.error(f"(INTERFACE MANAGER) Unknown command: {command}. Type 'help' for available commands.")
     
@@ -76,6 +134,7 @@ class ControllerInterfaceManager:
         print("  supabase export - Export the local buffer to the database")
         print("  zmq send - Send a command to a specific module via zeromq")
         print("  health status - Print the health status of all modules")
+        print("  health history - Show historical health data (usage: health history --module <id> [--metric <name>] [--limit <n>] [--window <seconds>])")
         print("  start export - Periodically export the local buffer to the database")
         print("  stop export - Stop the periodic export of the local buffer to the database")
         print("  start health export - Periodically export the local health data to the database")
@@ -83,6 +142,7 @@ class ControllerInterfaceManager:
         print("  check export - Check if the controller is currently exporting data to the database")
         print("  session_id - Generate a session_id")
         print("  show buffer - Print the current contents of the data buffer")
+        print("  show ptp history - Print the current PTP history")
     
     def list_modules(self):
         """List all discovered modules"""
@@ -213,6 +273,57 @@ class ControllerInterfaceManager:
             print(f"Uptime: {health.get('uptime', 'N/A')}s")
             print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
     
+    def handle_health_history(self):
+        """Handle health history command"""
+        # Get command arguments
+        args = input("\nEnter health history options (--module <id> [--metric <name>] [--limit <n>] [--window <seconds>]): ").strip()
+        
+        # Parse arguments
+        import argparse
+        parser = argparse.ArgumentParser(description='Health history command')
+        parser.add_argument('--module', required=True, help='Module ID to show history for')
+        parser.add_argument('--metric', help='Specific metric to show stats for')
+        parser.add_argument('--limit', type=int, help='Number of records to show')
+        parser.add_argument('--window', type=int, default=3600, 
+                          help='Time window in seconds for stats (default: 3600)')
+        
+        try:
+            args = parser.parse_args(args.split())
+        except SystemExit:
+            return
+        except Exception as e:
+            print(f"Error parsing arguments: {e}")
+            return
+
+        # Get history for module
+        history = self.controller.health_monitor.get_module_health_history(args.module, args.limit)
+        if not history:
+            print(f"No history found for module {args.module}")
+            return
+            
+        if args.metric:
+            # Print stats for specific metric
+            stats = self.controller.health_monitor.get_module_health_stats(args.module, args.metric, args.window)
+            if not stats:
+                print(f"No {args.metric} data found for module {args.module} in the last {args.window} seconds")
+                return
+                
+            print(f"\n{args.metric} statistics for module {args.module} (last {args.window} seconds):")
+            print(f"  Min: {stats['min']}")
+            print(f"  Max: {stats['max']}")
+            print(f"  Avg: {stats['avg']:.2f}")
+            print(f"  Latest: {stats['latest']}")
+            print(f"  Samples: {stats['samples']}")
+        else:
+            # Print full history
+            print(f"\nHealth history for module {args.module}:")
+            for record in reversed(history):  # Most recent first
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(record['timestamp']))
+                print(f"\n{timestamp}:")
+                for key, value in record.items():
+                    if key != 'timestamp':
+                        print(f"  {key}: {value}")
+    
     def handle_supabase_export(self):
         """Handle manual supabase export"""
         success = self.controller.data_export_manager.export_module_data(
@@ -274,3 +385,58 @@ class ControllerInterfaceManager:
             print(f"Module {module_id}: {len(data_list)} entries")
             for entry in data_list:
                 print(f"  {entry}")
+    
+    def handle_show_ptp_history(self):
+        """Display the current PTP history"""
+        history = self.controller.buffer_manager.get_ptp_history()
+        if not history:
+            print("PTP history is empty.")
+            return
+        print("Current PTP History:")
+        for module_id, history_data in history.items():
+            print(f"Module {module_id}:")
+            for entry in history_data:
+                print(f"  {entry}") 
+
+    def _on_module_discovered(self, module):
+        """Callback when a new module is discovered"""
+        self.logger.info(f"(INTERFACE MANAGER) Module discovered: {module.id}")
+        if self.web_interface:
+            self.logger.info(f"(INTERFACE MANAGER) Notifying web interface of module update")
+            try:
+                self.web_interface_manager.notify_module_update()
+                self.logger.info(f"(INTERFACE MANAGER) Successfully notified web interface")
+            except Exception as e:
+                self.logger.error(f"(INTERFACE MANAGER) Error notifying web interface: {e}")
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled, skipping module update notification")
+
+    def _on_ptp_update(self):
+        """Callback when PTP data is updated"""
+        self.logger.info(f"(INTERFACE MANAGER) PTP data updated")
+        if self.web_interface:
+            self.logger.info(f"(INTERFACE MANAGER) Notifying web interface of PTP update")
+            self.web_interface_manager.notify_ptp_update()
+        else:
+            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled, skipping PTP update notification")
+
+    def _get_modules(self):
+        """Callback to get module list"""
+        modules = []
+        for module in self.controller.service_manager.modules:
+            # Convert module to dict and ensure all keys are strings
+            module_dict = {
+                'id': module.id,
+                'type': module.type,
+                'ip': module.ip,
+                'port': module.port,
+                'properties': {k.decode() if isinstance(k, bytes) else k: 
+                             v.decode() if isinstance(v, bytes) else v 
+                             for k, v in module.properties.items()}
+            }
+            modules.append(module_dict)
+        return modules
+
+    def _get_ptp_history(self):
+        """Callback to get PTP history"""
+        return self.controller.buffer_manager.get_ptp_history()

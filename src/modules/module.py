@@ -69,6 +69,7 @@ class Module:
             self.logger.addHandler(console_handler)
 
         # Managers
+        self.logger.info(f"(MODULE) Initializing managers")
         self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
         self.config = config or {} # Store direct config reference for backwards compatibility
         self.file_transfer = None  # Will be initialized when controller is discovered
@@ -186,6 +187,17 @@ class Module:
             self.file_transfer = None
             raise
 
+    def controller_disconnected(self):
+        """Callback when controller is disconnected"""
+        self.logger.info("(MODULE) Controller disconnected")
+        self.ptp_manager.stop()
+        self.communication_manager.cleanup()
+        self.file_transfer = None
+        self.is_running = False
+        self.streaming = False
+        self.stream_thread = None
+        
+
     def start(self) -> bool:
         """
         Start the module.
@@ -201,7 +213,7 @@ class Module:
             return False
         else:
             self.is_running = True
-            self.start_time = time.time()
+            self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
             self.logger.info(f"(MODULE) Module started at {self.start_time}")
             
             # Update start time in command handler
@@ -217,13 +229,14 @@ class Module:
                 )
                 self.communication_manager.start_command_listener()
 
-                # Start PTP
-                self.ptp_manager.start()
+                # Start PTP only if it's not already running
+                if not self.ptp_manager.running:
+                    time.sleep(0.1)
+                    self.ptp_manager.start()
 
                 # Start sending heartbeats
+                time.sleep(0.1)
                 self.health_manager.start_heartbeats()
-
-
             
         return True
 

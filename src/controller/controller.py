@@ -56,6 +56,7 @@ class Controller:
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
             
+        self.logger.info(f"(CONTROLLER) Initializing managers")
         # Initialize config manager
         self.config_manager = config_manager.ControllerConfigManager(self.logger, config_file_path)
 
@@ -106,6 +107,9 @@ class Controller:
                 case 'heartbeat':
                     self.logger.info(f"(CONTROLLER) Heartbeat received from {module_id}")
                     self.health_monitor.update_module_health(module_id, status_data)
+                case 'ptp_status':
+                    self.logger.info(f"(CONTROLLER) PTP status received from {module_id}: {status_data}")
+                    self.buffer_manager.add_ptp_history(module_id, status_data)
                 case 'camera_settings_updated':
                     self.logger.info(f"(CONTROLLER) Camera settings updated for {module_id}: {status_data['settings']}")
                 case 'camera_settings_update_failed':
@@ -216,12 +220,9 @@ class Controller:
             self.logger.error(f"(CONTROLLER) Failed to start file transfer server: {e}")
             return False
 
-        # Start the appropriate control mode
-        if self.manual_control:
-            self.interface_manager.run_manual_control()
-        else:
-            self.logger.info("(CONTROLLER) Starting automatic loop (not implemented yet)")
-            # @TODO: Implement automatic loop
+        # Start the interface manager
+        self.logger.info("(CONTROLLER) Starting interface manager")
+        self.interface_manager.start()
 
         return True
         

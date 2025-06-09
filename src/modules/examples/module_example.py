@@ -9,7 +9,6 @@ def main():
     """Main entry point for the controller application"""
     module = Module(module_type="generic",
                     config={})
-    print("Habitat Module initialized")
 
     # Start the main loop
     module.start()

@@ -318,14 +318,15 @@ class CameraModule(Module):
         # Camera specific variables
         self.video_folder = "rec"
         self.video_filetype = self.config_manager.get("camera.file_format", "h264")
-        
+
         # Initialize camera
         self.picam2 = Picamera2()
 
         # Get camera modes
         self.camera_modes = self.picam2.sensor_modes
         self.logger.info(f"(MODULE) Camera modes: {self.camera_modes}")
-        
+        time.sleep(0.1)
+
         # Default camera config if not in config manager
         if not self.config_manager.get("camera"):
             self.config_manager.set("camera", {
@@ -341,6 +342,7 @@ class CameraModule(Module):
             
         # Configure camera
         self.configure_camera()
+        time.sleep(0.1)
 
         # State flags
         self.is_recording = False

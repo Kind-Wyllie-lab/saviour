@@ -18,13 +18,18 @@
         "show_buffer"
     ]},
     "service": {
-        "port": 5000,
+        "port": 5353,
         "service_type": "_controller._tcp.local.",
         "service_name": "controller._controller._tcp.local."
     },
+    "zmq": {
+        "cmd_port": 5555,
+        "status_port": 5556,
+        "host": "0.0.0.0"
+    },
     "health_monitor": {
         "heartbeat_interval": 30,
-        "heartbeat_timeout": 90
+        "heartbeat_timeout": 90 
     },
     "data_export": {
         "export_interval": 15,
@@ -37,5 +42,10 @@
     "logging": {
         "level": "INFO",
         "format": "%(asctime)s - %(levelname)s - %(message)s"
+    },
+    "interface": {
+        "cli": true,
+        "web_interface": true,
+        "web_interface_port": 5000
     }
 } 

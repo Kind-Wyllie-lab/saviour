@@ -1,14 +1,13 @@
 {
     "module": {
-        "heartbeat_interval": 60,
+        "heartbeat_interval": 30,
         "samplerate": 200,
-        "type": "camera",
         "status_reporting": true,
         "error_retry_count": 3,
         "error_retry_delay": 5
     },
     "service": {
-        "port": 5000,
+        "port": 5353,
         "service_type": "_module._tcp.local.",
         "announce": true
     },
@@ -47,13 +46,5 @@
         "low_power_mode_enabled": false,
         "auto_shutdown_on_idle": false,
         "idle_timeout_minutes": 30
-    },
-    "camera": {
-        "width": 1280,
-        "height": 720,
-        "fps": 30,
-        "codec": "h264",
-        "file_format": "mp4",
-        "new_setting": "This is a new value"
     }
-}
+} 

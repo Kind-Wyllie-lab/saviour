@@ -32,7 +32,8 @@ class PTPManager:
     def __init__(self,
                  role=PTPRole.MASTER,
                  interface='eth0',
-                 logger: logging.Logger = None):
+                 logger: logging.Logger = None,
+                 history_size=1000):  # Store last 1000 values by default
 
         """Initialize the PTP manager
 
@@ -40,6 +41,7 @@ class PTPManager:
             logger: Logger instance
             interface: The network interface, typically eth0
             role: The PTP role - slave for modules, master for controllers
+            history_size: Number of historical values to keep
         """
 
         # Check for root privileges first
@@ -50,6 +52,19 @@ class PTPManager:
         self.role = role
         self.interface = interface
         self.logger = logger
+        
+        # History tracking
+        self.history_size = history_size
+        self.ptp4l_history = {
+            'timestamps': [],
+            'offsets': [],
+            'freqs': []
+        }
+        self.phc2sys_history = {
+            'timestamps': [],
+            'offsets': [],
+            'freqs': []
+        }
         
         # Check for required packages
         self._check_required_packages()
@@ -70,7 +85,7 @@ class PTPManager:
             self.ptp4l_args = ['ptp4l', '-i', interface, '-s', '-m']
             # For slave, use manual configuration with the interface as master
             # self.phc2sys_args = ['phc2sys', '-s', interface, '-w', '-l', '6']
-            self.phc2sys_args = ['phc2sys', '-s', '/dev/ptp0', '-w', '-m']
+            self.phc2sys_args = ['phc2sys', '-s', '/dev/ptp0', '-w', '-m']  
         
         self.ptp4l_proc = None
         self.phc2sys_proc = None
@@ -78,16 +93,28 @@ class PTPManager:
         self.running = False
         self.status = 'not running'
         self.last_sync_time = None
-        self.last_offset = None
-        self.last_freq = None
+        
+        # Separate tracking for ptp4l and phc2sys values
+        self.ptp4l_offset = None
+        self.ptp4l_freq = None
+        self.phc2sys_offset = None
+        self.phc2sys_freq = None
+        
+        # For backward compatibility
+        self.last_offset = None  # Will be set to ptp4l_offset
+        self.last_freq = None    # Will be set to ptp4l_freq
+        
         self.active_ptp4l_processes = None
         self.active_phc2sys_processes = None
 
         # Warning limits
         # TODO: Thresholds in config files.
-        self.offset_warning_threshold = 10000 # If offsets are larger than this value, a warning will be displayed.
-        self.freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
-        self.threshold_flag = False
+        self.ptp4l_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
+        self.ptp4l_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
+        self.phc2sys_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
+        self.phc2sys_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
+        self.ptp4l_threshold_flag = False
+        self.phc2sys_threshold_flag = False
 
     def _check_required_packages(self):
         """Check if required PTP packages are installed."""
@@ -219,6 +246,21 @@ class PTPManager:
             self.logger.info(f"(PTP MANAGER) Killing all ptp processes with command: {cmd}")
             subprocess.Popen(cmd)
 
+    def _add_to_history(self, history_dict, timestamp, offset=None, freq=None):
+        """Add values to history, maintaining the specified size limit"""
+        history_dict['timestamps'].append(timestamp)
+        if offset is not None:
+            history_dict['offsets'].append(offset)
+        if freq is not None:
+            history_dict['freqs'].append(freq)
+            
+        # Trim history if it exceeds size limit
+        if len(history_dict['timestamps']) > self.history_size:
+            history_dict['timestamps'].pop(0)
+            if len(history_dict['offsets']) > 0:
+                history_dict['offsets'].pop(0)
+            if len(history_dict['freqs']) > 0:
+                history_dict['freqs'].pop(0)
 
     def start(self):
         self.logger.info(f"(PTP MANAGER) Starting PTP in {self.role.value} mode on {self.interface}")
@@ -240,7 +282,8 @@ class PTPManager:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,  # Line buffered
-                    universal_newlines=True
+                    universal_newlines=True,
+                    env=dict(os.environ, TERM='dumb')  # Disable ANSI escape sequences
                 )
                 
             # Check if process started successfully
@@ -258,29 +301,30 @@ class PTPManager:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,  # Line buffered
-                    universal_newlines=True
+                    universal_newlines=True,
+                    env=dict(os.environ, TERM='dumb')  # Disable ANSI escape sequences
                 )
-            
+                
             # Check if process started successfully
-            time.sleep(0.5)
+            time.sleep(0.5)  # Give it a moment to start
             if self.phc2sys_proc.poll() is not None:
                 error = self.phc2sys_proc.stderr.read()
-                self.ptp4l_proc.terminate()
                 raise PTPError(f"(PTP MANAGER) phc2sys failed to start: {error}")
             
             self.logger.info("(PTP MANAGER) phc2sys started successfully")
             
+            # Start monitoring thread
+            self.running = True
+            self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
+            self.monitor_thread.start()
+            
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to start PTP processes: {str(e)}")
+            self.logger.error(f"(PTP MANAGER) Error starting PTP: {e}")
             self.stop()
             raise
-        
-        self.running = True
-        self.status = 'starting'
-        self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
-        self.monitor_thread.start()
 
     def _monitor(self):
+        """Monitor PTP processes and log their output"""
         while self.running:
             for proc, name in [(self.ptp4l_proc, 'ptp4l'), (self.phc2sys_proc, 'phc2sys')]:
                 if proc and proc.poll() is not None:
@@ -293,29 +337,53 @@ class PTPManager:
                 line = proc.stdout.readline() if proc and proc.stdout else ''
                 if line:
                     line = line.strip()
-                    self.logger.debug(f"{name}: {line}")
                     
                     # Parse offset information
-                    # TODO: Distinguish ptp4l and phc2sys offset
                     if 'master offset' in line or 'offset' in line:
                         try:
                             # Extract offset value from line
                             offset_str = line.split('offset')[1].split()[0]
-                            self.last_offset = float(offset_str)
-                            self.last_sync_time = time.time()
+                            offset_value = float(offset_str)
+                            current_time = time.time()
+                            
+                            if name == 'ptp4l':
+                                self.ptp4l_offset = offset_value
+                                self.last_offset = offset_value  # For backward compatibility
+                                self._add_to_history(self.ptp4l_history, current_time, offset=offset_value)
+                            else:  # phc2sys
+                                self.phc2sys_offset = offset_value
+                                self._add_to_history(self.phc2sys_history, current_time, offset=offset_value)
+                            
+                            self.last_sync_time = current_time
                             self.status = 'synchronized'
-                            self.logger.debug(f"(PTP MANAGER) PTP offset: {self.last_offset} ns")
+                            
+                            # Log the offset with source identification
+                            self.logger.debug(f"(PTP MANAGER) {name} offset: {offset_value} ns")
+                            
                         except (IndexError, ValueError):
-                            self.logger.warning(f"(PTP MANAGER) Could not parse offset from line: {line}")
+                            pass
 
                     # Parse freq correction information
                     if 'freq' in line:
                         try:
                             # Extract freq correction from line
                             freq_str = line.split('freq')[1].split()[0]
-                            self.last_freq = int(freq_str)
+                            freq_value = int(freq_str)
+                            current_time = time.time()
+                            
+                            if name == 'ptp4l':
+                                self.ptp4l_freq = freq_value
+                                self.last_freq = freq_value  # For backward compatibility
+                                self._add_to_history(self.ptp4l_history, current_time, freq=freq_value)
+                            else:  # phc2sys
+                                self.phc2sys_freq = freq_value
+                                self._add_to_history(self.phc2sys_history, current_time, freq=freq_value)
+                            
+                            # Log the frequency with source identification
+                            self.logger.debug(f"(PTP MANAGER) {name} frequency correction: {freq_value} ppb")
+                            
                         except(IndexError, ValueError):
-                            self.logger.warning(f"(PTP MANAGER) Could not parse freq from line: {line}")
+                            pass
 
                     # Check for successful sync
                     if 'synchronized' in line.lower():
@@ -342,34 +410,40 @@ class PTPManager:
                     # Check for clock selection
                     if 'selected' in line and 'PTP clock' in line:
                         self.logger.info(f"(PTP MANAGER) PTP clock selected: {line}")
-                    
-                    # Check for frequency adjustment
-                    if 'frequency' in line and 'adjustment' in line:
-                        self.logger.info(f"(PTP MANAGER) PTP frequency adjustment: {line}")
-                    
-                    # Check for announce messages
-                    if 'announce' in line.lower():
-                        self.logger.debug(f"(PTP MANAGER) PTP announce: {line}")
-                    
-                    # Check for sync messages
-                    if 'sync' in line.lower() and 'message' in line.lower():
-                        self.logger.debug(f"(PTP MANAGER) PTP sync message: {line}")
 
                     # Check for excessively high freq/offset
-                    if self.last_offset is not None:
-                        if abs(self.last_offset) > self.offset_warning_threshold:
-                            self.logger.warning(f"(PTP MANAGER) Warning: offset {self.last_offset}ns exceeded threshold value {self.offset_warning_threshold}ns")
-                            self.threshold_flag = True
-                    if self.last_freq is not None:
-                        if abs(self.last_freq) > self.freq_warning_threshold:
-                            self.logger.warning(f"(PTP MANAGER) Warning: freq {self.last_freq}ppb exceeded threshold value {self.freq_warning_threshold}ppb")
-                            self.threshold_flag = True
-                    if self.threshold_flag == True:
-                        if self.last_freq is not None and self.last_offset is not None:
-                            if abs(self.last_freq) < self.freq_warning_threshold and abs(self.last_offset) < self.offset_warning_threshold:
-                                self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.last_freq}ppb and {self.last_offset}ns")
-                                self.threshold_flag = False
-            time.sleep(0.1)
+                    if name == 'ptp4l':  # Only check ptp4l values for warnings
+                        if self.ptp4l_offset is not None:
+                            if abs(self.ptp4l_offset) > self.ptp4l_offset_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: ptp4l offset {self.ptp4l_offset}ns exceeded threshold value {self.ptp4l_offset_warning_threshold}ns")
+                                self.ptp4l_threshold_flag = True
+                        if self.ptp4l_freq is not None:
+                            if abs(self.ptp4l_freq) > self.ptp4l_freq_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: ptp4l freq {self.ptp4l_freq}ppb exceeded threshold value {self.freq_warning_threshold}ppb")
+                                self.ptp4l_threshold_flag = True
+                        if self.ptp4l_threshold_flag == True:
+                            if self.ptp4l_freq is not None and self.ptp4l_offset is not None:
+                                if abs(self.ptp4l_freq) < self.ptp4l_freq_warning_threshold and abs(self.ptp4l_offset) < self.ptp4l_offset_warning_threshold:
+                                    self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.ptp4l_freq}ppb and {self.ptp4l_offset}ns")
+                                    self.ptp4l_threshold_flag = False
+                    elif name == 'phc2sys':
+                        if self.phc2sys_offset is not None:
+                            if abs(self.phc2sys_offset) > self.phc2sys_offset_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: phc2sys offset {self.phc2sys_offset}ns exceeded threshold value {self.phc2sys_offset_warning_threshold}ns")
+                                self.phc2sys_threshold_flag = True  
+                        if self.phc2sys_freq is not None:
+                            if abs(self.phc2sys_freq) > self.phc2sys_freq_warning_threshold:
+                                self.logger.warning(f"(PTP MANAGER) Warning: phc2sys freq {self.phc2sys_freq}ppb exceeded threshold value {self.phc2sys_freq_warning_threshold}ppb")
+                                self.phc2sys_threshold_flag = True
+                        if self.phc2sys_threshold_flag == True:
+                            if self.phc2sys_freq is not None and self.phc2sys_offset is not None:
+                                if abs(self.phc2sys_freq) < self.phc2sys_freq_warning_threshold and abs(self.phc2sys_offset) < self.phc2sys_offset_warning_threshold:
+                                    self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.phc2sys_freq}ppb and {self.phc2sys_offset}ns")
+                                    self.phc2sys_threshold_flag = False
+                                
+                                
+                                
+            time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
 
     def stop(self):
         """Stop PTP processes and clean up"""
@@ -426,13 +500,18 @@ class PTPManager:
         self.logger.info("(PTP MANAGER) PTP processes stopped and cleanup completed.")
 
     def get_status(self):
+        """Get current PTP status and history"""
         return {
             'role': self.role.value,
             'status': self.status,
             'last_sync': self.last_sync_time,
-            'last_offset': self.last_offset,
-            'last_freq': self.last_freq,
-            'interface': self.interface
+            'ptp4l_offset': self.ptp4l_offset,
+            'ptp4l_freq': self.ptp4l_freq,
+            'phc2sys_offset': self.phc2sys_offset,
+            'phc2sys_freq': self.phc2sys_freq,
+            'interface': self.interface,
+            'ptp4l_history': self.ptp4l_history,
+            'phc2sys_history': self.phc2sys_history
         }
 
     def is_synchronized(self, timeout=5):

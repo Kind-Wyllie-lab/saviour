@@ -74,7 +74,9 @@ class ControllerConfigManager:
         """
         self.logger = logger
         self.config_file_path = config_file_path or os.path.join(os.path.dirname(__file__), "config.json")
+        self.logger.info(f"(CONFIG MANAGER) Controller config file path set to: {self.config_file_path}")
         self.config = self._load_config()
+        self.logger.info(f"(CONFIG MANAGER) Controller config loaded: {self.config}")
         
     def _load_config(self) -> Dict[str, Any]:
         """

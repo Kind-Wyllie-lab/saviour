@@ -1506,8 +1506,8 @@ class RoundTripConstructor(SafeConstructor):
             mapping = SafeConstructor.construct_mapping(self, node, deep=True)
             init_var_defaults = {}
             for field in data.__dataclass_fields__.values():
-                # nprintf('field', field, field.default is MISSING,
-                #          isinstance(field.type, InitVar))
+                nprintf('field', field, field.default is MISSING,
+                         isinstance(field.type, InitVar))
                 # in 3.7, InitVar is a singleton
                 if (
                     isinstance(field.type, InitVar)

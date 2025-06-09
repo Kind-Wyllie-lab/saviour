@@ -4,19 +4,14 @@
         "manual_control": true,
         "print_received_data": false,
         "commands": ["get_status",
-        "get_data",
-        "start_stream",
-        "stop_stream",
-        "record_video",
         "start_recording",
         "stop_recording",
         "export_recordings",
         "ptp_status",
         "custom_command",
-        "update_camera_settings",
+        "update_settings",
         "list_recordings",
-        "clear_recordings",
-        "show_buffer"
+        "clear_recordings"
     ]},
     "service": {
         "port": 5353,

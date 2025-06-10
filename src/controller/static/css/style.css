@@ -134,21 +134,66 @@ body {
     display: flex;
     gap: 1rem;
     margin-top: 1rem;
+    align-items: center;
+    padding: 1rem;
 }
 
 .command-button {
-    padding: 0.5rem 1rem;
     background-color: var(--secondary-color);
     color: white;
     border: none;
-    border-radius: 4px;
+    padding: 0.8rem 1.5rem;
+    border-radius: 8px;
     cursor: pointer;
+    font-size: 0.9rem;
     font-weight: 500;
-    transition: background-color 0.2s ease;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .command-button:hover {
-    background-color: #2980b9;
+    background-color: var(--primary-color);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.command-button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Disabled state */
+.command-button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Loading state */
+.command-button.loading {
+    position: relative;
+    color: transparent;
+}
+
+.command-button.loading::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* Dialog */

@@ -104,24 +104,6 @@ class ControllerInterfaceManager:
                 self.show_health_status()
             case "health history":
                 self.handle_health_history()
-            case "supabase export":
-                self.handle_supabase_export()
-            case "start export":
-                self.handle_start_export()
-            case "stop export":
-                self.handle_stop_export()
-            case "start health export":
-                self.handle_start_health_export()
-            case "stop health export":
-                self.handle_stop_health_export()
-            case "check export":
-                self.handle_check_export()
-            case "session_id":
-                self.handle_session_id()
-            case "show buffer":
-                self.handle_show_buffer()
-            case "show ptp history":
-                self.handle_show_ptp_history()
             case _:
                 self.logger.error(f"(INTERFACE MANAGER) Unknown command: {command}. Type 'help' for available commands.")
     
@@ -131,18 +113,9 @@ class ControllerInterfaceManager:
         print("  help - Show this help message")
         print("  quit - Quit the manual control loop")
         print("  list - List available modules discovered by zeroconf")
-        print("  supabase export - Export the local buffer to the database")
         print("  zmq send - Send a command to a specific module via zeromq")
         print("  health status - Print the health status of all modules")
         print("  health history - Show historical health data (usage: health history --module <id> [--metric <name>] [--limit <n>] [--window <seconds>])")
-        print("  start export - Periodically export the local buffer to the database")
-        print("  stop export - Stop the periodic export of the local buffer to the database")
-        print("  start health export - Periodically export the local health data to the database")
-        print("  stop health export - Stop the periodic export of the local health data to the database")
-        print("  check export - Check if the controller is currently exporting data to the database")
-        print("  session_id - Generate a session_id")
-        print("  show buffer - Print the current contents of the data buffer")
-        print("  show ptp history - Print the current PTP history")
     
     def list_modules(self):
         """List all discovered modules"""
@@ -175,65 +148,58 @@ class ControllerInterfaceManager:
                 module_id = self.controller.service_manager.modules[module_idx].id
                 
             print("\nAvailable commands:")
-            for i, cmd in enumerate(self.controller.commands, 1):
+            for i, cmd in enumerate(self.controller.zmq_commands, 1):
                 print(f"{i}. {cmd}")
                 
             cmd_idx = int(input("\nChosen command: ").strip()) - 1
-            if not 0 <= cmd_idx < len(self.controller.commands):
+            if not 0 <= cmd_idx < len(self.controller.zmq_commands):
                 print("Invalid command selection")
                 return
                 
             # Special commands
 
             # Special handling for update_camera_settings command
-            if self.controller.commands[cmd_idx] == "update_camera_settings":
-                print("\nEnter camera settings (one per line, format: key=value):")
-                print("Available settings:")
-                print("  width=<pixels>")
-                print("  height=<pixels>")
-                print("  fps=<frames_per_second>")
-                print("  streaming.enabled=<true/false>")
-                print("  streaming.port=<port_number>")
-                print("Enter empty line when done")
-                
-                params = {}
-                while True:
-                    line = input().strip()
-                    if not line:
-                        break
-                    try:
-                        key, value = line.split('=')
-                        # Convert value to appropriate type
-                        if value.lower() in ('true', 'false'):
-                            value = value.lower() == 'true'
-                        elif value.isdigit():
-                            value = int(value)
-                        params[key.strip()] = value
-                    except ValueError:
-                        print("Invalid format. Use key=value")
-                        continue
-                
-                # Send the command with parameters as a string
-                command_str = f"update_camera_settings {str(params)}"
-                self.controller.communication_manager.send_command(
-                    module_id,
-                    command_str
-                )
+            if self.controller.zmq_commands[cmd_idx] == "update_settings":
+                # Check module type
+                match self.controller.service_manager.modules[module_idx].type:
+                    case "camera":
+                        print("\nEnter camera settings (one per line, format: key=value):")
+                        print("Available settings:")
+                        print("  width=<pixels>")
+                        print("  height=<pixels>")
+                        print("  fps=<frames_per_second>")
+                        print("  streaming.enabled=<true/false>")
+                        print("  streaming.port=<port_number>")
+                        print("Enter empty line when done")
+                        
+                        params = {}
+                        while True:
+                            line = input().strip()
+                            if not line:
+                                break
+                            try:
+                                key, value = line.split('=')
+                                # Convert value to appropriate type
+                                if value.lower() in ('true', 'false'):
+                                    value = value.lower() == 'true'
+                                elif value.isdigit():
+                                    value = int(value)
+                                params[key.strip()] = value
+                            except ValueError:
+                                print("Invalid format. Use key=value")
+                                continue
+                        
+                        # Send the command with parameters as a string
+                        command_str = f"update_settings {str(params)}"
+                        self.controller.communication_manager.send_command(
+                            module_id,
+                            command_str
+                        )
+                    case _:
+                        print(f"Module type {self.controller.service_manager.modules[module_idx].type} not found in update_settings command")
 
-            # Special handling for record_video command
-            elif self.controller.commands[cmd_idx] == "record_video":
-                try:
-                    duration = int(input("\nEnter recording duration in seconds (0 for continuous): ").strip())
-                    # Send the command with duration parameter
-                    command_str = f"record_video {duration}"
-                    self.controller.communication_manager.send_command(
-                        module_id,
-                        command_str
-                    )
-                except ValueError:
-                    print("Invalid duration - please enter a number")
             # Special handling for export_video command
-            elif self.controller.commands[cmd_idx] == "export_recordings":
+            elif self.controller.zmq_commands[cmd_idx] == "export_recordings":
                 try:
                     filename = input("\nEnter the filename for the exported video ('all' for all recordings, 'latest' for latest recording): ").strip()
                     destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
@@ -256,7 +222,7 @@ class ControllerInterfaceManager:
                 # Handle other commands as before
                 self.controller.communication_manager.send_command(
                     module_id, 
-                    self.controller.commands[cmd_idx]
+                    self.controller.zmq_commands[cmd_idx]
                 )
         except ValueError:
             print("Invalid input - please enter a number")
@@ -329,80 +295,6 @@ class ControllerInterfaceManager:
                 for key, value in record.items():
                     if key != 'timestamp':
                         print(f"  {key}: {value}")
-    
-    def handle_supabase_export(self):
-        """Handle manual supabase export"""
-        success = self.controller.data_export_manager.export_module_data(
-            self.controller.buffer_manager.get_module_data(), 
-            self.controller.service_manager
-        )
-        if success:
-            print("Data exported successfully")
-        else:
-            print("Failed to export data")
-    
-    def handle_start_export(self):
-        """Start periodic data export"""
-        self.controller.data_export_manager.start_periodic_data_export(
-            self.controller.buffer_manager, 
-            self.controller.service_manager, 
-            10  # Default interval
-        )
-        print("Started periodic data export")
-    
-    def handle_stop_export(self):
-        """Stop periodic data export"""
-        self.controller.data_export_manager.stop_periodic_data_export()
-        print("Stopped periodic data export")
-    
-    def handle_start_health_export(self):
-        """Start periodic health export"""
-        module_health = self.controller.health_monitor.get_module_health()
-        self.controller.data_export_manager.start_periodic_health_export(
-            module_health, 
-            10  # Default interval
-        )
-        print("Started periodic health export")
-    
-    def handle_stop_health_export(self):
-        """Stop periodic health export"""
-        self.controller.data_export_manager.stop_periodic_health_export()
-        print("Stopped periodic health export")
-    
-    def handle_check_export(self):
-        """Check export status"""
-        status = self.controller.data_export_manager.get_export_status()
-        print(f"Data export active: {status['data_exporting']}")
-        print(f"Health export active: {status['health_exporting']}")
-    
-    def handle_session_id(self):
-        """Generate a session ID"""
-        session_id = self.controller.session_manager.generate_session_id()
-        print(f"Generated session ID: {session_id}")
-
-    def handle_show_buffer(self):
-        """Display the current contents of the data buffer"""
-        buffer = self.controller.buffer_manager.get_module_data()
-        if not buffer:
-            print("Data buffer is empty.")
-            return
-        print("Current Data Buffer:")
-        for module_id, data_list in buffer.items():
-            print(f"Module {module_id}: {len(data_list)} entries")
-            for entry in data_list:
-                print(f"  {entry}")
-    
-    def handle_show_ptp_history(self):
-        """Display the current PTP history"""
-        history = self.controller.buffer_manager.get_ptp_history()
-        if not history:
-            print("PTP history is empty.")
-            return
-        print("Current PTP History:")
-        for module_id, history_data in history.items():
-            print(f"Module {module_id}:")
-            for entry in history_data:
-                print(f"  {entry}") 
 
     def _on_module_discovered(self, module):
         """Callback when a new module is discovered"""

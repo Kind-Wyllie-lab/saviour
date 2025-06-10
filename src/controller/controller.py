@@ -82,7 +82,8 @@ class Controller:
 
         # Parameters from config
         self.max_buffer_size = self.config_manager.get("controller.max_buffer_size")
-        self.commands = self.config_manager.get("controller.commands")
+        self.zmq_commands = self.config_manager.get("controller.zmq_commands")
+        self.cli_commands = self.config_manager.get("controller.cli_commands")
         
         # Control flags from config
         self.manual_control = self.config_manager.get("controller.manual_control")
@@ -211,6 +212,15 @@ class Controller:
         
         Returns:
             bool: True if the controller started successfully, False otherwise.
+            
+        Starts the following:
+        - An asyncio event loop
+        - A file transfer server, which starts an aiohttp web server to receive files from modules
+        - A PTP manager, which starts a thread to run ptp4l and phc2sys
+        - A file transfer thread, which runs the event loop
+        - An interface manager, which starts a web interface manager and a CLI interface manager if enabled in the config
+
+        Returns:
         """
         self.logger.info("(CONTROLLER) Starting controller")
 
@@ -279,8 +289,10 @@ class Controller:
             self.manual_control = value
         elif key == "controller.print_received_data":
             self.print_received_data = value
-        elif key == "controller.commands":
-            self.commands = value
+        elif key == "controller.zmq_commands":
+            self.zmq_commands = value
+        elif key == "controller.cli_commands":
+            self.cli_commands = value
         
         # Update in config manager
         return self.config_manager.set(key, value, persist) 

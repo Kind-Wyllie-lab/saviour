@@ -30,7 +30,7 @@ import src.controller.controller_service_manager as service_manager
 import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
-import src.controller.controller_data_export_manager as data_export_manager
+import src.controller.controller_database_manager as database_manager
 import src.controller.controller_interface_manager as interface_manager
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
@@ -99,7 +99,7 @@ class Controller:
             data_callback=self.handle_data_update
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
-        self.data_export_manager = data_export_manager.ControllerDataExportManager(self.logger, self.config_manager)
+        self.database_manager = database_manager.ControllerDatabaseManager(self.logger, self.config_manager)
         self.ptp_manager = ptp_manager.PTPManager(logger=self.logger,role=ptp_manager.PTPRole.MASTER)
         
         # Initialize health monitor with configuration
@@ -139,26 +139,13 @@ class Controller:
                     self.logger.info(f"(CONTROLLER) Command status from {module_id}: {status_data}")
         except Exception as e:
             self.logger.error(f"(CONTROLLER) Error parsing status data for module {module_id}: {e}")
-            
-    def handle_data_update(self, topic: str, data: str):
-        """Buffer incoming data from modules"""
-        print() # New line  
-        self.logger.info(f"(CONTROLLER) Data update received from module {topic} with data: {data}")
-        module_id = topic.split('/')[1]
-        
-        # Add data to buffer
-        buffer_ok = self.buffer_manager.add_data(module_id, data)
-        
-        # If buffer is getting full, export to database
-        if not buffer_ok:
-            self.logger.warning(f"(CONTROLLER) Buffer for module {module_id} is too large. Exporting to database.")
-            self.data_export_manager.export_module_data(
-                self.buffer_manager.get_module_data(), 
-                self.service_manager
-            )
 
-        if self.print_received_data:
-            print(f"Data update received from module {module_id} with data: {self.buffer_manager.get_module_data(module_id)}")
+    def handle_data_update(self, topic: str, data: str):
+        """Handle a data update from a module"""
+        # TODO: Implement this
+        # Formerly data pipeline was envisioned as a stream of data from modules to the controller, which would then be buffered and exported to the database.
+        # This is no longer the case. Modules record data locally, which controller then directs to be exported to either a NAS, database, or controller's own storage. 
+
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
@@ -192,8 +179,8 @@ class Controller:
             # Clean up communication manager
             self.communication_manager.cleanup()
             
-            # Clean up data export manager
-            self.data_export_manager.stop_all_exports()
+            # Clean up database manager
+            self.database_manager.stop_all_exports()
             
             # Give modules time to detect the controller is gone
             time.sleep(1)

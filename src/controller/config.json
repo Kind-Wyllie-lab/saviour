@@ -17,7 +17,7 @@
         "list_recordings",
         "clear_recordings"
     ]},
-    "service": {
+    "zeroconf": {
         "port": 5353,
         "service_type": "_controller._tcp.local.",
         "service_name": "controller._controller._tcp.local."

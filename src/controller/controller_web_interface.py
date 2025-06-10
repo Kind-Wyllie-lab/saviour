@@ -44,7 +44,7 @@ class WebInterfaceManager:
         self._running = False
 
     def register_callbacks(self, get_modules=None, get_ptp_history=None):
-        """Register callbacks for getting data"""
+        """Register callbacks for getting data from the command handler"""
         self.get_modules_callback = get_modules
         self.get_ptp_history_callback = get_ptp_history
 

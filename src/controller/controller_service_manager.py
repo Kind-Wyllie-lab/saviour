@@ -34,8 +34,9 @@ class ControllerServiceManager():
         # Module tracking
         self.modules = []
         self.module_health = {}
-        self.on_module_discovered = None  # Callback for module discovery
-
+        self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
+        self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.
+        
         # Get the ip address of the controller
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
@@ -68,13 +69,30 @@ class ControllerServiceManager():
 
     def cleanup(self):
         """Cleanup zeroconf resources"""
-        if hasattr(self, 'zeroconf'):
-            try:
+        self.logger.info("(SERVICE MANAGER) Cleaning up service manager")
+        try:
+            if hasattr(self, 'zeroconf'):
+                # Unregister our own service
                 self.zeroconf.unregister_service(self.service_info)
-                self.browser.cancel()
+                self.logger.info("(SERVICE MANAGER) Unregistered controller service")
+                
+                # Cancel browser
+                if hasattr(self, 'browser'):
+                    self.browser.cancel()
+                    self.logger.info("(SERVICE MANAGER) Cancelled service browser")
+                
+                # Close zeroconf
                 self.zeroconf.close()
-            except:
-                pass # Ignore errors during cleanup
+                self.logger.info("(SERVICE MANAGER) Closed zeroconf")
+                
+                # Clear module list
+                self.modules.clear()
+                self.module_health.clear()
+                self.logger.info("(SERVICE MANAGER) Cleared module tracking")
+        except Exception as e:
+            self.logger.error(f"(SERVICE MANAGER) Error during cleanup: {e}")
+        finally:
+            self.logger.info("(SERVICE MANAGER) Service manager cleanup complete")
     
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
@@ -105,17 +123,28 @@ class ControllerServiceManager():
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
         self.logger.info(f"(SERVICE MANAGER) Removing module: {name}")
-        # Find the module being removed
-        module_to_remove = next((module for module in self.modules if module.name == name), None)
-        if module_to_remove:
-            # Clean up health tracking
-            if module_to_remove.id in self.module_health:
-                self.logger.info(f"(SERVICE MANAGER) Removing health tracking for module {module_to_remove.id}")
-                del self.module_health[module_to_remove.id]
-            # Remove from modules list
-            self.modules = [module for module in self.modules if module.name != name]
-            self.logger.info(f"(SERVICE MANAGER) Module {module_to_remove.id} removed from tracking")
+        try:
+            # Find the module being removed
+            module_to_remove = next((module for module in self.modules if module.name == name), None)
+            if module_to_remove:
+                # Clean up health tracking
+                if module_to_remove.id in self.module_health:
+                    self.logger.info(f"(SERVICE MANAGER) Removing health tracking for module {module_to_remove.id}")
+                    del self.module_health[module_to_remove.id]
+                
+                # Remove from modules list
+                self.modules = [module for module in self.modules if module.name != name]
+                self.logger.info(f"(SERVICE MANAGER) Module {module_to_remove.id} removed from tracking")
 
+                # Call the callback if it exists
+                if self.on_module_removed:
+                    self.logger.info(f"(SERVICE MANAGER) Calling module removal callback")
+                    self.on_module_removed(module_to_remove)
+            else:
+                self.logger.warning(f"(SERVICE MANAGER) Attempted to remove unknown module: {name}")
+        except Exception as e:
+            self.logger.error(f"(SERVICE MANAGER) Error removing module {name}: {e}")
 
-
-
+    def get_modules(self):
+        """Get the list of modules, used by the command handler"""
+        return self.modules

@@ -12,12 +12,12 @@
   <p align="center">
     A modular and highly usable approach to I/O tasks within the Kind lab and beyond
     <br />
-    <a href="https://github.com/yourusername/habitat"><strong>Explore the docs »</strong></a>
+    <a href="https://github.com/Kind-Wyllie-lab/habitat"><strong>Explore the docs »</strong></a>
     <br />
     <br />
-    <a href="https://github.com/yourusername/habitat/issues">Report Bug</a>
+    <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Report Bug</a>
     ·
-    <a href="https://github.com/yourusername/habitat/issues">Request Feature</a>
+    <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Request Feature</a>
   </p>
 </div>
 
@@ -174,10 +174,10 @@ Project Link: [https://github.com/Kind-Wyllie-lab/habitat](https://github.com/Ki
 [contributors-shield]: https://img.shields.io/github/contributors/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
 [contributors-url]: https://github.com/Kind-Wyllie-lab/habitat/graphs/contributors
 [forks-shield]: https://img.shields.io/github/forks/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[forks-url]: https://github.com/yourusername/habitat/network/members
-[stars-shield]: https://img.shields.io/github/stars/yourusername/habitat.svg?style=for-the-badge
-[stars-url]: https://github.com/yourusername/habitat/stargazers
-[issues-shield]: https://img.shields.io/github/issues/yourusername/habitat.svg?style=for-the-badge
-[issues-url]: https://github.com/yourusername/habitat/issues
-[license-shield]: https://img.shields.io/github/license/yourusername/habitat.svg?style=for-the-badge
-[license-url]: https://github.com/yourusername/habitat/blob/master/LICENSE.txt
+[forks-url]: https://github.com/Kind-Wyllie-lab/habitat/network/members
+[stars-shield]: https://img.shields.io/github/stars/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
+[stars-url]: https://github.com/Kind-Wyllie-lab/habitat/stargazers
+[issues-shield]: https://img.shields.io/github/issues/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
+[issues-url]: https://github.com/Kind-Wyllie-lab/habitat/issues
+[license-shield]: https://img.shields.io/github/license/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
+[license-url]: https://github.com/Kind-Wyllie-lab/habitat/blob/master/LICENSE.txt

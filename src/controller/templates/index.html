@@ -32,11 +32,7 @@
             <div id="quick-commands">
                 <h2>Quick Commands</h2>
                 <div id="quick-commands-content">
-                    <button id="get-status" class="command-button">Get Status</button>
-                    <button id="start-recording" class="command-button">Start Recording</button>
-                    <button id="stop-recording" class="command-button">Stop Recording</button>
-                    <button id="list-recordings" class="command-button">List Recordings</button>
-                    <button id="export-recordings" class="command-button">Export Recordings</button>
+                    <!-- Command buttons will be generated here -->
                 </div>
             </div>
         </div>
@@ -55,6 +51,56 @@
     </div>
 
     <script>
+        // Command configuration
+        const commands = {
+            get_status: {
+                label: 'Get Status',
+                type: 'get_status',
+                description: 'Get the current status of selected modules'
+            },
+            start_recording: {
+                label: 'Start Recording',
+                type: 'start_recording',
+                description: 'Start recording on selected modules'
+            },
+            stop_recording: {
+                label: 'Stop Recording',
+                type: 'stop_recording',
+                description: 'Stop recording on selected modules'
+            },
+            list_recordings: {
+                label: 'List Recordings',
+                type: 'list_recordings',
+                description: 'List available recordings on selected modules'
+            },
+            export_recordings: {
+                label: 'Export Recordings',
+                type: 'export_recordings',
+                description: 'Export recordings from selected modules'
+            }
+        };
+
+        // Generate command buttons
+        function generateCommandButtons() {
+            const container = document.getElementById('quick-commands-content');
+            container.innerHTML = ''; // Clear existing buttons
+
+            Object.entries(commands).forEach(([id, command]) => {
+                const button = document.createElement('button');
+                button.id = id;
+                button.className = 'command-button';
+                button.textContent = command.label;
+                button.title = command.description;
+                
+                button.addEventListener('click', () => {
+                    currentCommand = command.type;
+                    dialog.style.display = 'flex';
+                });
+                
+                container.appendChild(button);
+            });
+        }
+
         console.log('Script starting...'); // Initial script load
 
         // WebSocket connection
@@ -75,12 +121,7 @@
         });
         
         socket.on('module_update', function(data) { // When module update is received, log it and update the module list
-            console.log('Received module_update event');
-            console.log('Data received:', data);
-            if (!data || !data.modules) {
-                console.error('Invalid data format received:', data);
-                return;
-            }
+            console.log('Received module update:', data);
             updateModuleList(data.modules);
             updateDashboardOverview(data.modules);
         });
@@ -102,18 +143,17 @@
 
         // Module selection dialog
         const dialog = document.getElementById('module-selection-dialog');
-        const getStatusButton = document.getElementById('get-status');
         const moduleOptions = document.getElementById('module-options');
         const closeButton = document.querySelector('.dialog-close');
+        let currentCommand = null;
 
-        getStatusButton.addEventListener('click', () => {
-            dialog.style.display = 'flex';
-        });
-
+        // Command Button Event Listeners
         closeButton.addEventListener('click', () => {
             dialog.style.display = 'none';
+            currentCommand = null;
         });
 
+        // Update the module selection dialog options
         function updateModuleOptions(modules) {
             moduleOptions.innerHTML = '';
             modules.forEach(module => {
@@ -122,21 +162,34 @@
                 button.textContent = `${module.type} (${module.id})`;
                 button.dataset.moduleId = module.id;
                 button.addEventListener('click', () => {
-                    requestModuleStatus(module.id);
+                    sendCommand(module.id);
                     dialog.style.display = 'none';
                 });
                 moduleOptions.appendChild(button);
             });
         }
 
-        function requestModuleStatus(moduleId) {
+        // Send command to module
+        function sendCommand(moduleId) {
+            if (!currentCommand) {
+                console.error('No command selected');
+                return;
+            }
+
             const command = {
-                type: 'get_status',
+                type: currentCommand,
                 module_id: moduleId
             };
-            console.log('Sending status request:', command);
+            console.log('Sending command:', command);
             socket.emit('command', command);
+            currentCommand = null;
         }
+
+        // Add click handler for "All Modules" option
+        document.querySelector('[data-module="all"]').addEventListener('click', () => {
+            sendCommand('all');
+            dialog.style.display = 'none';
+        });
 
         // Update the module list
         function updateModuleList(modules) {
@@ -199,15 +252,12 @@
         }   
 
         function updatePTPChart(data) {
-            console.log('updatePTPChart called with:', data);
+            console.log('PTP data:', data);
             // TODO: Implement PTP chart update
         }
 
-        // Add click handler for "All Modules" option
-        document.querySelector('[data-module="all"]').addEventListener('click', () => {
-            requestModuleStatus('all');
-            dialog.style.display = 'none';
-        });
+        // Initialize command buttons
+        generateCommandButtons();
 
         // Log when the page is fully loaded
         window.addEventListener('load', function() {
@@ -215,4 +265,4 @@
         });
     </script>
 </body>
-</html> </html> 
+</html> 

@@ -22,13 +22,15 @@ class CLIInterface:
         self.get_ptp_history_callback = None
         self.get_zmq_commands_callback = None
         self.send_command_callback = None
+        self.get_module_health_callback = None
 
-    def register_callbacks(self, get_modules=None, get_ptp_history=None, get_zmq_commands=None, send_command=None):
+    def register_callbacks(self, get_modules=None, get_ptp_history=None, get_zmq_commands=None, send_command=None, get_module_health=None):
         """Register callbacks for getting data from the command handler"""
         self.get_modules_callback = get_modules
         self.get_ptp_history_callback = get_ptp_history
         self.get_zmq_commands_callback = get_zmq_commands
         self.send_command_callback = send_command
+        self.get_module_health_callback = get_module_health
 
     def start(self):
         """Start the CLI interface"""
@@ -194,24 +196,6 @@ class CLIInterface:
             elif zmq_commands[cmd_idx] == "export_recordings":
                 print("Export recordings not yet implemented")
                 # TODO: Use callbacks to get interface manager to do this.
-                # try:
-                #     filename = input("\nEnter the filename for the exported recordings ('all' for all recordings, 'latest' for latest recording): ").strip()
-                #     destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
-                #     if not destination:
-                #         destination = "controller"
-                #     elif destination not in ["controller", "nas"]:
-                #         print("Invalid destination. Using 'controller'")
-                #         destination = "controller"
-                    
-                #     command_str = f'export_recordings {{"filename": "{filename}", "destination": "{destination}"}}'
-                #     self.controller.communication_manager.send_command(
-                #         module_id,
-                #         command_str
-                #     )
-                # except ValueError as e:
-                #     self.logger.error(f"(INTERFACE MANAGER) Invalid input: {e}")
-                # except Exception as e:
-                #     self.logger.error(f"(INTERFACE MANAGER) Error during export: {e}")
             else:
                 # Handle other commands as before
                 if self.send_command_callback:
@@ -227,18 +211,21 @@ class CLIInterface:
     def show_health_status(self):
         """Display health status of all modules"""
         self.logger.info(f"(CLI INTERFACE) Showing health status of all modules")
-        modules = self.get_modules_callback()
-        if not modules:
-            self.logger.info(f"(CLI INTERFACE) No modules found")
+        print("\nModule Health Status:")
+        module_health = self.get_module_health_callback()
+        if not module_health:
+            print("No modules reporting health data")
             return
             
-        for module in modules:
-            self.logger.info(f"(CLI INTERFACE) Module: {module['id']}")
-            self.logger.info(f"(CLI INTERFACE) Type: {module['type']}")
-            self.logger.info(f"(CLI INTERFACE) IP: {module['ip']}")
-            self.logger.info(f"(CLI INTERFACE) Port: {module['port']}")
-            self.logger.info(f"(CLI INTERFACE) Properties: {module['properties']}")
-            self.logger.info(f"(CLI INTERFACE) --------------------")
+        for module_id, health in module_health.items():
+            print(f"\nModule: {module_id}")
+            print(f"Status: {health['status']}")
+            print(f"CPU Usage: {health.get('cpu_usage', 'N/A')}%")
+            print(f"Memory Usage: {health.get('memory_usage', 'N/A')}%")
+            print(f"Temperature: {health.get('cpu_temp', 'N/A')}°C")
+            print(f"Disk Space: {health.get('disk_space', 'N/A')}%")
+            print(f"Uptime: {health.get('uptime', 'N/A')}s")
+            print(f"Last Heartbeat: {time.strftime('%H:%M:%S', time.localtime(health['last_heartbeat']))}")
     
     def handle_health_history(self):
         """Handle health history command"""

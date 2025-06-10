@@ -24,7 +24,8 @@ class InterfaceManager:
         self.config_manager = config_manager
         self.zmq_commands = self.config_manager.get("controller.zmq_commands", [])
         self.send_command_callback = None
-    
+        self.get_module_health_callback = None
+        
     def register_callbacks(self, get_modules=None, get_ptp_history=None, get_module_health=None, send_command=None):
         """Register callbacks for getting data from other managers"""
         self.get_modules_callback = get_modules
@@ -35,6 +36,10 @@ class InterfaceManager:
     def get_zmq_commands(self):
         """Get available ZMQ commands"""
         return self.zmq_commands
+
+    def get_module_health(self):
+        """Get health status of all modules"""
+        return self.get_module_health_callback()
 
     def send_command(self, module_id: str, command: str) -> bool:
         """Send a command to a module

@@ -105,9 +105,6 @@ class Controller:
         self.database_manager = database_manager.ControllerDatabaseManager(self.logger, self.config_manager)
         self.ptp_manager = ptp_manager.PTPManager(logger=self.logger,role=ptp_manager.PTPRole.MASTER)
         
-        # Initialize interface manager
-        self.interface_manager = interface_manager.InterfaceManager(self.logger, self.config_manager)
-
         # Check which interfaces are enabled
         self.web_interface = None # Flag to indicate if the web interface is enabled
         self.cli_interface = None # Flag to indicate if the CLI interface is enabled
@@ -143,35 +140,29 @@ class Controller:
     
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""
-        # Interface manager
-        self.interface_manager.register_callbacks(
-            get_modules=self.service_manager.get_modules,
-            get_ptp_history=self.buffer_manager.get_ptp_history,
-            get_module_health=self.health_monitor.get_module_health,
-            send_command=self.communication_manager.send_command
-        )
-
         # Web interface
         if self.web_interface:
             self.web_interface_manager.register_callbacks(
-                get_modules=self.interface_manager._get_modules,
-                get_ptp_history=self.interface_manager._get_ptp_history,
-                send_command=self.interface_manager.send_command
+                get_modules=self.service_manager.get_modules,
+                get_ptp_history=self.buffer_manager.get_ptp_history,
+                send_command=self.communication_manager.send_command,
+                get_module_health=self.health_monitor.get_module_health
             )
             
             # Register callback for module discovery
             if hasattr(self, 'service_manager'): # If a service manager exists, register the callback (is this necessary?)
                 self.logger.info(f"(CONTROLLER) Registering module discovery callback")
-                self.service_manager.on_module_discovered = self.interface_manager._on_module_discovered # When a module is discovered, call the _on_module_discovered method
-                self.service_manager.on_module_removed = self.interface_manager._on_module_removed  # Use same callback for removal (is this necessary?)
+                self.service_manager.on_module_discovered = self.web_interface_manager._on_module_discovered # When a module is discovered, call the _on_module_discovered method
+                self.service_manager.on_module_removed = self.web_interface_manager._on_module_removed  # Use same callback for removal (is this necessary?)
         
         # CLI 
         if self.cli_interface:
             self.cli_interface.register_callbacks(
-                get_modules=self.interface_manager._get_modules,
-                get_ptp_history=self.interface_manager._get_ptp_history,
-                get_zmq_commands=self.interface_manager.get_zmq_commands,
-                send_command = self.interface_manager.send_command
+                get_modules=self.service_manager.get_modules,
+                get_ptp_history=self.buffer_manager.get_ptp_history,
+                get_zmq_commands=self.get_zmq_commands,
+                send_command = self.communication_manager.send_command,
+                get_module_health=self.health_monitor.get_module_health
             )
     
 
@@ -245,10 +236,6 @@ class Controller:
             self.logger.info("(CONTROLLER) Cleaning up database manager")
             self.database_manager.cleanup()
 
-            # Clean up interface manager
-            self.logger.info("(CONTROLLER) Cleaning up interface manager")
-            self.interface_manager.cleanup()
-            
             # Give modules time to detect the controller is gone
             time.sleep(1)
             
@@ -280,27 +267,23 @@ class Controller:
         self.logger.info("(CONTROLLER) Starting PTP manager...")
         self.ptp_manager.start() # This will start a thread to run ptp4l and phc2sys
 
-        # Interfaces should request information from the interface manager, this will probably involve callbacks.
 
-        # Start the interface manager
-        self.logger.info("(CONTROLLER) Starting interface manager")
-        self.interface_manager.start() 
-
-        # Start the interfaces
+        # Start the web interface
         if self.web_interface:
             self.logger.info("(CONTROLLER) Starting web interface")
             self.web_interface_manager.start() # This will start a thread to serve a webapp and listen for commands from user
             # Register callback for module discovery
             if hasattr(self, 'service_manager'):
                 self.logger.info(f"(CONTROLLER) Registering module discovery callback")
-                self.service_manager.on_module_discovered = self.interface_manager._on_module_discovered
-                self.service_manager.on_module_removed = self.interface_manager._on_module_discovered
+                self.service_manager.on_module_discovered = self.web_interface_manager._on_module_discovered
+                self.service_manager.on_module_removed = self.web_interface_manager._on_module_removed
                 self.logger.info(f"(CONTROLLER) Module discovery callback registered")
             
             # Update web interface with initial module list
             if hasattr(self, 'service_manager'):
                 self.web_interface_manager.update_modules(self.service_manager.modules)
 
+        # Start the CLI interface
         if self.cli_interface:
             self.logger.info("(CONTROLLER) Starting CLI interface")
             self.cli_interface.start() # This will start a thread to listen for commands from the user
@@ -362,3 +345,7 @@ class Controller:
         
         # Update in config manager
         return self.config_manager.set(key, value, persist) 
+
+    def get_zmq_commands(self):
+        """Get the list of available ZMQ commands"""
+        return self.config_manager.get("controller.zmq_commands", []) 

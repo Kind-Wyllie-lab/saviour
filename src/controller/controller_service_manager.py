@@ -146,5 +146,18 @@ class ControllerServiceManager():
             self.logger.error(f"(SERVICE MANAGER) Error removing module {name}: {e}")
 
     def get_modules(self):
-        """Get the list of modules, used by the command handler"""
-        return self.modules
+        """Return module list"""
+        modules = []
+        for module in self.modules:
+            # Convert module to dict and ensure all keys are strings
+            module_dict = {
+                'id': module.id,
+                'type': module.type,
+                'ip': module.ip,
+                'port': module.port,
+                'properties': {k.decode() if isinstance(k, bytes) else k: 
+                             v.decode() if isinstance(v, bytes) else v 
+                             for k, v in module.properties.items()}
+            }
+            modules.append(module_dict)
+        return modules

@@ -44,8 +44,8 @@
         "format": "%(asctime)s - %(levelname)s - %(message)s"
     },
     "interface": {
-        "cli": false,
-        "web_interface": true,
+        "cli": true,
+        "web_interface": false,
         "web_interface_port": 5000
     }
 } 

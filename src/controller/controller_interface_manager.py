@@ -195,8 +195,14 @@ class ControllerInterfaceManager:
                             module_id,
                             command_str
                         )
+                    case "generic":
+                        print(f"No update_settings logic has been implemented for module type '{self.controller.service_manager.modules[module_idx].type}'")
+                    case "ttl":
+                        print(f"No update_settings logic has been implemented for module type '{self.controller.service_manager.modules[module_idx].type}'")
+                    case "mic":
+                        print(f"No update_settings logic has been implemented for module type '{self.controller.service_manager.modules[module_idx].type}'")
                     case _:
-                        print(f"Module type {self.controller.service_manager.modules[module_idx].type} not found in update_settings command")
+                        print(f"Module type '{self.controller.service_manager.modules[module_idx].type}' not found in update_settings command")
 
             # Special handling for export_video command
             elif self.controller.zmq_commands[cmd_idx] == "export_recordings":

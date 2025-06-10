@@ -43,14 +43,14 @@ class ControllerServiceManager():
             self.ip = os.popen('hostname -I').read().split()[0]
 
         # Get service configuration from config manager if available
-        service_port = 5353 # Default value #TODO: Read this from config_manager
+        service_port = 5353 # Default value #TODO: Read this from config_manager    
         service_type = "_controller._tcp.local."
         service_name = "controller._controller._tcp.local."
         
         if self.config_manager:
-            service_port = self.config_manager.get("service.port", service_port)
-            service_type = self.config_manager.get("service.service_type", service_type)
-            service_name = self.config_manager.get("service.service_name", service_name)
+            service_port = self.config_manager.get("zeroconf.port", service_port)
+            service_type = self.config_manager.get("zeroconf.service_type", service_type)
+            service_name = self.config_manager.get("zeroconf.service_name", service_name)
 
         # Initialize zeroconf
         self.zeroconf = Zeroconf()

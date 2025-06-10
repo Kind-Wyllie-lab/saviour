@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Controller Interface
+Command Handler
 
 Handles user interaction with the habitat controller, including:
 - Manual control CLI
@@ -15,7 +15,7 @@ from src.controller.controller_web_interface import WebInterfaceManager
 from src.controller.controller_cli_interface import CLIInterface
 import threading
 
-class ControllerInterfaceManager:
+class CommandHandler:
     def __init__(self, controller):
         """Initialize the controller interface"""
         self.controller = controller # Pass through the controller object so we can access logger, config, module data etc
@@ -25,7 +25,7 @@ class ControllerInterfaceManager:
 
         # Check which interfaces are enabled
         if self.controller.config_manager.get("interface.web_interface") == True:
-            self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to True")
+            self.logger.info(f"(COMMAND HANDLER) Web interface flag set to True")
             self.web_interface = True # Flag to indicate if the web interface is enabled
             self.web_interface_manager = WebInterfaceManager(self.logger, self.controller.config_manager) # Should this be instantiated here or in controller.py? 
             
@@ -37,35 +37,35 @@ class ControllerInterfaceManager:
             
             # Register callback for module discovery
             if hasattr(self.controller, 'service_manager'):
-                self.logger.info(f"(INTERFACE MANAGER) Registering module discovery callback")
+                self.logger.info(f"(COMMAND HANDLER) Registering module discovery callback")
                 self.controller.service_manager.on_module_discovered = self._on_module_discovered
                 self.controller.service_manager.on_module_removed = self._on_module_discovered  # Use same callback for removal
         else:
-            self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to False")
+            self.logger.info(f"(COMMAND HANDLER) Web interface flag set to False")
             self.web_interface = False
 
         if self.controller.config_manager.get("interface.cli") == True:
-            self.logger.info(f"(INTERFACE MANAGER) CLI interface flag set to True")
+            self.logger.info(f"(COMMAND HANDLER) CLI interface flag set to True")
             self.cli_interface = True
         else:
-            self.logger.info(f"(INTERFACE MANAGER) CLI interface flag set to False")
+            self.logger.info(f"(COMMAND HANDLER) CLI interface flag set to False")
             self.cli_interface = False
     
     def start(self):
         """Start the interface manager"""
-        self.logger.info(f"(INTERFACE MANAGER) Starting interface manager")
+        self.logger.info(f"(COMMAND HANDLER) Starting interface manager")
         
         # Start web interface if enabled
         if self.web_interface == True:
-            self.logger.info(f"(INTERFACE MANAGER) Starting web interface")
+            self.logger.info(f"(COMMAND HANDLER) Starting web interface")
             self.web_interface_manager.start()
             
             # Register callback for module discovery
             if hasattr(self.controller, 'service_manager'):
-                self.logger.info(f"(INTERFACE MANAGER) Registering module discovery callback")
+                self.logger.info(f"(COMMAND HANDLER) Registering module discovery callback")
                 self.controller.service_manager.on_module_discovered = self._on_module_discovered
                 self.controller.service_manager.on_module_removed = self._on_module_discovered
-                self.logger.info(f"(INTERFACE MANAGER) Module discovery callback registered")
+                self.logger.info(f"(COMMAND HANDLER) Module discovery callback registered")
             
             # Update web interface with initial module list
             if hasattr(self.controller, 'service_manager'):
@@ -73,13 +73,13 @@ class ControllerInterfaceManager:
         
         # Start CLI if enabled
         if self.cli_interface == True:
-            self.logger.info(f"(INTERFACE MANAGER) Starting manual control loop")
+            self.logger.info(f"(COMMAND HANDLER) Starting manual control loop")
             self.cli_thread = threading.Thread(target=self.run_cli_interface, daemon=True)
             self.cli_thread.start()
 
     def run_cli_interface(self):
         """Run the manual control loop"""
-        self.logger.info("(INTERFACE MANAGER) Starting manual CLI control loop")
+        self.logger.info("(COMMAND HANDLER) Starting manual CLI control loop")
         while True: # This needs to be in a while loop to continously print the prompt and await user input
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
@@ -91,7 +91,7 @@ class ControllerInterfaceManager:
                 self.handle_command(user_input)
                     
             except Exception as e:
-                self.logger.error(f"(INTERFACE MANAGER) Error handling input: {e}")
+                self.logger.error(f"(COMMAND HANDLER) Error handling input: {e}")
     
     def handle_command(self, command):
         """Handle a single command"""
@@ -99,7 +99,7 @@ class ControllerInterfaceManager:
             case "help":
                 self.show_help()
             case "quit":
-                self.logger.info("(INTERFACE MANAGER) Quitting manual control loop")
+                self.logger.info("(COMMAND HANDLER) Quitting manual control loop")
                 return False  # Signal to exit
             case "list":
                 self.list_modules()
@@ -110,7 +110,7 @@ class ControllerInterfaceManager:
             case "health history":
                 self.handle_health_history()
             case _:
-                self.logger.error(f"(INTERFACE MANAGER) Unknown command: {command}. Type 'help' for available commands.")
+                self.logger.error(f"(COMMAND HANDLER) Unknown command: {command}. Type 'help' for available commands.")
     
     def show_help(self):
         """Display available commands"""
@@ -226,9 +226,9 @@ class ControllerInterfaceManager:
                         command_str
                     )
                 except ValueError as e:
-                    self.logger.error(f"(INTERFACE MANAGER) Invalid input: {e}")
+                    self.logger.error(f"(COMMAND HANDLER) Invalid input: {e}")
                 except Exception as e:
-                    self.logger.error(f"(INTERFACE MANAGER) Error during export: {e}")
+                    self.logger.error(f"(COMMAND HANDLER) Error during export: {e}")
             else:
                 # Handle other commands as before
                 self.controller.communication_manager.send_command(
@@ -309,25 +309,25 @@ class ControllerInterfaceManager:
 
     def _on_module_discovered(self, module):
         """Callback when a new module is discovered"""
-        self.logger.info(f"(INTERFACE MANAGER) Module discovered: {module.id}")
+        self.logger.info(f"(COMMAND HANDLER) Module discovered: {module.id}")
         if self.web_interface:
-            self.logger.info(f"(INTERFACE MANAGER) Notifying web interface of module update")
+            self.logger.info(f"(COMMAND HANDLER) Notifying web interface of module update")
             try:
                 self.web_interface_manager.notify_module_update()
-                self.logger.info(f"(INTERFACE MANAGER) Successfully notified web interface")
+                self.logger.info(f"(COMMAND HANDLER) Successfully notified web interface")
             except Exception as e:
-                self.logger.error(f"(INTERFACE MANAGER) Error notifying web interface: {e}")
+                self.logger.error(f"(COMMAND HANDLER) Error notifying web interface: {e}")
         else:
-            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled, skipping module update notification")
+            self.logger.info(f"(COMMAND HANDLER) Web interface disabled, skipping module update notification")
 
     def _on_ptp_update(self):
         """Callback when PTP data is updated"""
-        self.logger.info(f"(INTERFACE MANAGER) PTP data updated")
+        self.logger.info(f"(COMMAND HANDLER) PTP data updated")
         if self.web_interface:
-            self.logger.info(f"(INTERFACE MANAGER) Notifying web interface of PTP update")
+            self.logger.info(f"(COMMAND HANDLER) Notifying web interface of PTP update")
             self.web_interface_manager.notify_ptp_update()
         else:
-            self.logger.info(f"(INTERFACE MANAGER) Web interface disabled, skipping PTP update notification")
+            self.logger.info(f"(COMMAND HANDLER) Web interface disabled, skipping PTP update notification")
 
     def _get_modules(self):
         """Callback to get module list"""
@@ -349,3 +349,14 @@ class ControllerInterfaceManager:
     def _get_ptp_history(self):
         """Callback to get PTP history"""
         return self.controller.buffer_manager.get_ptp_history()
+
+    def cleanup(self):
+        """Clean up the command handler"""
+        self.logger.info("(COMMAND HANDLER) Cleaning up command handler")
+        if self.cli_thread:
+            self.cli_thread.join()
+            self.cli_thread = None
+        if self.web_interface_manager:
+            self.web_interface_manager.cleanup()
+            self.web_interface_manager = None
+        self.logger.info("(COMMAND HANDLER) Command handler cleaned up")

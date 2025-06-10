@@ -31,7 +31,7 @@ import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
 import src.controller.controller_database_manager as database_manager
-import src.controller.controller_interface_manager as interface_manager
+import src.controller.controller_command_handler as command_handler
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
 import src.controller.controller_config_manager as config_manager
@@ -112,7 +112,7 @@ class Controller:
         )
         
         self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
-        self.interface_manager = interface_manager.ControllerInterfaceManager(self)
+        self.command_handler = command_handler.CommandHandler(self)
 
         # Start health monitoring
         self.health_monitor.start_monitoring()
@@ -153,12 +153,14 @@ class Controller:
         
         try:
             # Stop PTP
+            self.logger.info("(CONTROLLER) Stopping PTP manager")
             self.ptp_manager.stop()
 
             # Stop all threads by setting flags
             self.is_running = False
             
             # Stop health monitoring
+            self.logger.info("(CONTROLLER) Stopping health monitoring")
             self.health_monitor.stop_monitoring()
             
             # Clean up health monitoring
@@ -174,13 +176,20 @@ class Controller:
             self.service_manager.modules.clear()
 
             # Clean up service manager
+            self.logger.info("(CONTROLLER) Cleaning up service manager")
             self.service_manager.cleanup()
             
             # Clean up communication manager
+            self.logger.info("(CONTROLLER) Cleaning up communication manager")
             self.communication_manager.cleanup()
             
             # Clean up database manager
+            self.logger.info("(CONTROLLER) Cleaning up database manager")
             self.database_manager.cleanup()
+
+            # Clean up command handler
+            self.logger.info("(CONTROLLER) Cleaning up command handler")
+            self.command_handler.cleanup()
             
             # Give modules time to detect the controller is gone
             time.sleep(1)
@@ -201,11 +210,9 @@ class Controller:
             bool: True if the controller started successfully, False otherwise.
             
         Starts the following:
-        - An asyncio event loop
-        - A file transfer server, which starts an aiohttp web server to receive files from modules
         - A PTP manager, which starts a thread to run ptp4l and phc2sys
-        - A file transfer thread, which runs the event loop
         - An interface manager, which starts a web interface manager and a CLI interface manager if enabled in the config
+        - A forever loop to keep the main controller thread alive
 
         Returns:
         """
@@ -217,7 +224,7 @@ class Controller:
 
         # Start the interface manager
         self.logger.info("(CONTROLLER) Starting interface manager")
-        self.interface_manager.start() # This will start a thread to listen for commands from the user
+        self.command_handler.start() # This will start a thread to listen for commands from the user
 
         # Keep the main thread alive
         try: 

@@ -4,71 +4,138 @@
     <title>Habitat Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="icon" type="image/x-icon" href="/static/uofe_logo.png">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script> <!--Import socketio, used for websocket communication i.e. updates pushed from controller-->
+    <script src="{{ url_for('static', filename='js/header.js') }}"></script> <!--Import header.js, used for the header of the page-->
+    <script src="{{ url_for('static', filename='js/module-item.js') }}"></script> <!--Import module-item.js, used for the module list-->
 </head>
 <body>
-    <h1>Habitat Controller</h1>
+    <main-header></main-header>
     
-    <div id="module-list">
-        <h2>Discovered Modules</h2>
-        <div id="modules"></div>
+    <div class="dashboard-container">
+        <div class="dashboard-card">
+            <div id="dashboard-overview">
+                <h2>Dashboard Overview</h2>
+                <div id="dashboard-overview-content">
+                    <p>Modules: <span id="number-of-modules">0</span></p>
+                    <p>Camera modules: <span id="number-of-camera-modules">0</span></p>
+                    <p>TTL modules: <span id="number-of-ttl-modules">0</span></p>
+                </div>
+            </div>
+        </div>
+        <div class="dashboard-card">
+            <div id="module-list">
+                <h2>Discovered Modules</h2>
+                <div id="modules"></div>
+            </div>
+        </div>
     </div>
 
     <script>
+        console.log('Script starting...'); // Initial script load
+
         // WebSocket connection
-        const socket = io(window.location.origin, {
+        const socket = io(window.location.origin, { // The socket object receives updates from the controller
             transports: ['websocket'],
             upgrade: false
         });
         
         // WebSocket event handlers
-        socket.on('connect', function() {
+        socket.on('connect', function() { // When connection is established, log it
             console.log('WebSocket connection established');
+            // Request initial module data
+            socket.emit('get_modules');
+        });
+    
+        socket.on('disconnect', function() { // When connection is closed, log it
+            console.log('WebSocket connection closed');
         });
         
-        socket.on('module_update', function(data) {
-            console.log('Received module update:', data);
+        socket.on('module_update', function(data) { // When module update is received, log it and update the module list
+            console.log('Received module_update event');
+            console.log('Data received:', data);
+            if (!data || !data.modules) {
+                console.error('Invalid data format received:', data);
+                return;
+            }
             updateModuleList(data.modules);
+            updateDashboardOverview(data.modules);
         });
         
-        socket.on('ptp_status', function(data) {
+        socket.on('ptp_status', function(data) { // When PTP status is received, log it and update the PTP chart
             console.log('Received PTP update:', data);
             updatePTPChart(data);
         });
         
-        socket.on('disconnect', function() {
-            console.log('WebSocket connection closed');
-        });
-        
-        socket.on('error', function(error) {
+        socket.on('error', function(error) { // When an error occurs, log it
             console.error('WebSocket error:', error);
         });
 
+        // Update the module list
         function updateModuleList(modules) {
+            console.log('updateModuleList called with:', modules);
             const moduleList = document.getElementById('modules');
+            if (!moduleList) {
+                console.error('Could not find modules element');
+                return;
+            }
             moduleList.innerHTML = '';
             
-            if (modules.length === 0) {
+            if (!modules || modules.length === 0) {
+                console.log('No modules to display');
                 moduleList.innerHTML = '<p>No modules found</p>';
                 return;
             }
             
             modules.forEach(module => {
-                const moduleDiv = document.createElement('div');
-                moduleDiv.className = 'module-item';
-                moduleDiv.innerHTML = `
-                    <p>ID: ${module.id}</p>
-                    <p>Type: ${module.type}</p>
-                    <p>IP: ${module.ip}</p>
-                `;
-                moduleList.appendChild(moduleDiv);
+                console.log('Creating module element for:', module);
+                const moduleElement = document.createElement('module-item');
+                moduleElement.setAttribute('module-id', module.id);
+                moduleElement.setAttribute('module-type', module.type);
+                moduleElement.setAttribute('module-ip', module.ip);
+                moduleList.appendChild(moduleElement);
             });
         }
 
+        // Update the dashboard overview
+        function updateDashboardOverview(modules) {
+            console.log('updateDashboardOverview called with:', modules);
+            const numberOfModules = document.getElementById('number-of-modules');
+            if (!numberOfModules) {
+                console.error('Could not find number-of-modules element');
+                return;
+            }
+            numberOfModules.textContent = modules ? modules.length : 0;
+
+            // Debug logging for module types
+            if (modules) {
+                console.log('All module types:', modules.map(m => m.type));
+                console.log('Camera modules:', modules.filter(module => module.type === 'camera'));
+                console.log('TTL modules:', modules.filter(module => module.type === 'ttl'));
+            }
+
+            const numberOfCameraModules = document.getElementById('number-of-camera-modules');
+            if (!numberOfCameraModules) {
+                console.error('Could not find number-of-camera-modules element');
+                return;
+            }
+            numberOfCameraModules.textContent = modules ? modules.filter(module => module.type === 'camera').length : 0; // Update the number of camera modules in the dashboard overview
+            const numberOfTTLModules = document.getElementById('number-of-ttl-modules');  
+            if (!numberOfTTLModules) {
+                console.error('Could not find number-of-ttl-modules element');
+                return;
+            }
+            numberOfTTLModules.textContent = modules ? modules.filter(module => module.type === 'ttl').length : 0; // Update the number of TTL modules in the dashboard overview
+        }   
+
         function updatePTPChart(data) {
+            console.log('updatePTPChart called with:', data);
             // TODO: Implement PTP chart update
-            console.log('PTP data:', data);
         }
+
+        // Log when the page is fully loaded
+        window.addEventListener('load', function() {
+            console.log('Page fully loaded');
+        });
     </script>
 </body>
 </html> 

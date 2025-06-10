@@ -12,12 +12,15 @@ Handles user interaction with the habitat controller, including:
 import logging
 import time
 from src.controller.controller_web_interface_manager import WebInterfaceManager
+import threading
 
 class ControllerInterfaceManager:
     def __init__(self, controller):
         """Initialize the controller interface"""
         self.controller = controller # Pass through the controller object so we can access logger, config, module data etc
         self.logger = controller.logger
+
+        self.cli_thread = None
 
         # Check which interfaces are enabled
         if self.controller.config_manager.get("interface.web_interface") == True:
@@ -70,7 +73,8 @@ class ControllerInterfaceManager:
         # Start CLI if enabled
         if self.cli_interface == True:
             self.logger.info(f"(INTERFACE MANAGER) Starting manual control loop")
-            self.run_manual_control()
+            self.cli_thread = threading.Thread(target=self.run_manual_control, daemon=True)
+            self.cli_thread.start()
 
     def run_manual_control(self):
         """Run the manual control loop"""

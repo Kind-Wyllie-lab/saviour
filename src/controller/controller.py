@@ -31,11 +31,13 @@ import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
 import src.controller.controller_database_manager as database_manager
-import src.controller.controller_command_handler as command_handler
+import src.controller.controller_interface_manager as interface_manager
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
 import src.controller.controller_config_manager as config_manager
 import src.controller.controller_ptp_manager as ptp_manager
+import src.controller.controller_web_interface as web_interface_manager
+import src.controller.controller_cli_interface as cli_interface
     
 # Habitat Controller Class
 class Controller:
@@ -99,9 +101,31 @@ class Controller:
             data_callback=self.handle_data_update
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
+        self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
         self.database_manager = database_manager.ControllerDatabaseManager(self.logger, self.config_manager)
         self.ptp_manager = ptp_manager.PTPManager(logger=self.logger,role=ptp_manager.PTPRole.MASTER)
         
+        # Initialize interface manager
+        self.interface_manager = interface_manager.InterfaceManager(self.logger, self.config_manager)
+
+        # Check which interfaces are enabled
+        self.web_interface = None # Flag to indicate if the web interface is enabled
+        self.cli_interface = None # Flag to indicate if the CLI interface is enabled
+        if self.config_manager.get("interface.web_interface") == True:
+            self.logger.info(f"(CONTROLLER) Web interface flag set to True")
+            self.web_interface = True # Flag to indicate if the web interface is enabled
+            self.web_interface_manager = web_interface_manager.WebInterfaceManager(self.logger, self.config_manager) # Should this be instantiated here or in controller.py? 
+        else:
+            self.logger.info(f"(CONTROLLER) Web interface flag set to False")
+            self.web_interface = False
+
+        if self.config_manager.get("interface.cli") == True:
+            self.logger.info(f"(CONTROLLER) CLI interface flag set to True")
+            self.cli_interface = cli_interface.CLIInterface(self.logger)
+        else:
+            self.logger.info(f"(CONTROLLER) CLI interface flag set to False")
+            self.cli_interface = False
+
         # Initialize health monitor with configuration
         heartbeat_interval = self.config_manager.get("health_monitor.heartbeat_interval")
         heartbeat_timeout = self.config_manager.get("health_monitor.heartbeat_timeout")
@@ -110,12 +134,46 @@ class Controller:
             heartbeat_interval=heartbeat_interval,
             heartbeat_timeout=heartbeat_timeout
         )
-        
-        self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
-        self.command_handler = command_handler.CommandHandler(self)
 
         # Start health monitoring
         self.health_monitor.start_monitoring()
+
+        # Register callbacks
+        self.register_callbacks()
+    
+    def register_callbacks(self):
+        """Register callbacks for getting data from other managers"""
+        # Interface manager
+        self.interface_manager.register_callbacks(
+            get_modules=self.service_manager.get_modules,
+            get_ptp_history=self.buffer_manager.get_ptp_history,
+            get_module_health=self.health_monitor.get_module_health,
+            send_command=self.communication_manager.send_command
+        )
+
+        # Web interface
+        if self.web_interface:
+            self.web_interface_manager.register_callbacks(
+                get_modules=self.interface_manager._get_modules,
+                get_ptp_history=self.interface_manager._get_ptp_history,
+                send_command=self.interface_manager.send_command
+            )
+            
+            # Register callback for module discovery
+            if hasattr(self, 'service_manager'): # If a service manager exists, register the callback (is this necessary?)
+                self.logger.info(f"(CONTROLLER) Registering module discovery callback")
+                self.service_manager.on_module_discovered = self.interface_manager._on_module_discovered # When a module is discovered, call the _on_module_discovered method
+                self.service_manager.on_module_removed = self.interface_manager._on_module_removed  # Use same callback for removal (is this necessary?)
+        
+        # CLI 
+        if self.cli_interface:
+            self.cli_interface.register_callbacks(
+                get_modules=self.interface_manager._get_modules,
+                get_ptp_history=self.interface_manager._get_ptp_history,
+                get_zmq_commands=self.interface_manager.get_zmq_commands,
+                send_command = self.interface_manager.send_command
+            )
+    
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -187,9 +245,9 @@ class Controller:
             self.logger.info("(CONTROLLER) Cleaning up database manager")
             self.database_manager.cleanup()
 
-            # Clean up command handler
-            self.logger.info("(CONTROLLER) Cleaning up command handler")
-            self.command_handler.cleanup()
+            # Clean up interface manager
+            self.logger.info("(CONTROLLER) Cleaning up interface manager")
+            self.interface_manager.cleanup()
             
             # Give modules time to detect the controller is gone
             time.sleep(1)
@@ -211,7 +269,7 @@ class Controller:
             
         Starts the following:
         - A PTP manager, which starts a thread to run ptp4l and phc2sys
-        - An interface manager, which starts a web interface manager and a CLI interface manager if enabled in the config
+        - A interface manager, which receives input from CLI or web interface and handles it (and may also be used to send commands to modules)
         - A forever loop to keep the main controller thread alive
 
         Returns:
@@ -222,9 +280,32 @@ class Controller:
         self.logger.info("(CONTROLLER) Starting PTP manager...")
         self.ptp_manager.start() # This will start a thread to run ptp4l and phc2sys
 
+        # Interfaces should request information from the interface manager, this will probably involve callbacks.
+
         # Start the interface manager
         self.logger.info("(CONTROLLER) Starting interface manager")
-        self.command_handler.start() # This will start a thread to listen for commands from the user
+        self.interface_manager.start() 
+
+        # Start the interfaces
+        if self.web_interface:
+            self.logger.info("(CONTROLLER) Starting web interface")
+            self.web_interface_manager.start() # This will start a thread to serve a webapp and listen for commands from user
+            # Register callback for module discovery
+            if hasattr(self, 'service_manager'):
+                self.logger.info(f"(CONTROLLER) Registering module discovery callback")
+                self.service_manager.on_module_discovered = self.interface_manager._on_module_discovered
+                self.service_manager.on_module_removed = self.interface_manager._on_module_discovered
+                self.logger.info(f"(CONTROLLER) Module discovery callback registered")
+            
+            # Update web interface with initial module list
+            if hasattr(self, 'service_manager'):
+                self.web_interface_manager.update_modules(self.service_manager.modules)
+
+        if self.cli_interface:
+            self.logger.info("(CONTROLLER) Starting CLI interface")
+            self.cli_interface.start() # This will start a thread to listen for commands from the user
+
+
 
         # Keep the main thread alive
         try: 

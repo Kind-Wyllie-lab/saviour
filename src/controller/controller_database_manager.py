@@ -222,3 +222,8 @@ class ControllerDatabaseManager:
             "data_exporting": self.is_exporting_data,
             "health_exporting": self.is_health_exporting
         }
+    
+    def cleanup(self):
+        """Clean up the database manager"""
+        self.stop_all_exports()
+        self.logger.info("(DATABASE MANAGER) Cleaned up database manager")

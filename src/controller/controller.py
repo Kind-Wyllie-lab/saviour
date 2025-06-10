@@ -180,7 +180,7 @@ class Controller:
             self.communication_manager.cleanup()
             
             # Clean up database manager
-            self.database_manager.stop_all_exports()
+            self.database_manager.cleanup()
             
             # Give modules time to detect the controller is gone
             time.sleep(1)

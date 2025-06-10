@@ -31,7 +31,6 @@ import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
 import src.controller.controller_database_manager as database_manager
-import src.controller.controller_interface_manager as interface_manager
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
 import src.controller.controller_config_manager as config_manager
@@ -150,10 +149,11 @@ class Controller:
             )
             
             # Register callback for module discovery
-            if hasattr(self, 'service_manager'): # If a service manager exists, register the callback (is this necessary?)
+            if hasattr(self, 'service_manager'):
                 self.logger.info(f"(CONTROLLER) Registering module discovery callback")
-                self.service_manager.on_module_discovered = self.web_interface_manager._on_module_discovered # When a module is discovered, call the _on_module_discovered method
-                self.service_manager.on_module_removed = self.web_interface_manager._on_module_removed  # Use same callback for removal (is this necessary?)
+                self.service_manager.on_module_discovered = lambda module: self.web_interface_manager.notify_module_update()
+                self.service_manager.on_module_removed = lambda module: self.web_interface_manager.notify_module_update()
+                self.logger.info(f"(CONTROLLER) Module discovery callback registered")
         
         # CLI 
         if self.cli_interface:
@@ -161,7 +161,7 @@ class Controller:
                 get_modules=self.service_manager.get_modules,
                 get_ptp_history=self.buffer_manager.get_ptp_history,
                 get_zmq_commands=self.get_zmq_commands,
-                send_command = self.communication_manager.send_command,
+                send_command=self.communication_manager.send_command,
                 get_module_health=self.health_monitor.get_module_health
             )
     
@@ -258,8 +258,6 @@ class Controller:
         - A PTP manager, which starts a thread to run ptp4l and phc2sys
         - A interface manager, which receives input from CLI or web interface and handles it (and may also be used to send commands to modules)
         - A forever loop to keep the main controller thread alive
-
-        Returns:
         """
         self.logger.info("(CONTROLLER) Starting controller")
 
@@ -267,17 +265,10 @@ class Controller:
         self.logger.info("(CONTROLLER) Starting PTP manager...")
         self.ptp_manager.start() # This will start a thread to run ptp4l and phc2sys
 
-
         # Start the web interface
         if self.web_interface:
             self.logger.info("(CONTROLLER) Starting web interface")
             self.web_interface_manager.start() # This will start a thread to serve a webapp and listen for commands from user
-            # Register callback for module discovery
-            if hasattr(self, 'service_manager'):
-                self.logger.info(f"(CONTROLLER) Registering module discovery callback")
-                self.service_manager.on_module_discovered = self.web_interface_manager._on_module_discovered
-                self.service_manager.on_module_removed = self.web_interface_manager._on_module_removed
-                self.logger.info(f"(CONTROLLER) Module discovery callback registered")
             
             # Update web interface with initial module list
             if hasattr(self, 'service_manager'):
@@ -287,8 +278,6 @@ class Controller:
         if self.cli_interface:
             self.logger.info("(CONTROLLER) Starting CLI interface")
             self.cli_interface.start() # This will start a thread to listen for commands from the user
-
-
 
         # Keep the main thread alive
         try: 

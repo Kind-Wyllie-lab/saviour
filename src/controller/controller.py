@@ -42,7 +42,27 @@ class Controller:
     """Main controller class for the habitat system"""
     
     def __init__(self, config_file_path: str = None):
-        """Initialize the controller with default values"""
+        """Initialize the controller with default values
+
+        Instantiates the following:
+        - A logger
+        - A config manager, which initially loads the config file and sets up the config object which the controller can use to get parameters
+        - A service manager, which initially registers a zeroconf service and (passively, as part of zeroconf object) starts a thread to browse for module services
+        - A session manager, which has a method to generate a session id for a module
+        - A communication manager, which initially starts a thread to listen for status and data updates from modules
+        - A file transfer manager, which initially starts an aiohttp web server to receive files from modules
+        - A data export manager, which initially creates a supabase client (is this a thread?)
+        - A PTP manager, which initally defines the ptp4l and phc2sys arguments based on the role of the controller and will later start a thread
+        - A buffer manager, which initially sets the max buffer size
+        - An interface manager, which initially may instantiate a web interface manager and a CLI interface manager, and will later start a manual control loop thread if CLI interface is enabled. These are to be separated later.
+        - A health monitor, which then has it's start monitoring method called to start a thread to monitor the health of the modules
+
+        Args:
+            config_file_path: Path to the config file
+            
+        Returns:
+            None
+        """
 
         # Setup logging
         self.logger = logging.getLogger()

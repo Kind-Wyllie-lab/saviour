@@ -23,7 +23,7 @@ class ControllerInterfaceManager:
         if self.controller.config_manager.get("interface.web_interface") == True:
             self.logger.info(f"(INTERFACE MANAGER) Web interface flag set to True")
             self.web_interface = True # Flag to indicate if the web interface is enabled
-            self.web_interface_manager = WebInterfaceManager(self.logger, self.controller.config_manager)
+            self.web_interface_manager = WebInterfaceManager(self.logger, self.controller.config_manager) # Should this be instantiated here or in controller.py? 
             
             # Register callbacks
             self.web_interface_manager.register_callbacks(

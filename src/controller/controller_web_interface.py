@@ -141,6 +141,35 @@ class WebInterfaceManager:
         def handle_disconnect():
             self.logger.info(f"(WEB INTERFACE MANAGER) Client disconnected")
 
+        @self.socketio.on('command')
+        def handle_command(data):
+            """Handle incoming WebSocket commands"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
+            
+            if not self.send_command_callback:
+                self.logger.error(f"(WEB INTERFACE MANAGER) No send_command callback registered")
+                return
+            
+            command_type = data.get('type')
+            module_id = data.get('module_id')
+            
+            if not command_type or not module_id:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Invalid command format: {data}")
+                return
+            
+            try:
+                # Send the command through the callback
+                self.send_command_callback(module_id, command_type)
+                self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command_type} to module {module_id}")
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error sending command: {e}")
+                # Optionally emit an error back to the client
+                self.socketio.emit('command_error', {
+                    'error': str(e),
+                    'command': command_type,
+                    'module_id': module_id
+                })
+
     def get_modules(self):
         """Get the list of modules"""
         if self.get_modules_callback:

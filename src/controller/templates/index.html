@@ -28,6 +28,30 @@
                 <div id="modules"></div>
             </div>
         </div>
+        <div class="dashboard-card">
+            <div id="quick-commands">
+                <h2>Quick Commands</h2>
+                <div id="quick-commands-content">
+                    <button id="get-status" class="command-button">Get Status</button>
+                    <button id="start-recording" class="command-button">Start Recording</button>
+                    <button id="stop-recording" class="command-button">Stop Recording</button>
+                    <button id="list-recordings" class="command-button">List Recordings</button>
+                    <button id="export-recordings" class="command-button">Export Recordings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Selection Dialog -->
+    <div id="module-selection-dialog" class="dialog" style="display: none;">
+        <div class="dialog-content">
+            <h3>Select Module</h3>
+            <div class="dialog-options">
+                <button class="dialog-option" data-module="all">All Modules</button>
+                <div id="module-options"></div>
+            </div>
+            <button class="dialog-close">Cancel</button>
+        </div>
     </div>
 
     <script>
@@ -70,6 +94,50 @@
             console.error('WebSocket error:', error);
         });
 
+        socket.on('module_status', function(data) {
+            console.log('Received module status:', data);
+            // TODO: Display the status in the UI
+            alert(`Status for ${data.module_id}: ${JSON.stringify(data.status)}`);
+        });
+
+        // Module selection dialog
+        const dialog = document.getElementById('module-selection-dialog');
+        const getStatusButton = document.getElementById('get-status');
+        const moduleOptions = document.getElementById('module-options');
+        const closeButton = document.querySelector('.dialog-close');
+
+        getStatusButton.addEventListener('click', () => {
+            dialog.style.display = 'flex';
+        });
+
+        closeButton.addEventListener('click', () => {
+            dialog.style.display = 'none';
+        });
+
+        function updateModuleOptions(modules) {
+            moduleOptions.innerHTML = '';
+            modules.forEach(module => {
+                const button = document.createElement('button');
+                button.className = 'dialog-option';
+                button.textContent = `${module.type} (${module.id})`;
+                button.dataset.moduleId = module.id;
+                button.addEventListener('click', () => {
+                    requestModuleStatus(module.id);
+                    dialog.style.display = 'none';
+                });
+                moduleOptions.appendChild(button);
+            });
+        }
+
+        function requestModuleStatus(moduleId) {
+            const command = {
+                type: 'get_status',
+                module_id: moduleId
+            };
+            console.log('Sending status request:', command);
+            socket.emit('command', command);
+        }
+
         // Update the module list
         function updateModuleList(modules) {
             console.log('updateModuleList called with:', modules);
@@ -94,6 +162,9 @@
                 moduleElement.setAttribute('module-ip', module.ip);
                 moduleList.appendChild(moduleElement);
             });
+
+            // Update the module selection dialog options
+            updateModuleOptions(modules);
         }
 
         // Update the dashboard overview
@@ -132,10 +203,16 @@
             // TODO: Implement PTP chart update
         }
 
+        // Add click handler for "All Modules" option
+        document.querySelector('[data-module="all"]').addEventListener('click', () => {
+            requestModuleStatus('all');
+            dialog.style.display = 'none';
+        });
+
         // Log when the page is fully loaded
         window.addEventListener('load', function() {
             console.log('Page fully loaded');
         });
     </script>
 </body>
-</html> 
+</html> </html> 

@@ -5,6 +5,16 @@
 
 set -e
 
+# Function to check if this is a controller Pi
+is_controller() {
+    # Check if controller-specific packages are installed
+    if dpkg -s python3-picamera2 &> /dev/null; then
+        return 0  # This is a controller Pi
+    else
+        return 1  # This is not a controller Pi
+    fi
+}
+
 # List of required system packages
 SYSTEM_PACKAGES=(
     linuxptp
@@ -23,59 +33,15 @@ SYSTEM_PACKAGES=(
     # Additional dependencies for image processing
     libjpeg-dev
     libpng-dev
-    # Samba for file sharing
+    # File sharing dependencies
     samba
     samba-common-bin
+    cifs-utils
 )
 
 # Function to check if a package is installed
 is_installed() {
     dpkg -s "$1" &> /dev/null
-}
-
-# Function to setup Samba
-setup_samba() {
-    echo "=== Setting up Samba Server ==="
-    
-    # Create Samba configuration backup
-    if [ ! -f /etc/samba/smb.conf.backup ]; then
-        sudo cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
-    fi
-    
-    # Create Samba share directory
-    sudo mkdir -p /home/pi/habitat_share
-    sudo chown pi:pi /home/pi/habitat_share
-    sudo chmod 777 /home/pi/habitat_share
-    
-    # Configure Samba
-    sudo tee /etc/samba/smb.conf > /dev/null << EOL
-[global]
-   workgroup = WORKGROUP
-   server string = Habitat Raspberry Pi
-   security = user
-   map to guest = bad user
-   dns proxy = no
-
-[habitat_share]
-   path = /home/pi/habitat_share
-   browseable = yes
-   writeable = yes
-   create mask = 0777
-   directory mask = 0777
-   public = yes
-   guest ok = yes
-EOL
-
-    # Set Samba password for pi user
-    echo "Setting up Samba password for user 'pi'"
-    sudo smbpasswd -a pi
-    
-    # Restart Samba service
-    sudo systemctl restart smbd
-    sudo systemctl enable smbd
-    
-    echo "Samba server setup complete!"
-    echo "You can access the share at: \\\\$(hostname -I | awk '{print $1}')\\habitat_share"
 }
 
 echo "=== Installing System Dependencies ==="
@@ -91,9 +57,6 @@ for pkg in "${SYSTEM_PACKAGES[@]}"; do
         sudo apt-get install -y "$pkg"
     fi
 done
-
-# Setup Samba
-setup_samba
 
 # Enable camera interface if not already enabled
 if ! grep -q "camera_auto_detect=1" /boot/config.txt; then

@@ -11,7 +11,8 @@ Handles user interaction with the habitat controller, including:
 
 import logging
 import time
-from src.controller.controller_web_interface_manager import WebInterfaceManager
+from src.controller.controller_web_interface import WebInterfaceManager
+from src.controller.controller_cli_interface import CLIInterface
 import threading
 
 class ControllerInterfaceManager:

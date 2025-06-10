@@ -224,35 +224,13 @@ class Controller:
         """
         self.logger.info("(CONTROLLER) Starting controller")
 
-        # Start file transfer server
-        try:
-            # Create event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Start the file transfer server
-            self.logger.info("(CONTROLLER) Starting file transfer server...")
-            loop.run_until_complete(self.file_transfer.start())
-
-            # Start PTP
-            self.logger.info("(CONTROLLER) Starting PTP manager...")
-            self.ptp_manager.start()
-
-            # Keep the event loop running
-            def run_event_loop():
-                loop.run_forever()
-            
-            self.file_transfer_thread = threading.Thread(target=run_event_loop, daemon=True)
-            self.file_transfer_thread.start()
-            self.logger.info("(CONTROLLER) File transfer server started successfully")
-            
-        except Exception as e:
-            self.logger.error(f"(CONTROLLER) Failed to start file transfer server: {e}")
-            return False
+        # Start PTP
+        self.logger.info("(CONTROLLER) Starting PTP manager...")
+        self.ptp_manager.start() # This will start a thread to run ptp4l and phc2sys
 
         # Start the interface manager
         self.logger.info("(CONTROLLER) Starting interface manager")
-        self.interface_manager.start()
+        self.interface_manager.start() # This will start a thread to listen for commands from the user
 
         return True
         

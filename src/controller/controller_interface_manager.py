@@ -204,10 +204,10 @@ class ControllerInterfaceManager:
                     case _:
                         print(f"Module type '{self.controller.service_manager.modules[module_idx].type}' not found in update_settings command")
 
-            # Special handling for export_video command
+            # Special handling for export_records command
             elif self.controller.zmq_commands[cmd_idx] == "export_recordings":
                 try:
-                    filename = input("\nEnter the filename for the exported video ('all' for all recordings, 'latest' for latest recording): ").strip()
+                    filename = input("\nEnter the filename for the exported recordings ('all' for all recordings, 'latest' for latest recording): ").strip()
                     destination = input("Enter destination (controller/nas) [default: controller]: ").strip().lower()
                     if not destination:
                         destination = "controller"

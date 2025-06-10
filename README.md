@@ -87,6 +87,7 @@ The system includes:
 - PoE-capable network switch
 - 1x Raspberry Pi 5 for controller
 - 1x Raspberry Pi 5 per module, plus module specific hardware e.g. camera, audiomoth USV microphone 
+- An external storage device, e.g., Synology NAS DS1522+, or perhaps a controller Pi with NVME/SSD storage 
 
 
 
@@ -101,27 +102,13 @@ The system includes:
    cd habitat
    ```
 
-2. Create a virtual environment
-   ```sh
-   # Make sure you're in the habitat directory
-   mkdir env
-   python -m venv env
-   source env/bin/activate
-   ```
-
-3. Install required packages
-   ```sh
-   # Ensure you're in the habitat directory with activated virtual environment
-   pip install -r requirements.txt
-   ```
-
-4. Install linuxptp
-   ```sh
-   # System-wide installation
-   sudo apt-get install linuxptp
-   ```
+2. Run the setup script
+    ```sh
+    # Make sure you're in the habitat directory
+    . setup.sh
+    # You will be prompted to run tests. You can either choose yes or no. After this, setup is complete.
   
-5. Navigate to and run device specific program
+3. Navigate to and run device specific program
    ```sh
    # For controller
    cd src/controller/examples

@@ -73,13 +73,13 @@ class ControllerInterfaceManager:
         # Start CLI if enabled
         if self.cli_interface == True:
             self.logger.info(f"(INTERFACE MANAGER) Starting manual control loop")
-            self.cli_thread = threading.Thread(target=self.run_manual_control, daemon=True)
+            self.cli_thread = threading.Thread(target=self.run_cli_interface, daemon=True)
             self.cli_thread.start()
 
-    def run_manual_control(self):
+    def run_cli_interface(self):
         """Run the manual control loop"""
         self.logger.info("(INTERFACE MANAGER) Starting manual CLI control loop")
-        while True:
+        while True: # This needs to be in a while loop to continously print the prompt and await user input
             # Get user input
             print("\nEnter a command (type help for list of commands): ", end='', flush=True)
             try:

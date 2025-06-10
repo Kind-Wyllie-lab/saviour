@@ -32,7 +32,7 @@ class WebInterfaceManager:
         # Callbacks
         self.get_modules_callback = None
         self.get_ptp_history_callback = None
-        
+        self.send_command_callback = None
         # Webhook handlers
         self.ptp_update_handlers = []
         self.module_update_handlers = []
@@ -43,10 +43,12 @@ class WebInterfaceManager:
         self.test = False
         self._running = False
 
-    def register_callbacks(self, get_modules=None, get_ptp_history=None):
+    def register_callbacks(self, get_modules=None, get_ptp_history=None, send_command=None, get_module_health=None):
         """Register callbacks for getting data from the command handler"""
         self.get_modules_callback = get_modules
         self.get_ptp_history_callback = get_ptp_history
+        self.send_command_callback = send_command
+        self.get_module_health_callback = get_module_health
 
     def register_ptp_update_handler(self, handler):
         """Register a handler for PTP updates"""
@@ -74,12 +76,10 @@ class WebInterfaceManager:
         if self.get_modules_callback:
             modules = self.get_modules_callback()
             self.logger.info(f"(WEB INTERFACE MANAGER) Got {len(modules)} modules from callback")
-            for handler in self.module_update_handlers:
-                try:
-                    handler(modules)
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Successfully sent module update to handler")
-                except Exception as e:
-                    self.logger.error(f"(WEB INTERFACE MANAGER) Error in module update handler: {e}")
+            
+            # Use socketio.emit instead of individual handlers to ensure proper context
+            self.socketio.emit('module_update', {"modules": modules})
+            self.logger.info(f"(WEB INTERFACE MANAGER) Sent module update to all clients")
 
     def register_routes(self):
         # Main pages
@@ -90,7 +90,7 @@ class WebInterfaceManager:
         # API endpoints
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
-            self.logger.info(f"(WEB INTERFACE MANAGER) Listing modules")
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/list_modules endpoint called. Listing modules")
             modules = self.get_modules()
             self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(modules)} modules")
             return jsonify({"modules": modules})
@@ -98,40 +98,48 @@ class WebInterfaceManager:
         @self.app.route('/api/ptp_history', methods=['GET'])
         def ptp_history():
             """Get PTP history for all modules"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) Getting PTP history")
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/ptp_history endpoint called. Getting PTP history")
             if self.get_ptp_history_callback:
                 history = self.get_ptp_history_callback()
                 self.logger.info(f"(WEB INTERFACE MANAGER) Got PTP history for {len(history)} modules")
                 return jsonify(history)
             return jsonify({})
 
+        @self.app.route('/api/send_command', methods=['POST'])
+        def send_command():
+            """Send a command to a module"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/send_command endpoint called with command: {request.json.get('command')} and module_id: {request.json.get('module_id')}")
+            command = request.json.get('command')
+            module_id = request.json.get('module_id')
+            if self.send_command_callback:
+                self.send_command_callback(module_id, command)
+            else:
+                self.logger.error(f"(WEB INTERFACE MANAGER) No send_command callback registered")
+                return jsonify({"error": "No send_command callback registered"}), 500
+                
+        @self.app.route('/api/module_health', methods=['GET'])
+        def module_health():
+            """Get the health status of all modules"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/module_health endpoint called. Getting module health")
+            if self.get_module_health_callback:
+                health = self.get_module_health_callback()
+                self.logger.info(f"(WEB INTERFACE MANAGER) Got module health for {len(health)} modules")
+                return jsonify(health)
+            return jsonify({})
+
         # WebSocket event handlers
         @self.socketio.on('connect')
         def handle_connect():
             self.logger.info(f"(WEB INTERFACE MANAGER) Client connected")
-            # Register this client for updates
-            def send_ptp_update(history):
-                self.logger.info(f"(WEB INTERFACE MANAGER) Sending PTP update to client")
-                self.socketio.emit('ptp_status', history, room=request.sid)
-            def send_module_update(modules):
-                self.logger.info(f"(WEB INTERFACE MANAGER) Sending module update to client")
-                self.socketio.emit('module_update', {"modules": modules}, room=request.sid)
-            self.register_ptp_update_handler(send_ptp_update)
-            self.register_module_update_handler(send_module_update)
-            self.logger.info(f"(WEB INTERFACE MANAGER) Registered update handlers for new client")
             
             # Send initial module list
             modules = self.get_modules()
             self.logger.info(f"(WEB INTERFACE MANAGER) Sending initial module list to new client: {len(modules)} modules")
-            self.socketio.emit('module_update', {"modules": modules}, room=request.sid)
+            self.socketio.emit('module_update', {"modules": modules})
 
         @self.socketio.on('disconnect')
         def handle_disconnect():
             self.logger.info(f"(WEB INTERFACE MANAGER) Client disconnected")
-            # Remove this client's handlers
-            self.ptp_update_handlers = [h for h in self.ptp_update_handlers if h.__name__ != 'send_ptp_update']
-            self.module_update_handlers = [h for h in self.module_update_handlers if h.__name__ != 'send_module_update']
-            self.logger.info(f"(WEB INTERFACE MANAGER) Removed handlers for disconnected client. Remaining handlers: {len(self.module_update_handlers)}")
 
     def get_modules(self):
         """Get the list of modules"""

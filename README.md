@@ -131,11 +131,12 @@ Detailed usage instructions can be found in the [System Requirements Specificati
 - [X] Develop sensor module interfaces
 - [X] Implement data storage and retrieval
 - [X] Add monitoring and health checks
+- [X] pyproject.toml style setup
 - [ ] Graphical user interface
 - [ ] REST endpoints for synchronisation with webapp and other apps
 - [ ] Reliable PTP synchronisation
 - [ ] Add documentation
-- [ ] manifest.yoml style setup
+
 
 <!-- CONTRIBUTING -->
 ## Contributing

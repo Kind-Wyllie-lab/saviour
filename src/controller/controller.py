@@ -232,6 +232,19 @@ class Controller:
         self.logger.info("(CONTROLLER) Starting interface manager")
         self.interface_manager.start() # This will start a thread to listen for commands from the user
 
+        # Keep the main thread alive
+        try: 
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.logger.info("(CONTROLLER) Keyboard interrupt received. Stopping controller...")
+            self.stop()
+            return False
+        except Exception as e:
+            self.logger.error(f"(CONTROLLER) Error in main thread: {e}")
+            self.stop()
+            return False
+        
         return True
         
     def get_config(self, key: str, default: Any = None) -> Any:

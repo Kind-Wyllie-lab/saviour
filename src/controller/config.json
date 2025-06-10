@@ -45,7 +45,7 @@
     },
     "interface": {
         "cli": true,
-        "web_interface": true,
+        "web_interface": false,
         "web_interface_port": 5000
     }
 } 

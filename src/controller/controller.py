@@ -173,6 +173,7 @@ class Controller:
         try:
             status_data = eval(data)
             status_type = status_data.get('type', 'unknown')
+            self.web_interface_manager.handle_module_status(module_id, status_data)
             match status_type:
                 case 'heartbeat':
                     self.logger.info(f"(CONTROLLER) Heartbeat received from {module_id}")
@@ -180,12 +181,8 @@ class Controller:
                 case 'ptp_status':
                     self.logger.info(f"(CONTROLLER) PTP status received from {module_id}: {status_data}")
                     self.buffer_manager.add_ptp_history(module_id, status_data)
-                case 'camera_settings_updated':
-                    self.logger.info(f"(CONTROLLER) Camera settings updated for {module_id}: {status_data['settings']}")
-                case 'camera_settings_update_failed':
-                    self.logger.error(f"(CONTROLLER) Failed to update camera settings for {module_id}: {status_data['error']}")
                 case _:
-                    self.logger.info(f"(CONTROLLER) Command status from {module_id}: {status_data}")
+                    self.logger.info(f"(CONTROLLER) Unknown status type from {module_id}: {status_type}")
         except Exception as e:
             self.logger.error(f"(CONTROLLER) Error parsing status data for module {module_id}: {e}")
 

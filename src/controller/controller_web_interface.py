@@ -87,7 +87,7 @@ class WebInterfaceManager:
         def index():
             return render_template('index.html')
         
-        # API endpoints
+        # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
             self.logger.info(f"(WEB INTERFACE MANAGER) /api/list_modules endpoint called. Listing modules")
@@ -127,7 +127,7 @@ class WebInterfaceManager:
                 return jsonify(health)
             return jsonify({})
 
-        # WebSocket event handlers
+        # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect():
             self.logger.info(f"(WEB INTERFACE MANAGER) Client connected")
@@ -169,6 +169,37 @@ class WebInterfaceManager:
                     'command': command_type,
                     'module_id': module_id
                 })
+
+        @self.socketio.on('get_modules')
+        def handle_get_modules():
+            """Handle request for module data"""
+            self.logger.info("Client requested module data")
+            self.notify_module_update()
+
+        @self.socketio.on('module_status')
+        def handle_module_status(data):
+            """Handle module status update"""
+            try:
+                self.logger.info(f"Received module status: {data}")
+                if not isinstance(data, dict):
+                    raise ValueError("Status data must be a dictionary")
+                
+                module_id = data.get('module_id')
+                status = data.get('status')
+                
+                if not module_id or not status:
+                    raise ValueError("Status must include 'module_id' and 'status'")
+                
+                # Broadcast status to all clients
+                self.socketio.emit('module_status', {
+                    'module_id': module_id,
+                    'status': status
+                })
+                
+            except Exception as e:
+                self.logger.error(f"Error handling module status: {str(e)}")
+                # Optionally emit error back to client
+                # self.socketio.emit('error', {'message': str(e)})
 
     def get_modules(self):
         """Get the list of modules"""
@@ -219,3 +250,15 @@ class WebInterfaceManager:
             }
             modules.append(module_dict)
         return jsonify({"modules": modules})
+
+    def handle_module_status(self, module_id, status):
+        """Handle status update from a module and emit to frontend"""
+        try:
+            self.logger.info(f"Received status from {module_id}: {status}")
+            # Emit the status to all connected clients
+            self.socketio.emit('module_status', {
+                'module_id': module_id,
+                'status': status
+            })
+        except Exception as e:
+            self.logger.error(f"Error handling module status: {str(e)}")

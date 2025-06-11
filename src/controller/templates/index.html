@@ -145,62 +145,69 @@
             const statusContent = document.getElementById('status-content');
             const timestamp = new Date(data.status.timestamp * 1000).toLocaleString();
             
+            // Create or update the status card for this module
+            let statusCard = document.getElementById(`status-card-${data.module_id}`);
+            if (!statusCard) {
+                statusCard = document.createElement('div');
+                statusCard.id = `status-card-${data.module_id}`;
+                statusCard.className = 'status-card';
+                statusContent.appendChild(statusCard);
+            }
+            
             const statusHTML = `
-                <div class="status-card">
-                    <div class="status-header">
-                        <h3>${data.module_id}</h3>
-                        <span class="status-timestamp">${timestamp}</span>
+                <div class="status-header">
+                    <h3>${data.module_id}</h3>
+                    <span class="status-timestamp">${timestamp}</span>
+                </div>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">CPU Temperature</span>
+                        <span class="status-value">${data.status.cpu_temp}°C</span>
                     </div>
-                    <div class="status-grid">
-                        <div class="status-item">
-                            <span class="status-label">CPU Temperature</span>
-                            <span class="status-value">${data.status.cpu_temp}°C</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">CPU Usage</span>
-                            <span class="status-value">${data.status.cpu_usage}%</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Memory Usage</span>
-                            <span class="status-value">${data.status.memory_usage}%</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Uptime</span>
-                            <span class="status-value">${formatUptime(data.status.uptime)}</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Disk Space</span>
-                            <span class="status-value">${data.status.disk_space}%</span>
-                        </div>
-                        ${data.status.ptp4l_offset !== null ? `
-                            <div class="status-item">
-                                <span class="status-label">PTP4L Offset</span>
-                                <span class="status-value">${data.status.ptp4l_offset}ns</span>
-                            </div>
-                        ` : ''}
-                        ${data.status.ptp4l_freq !== null ? `
-                            <div class="status-item">
-                                <span class="status-label">PTP4L Frequency</span>
-                                <span class="status-value">${data.status.ptp4l_freq}ppb</span>
-                            </div>
-                        ` : ''}
-                        ${data.status.phc2sys_offset !== null ? `
-                            <div class="status-item">
-                                <span class="status-label">PHC2SYS Offset</span>
-                                <span class="status-value">${data.status.phc2sys_offset}ns</span>
-                            </div>
-                        ` : ''}
-                        ${data.status.phc2sys_freq !== null ? `
-                            <div class="status-item">
-                                <span class="status-label">PHC2SYS Frequency</span>
-                                <span class="status-value">${data.status.phc2sys_freq}ppb</span>
-                            </div>
-                        ` : ''}
+                    <div class="status-item">
+                        <span class="status-label">CPU Usage</span>
+                        <span class="status-value">${data.status.cpu_usage}%</span>
                     </div>
+                    <div class="status-item">
+                        <span class="status-label">Memory Usage</span>
+                        <span class="status-value">${data.status.memory_usage}%</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Uptime</span>
+                        <span class="status-value">${formatUptime(data.status.uptime)}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Disk Space</span>
+                        <span class="status-value">${data.status.disk_space}%</span>
+                    </div>
+                    ${data.status.ptp4l_offset !== null ? `
+                        <div class="status-item">
+                            <span class="status-label">PTP4L Offset</span>
+                            <span class="status-value">${data.status.ptp4l_offset}ns</span>
+                        </div>
+                    ` : ''}
+                    ${data.status.ptp4l_freq !== null ? `
+                        <div class="status-item">
+                            <span class="status-label">PTP4L Frequency</span>
+                            <span class="status-value">${data.status.ptp4l_freq}ppb</span>
+                        </div>
+                    ` : ''}
+                    ${data.status.phc2sys_offset !== null ? `
+                        <div class="status-item">
+                            <span class="status-label">PHC2SYS Offset</span>
+                            <span class="status-value">${data.status.phc2sys_offset}ns</span>
+                        </div>
+                    ` : ''}
+                    ${data.status.phc2sys_freq !== null ? `
+                        <div class="status-item">
+                            <span class="status-label">PHC2SYS Frequency</span>
+                            <span class="status-value">${data.status.phc2sys_freq}ppb</span>
+                        </div>
+                    ` : ''}
                 </div>
             `;
             
-            statusContent.innerHTML = statusHTML;
+            statusCard.innerHTML = statusHTML;
         }
 
         function formatUptime(seconds) {
@@ -283,6 +290,9 @@
                 return;
             }
             
+            // Get list of active module IDs for cleanup
+            const activeModuleIds = modules.map(module => module.id);
+            
             modules.forEach(module => {
                 console.log('Creating module element for:', module);
                 const moduleElement = document.createElement('module-item');
@@ -294,6 +304,23 @@
 
             // Update the module selection dialog options
             updateModuleOptions(modules);
+            
+            // Clean up status cards for disconnected modules
+            cleanupDisconnectedModules(activeModuleIds);
+        }
+
+        // Add cleanup for disconnected modules
+        function cleanupDisconnectedModules(activeModules) {
+            const statusContent = document.getElementById('status-content');
+            const statusCards = statusContent.getElementsByClassName('status-card');
+            
+            // Convert HTMLCollection to Array for easier manipulation
+            Array.from(statusCards).forEach(card => {
+                const moduleId = card.id.replace('status-card-', '');
+                if (!activeModules.includes(moduleId)) {
+                    card.remove();
+                }
+            });
         }
 
         // Update the dashboard overview

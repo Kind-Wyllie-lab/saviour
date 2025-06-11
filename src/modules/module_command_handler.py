@@ -122,6 +122,7 @@ class ModuleCommandHandler:
                 uptime = current_time - float(self.start_time)
             
             status = {
+                "type": "get_status",
                 "timestamp": current_time,
                 "cpu_temp": self.health_manager.get_cpu_temp(),
                 "cpu_usage": psutil.cpu_percent(),

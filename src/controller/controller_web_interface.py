@@ -170,11 +170,18 @@ class WebInterfaceManager:
                     'module_id': module_id
                 })
 
-        @self.socketio.on('get_modules')
-        def handle_get_modules():
+        @self.socketio.on('module_update')
+        def handle_module_update():
             """Handle request for module data"""
-            self.logger.info("Client requested module data")
-            self.notify_module_update()
+            self.logger.info(f"(WEB INTERFACE MANAGER) Client requested module data")
+            
+            # Get current modules from callback
+            modules = self.get_modules_callback()
+            self.logger.info(f"(WEB INTERFACE MANAGER) Got {len(modules)} modules from callback")
+            
+            # Send module update to all clients
+            self.socketio.emit('module_update', {'modules': modules})
+            self.logger.info(f"(WEB INTERFACE MANAGER) Sent module update to all clients")
 
         @self.socketio.on('module_status')
         def handle_module_status(data):

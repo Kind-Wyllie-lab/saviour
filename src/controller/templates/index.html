@@ -114,7 +114,7 @@
         // WebSocket event handlers
         socket.on('connect', function() { // When connection is established, log it
             console.log('WebSocket connection established');
-            socket.emit('get_modules'); // Request initial module data
+            socket.emit('module_update'); // Request initial module data
         });
     
         socket.on('disconnect', function() { // When connection is closed, log it
@@ -311,6 +311,7 @@
                 moduleElement.setAttribute('module-id', module.id);
                 moduleElement.setAttribute('module-type', module.type);
                 moduleElement.setAttribute('module-ip', module.ip);
+                moduleElement.setAttribute('recording', module.recording);
                 moduleList.appendChild(moduleElement);
             });
 
@@ -368,7 +369,7 @@
 
         function updatePTPChart(data) {
             console.log('PTP data:', data);
-            // TODO: Implement PTP chart update
+            // TODO: Implement PTP chart 
         }
 
         // Initialize command buttons

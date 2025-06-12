@@ -259,19 +259,25 @@ class ExportManager:
                 'sudo', 'mount', '-t', 'cifs',
                 f'//{controller_ip}/{share_path}',
                 self.mount_point,
-                '-o', f'username={username},password={password}'
+                '-o', f'username={username},password={password},vers=3.0'
             ]
             
-            subprocess.run(mount_cmd, check=True)
+            # Run mount command and capture output
+            result = subprocess.run(mount_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                self.logger.error(f"(EXPORT MANAGER) Failed to mount controller share: {result.stderr}")
+                return False
+                
             self.logger.info(f"(EXPORT MANAGER) Successfully mounted controller share at {self.mount_point}")
             self.current_mount = ExportManager.ExportDestination.CONTROLLER
             return True
             
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"(EXPORT MANAGER) Failed to mount controller share: {e}")
+            self.logger.error(f"(EXPORT MANAGER) Failed to mount controller share: {e.stderr if hasattr(e, 'stderr') else str(e)}")
             return False
         except Exception as e:
-            self.logger.error(f"(EXPORT MANAGER) Controller mount failed: {e}")
+            self.logger.error(f"(EXPORT MANAGER) Controller mount failed: {str(e)}")
             return False
             
     def _mount_nas(self) -> bool:

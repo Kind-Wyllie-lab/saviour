@@ -45,6 +45,7 @@ class WebInterfaceManager:
 
     def register_callbacks(self, get_modules=None, get_ptp_history=None, send_command=None, get_module_health=None):
         """Register callbacks for getting data from the command handler"""
+        # TODO: Swich to dict based callback registration
         self.get_modules_callback = get_modules
         self.get_ptp_history_callback = get_ptp_history
         self.send_command_callback = send_command
@@ -187,7 +188,7 @@ class WebInterfaceManager:
         def handle_module_status(data):
             """Handle module status update"""
             try:
-                self.logger.info(f"Received module status: {data}")
+                self.logger.info(f"(WEB INTERFACE MANAGER) Received module status: {data}")
                 if not isinstance(data, dict):
                     raise ValueError("Status data must be a dictionary")
                 
@@ -195,7 +196,7 @@ class WebInterfaceManager:
                 status = data.get('status')
                 
                 if not module_id or not status:
-                    raise ValueError("Status must include 'module_id' and 'status'")
+                    raise ValueError("(WEB INTERFACE MANAGER) Status must include 'module_id' and 'status'")
                 
                 # Broadcast status to all clients
                 self.socketio.emit('module_status', {
@@ -204,7 +205,7 @@ class WebInterfaceManager:
                 })
                 
             except Exception as e:
-                self.logger.error(f"Error handling module status: {str(e)}")
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error handling module status: {str(e)}")
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
 
@@ -221,7 +222,7 @@ class WebInterfaceManager:
     def start(self):
         """Start the web interface in a separate thread"""
         if not self._running:
-            self.logger.info(f"(WEB INTERFACE) Starting web interface on port {self.port}")
+            self.logger.info(f"(WEB INTERFACE MANAGER) Starting web interface on port {self.port}")
             self._running = True
             self.web_thread = threading.Thread(
                 target=self._run_server,
@@ -261,11 +262,21 @@ class WebInterfaceManager:
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
         try:
-            self.logger.info(f"Received status from {module_id}: {status}")
+            self.logger.info(f"(WEB INTERFACE MANAGER) Received status from {module_id}: {status}")
+
+            # Ensure status has required fields
+            if not isinstance(status, dict):
+                raise ValueError("Status must be a dictionary")
+
+            # DEBUG 120625 Check recording sand streaming are present and boolean
+            if 'recording_status' not in status:
+                self.logger.warning("(WEB INTERFACE MANAGER) Recording status not in received status update.")
+                
+                    
             # Emit the status to all connected clients
             self.socketio.emit('module_status', {
                 'module_id': module_id,
                 'status': status
             })
         except Exception as e:
-            self.logger.error(f"Error handling module status: {str(e)}")
+            self.logger.error(f"(WEB INTERFACE MANAGER) Error handling module status: {str(e)}")

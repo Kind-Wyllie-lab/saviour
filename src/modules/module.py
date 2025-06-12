@@ -254,16 +254,12 @@ class Module:
         
         return True  # Just return True, let child class handle status
 
-    def list_recordings(self):
-        """List all recorded files with metadata"""
+    def _get_recordings_list(self):
+        """Internal method to get list of recordings with metadata"""
         try:
             recordings = []
             if not os.path.exists(self.recording_folder):
-                self.communication_manager.send_status({
-                    "type": "recordings_list",
-                    "recordings": []
-                })
-                return
+                return []
                 
             for filename in os.listdir(self.recording_folder):
                 filepath = os.path.join(self.recording_folder, filename)
@@ -276,6 +272,16 @@ class Module:
             
             # Sort by creation time, newest first
             recordings.sort(key=lambda x: x["created"], reverse=True)
+            return recordings
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error getting recordings list: {e}")
+            raise
+
+    def list_recordings(self):
+        """List all recorded files with metadata and send to controller"""
+        try:
+            recordings = self._get_recordings_list()
             
             # Send status response
             self.communication_manager.send_status({
@@ -307,8 +313,8 @@ class Module:
             if not os.path.exists(self.recording_folder):
                 return {"deleted_count": 0, "kept_count": 0}
                 
-            # Get list of recordings
-            recordings = self.list_recordings()
+            # Get list of recordings using internal method
+            recordings = self._get_recordings_list()
             if not recordings:
                 return {"deleted_count": 0, "kept_count": 0}
                 
@@ -330,7 +336,13 @@ class Module:
                     continue
                     
                 try:
-                    os.remove(recording["path"])
+                    filepath = os.path.join(self.recording_folder, recording["filename"])
+                    os.remove(filepath)
+                    # Also try to remove associated timestamp file if it exists
+                    base_name = os.path.splitext(recording["filename"])[0]
+                    timestamp_file = os.path.join(self.recording_folder, f"{base_name}_timestamps.txt")
+                    if os.path.exists(timestamp_file):
+                        os.remove(timestamp_file)
                     deleted_count += 1
                 except Exception as e:
                     self.logger.error(f"(MODULE) Error deleting recording {recording['filename']}: {e}")

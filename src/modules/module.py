@@ -131,13 +131,23 @@ class Module:
 
         # Control flags
         self.is_running = False  # Start as False
-        self.streaming = False
+        self.recording = False # Flag to indicate if the module is recording e.g. video, TTL, audio, etc.
+        self.streaming = False # Flag to indicate if the module is streaming on a network port e.g. video, TTL, audio, etc.
         
         # Track when module started for uptime calculation
         self.start_time = None
         
         # Data parameters - Thread
         self.stream_thread = None
+
+    def register_callbacks(self, get_recording_status, get_streaming_status):
+        self.command_handler.register_callbacks(self.get_recording_status, self.get_streaming_status)
+    
+    def get_recording_status(self):
+        return self.recording
+    
+    def get_streaming_status(self):
+        return self.streaming
 
     def controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""

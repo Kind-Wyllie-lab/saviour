@@ -64,6 +64,12 @@ class ModuleCommandHandler:
         
         # Callback dictionary - will be set by set_callbacks method
         self.callbacks = {}
+        self.get_recording_status_callback = None
+        self.get_streaming_status_callback = None
+
+    def register_callbacks(self, get_recording_status, get_streaming_status):
+        self.get_recording_status_callback = get_recording_status
+        self.get_streaming_status_callback = get_streaming_status
         
     def set_callbacks(self, callbacks: Dict[str, Callable]):
         """
@@ -90,6 +96,7 @@ class ModuleCommandHandler:
         
         match command:
             case "get_status":
+                self.logger.info("(COMMAND HANDLER) Command identified as get_status, calling _handle_get_status")
                 self._handle_get_status()
             
             case "get_data":
@@ -107,13 +114,20 @@ class ModuleCommandHandler:
             case _:
                 self._handle_unknown_command(command)
 
-    
     def _handle_get_status(self):
         """Handle get_status command"""
-        self.logger.info("(COMMAND HANDLER) Command identified as get_status")
+        self.logger.info("(COMMAND HANDLER) _handle_get_status called")
         try:
             # Get PTP status first
-            ptp_status = self.ptp_manager.get_status()
+            ptp_status = self.ptp_manager.get_status() if self.ptp_manager else {}
+
+            # Get recording and streaming status safely
+            recording_status = False
+            streaming_status = False
+            if self.get_recording_status_callback:
+                recording_status = self.get_recording_status_callback()
+            if self.get_streaming_status_callback:
+                streaming_status = self.get_streaming_status_callback()
             
             # Calculate uptime safely
             current_time = time.time()
@@ -122,9 +136,9 @@ class ModuleCommandHandler:
                 uptime = current_time - float(self.start_time)
             
             status = {
-                "type": "get_status",
+                "type": "status",  # Always include type field
                 "timestamp": current_time,
-                "cpu_temp": self.health_manager.get_cpu_temp(),
+                "cpu_temp": self.health_manager.get_cpu_temp() if self.health_manager else None,
                 "cpu_usage": psutil.cpu_percent(),
                 "memory_usage": psutil.virtual_memory().percent,
                 "uptime": uptime,
@@ -132,13 +146,20 @@ class ModuleCommandHandler:
                 "ptp4l_offset": ptp_status.get('ptp4l_offset'),
                 "ptp4l_freq": ptp_status.get('ptp4l_freq'),
                 "phc2sys_offset": ptp_status.get('phc2sys_offset'),
-                "phc2sys_freq": ptp_status.get('phc2sys_freq')
+                "phc2sys_freq": ptp_status.get('phc2sys_freq'),
+                "recording": recording_status,
+                "streaming": streaming_status,
             }
+            self.logger.info(f"(COMMAND HANDLER) Status: {status}")
             self.communication_manager.send_status(status)
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
-            # Send a minimal status if we can't get all metrics
-            status = {"timestamp": time.time(), "error": str(e)}
+            # Send a minimal status if we can't get all metrics, but always include type
+            status = {
+                "type": "status",
+                "timestamp": time.time(),
+                "error": str(e)
+            }
             self.communication_manager.send_status(status)
     
     def _handle_get_data(self):

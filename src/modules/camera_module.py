@@ -29,6 +29,7 @@ import threading
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
+    # TODO: Is this necessary? Most methods have been moved to the base class. 
     
     def handle_command(self, command: str, **kwargs):
         """Handle camera-specific commands while preserving base functionality"""
@@ -88,9 +89,7 @@ class CameraModule(Module):
         self.export_manager.set_callbacks({
             'get_controller_ip': lambda: self.service_manager.controller_ip
         })
-        
-        # Camera specific variables
-        self.latest_recording = None
+    
 
         # Initialize camera
         self.picam2 = Picamera2()
@@ -120,6 +119,7 @@ class CameraModule(Module):
         # State flags
         self.is_recording = False
         self.is_streaming = False
+        self.latest_recording = None
         self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler

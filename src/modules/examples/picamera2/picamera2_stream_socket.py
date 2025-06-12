@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """
-Demo of a picamera2 stream to a socket.
+Demo of a picamera2 stream to a socket using TCP.
 
 To play it on another pi use 
 ffplay -i tcp://192.168.0.14:10001 -fflags nobuffer -flags low_delay -probesize 32 -sync ext -vf "scale=1280:720:flags=fast_bilinear"

@@ -16,15 +16,15 @@
             <div id="dashboard-overview">
                 <h2>Dashboard Overview</h2>
                 <div id="dashboard-overview-content">
-                    <p>Modules: <span id="number-of-modules">0</span></p>
-                    <p>Camera modules: <span id="number-of-camera-modules">0</span></p>
-                    <p>TTL modules: <span id="number-of-ttl-modules">0</span></p>
+                    <p><span id="number-of-camera-modules">0</span> camera modules,</p>
+                    <p><span id="number-of-ttl-modules">0</span> TTL modules,</p>
+                    <p>and <span id="number-of-modules">0</span> total modules</p>
                 </div>
             </div>
         </div>
         <div class="dashboard-card">
             <div id="module-list">
-                <h2>Discovered Modules</h2>
+                <h2>Connected Modules</h2>
                 <div id="modules"></div>
             </div>
         </div>
@@ -202,6 +202,18 @@
                         <div class="status-item">
                             <span class="status-label">PHC2SYS Frequency</span>
                             <span class="status-value">${data.status.phc2sys_freq}ppb</span>
+                        </div>
+                    ` : ''}
+                    ${data.status.recording !== undefined ? `
+                        <div class="status-item">
+                            <span class="status-label">Recording</span>
+                            <span class="status-value">${data.status.recording ? 'Yes' : 'No'}</span>
+                        </div>
+                    ` : ''}
+                    ${data.status.streaming !== undefined ? `
+                        <div class="status-item">
+                            <span class="status-label">Streaming</span>
+                            <span class="status-value">${data.status.streaming ? 'Yes' : 'No'}</span>
                         </div>
                     ` : ''}
                 </div>

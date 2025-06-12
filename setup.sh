@@ -15,6 +15,11 @@ is_controller() {
     fi
 }
 
+# Synchronize system time before proceeding
+echo "=== Synchronizing System Time ==="
+sudo timedatectl set-ntp true
+sleep 5  # Wait for time sync to complete
+
 # List of required system packages
 SYSTEM_PACKAGES=(
     linuxptp

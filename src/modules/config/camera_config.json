@@ -42,7 +42,7 @@
     },
     "nas": {
         "enabled": true,
-        "host": "192.168.0.16",
+        "host": "192.168.0.2",
         "share": "data",
         "mount_point": "/mnt/nas",
         "export_folder": "videos"

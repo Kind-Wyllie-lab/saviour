@@ -47,5 +47,14 @@
         "auto_shutdown_on_idle": false,
         "idle_timeout_minutes": 30
     },
-    "recording_folder": "rec"
+    "recording_folder": "rec",
+    "recording_filetype": "txt",
+    "controller_share_path": "habitat_share",
+    "controller_username": "pi",
+    "controller_password": "pass",
+    "nas_ip": "192.168.0.2",
+    "nas_share_path": "data",
+    "nas_recordings_path": "recordings",
+    "nas_username": "sidbit",
+    "nas_password": "RaspberryWonder1305"
 } 

@@ -38,19 +38,7 @@ import src.controller.controller_session_manager as controller_session_manager #
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
 from src.modules.module_ptp_manager import PTPManager, PTPRole
-
-class ExportDestination(Enum):
-    """Enum for export destinations"""
-    CONTROLLER = "controller"
-    NAS = "nas"
-
-    @classmethod
-    def from_string(cls, value: str) -> 'ExportDestination':
-        """Convert string to ExportDestination enum"""
-        try:
-            return cls(value.lower())
-        except ValueError:
-            raise ValueError(f"Invalid destination: {value}. Must be one of: {[d.value for d in cls]}")
+from src.modules.module_export_manager import ExportManager
 
 class Module:
     """
@@ -94,7 +82,12 @@ class Module:
         self.logger.info(f"(MODULE) Initialising managers")
         self.logger.info(f"(MODULE) Initialising config manager")
         self.config_manager = ModuleConfigManager(self.logger, self.module_type, self.config_path)
-        self.file_transfer = None  # Will be initialized when controller is discovered
+        self.export_manager = ExportManager(
+            module_id=self.module_id,
+            recording_folder=self.recording_folder,
+            config=self.config_manager.get_all(),
+            logger=self.logger
+        )
         self.logger.info(f"(MODULE) Initialising communication manager")
         self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
             self.logger, # Pass in the logger
@@ -142,6 +135,9 @@ class Module:
             'list_recordings': self.list_recordings,
             'clear_recordings': self.clear_recordings,
             'export_recordings': self.export_recordings
+        })
+        self.export_manager.set_callbacks({
+            'get_controller_ip': lambda: self.service_manager.controller_ip  # or whatever the callback function is
         })
         
         # Recording management
@@ -348,119 +344,66 @@ class Module:
             self.logger.error(f"(MODULE) Error clearing recordings: {e}")
             raise
 
-    def export_recordings(self, filename: str, length: int = 0, destination: ExportDestination = ExportDestination.CONTROLLER):
+    def export_recordings(self, filename: str, length: int = 0, destination: ExportManager.ExportDestination = ExportManager.ExportDestination.CONTROLLER):
         """Export a video to the specified destination
         
         Args:
             filename: Name of the file to export
             length: Optional length of the video
-            destination: Where to export to - ExportDestination.CONTROLLER or ExportDestination.NAS
+            destination: Where to export to - ExportManager.ExportDestination.CONTROLLER or ExportManager.ExportDestination.NAS
             
         Returns:
             bool: True if export successful
         """
         try:
             if filename == "all":
-                # Export all recordings
-                for recording in self.list_recordings():
-                    if destination == ExportDestination.NAS:
-                        self.export_to_nas(recording["filename"])
-                        self.export_to_nas(f"{recording['filename']}_timestamps.txt")
-                    else:
-                        self.send_file(recording["path"], f"videos/{recording['filename']}")
-                        self.send_file(f"{recording['filename']}_timestamps.txt", f"videos/{recording['filename']}_timestamps.txt")
+                # Export all recordings in a single export session
+                if not self.export_manager.export_all_files(destination):
+                    self.communication_manager.send_status({
+                        "type": "export_failed",
+                        "filename": "all",
+                        "error": "Failed to export files"
+                    })
+                    return False
                 return True
+                
             elif filename == "latest":
                 # Export latest recording
                 latest_recording = self.get_latest_recording()
-                if destination == ExportDestination.NAS:
-                    self.export_to_nas(latest_recording["filename"])
-                    self.export_to_nas(f"{latest_recording['filename']}_timestamps.txt")
-                else:
-                    self.send_file(latest_recording["path"], f"videos/{latest_recording['filename']}")
-                    self.send_file(f"{latest_recording['filename']}_timestamps.txt", f"videos/{latest_recording['filename']}_timestamps.txt")
+                if not self.export_manager.export_file(latest_recording["filename"], destination):
+                    self.communication_manager.send_status({
+                        "type": "export_failed",
+                        "filename": latest_recording["filename"],
+                        "error": "Failed to export file"
+                    })
+                    return False
                 return True
                 
-            # Ensure the video file exists
-            filepath = os.path.join(self.recording_folder, filename)
-            if not os.path.exists(filepath):
-                self.logger.error(f"(MODULE) Video file not found: {filepath}")
+            # Export specific file
+            if not self.export_manager.export_file(filename, destination):
                 self.communication_manager.send_status({
-                    "type": "video_export_failed",
-                    "error": f"File not found: {filename}"
+                    "type": "export_failed",
+                    "filename": filename,
+                    "error": "Failed to export file"
                 })
                 return False
-
-            # Get the timestamp file path
-            session_id = filename.split('.')[0]  # Remove extension
-            timestamp_filename = f"{session_id}_timestamps.txt"
-            timestamp_filepath = os.path.join(self.recording_folder, timestamp_filename)
-
-            if destination == ExportDestination.NAS:
-                # Export to NAS
-                success = self.export_to_nas(filename)
-                if success:
-                    # Also export timestamp file if it exists
-                    if os.path.exists(timestamp_filepath):
-                        self.export_to_nas(timestamp_filename)
-                    
-                    self.logger.info(f"(MODULE) Video file and timestamps exported successfully to NAS")
-                    self.communication_manager.send_status({
-                        "type": "video_export_complete",
-                        "filename": filename,
-                        "session_id": self.stream_session_id,
-                        "length": length,
-                        "destination": destination.value,
-                        "has_timestamps": os.path.exists(timestamp_filepath)
-                    })
-                    return True
-                else:
-                    self.logger.error("(MODULE) Failed to export video file to NAS")
-                    self.communication_manager.send_status({
-                        "type": "video_export_failed",
-                        "error": "Failed to export to NAS"
-                    })
-                    return False
-            else:
-                # Export to controller
-                controller_ip = self.get_controller_ip()
-            if not controller_ip:
-                    self.logger.error("(MODULE) Could not find controller IP")
-                    self.communication_manager.send_status({
-                        "type": "video_export_failed",
-                        "error": "Could not find controller IP"
-                    })
-                    return False
-                    
-                # Send the video file
-            success = self.send_file(filepath, f"videos/{filename}")
-            if success:
-                    # Also send timestamp file if it exists
-                    if os.path.exists(timestamp_filepath):
-                        self.send_file(timestamp_filepath, f"videos/{timestamp_filename}")
-                    
-                    self.logger.info(f"(MODULE) Video file and timestamps sent successfully to controller")
-                    self.communication_manager.send_status({
-                        "type": "video_export_complete",
-                        "filename": filename,
-                        "session_id": self.stream_session_id,
-                        "length": length,
-                        "destination": destination.value,
-                        "has_timestamps": os.path.exists(timestamp_filepath)
-                    })
-                    return True
-            else:
-                    self.logger.error("(MODULE) Failed to send video file to controller")
-                    self.communication_manager.send_status({
-                        "type": "video_export_failed",
-                        "error": "Failed to send video file"
-                    })
-                    return False
                 
-        except Exception as e:
-            self.logger.error(f"(MODULE) Error exporting video file: {e}")
+            # Send success status
             self.communication_manager.send_status({
-                "type": "video_export_failed",
+                "type": "video_export_complete",
+                "filename": filename,
+                "session_id": self.stream_session_id,
+                "length": length,
+                "destination": destination.value,
+                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt")
+            })
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error exporting recordings: {e}")
+            self.communication_manager.send_status({
+                "type": "export_failed",
+                "filename": filename,
                 "error": str(e)
             })
             return False
@@ -542,6 +485,10 @@ class Module:
             # Fifth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("(MODULE) Cleaning up communication manager...")
             self.communication_manager.cleanup()
+
+            # Unmount any mounted destination
+            if hasattr(self, 'export_manager'):
+                self.export_manager.unmount()
 
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping module: {e}")

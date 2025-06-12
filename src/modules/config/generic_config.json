@@ -46,5 +46,6 @@
         "low_power_mode_enabled": false,
         "auto_shutdown_on_idle": false,
         "idle_timeout_minutes": 30
-    }
+    },
+    "recording_folder": "rec"
 } 

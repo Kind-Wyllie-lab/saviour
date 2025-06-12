@@ -37,6 +37,23 @@
             </div>
         </div>
         <div class="dashboard-card">
+            <div id="recordings-section">
+                <h2>Recordings</h2>
+                <div class="recordings-container">
+                    <div class="recordings-tabs">
+                        <button class="tab-button active" data-tab="module-recordings">Module Recordings</button>
+                        <button class="tab-button" data-tab="exported-recordings">Exported Recordings</button>
+                    </div>
+                    <div id="module-recordings" class="recordings-content active">
+                        <div class="recordings-list"></div>
+                    </div>
+                    <div id="exported-recordings" class="recordings-content">
+                        <div class="recordings-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="dashboard-card">
             <div id="module-status">
                 <h2>Module Status</h2>
                 <div id="status-content"></div>
@@ -376,6 +393,132 @@
             console.log('PTP data:', data);
             // TODO: Implement PTP chart 
         }
+
+        // Handle recordings list response
+        socket.on('recordings_list', function(data) {
+            // Handle module recordings
+            const moduleRecordingsList = document.querySelector('#module-recordings .recordings-list');
+            if (moduleRecordingsList) {
+                moduleRecordingsList.innerHTML = '';
+                
+                if (!data.module_recordings || data.module_recordings.length === 0) {
+                    moduleRecordingsList.innerHTML = '<p>No recordings found</p>';
+                } else {
+                    const recordingsHTML = data.module_recordings.map(recording => `
+                        <div class="recording-item">
+                            <div class="recording-info">
+                                <span class="recording-name">${recording.filename}</span>
+                                <span class="recording-date">${recording.created}</span>
+                                <span class="recording-size">${formatFileSize(recording.size)}</span>
+                            </div>
+                            <div class="recording-actions">
+                                <button class="action-button export" title="Export Recording" data-filename="${recording.filename}">
+                                    Export
+                                </button>
+                                <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                    moduleRecordingsList.innerHTML = recordingsHTML;
+                }
+            }
+
+            // Handle exported recordings
+            const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
+            if (exportedRecordingsList) {
+                exportedRecordingsList.innerHTML = '';
+                
+                if (!data.exported_recordings || data.exported_recordings.length === 0) {
+                    exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
+                } else {
+                    const recordingsHTML = data.exported_recordings.map(recording => `
+                        <div class="recording-item">
+                            <div class="recording-info">
+                                <span class="recording-name">${recording.filename}</span>
+                                <span class="recording-date">${recording.created}</span>
+                                <span class="recording-size">${formatFileSize(recording.size)}</span>
+                            </div>
+                            <div class="recording-actions">
+                                <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                    exportedRecordingsList.innerHTML = recordingsHTML;
+                }
+            }
+
+            // Add event listeners for the action buttons
+            moduleRecordingsList.querySelectorAll('.action-button.export').forEach(button => {
+                button.addEventListener('click', () => {
+                    const filename = button.dataset.filename;
+                    socket.emit('command', {
+                        type: 'export_recordings',
+                        module_id: 'all',
+                        filename: filename
+                    });
+                });
+            });
+
+            moduleRecordingsList.querySelectorAll('.action-button.delete').forEach(button => {
+                button.addEventListener('click', () => {
+                    const filename = button.dataset.filename;
+                    if (confirm(`Are you sure you want to delete ${filename}?`)) {
+                        socket.emit('command', {
+                            type: 'clear_recordings',
+                            module_id: 'all',
+                            filename: filename
+                        });
+                    }
+                });
+            });
+
+            exportedRecordingsList.querySelectorAll('.action-button.delete').forEach(button => {
+                button.addEventListener('click', () => {
+                    const filename = button.dataset.filename;
+                    if (confirm(`Are you sure you want to delete ${filename}?`)) {
+                        // TODO: Implement delete for exported recordings
+                        alert('Deleting exported recordings is not yet implemented');
+                    }
+                });
+            });
+        });
+
+        // Handle export complete response
+        socket.on('export_complete', function(data) {
+            if (data.success) {
+                // Refresh the recordings list
+                socket.emit('module_update');
+            } else {
+                alert(`Export failed: ${data.error || 'Unknown error'}`);
+            }
+        });
+
+        // Helper function to format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Tab switching functionality
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                // Remove active class from all buttons and contents
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('.recordings-content').forEach(content => content.classList.remove('active'));
+                
+                // Add active class to clicked button and corresponding content
+                button.classList.add('active');
+                const tabId = button.dataset.tab;
+                document.getElementById(tabId).classList.add('active');
+            });
+        });
 
         // Initialize command buttons
         generateCommandButtons();

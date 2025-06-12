@@ -16,6 +16,9 @@ from flask_socketio import SocketIO
 from typing import Any
 import threading
 import json
+import os
+from datetime import datetime
+from pathlib import Path
 
 class WebInterfaceManager:
     def __init__(self, logger: logging.Logger, config_manager):
@@ -42,6 +45,8 @@ class WebInterfaceManager:
         # Test mode
         self.test = False
         self._running = False
+
+        self.habitat_share_dir = Path("../habitat_share")
 
     def register_callbacks(self, get_modules=None, get_ptp_history=None, send_command=None, get_module_health=None):
         """Register callbacks for getting data from the command handler"""
@@ -144,32 +149,32 @@ class WebInterfaceManager:
 
         @self.socketio.on('command')
         def handle_command(data):
-            """Handle incoming WebSocket commands"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
-            
-            if not self.send_command_callback:
-                self.logger.error(f"(WEB INTERFACE MANAGER) No send_command callback registered")
-                return
-            
-            command_type = data.get('type')
-            module_id = data.get('module_id')
-            
-            if not command_type or not module_id:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Invalid command format: {data}")
-                return
-            
+            """Handle command from frontend"""
             try:
-                # Send the command through the callback
-                self.send_command_callback(module_id, command_type)
-                self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command_type} to module {module_id}")
+                command_type = data.get('type')
+                module_id = data.get('module_id')
+                
+                self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
+                
+                # Send command to module
+                if self.send_command_callback:
+                    self.send_command_callback(module_id, command_type)
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command_type} to module {module_id}")
+                    
+                    # If this was a clear_recordings command, request updated list
+                    if command_type == 'clear_recordings':
+                        # Wait a short moment for the deletion to complete
+                        self.socketio.sleep(0.5)
+                        # Request updated recordings list
+                        if self.send_command_callback:
+                            self.send_command_callback(module_id, 'list_recordings')
+                            self.logger.info(f"(WEB INTERFACE MANAGER) Requested updated recordings list after clear")
+                else:
+                    self.logger.error("(WEB INTERFACE MANAGER) No command handler registered")
+                    
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error sending command: {e}")
-                # Optionally emit an error back to the client
-                self.socketio.emit('command_error', {
-                    'error': str(e),
-                    'command': command_type,
-                    'module_id': module_id
-                })
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error handling command: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
 
         @self.socketio.on('module_update')
         def handle_module_update():
@@ -197,6 +202,46 @@ class WebInterfaceManager:
                 
                 if not module_id or not status:
                     raise ValueError("(WEB INTERFACE MANAGER) Status must include 'module_id' and 'status'")
+                
+                # Handle recordings list response
+                if status.get('type') == 'recordings_list':
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recordings list for module {module_id}")
+                    # Get module recordings
+                    module_recordings = status.get('recordings', [])
+                    # Get exported recordings
+                    exported_recordings = self.get_exported_recordings()
+                    
+                    # Send both lists separately
+                    self.socketio.emit('recordings_list', {
+                        'module_id': module_id,
+                        'module_recordings': module_recordings,
+                        'exported_recordings': exported_recordings
+                    })
+                    return
+                
+                # Handle export complete response
+                if status.get('type') == 'export_complete':
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting export complete for module {module_id}")
+                    self.socketio.emit('export_complete', {
+                        'module_id': module_id,
+                        'success': status.get('success', False),
+                        'error': status.get('error'),
+                        'filename': status.get('filename')
+                    })
+                    return
+                
+                # Handle recording started/stopped status
+                if status.get('type') in ['recording_started', 'recording_stopped']:
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recording status for module {module_id}")
+                    self.socketio.emit('module_status', {
+                        'module_id': module_id,
+                        'status': status
+                    })
+                    return
+                
+                # For heartbeat and other status types
+                if 'recording_status' not in status:
+                    self.logger.warning("(WEB INTERFACE MANAGER) Recording status not in received status update.")
                 
                 # Broadcast status to all clients
                 self.socketio.emit('module_status', {
@@ -259,6 +304,20 @@ class WebInterfaceManager:
             modules.append(module_dict)
         return jsonify({"modules": modules})
 
+    def get_exported_recordings(self):
+        """Get list of exported recordings from habitat_share directory"""
+        recordings = []
+        if self.habitat_share_dir.exists():
+            for file in self.habitat_share_dir.glob('**/*'):
+                if file.is_file() and file.suffix in ['.mp4', '.txt']:
+                    recordings.append({
+                        'filename': str(file.relative_to(self.habitat_share_dir)),
+                        'size': file.stat().st_size,
+                        'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                        'is_exported': True
+                    })
+        return recordings
+
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
         try:
@@ -268,11 +327,46 @@ class WebInterfaceManager:
             if not isinstance(status, dict):
                 raise ValueError("Status must be a dictionary")
 
-            # DEBUG 120625 Check recording sand streaming are present and boolean
+            # Handle recordings list response
+            if status.get('type') == 'recordings_list':
+                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recordings list for module {module_id}")
+                # Get module recordings
+                module_recordings = status.get('recordings', [])
+                # Get exported recordings
+                exported_recordings = self.get_exported_recordings()
+                
+                # Send both lists separately
+                self.socketio.emit('recordings_list', {
+                    'module_id': module_id,
+                    'module_recordings': module_recordings,
+                    'exported_recordings': exported_recordings
+                })
+                return
+
+            # Handle export complete response
+            if status.get('type') == 'export_complete':
+                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting export complete for module {module_id}")
+                self.socketio.emit('export_complete', {
+                    'module_id': module_id,
+                    'success': status.get('success', False),
+                    'error': status.get('error'),
+                    'filename': status.get('filename')
+                })
+                return
+
+            # Handle recording started/stopped status
+            if status.get('type') in ['recording_started', 'recording_stopped']:
+                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recording status for module {module_id}")
+                self.socketio.emit('module_status', {
+                    'module_id': module_id,
+                    'status': status
+                })
+                return
+
+            # For heartbeat and other status types
             if 'recording_status' not in status:
                 self.logger.warning("(WEB INTERFACE MANAGER) Recording status not in received status update.")
                 
-                    
             # Emit the status to all connected clients
             self.socketio.emit('module_status', {
                 'module_id': module_id,

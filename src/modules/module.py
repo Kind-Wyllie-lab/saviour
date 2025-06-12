@@ -26,6 +26,8 @@ import psutil
 import asyncio
 from typing import Dict, Any, Optional
 import numpy as np
+from enum import Enum, auto
+import datetime
 
 
 # Import managers
@@ -36,6 +38,19 @@ import src.controller.controller_session_manager as controller_session_manager #
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
 from src.modules.module_ptp_manager import PTPManager, PTPRole
+
+class ExportDestination(Enum):
+    """Enum for export destinations"""
+    CONTROLLER = "controller"
+    NAS = "nas"
+
+    @classmethod
+    def from_string(cls, value: str) -> 'ExportDestination':
+        """Convert string to ExportDestination enum"""
+        try:
+            return cls(value.lower())
+        except ValueError:
+            raise ValueError(f"Invalid destination: {value}. Must be one of: {[d.value for d in cls]}")
 
 class Module:
     """
@@ -50,10 +65,17 @@ class Module:
         config (dict): Configuration parameters for the module
 
     """
-    def __init__(self, module_type: str, config: dict = None, config_file_path: str = None):
+    def __init__(self, module_type: str, config: dict = None, config_path: str = None):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
+        self.config_path = config_path
+        self.recording_folder = "rec"  # Default recording folder
+        
+        # Create recording folder if it doesn't exist
+        if not os.path.exists(self.recording_folder):
+            os.makedirs(self.recording_folder)
+            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
         
         # Setup logging first
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
@@ -69,61 +91,67 @@ class Module:
             self.logger.addHandler(console_handler)
 
         # Managers
-        self.logger.info(f"(MODULE) Initializing managers")
-        self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
+        self.logger.info(f"(MODULE) Initialising managers")
+        self.logger.info(f"(MODULE) Initialising config manager")
+        self.config_manager = ModuleConfigManager(self.logger, self.module_type, self.config_path)
         self.file_transfer = None  # Will be initialized when controller is discovered
+        self.logger.info(f"(MODULE) Initialising communication manager")
         self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
-            self.logger, 
-            self.module_id,
-            # Command handling moved to command_handler
-            config_manager=self.config_manager
+            self.logger, # Pass in the logger
+            self.module_id, # Pass in the module ID for use in messages
+            config_manager=self.config_manager # Pass in the config manager for getting properties
         )
+        self.logger.info(f"(MODULE) Initialising health manager")
         self.health_manager = ModuleHealthManager(
             self.logger, 
             config_manager=self.config_manager,
             communication_manager=self.communication_manager
         )
+        self.logger.info(f"(MODULE) Initialising PTP manager")
         self.ptp_manager = PTPManager(
             logger=self.logger,
             role=PTPRole.SLAVE)
-
-        # Initialize command handler if not already set
-        if not hasattr(self, 'command_handler'):
+        if not hasattr(self, 'command_handler'): # Initialize command handler if not already set - extensions of module class might set their own command handler
+            self.logger.info(f"(MODULE) Initialising command handler")
             self.command_handler = ModuleCommandHandler(
                 self.logger,
                 self.module_id,
                 self.module_type,
-                communication_manager=self.communication_manager,
-                health_manager=self.health_manager,
                 config_manager=self.config_manager,
-                ptp_manager=self.ptp_manager,
                 start_time=None # Will be set during start()
             )
-
-        # Bind health manager's callback to the ptp_manager method
-        self.health_manager.get_ptp_offsets = self.ptp_manager.get_status
-
-        # Set the callback in the communication manager to use the command handler
-        self.communication_manager.command_callback = self.command_handler.handle_command
-        
-        # Define callbacks for the command handler
-        self.command_handler.set_callbacks({
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'samplerate': self.config_manager.get("module.samplerate", 200),
-            'ptp_status': self.ptp_manager.get_status()
-        })
-        
-        # Lazy import and initialization of ServiceManager to avoid circular imports
-        from src.modules.module_service_manager import ModuleServiceManager
+        from src.modules.module_service_manager import ModuleServiceManager # Lazy import and initialization of ServiceManager to avoid circular imports
+        self.logger.info(f"(MODULE) Initialising service manager")
         self.service_manager = ModuleServiceManager(self.logger, self)
-        
+        self.logger.info(f"(MODULE) Initialising service manager")
         self.session_manager = controller_session_manager.SessionManager()
 
-        # Session management
-        self.stream_session_id = None
+        # Register Callbacks
+        self.health_manager.get_ptp_offsets = self.ptp_manager.get_status # Bind health manager's callback to the ptp_manager method
+        self.communication_manager.command_callback = self.command_handler.handle_command # Set the callback in the communication manager to use the command handler
+        self.command_handler.set_callbacks({ # Define callbacks for the command handler
+            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id), # 
+            'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
+            'get_ptp_status': self.ptp_manager.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+            'get_streaming_status': lambda: self.is_streaming,
+            'get_recording_status': lambda: self.is_recording,
+            'send_status': lambda status: self.communication_manager.send_status(status),
+            'get_health': self.health_manager.get_health,
+            'start_recording': self.start_recording,
+            'stop_recording': self.stop_recording,
+            'list_recordings': self.list_recordings,
+            'clear_recordings': self.clear_recordings,
+            'export_recordings': self.export_recordings
+        })
+        
+        # Recording management
+        self.recording_session_id = None
+        self.current_filename = None
 
         # Parameters from config
         self.samplerate = self.config_manager.get("module.samplerate")
+        self.recording_folder = self.config_manager.get("recording_folder")
+        self.recording_filetype = self.config_manager.get(f"{self.module_type}.file_format", None) # Find the appropriate filetype for this module type, 
 
         # Control flags
         self.is_running = False  # Start as False
@@ -132,16 +160,6 @@ class Module:
         
         # Track when module started for uptime calculation
         self.start_time = None
-        
-        # Data parameters - Thread
-        self.stream_thread = None
-
-        # Recording folder
-        self.recording_folder = self.config_manager.get("recording_folder")
-
-    def register_callbacks(self, get_recording_status, get_streaming_status):
-        self.command_handler.register_callbacks(self.get_recording_status, self.get_streaming_status)
-
 
     def controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -199,31 +217,254 @@ class Module:
         self.communication_manager.cleanup()
         self.file_transfer = None
         self.is_running = False
-        self.streaming = False
-        self.stream_thread = None
+        self.is_streaming = False
 
 
     # Recording functions
-    def start_recording(self):
+    def start_recording(self) -> Optional[str]:
+        """
+        Start recording. Should be extended with module-specific implementation.
+        Returns the filename if setup was successful, None otherwise.
+        """
+        # Check not already recording
         if self.is_recording:
             self.logger.info("(MODULE) Already recording")
+            self.communication_manager.send_status({
+                "type": "recording_start_failed",
+                "error": "Already recording"
+            })
+            return None
+        
+        # Set up recording - filename and folder
+        self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
+        self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
+        os.makedirs(self.recording_folder, exist_ok=True)
+        
+        return self.current_filename  # Just return filename, let child class handle status
+
+    def stop_recording(self) -> bool:
+        """
+        Stop recording. Should be extended with module-specific implementation.
+        Returns True if ready to stop, False otherwise.
+        """
+        # Check if recording
+        if not self.is_recording:
+            self.logger.info("(MODULE) Already stopped recording")
+            self.communication_manager.send_status({
+                "type": "recording_stop_failed",
+                "error": "Not recording"
+            })
             return False
         
-        # Generate new session ID for this recording
-        self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
-        
-        # Create filename using just the session ID
-        filename = f"{self.recording_folder}/{self.stream_session_id}.{self.video_filetype}"
-        
-        # Ensure recording directory exists
-        os.makedirs(self.recording_folder, exist_ok=True)
+        return True  # Just return True, let child class handle status
 
-    def get_recording_status(self):
-        return self.is_recording
-    
-    def get_streaming_status(self):
-        return self.is_streaming
+    def list_recordings(self):
+        """List all recorded files with metadata"""
+        try:
+            recordings = []
+            if not os.path.exists(self.recording_folder):
+                self.communication_manager.send_status({
+                    "type": "recordings_list",
+                    "recordings": []
+                })
+                return
+                
+            for filename in os.listdir(self.recording_folder):
+                filepath = os.path.join(self.recording_folder, filename)
+                stat = os.stat(filepath)
+                recordings.append({
+                    "filename": filename,
+                    "size": stat.st_size,
+                    "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                })
+            
+            # Sort by creation time, newest first
+            recordings.sort(key=lambda x: x["created"], reverse=True)
+            
+            # Send status response
+            self.communication_manager.send_status({
+                "type": "recordings_list",
+                "recordings": recordings
+            })
+            
+            return recordings
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error listing recordings: {e}")
+            self.communication_manager.send_status({
+                "type": "recordings_list_failed",
+                "error": str(e)
+            })
+            raise
+
+    def clear_recordings(self, older_than: int = None, keep_latest: int = 0):
+        """Clear old recordings
         
+        Args:
+            older_than: Optional timestamp - delete recordings older than this
+            keep_latest: Optional number of latest recordings to keep
+            
+        Returns:
+            dict with deleted_count and kept_count
+        """
+        try:
+            if not os.path.exists(self.recording_folder):
+                return {"deleted_count": 0, "kept_count": 0}
+                
+            # Get list of recordings
+            recordings = self.list_recordings()
+            if not recordings:
+                return {"deleted_count": 0, "kept_count": 0}
+                
+            # Sort by creation time, newest first
+            recordings.sort(key=lambda x: x["created"], reverse=True)
+            
+            deleted_count = 0
+            kept_count = 0
+            
+            # Keep the latest N recordings if specified
+            if keep_latest > 0:
+                kept_recordings = recordings[:keep_latest]
+                recordings = recordings[keep_latest:]
+                kept_count = len(kept_recordings)
+            
+            # Delete recordings older than timestamp if specified
+            for recording in recordings:
+                if older_than and recording["created"] >= older_than:
+                    continue
+                    
+                try:
+                    os.remove(recording["path"])
+                    deleted_count += 1
+                except Exception as e:
+                    self.logger.error(f"(MODULE) Error deleting recording {recording['filename']}: {e}")
+            
+            return {
+                "deleted_count": deleted_count,
+                "kept_count": kept_count
+            }
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error clearing recordings: {e}")
+            raise
+
+    def export_recordings(self, filename: str, length: int = 0, destination: ExportDestination = ExportDestination.CONTROLLER):
+        """Export a video to the specified destination
+        
+        Args:
+            filename: Name of the file to export
+            length: Optional length of the video
+            destination: Where to export to - ExportDestination.CONTROLLER or ExportDestination.NAS
+            
+        Returns:
+            bool: True if export successful
+        """
+        try:
+            if filename == "all":
+                # Export all recordings
+                for recording in self.list_recordings():
+                    if destination == ExportDestination.NAS:
+                        self.export_to_nas(recording["filename"])
+                        self.export_to_nas(f"{recording['filename']}_timestamps.txt")
+                    else:
+                        self.send_file(recording["path"], f"videos/{recording['filename']}")
+                        self.send_file(f"{recording['filename']}_timestamps.txt", f"videos/{recording['filename']}_timestamps.txt")
+                return True
+            elif filename == "latest":
+                # Export latest recording
+                latest_recording = self.get_latest_recording()
+                if destination == ExportDestination.NAS:
+                    self.export_to_nas(latest_recording["filename"])
+                    self.export_to_nas(f"{latest_recording['filename']}_timestamps.txt")
+                else:
+                    self.send_file(latest_recording["path"], f"videos/{latest_recording['filename']}")
+                    self.send_file(f"{latest_recording['filename']}_timestamps.txt", f"videos/{latest_recording['filename']}_timestamps.txt")
+                return True
+                
+            # Ensure the video file exists
+            filepath = os.path.join(self.recording_folder, filename)
+            if not os.path.exists(filepath):
+                self.logger.error(f"(MODULE) Video file not found: {filepath}")
+                self.communication_manager.send_status({
+                    "type": "video_export_failed",
+                    "error": f"File not found: {filename}"
+                })
+                return False
+
+            # Get the timestamp file path
+            session_id = filename.split('.')[0]  # Remove extension
+            timestamp_filename = f"{session_id}_timestamps.txt"
+            timestamp_filepath = os.path.join(self.recording_folder, timestamp_filename)
+
+            if destination == ExportDestination.NAS:
+                # Export to NAS
+                success = self.export_to_nas(filename)
+                if success:
+                    # Also export timestamp file if it exists
+                    if os.path.exists(timestamp_filepath):
+                        self.export_to_nas(timestamp_filename)
+                    
+                    self.logger.info(f"(MODULE) Video file and timestamps exported successfully to NAS")
+                    self.communication_manager.send_status({
+                        "type": "video_export_complete",
+                        "filename": filename,
+                        "session_id": self.stream_session_id,
+                        "length": length,
+                        "destination": destination.value,
+                        "has_timestamps": os.path.exists(timestamp_filepath)
+                    })
+                    return True
+                else:
+                    self.logger.error("(MODULE) Failed to export video file to NAS")
+                    self.communication_manager.send_status({
+                        "type": "video_export_failed",
+                        "error": "Failed to export to NAS"
+                    })
+                    return False
+            else:
+                # Export to controller
+                controller_ip = self.get_controller_ip()
+            if not controller_ip:
+                    self.logger.error("(MODULE) Could not find controller IP")
+                    self.communication_manager.send_status({
+                        "type": "video_export_failed",
+                        "error": "Could not find controller IP"
+                    })
+                    return False
+                    
+                # Send the video file
+            success = self.send_file(filepath, f"videos/{filename}")
+            if success:
+                    # Also send timestamp file if it exists
+                    if os.path.exists(timestamp_filepath):
+                        self.send_file(timestamp_filepath, f"videos/{timestamp_filename}")
+                    
+                    self.logger.info(f"(MODULE) Video file and timestamps sent successfully to controller")
+                    self.communication_manager.send_status({
+                        "type": "video_export_complete",
+                        "filename": filename,
+                        "session_id": self.stream_session_id,
+                        "length": length,
+                        "destination": destination.value,
+                        "has_timestamps": os.path.exists(timestamp_filepath)
+                    })
+                    return True
+            else:
+                    self.logger.error("(MODULE) Failed to send video file to controller")
+                    self.communication_manager.send_status({
+                        "type": "video_export_failed",
+                        "error": "Failed to send video file"
+                    })
+                    return False
+                
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error exporting video file: {e}")
+            self.communication_manager.send_status({
+                "type": "video_export_failed",
+                "error": str(e)
+            })
+            return False
+
     # Start and stop functions
     def start(self) -> bool:
         """

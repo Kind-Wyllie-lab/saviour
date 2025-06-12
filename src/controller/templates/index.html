@@ -207,13 +207,13 @@
                     ${data.status.recording !== undefined ? `
                         <div class="status-item">
                             <span class="status-label">Recording</span>
-                            <span class="status-value">${data.status.recording ? 'Yes' : 'No'}</span>
+                            <span class="status-value">${data.status.recording_status ? 'Yes' : 'No'}</span>
                         </div>
                     ` : ''}
                     ${data.status.streaming !== undefined ? `
                         <div class="status-item">
                             <span class="status-label">Streaming</span>
-                            <span class="status-value">${data.status.streaming ? 'Yes' : 'No'}</span>
+                            <span class="status-value">${data.status.streaming_status ? 'Yes' : 'No'}</span>
                         </div>
                     ` : ''}
                 </div>

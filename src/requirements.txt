@@ -63,7 +63,7 @@ more-itertools==8.10.0
 multidict==6.4.4
 mypy==1.0.1
 mypy-extensions==0.4.3
-numpy==1.24.3
+numpy==2.3.0
 oauthlib==3.2.2
 olefile==0.46
 packaging==25.0
@@ -126,7 +126,7 @@ ruamel.yaml.clib==0.2.12
 Send2Trash==1.8.1b0
 sense-hat==2.6.0
 simple-websocket==1.1.0
-simplejpeg==1.8.1
+simplejpeg==1.8.2
 simplejson==3.18.3
 six==1.16.0
 smbus2==0.4.2

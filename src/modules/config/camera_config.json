@@ -47,5 +47,5 @@
         "mount_point": "/mnt/nas",
         "export_folder": "videos"
     },
-    "video_folder": "rec"
+    "recording_folder": "rec"
 }

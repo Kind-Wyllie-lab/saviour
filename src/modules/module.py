@@ -71,7 +71,6 @@ class Module:
         # Managers
         self.logger.info(f"(MODULE) Initializing managers")
         self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
-        self.config = config or {} # Store direct config reference for backwards compatibility
         self.file_transfer = None  # Will be initialized when controller is discovered
         self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
             self.logger, 
@@ -109,8 +108,6 @@ class Module:
         
         # Define callbacks for the command handler
         self.command_handler.set_callbacks({
-            'read_data': self.read_fake_data,
-            'stream_data': self.stream_data,
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
             'samplerate': self.config_manager.get("module.samplerate", 200),
             'ptp_status': self.ptp_manager.get_status()
@@ -126,13 +123,12 @@ class Module:
         self.stream_session_id = None
 
         # Parameters from config
-        # self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval")
         self.samplerate = self.config_manager.get("module.samplerate")
 
         # Control flags
         self.is_running = False  # Start as False
-        self.recording = False # Flag to indicate if the module is recording e.g. video, TTL, audio, etc.
-        self.streaming = False # Flag to indicate if the module is streaming on a network port e.g. video, TTL, audio, etc.
+        self.is_recording = False # Flag to indicate if the module is recording e.g. video, TTL, audio, etc.
+        self.is_streaming = False # Flag to indicate if the module is streaming on a network port e.g. video, TTL, audio, etc.
         
         # Track when module started for uptime calculation
         self.start_time = None
@@ -140,14 +136,12 @@ class Module:
         # Data parameters - Thread
         self.stream_thread = None
 
+        # Recording folder
+        self.recording_folder = self.config_manager.get("recording_folder")
+
     def register_callbacks(self, get_recording_status, get_streaming_status):
         self.command_handler.register_callbacks(self.get_recording_status, self.get_streaming_status)
-    
-    def get_recording_status(self):
-        return self.recording
-    
-    def get_streaming_status(self):
-        return self.streaming
+
 
     def controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -199,6 +193,7 @@ class Module:
 
     def controller_disconnected(self):
         """Callback when controller is disconnected"""
+        # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
         self.logger.info("(MODULE) Controller disconnected")
         self.ptp_manager.stop()
         self.communication_manager.cleanup()
@@ -206,8 +201,30 @@ class Module:
         self.is_running = False
         self.streaming = False
         self.stream_thread = None
-        
 
+
+    # Recording functions
+    def start_recording(self):
+        if self.is_recording:
+            self.logger.info("(MODULE) Already recording")
+            return False
+        
+        # Generate new session ID for this recording
+        self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+        
+        # Create filename using just the session ID
+        filename = f"{self.recording_folder}/{self.stream_session_id}.{self.video_filetype}"
+        
+        # Ensure recording directory exists
+        os.makedirs(self.recording_folder, exist_ok=True)
+
+    def get_recording_status(self):
+        return self.is_recording
+    
+    def get_streaming_status(self):
+        return self.is_streaming
+        
+    # Start and stop functions
     def start(self) -> bool:
         """
         Start the module.
@@ -299,64 +316,3 @@ class Module:
         mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
-    
-    # Sensor data methods
-    def stream_data(self):
-        """Function to continuously read and transmit data"""
-        while self.streaming:
-            data=str(self.read_fake_data())
-            self.communication_manager.send_data(data)
-            time.sleep(self.samplerate/1000)
-
-    def read_fake_data(self): 
-        """Stand in for future sensor integration. Returns a random float between 0 and 1."""
-        return random.random()
-    
-    def read_fake_camera_frame(self):
-        """Generate fake camera frame data"""
-        # Create random 640x480 RGB frame
-        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        return frame.tobytes()  # Convert to bytes for transmission
-
-    def read_fake_audio(self):
-        """Generate fake audio samples"""
-        # Generate 1 second of fake audio at 192kHz
-        samples = np.random.uniform(-1, 1, 192000)
-        return samples.tobytes()
-
-    def read_fake_rfid(self):
-        """Generate fake RFID readings"""
-        tags = ['A1B2C3D4', 'E5F6G7H8', 'I9J0K1L2']
-        return random.choice(tags)
-
-    def read_fake_ttl(self):
-        """Generate fake TTL I/O readings"""
-        digital_in = [random.choice([0, 1]) for _ in range(8)]  # 8 digital inputs
-        analog_in = [random.uniform(0, 5) for _ in range(4)]    # 4 analog inputs (0-5V)
-        return {
-            'digital': digital_in,
-            'analog': analog_in
-        }
-
-
-    def send_file(self, filepath: str, remote_path: str = None) -> bool:
-        """Send a file to the controller"""
-        if not self.file_transfer:
-            self.logger.error("File transfer not initialized - controller not discovered")
-            return False
-            
-        try:
-            # Create a new event loop for this thread if needed
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            # Run the file transfer
-            success = loop.run_until_complete(self.file_transfer.send_file(filepath, remote_path))
-            return success
-        except Exception as e:
-            self.logger.error(f"Error sending file: {e}")
-            return False
-            

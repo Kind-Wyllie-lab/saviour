@@ -362,19 +362,17 @@ class CameraModule(Module):
 
         # State flags
         self.is_recording = False
+        self.is_streaming = False
         self.nas_mounted = False
         self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
         self.command_handler.set_callbacks({
-            'read_data': super().read_fake_data,  # Use base module's read_fake_data
-            'stream_data': self.stream_data,
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
             'samplerate': self.config_manager.get("module.samplerate", 200),
             'ptp_status': self.ptp_manager.get_status,
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
-            'record_video': self.record_video,
             'export_recordings': self.export_recordings,
             'handle_update_camera_settings': self.handle_update_camera_settings,
             'list_recordings': self.list_recordings,
@@ -420,72 +418,72 @@ class CameraModule(Module):
             self.logger.error(f"(MODULE) Error configuring camera: {e}")
             return False
                 
-    def record_video(self, length: int = 10):
-        """Record a video for a specific duration"""
-        if length == 0:
-            # If length is 0, start continuous recording
-            filename = self.start_recording()
-            if filename:
-                # Don't send completion message for continuous recording
-                return filename
-            return None
+    # def record_video(self, length: int = 10):
+    #     """Record a video for a specific duration"""
+    #     if length == 0:
+    #         # If length is 0, start continuous recording
+    #         filename = self.start_recording()
+    #         if filename:
+    #             # Don't send completion message for continuous recording
+    #             return filename
+    #         return None
         
-        # Otherwise, record for specified duration
-        self.logger.info(f"(MODULE) Starting video recording for {length} seconds")
+    #     # Otherwise, record for specified duration
+    #     self.logger.info(f"(MODULE) Starting video recording for {length} seconds")
         
-        # Generate new session ID for this recording
-        self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
+    #     # Generate new session ID for this recording
+    #     self.stream_session_id = self.session_manager.generate_session_id(self.module_id)
         
-        # Create filename using just the session ID
-        filename = f"{self.video_folder}/{self.stream_session_id}.{self.video_filetype}"
-        self.latest_recording = filename
+    #     # Create filename using just the session ID
+    #     filename = f"{self.video_folder}/{self.stream_session_id}.{self.video_filetype}"
+    #     self.latest_recording = filename
         
-        # Ensure recording directory exists
-        os.makedirs(self.video_folder, exist_ok=True)
+    #     # Ensure recording directory exists
+    #     os.makedirs(self.video_folder, exist_ok=True)
         
-        try:
-            # Start recording
-            self.picam2.start_recording(self.encoder, filename)
-            self.logger.info(f"(MODULE) Recording started to {filename}")
+    #     try:
+    #         # Start recording
+    #         self.picam2.start_recording(self.encoder, filename)
+    #         self.logger.info(f"(MODULE) Recording started to {filename}")
             
-            # Record and capture FrameWallClock during recording
-            start_time = time.time()
-            self.frame_times = []
+    #         # Record and capture FrameWallClock during recording
+    #         start_time = time.time()
+    #         self.frame_times = []
             
-            while time.time() - start_time < length:
-                metadata = self.picam2.capture_metadata()
-                frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-                if frame_wall_clock != 'No data':
-                    self.frame_times.append(frame_wall_clock)
+    #         while time.time() - start_time < length:
+    #             metadata = self.picam2.capture_metadata()
+    #             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+    #             if frame_wall_clock != 'No data':
+    #                 self.frame_times.append(frame_wall_clock)
             
-            # Stop recording
-            self.picam2.stop_recording()
+    #         # Stop recording
+    #         self.picam2.stop_recording()
             
-            # Save timestamps
-            timestamps_file = f"{self.video_folder}/{self.stream_session_id}_timestamps.txt"
-            np.savetxt(timestamps_file, self.frame_times)
+    #         # Save timestamps
+    #         timestamps_file = f"{self.video_folder}/{self.stream_session_id}_timestamps.txt"
+    #         np.savetxt(timestamps_file, self.frame_times)
             
-            self.logger.info(f"(MODULE) Video recording completed successfully: {filename}")
-            self.logger.info(f"(MODULE) Captured {len(self.frame_times)} frames")
+    #         self.logger.info(f"(MODULE) Video recording completed successfully: {filename}")
+    #         self.logger.info(f"(MODULE) Captured {len(self.frame_times)} frames")
             
-            # Send status update
-            self.communication_manager.send_status({
-                "type": "video_recording_complete",
-                "filename": filename,
-                "length": length,
-                "session_id": self.stream_session_id,
-                "frame_count": len(self.frame_times)
-            })
+    #         # Send status update
+    #         self.communication_manager.send_status({
+    #             "type": "video_recording_complete",
+    #             "filename": filename,
+    #             "length": length,
+    #             "session_id": self.stream_session_id,
+    #             "frame_count": len(self.frame_times)
+    #         })
             
-            return filename
+    #         return filename
                 
-        except Exception as e:
-            self.logger.error(f"(MODULE) Error during video recording: {e}")
-            self.communication_manager.send_status({
-                "type": "video_recording_failed",
-                "error": str(e)
-            })
-            return None
+    #     except Exception as e:
+    #         self.logger.error(f"(MODULE) Error during video recording: {e}")
+    #         self.communication_manager.send_status({
+    #             "type": "video_recording_failed",
+    #             "error": str(e)
+    #         })
+    #         return None
     
     def export_recordings(self, filename: str, length: int = 0, destination: str = "controller"):
         """Export a video to the specified destination
@@ -734,13 +732,6 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"(MODULE) Error setting camera parameters: {e}")
             return False
-        
-    def read_fake_camera_frame(self):
-        """Generate fake camera frame data"""
-        # Create random 640x480 RGB frame
-        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        # Convert to base64 string for safe transmission
-        return base64.b64encode(frame.tobytes()).decode('utf-8')
         
     def handle_update_camera_settings(self, params: dict) -> bool:
         """Handle update_camera_settings command"""

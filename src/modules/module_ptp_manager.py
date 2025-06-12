@@ -417,33 +417,38 @@ class PTPManager:
                             if abs(self.ptp4l_offset) > self.ptp4l_offset_warning_threshold:
                                 self.logger.warning(f"(PTP MANAGER) Warning: ptp4l offset {self.ptp4l_offset}ns exceeded threshold value {self.ptp4l_offset_warning_threshold}ns")
                                 self.ptp4l_threshold_flag = True
+                                time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
                         if self.ptp4l_freq is not None:
                             if abs(self.ptp4l_freq) > self.ptp4l_freq_warning_threshold:
                                 self.logger.warning(f"(PTP MANAGER) Warning: ptp4l freq {self.ptp4l_freq}ppb exceeded threshold value {self.ptp4l_freq_warning_threshold}ppb")
                                 self.ptp4l_threshold_flag = True
+                                time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
                         if self.ptp4l_threshold_flag == True:
                             if self.ptp4l_freq is not None and self.ptp4l_offset is not None:
                                 if abs(self.ptp4l_freq) < self.ptp4l_freq_warning_threshold and abs(self.ptp4l_offset) < self.ptp4l_offset_warning_threshold:
                                     self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.ptp4l_freq}ppb and {self.ptp4l_offset}ns")
                                     self.ptp4l_threshold_flag = False
+                                    time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
                     elif name == 'phc2sys':
                         if self.phc2sys_offset is not None:
                             if abs(self.phc2sys_offset) > self.phc2sys_offset_warning_threshold:
                                 self.logger.warning(f"(PTP MANAGER) Warning: phc2sys offset {self.phc2sys_offset}ns exceeded threshold value {self.phc2sys_offset_warning_threshold}ns")
                                 self.phc2sys_threshold_flag = True  
+                                time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
                         if self.phc2sys_freq is not None:
                             if abs(self.phc2sys_freq) > self.phc2sys_freq_warning_threshold:
                                 self.logger.warning(f"(PTP MANAGER) Warning: phc2sys freq {self.phc2sys_freq}ppb exceeded threshold value {self.phc2sys_freq_warning_threshold}ppb")
                                 self.phc2sys_threshold_flag = True
+                                time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
                         if self.phc2sys_threshold_flag == True:
                             if self.phc2sys_freq is not None and self.phc2sys_offset is not None:
                                 if abs(self.phc2sys_freq) < self.phc2sys_freq_warning_threshold and abs(self.phc2sys_offset) < self.phc2sys_offset_warning_threshold:
                                     self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.phc2sys_freq}ppb and {self.phc2sys_offset}ns")
                                     self.phc2sys_threshold_flag = False
+                                    time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
                                 
                                 
-                                
-            time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
+            time.sleep(0.2) # Sleep for 0.2 seconds to avoid busy-waiting
 
     def stop(self):
         """Stop PTP processes and clean up"""

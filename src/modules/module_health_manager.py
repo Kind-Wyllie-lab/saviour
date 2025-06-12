@@ -72,7 +72,7 @@ class ModuleHealthManager:
         """Internal method: Loop sending heartbeats until stopped"""
         self.logger.info("(HEALTH MANAGER) Heartbeat thread started")
         last_heartbeat_time = 0
-        check_interval = 0.1  # Check for stop flag every 100ms
+        check_interval = 0.1  # Check for stop flag every 10ms
         
         while self.heartbeats_active:
             current_time = time.time()
@@ -81,20 +81,19 @@ class ModuleHealthManager:
                 try:
                         self.logger.info("(HEALTH MANAGER) Sending heartbeat")
                         status = self.get_health()
+                        status['type'] = 'heartbeat' # Add type field to identify heartbeat status
                         self.communication_manager.send_status(status)
                         last_heartbeat_time = current_time
                 except Exception as e:
                         self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
             
-            # Sleep for a short interval rather than the full heartbeat interval
-            # This allows for quicker response to stop requests
+            # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
             time.sleep(check_interval)
     
     def get_health(self):
-        """Get health metrics for the module to be sent as heartbeat"""
+        """Get health metrics for the module"""
         ptp_status = self.get_ptp_offsets()
         return {
-            "type": "heartbeat",  # Add type field to identify heartbeat status
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
             'cpu_usage': psutil.cpu_percent(),

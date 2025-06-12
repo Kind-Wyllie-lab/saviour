@@ -47,5 +47,14 @@
         "mount_point": "/mnt/nas",
         "export_folder": "videos"
     },
-    "recording_folder": "rec"
+    "recording_folder": "rec",
+    "recording_filetype": "mp4",
+    "controller_share_path": "habitat_share",
+    "controller_username": "pi",
+    "controller_password": "pass",
+    "nas_ip": "192.168.0.2",
+    "nas_share_path": "data",
+    "nas_recordings_path": "recordings",
+    "nas_username": "sidbit",
+    "nas_password": "RaspberryWonder1305"
 }

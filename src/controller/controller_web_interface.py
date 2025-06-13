@@ -92,47 +92,7 @@ class WebInterfaceManager:
         @self.app.route('/')
         def index():
             return render_template('index.html')
-        
-        # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
-        @self.app.route('/api/list_modules', methods=['GET'])
-        def list_modules():
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/list_modules endpoint called. Listing modules")
-            modules = self.get_modules()
-            self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(modules)} modules")
-            return jsonify({"modules": modules})
-
-        @self.app.route('/api/ptp_history', methods=['GET'])
-        def ptp_history():
-            """Get PTP history for all modules"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/ptp_history endpoint called. Getting PTP history")
-            if self.get_ptp_history_callback:
-                history = self.get_ptp_history_callback()
-                self.logger.info(f"(WEB INTERFACE MANAGER) Got PTP history for {len(history)} modules")
-                return jsonify(history)
-            return jsonify({})
-
-        @self.app.route('/api/send_command', methods=['POST'])
-        def send_command():
-            """Send a command to a module"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/send_command endpoint called with command: {request.json.get('command')} and module_id: {request.json.get('module_id')}")
-            command = request.json.get('command')
-            module_id = request.json.get('module_id')
-            if self.send_command_callback:
-                self.send_command_callback(module_id, command)
-            else:
-                self.logger.error(f"(WEB INTERFACE MANAGER) No send_command callback registered")
-                return jsonify({"error": "No send_command callback registered"}), 500
-                
-        @self.app.route('/api/module_health', methods=['GET'])
-        def module_health():
-            """Get the health status of all modules"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/module_health endpoint called. Getting module health")
-            if self.get_module_health_callback:
-                health = self.get_module_health_callback()
-                self.logger.info(f"(WEB INTERFACE MANAGER) Got module health for {len(health)} modules")
-                return jsonify(health)
-            return jsonify({})
-
+    
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect():
@@ -155,13 +115,19 @@ class WebInterfaceManager:
             try:
                 command_type = data.get('type')
                 module_id = data.get('module_id')
+                params = data.get('params', [])
                 
                 self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
                 
+                # Format command with parameters
+                command = command_type
+                if params:
+                    command = f"{command_type} {' '.join(str(p) for p in params)}"
+                
                 # Send command to module
                 if self.send_command_callback:
-                    self.send_command_callback(module_id, command_type)
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command_type} to module {module_id}")
+                    self.send_command_callback(module_id, command)
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command} to module {module_id}")
                     
                     # If this was a clear_recordings command, request updated list
                     if command_type == 'clear_recordings':
@@ -255,6 +221,47 @@ class WebInterfaceManager:
                 self.logger.error(f"(WEB INTERFACE MANAGER) Error handling module status: {str(e)}")
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
+
+        # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
+        @self.app.route('/api/list_modules', methods=['GET'])
+        def list_modules():
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/list_modules endpoint called. Listing modules")
+            modules = self.get_modules()
+            self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(modules)} modules")
+            return jsonify({"modules": modules})
+
+        @self.app.route('/api/ptp_history', methods=['GET'])
+        def ptp_history():
+            """Get PTP history for all modules"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/ptp_history endpoint called. Getting PTP history")
+            if self.get_ptp_history_callback:
+                history = self.get_ptp_history_callback()
+                self.logger.info(f"(WEB INTERFACE MANAGER) Got PTP history for {len(history)} modules")
+                return jsonify(history)
+            return jsonify({})
+
+        @self.app.route('/api/send_command', methods=['POST'])
+        def send_command():
+            """Send a command to a module"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/send_command endpoint called with command: {request.json.get('command')} and module_id: {request.json.get('module_id')}")
+            command = request.json.get('command')
+            module_id = request.json.get('module_id')
+            if self.send_command_callback:
+                self.send_command_callback(module_id, command)
+            else:
+                self.logger.error(f"(WEB INTERFACE MANAGER) No send_command callback registered")
+                return jsonify({"error": "No send_command callback registered"}), 500
+                
+        @self.app.route('/api/module_health', methods=['GET'])
+        def module_health():
+            """Get the health status of all modules"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) /api/module_health endpoint called. Getting module health")
+            if self.get_module_health_callback:
+                health = self.get_module_health_callback()
+                self.logger.info(f"(WEB INTERFACE MANAGER) Got module health for {len(health)} modules")
+                return jsonify(health)
+            return jsonify({})
+
 
     def get_modules(self):
         """Get the list of modules"""

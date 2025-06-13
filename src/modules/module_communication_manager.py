@@ -116,6 +116,7 @@ class ModuleCommunicationManager:
 
     def listen_for_commands(self):
         """Listen for commands from the controller"""
+        # Commands look like cmd/<module_id> <command> <params>
         self.logger.info("(COMMUNICATION MANAGER) Starting command listener thread")
         while self.command_listener_running:
             try:

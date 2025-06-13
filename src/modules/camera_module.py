@@ -128,7 +128,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                 return
 
         # If not a camera-specific command, pass to parent class
-        super().handle_command(command, **kwargs)
+        super().handle_command(command)
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None, config_file_path=None):
@@ -175,6 +175,7 @@ class CameraModule(Module):
             })
             
         # Configure camera
+        time.sleep(0.1)
         self.configure_camera()
         time.sleep(0.1)
 

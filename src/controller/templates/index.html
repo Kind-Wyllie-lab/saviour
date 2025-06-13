@@ -173,6 +173,11 @@
             displayModuleStatus(data);
         });
 
+        socket.on('client_ip', function(ip) {
+            clientIP = ip;
+            console.log('Received client IP:', ip);
+        });
+
         function displayModuleStatus(data) {
             const statusContent = document.getElementById('status-content');
             const timestamp = new Date(data.status.timestamp * 1000).toLocaleString();
@@ -307,6 +312,16 @@
                 type: currentCommand,
                 module_id: moduleId
             };
+
+            // Add IP and port for streaming commands
+            if (currentCommand === 'start_streaming') {
+                if (!clientIP) {
+                    alert('Client IP not available. Please refresh the page and try again.');
+                    return;
+                }
+                command.params = [clientIP, 10001]; // Default port 10001
+            }
+
             console.log('Sending command:', command);
             socket.emit('command', command);
             currentCommand = null;

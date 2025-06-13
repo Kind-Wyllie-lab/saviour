@@ -68,6 +68,58 @@ class CameraCommandHandler(ModuleCommandHandler):
                         "error": str(e)
                     })
                 return
+            case "start_streaming":
+                try:
+                    # Extract IP and port from command
+                    params = command.split()[1:]
+                    receiver_ip = params[0]
+                    port = int(params[1]) if len(params) > 1 else 10001
+                    
+                    if 'start_streaming' in self.callbacks:
+                        success = self.callbacks['start_streaming'](receiver_ip, port)
+                        if success:
+                            self.communication_manager.send_status({
+                                "type": "streaming_started",
+                                "receiver_ip": receiver_ip,
+                                "port": port
+                            })
+                        else:
+                            self.communication_manager.send_status({
+                                "type": "streaming_start_failed",
+                                "error": "Failed to start streaming"
+                            })
+                    else:
+                        self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
+                        self.communication_manager.send_status({
+                            "type": "streaming_start_failed",
+                            "error": "Module not configured for streaming"
+                        })
+                except Exception as e:
+                    self.logger.error(f"(COMMAND HANDLER) Error starting stream: {e}")
+                    self.communication_manager.send_status({
+                        "type": "streaming_start_failed",
+                        "error": str(e)
+                    })
+                return
+            case "stop_streaming":
+                if 'stop_streaming' in self.callbacks:
+                    success = self.callbacks['stop_streaming']()
+                    if success:
+                        self.communication_manager.send_status({
+                            "type": "streaming_stopped"
+                        })
+                    else:
+                        self.communication_manager.send_status({
+                            "type": "streaming_stop_failed",
+                            "error": "Failed to stop streaming"
+                        })
+                else:
+                    self.logger.error("(COMMAND HANDLER) No stop_streaming callback provided")
+                    self.communication_manager.send_status({
+                        "type": "streaming_stop_failed",
+                        "error": "Module not configured for streaming"
+                    })
+                return
 
         # If not a camera-specific command, pass to parent class
         super().handle_command(command, **kwargs)
@@ -316,12 +368,16 @@ class CameraModule(Module):
         """Get the latest recording"""
         return self.latest_recording
 
-    def start_streaming(self, receiver_ip: str, port: int = 10001) -> bool:
+    def start_streaming(self, receiver_ip: str = None, port: int = 10001) -> bool:
         """Start streaming video over network"""
         try:
             if self.is_streaming:
                 self.logger.warning("(MODULE) Already streaming")
                 return False
+
+            # Use controller IP if no receiver_ip provided
+            if receiver_ip is None:
+                receiver_ip = self.service_manager.controller_ip
 
             # Create network output
             self.network_output = FfmpegOutput(f"-f mpegts udp://{receiver_ip}:{port}")

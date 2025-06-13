@@ -27,125 +27,151 @@ import threading
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput, FfmpegOutput
+import json
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
     
-    def __init__(self, logger, module_id, module_type, config_manager, start_time):
+    def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
         super().__init__(logger, module_id, module_type, config_manager, start_time)
         self.logger.info("(CAMERA COMMAND HANDLER) Initialised")
 
-    def handle_command(self, command: str, **kwargs):
+    def handle_command(self, command: str):
         """Handle camera-specific commands while preserving base functionality"""
         self.logger.info("(CAMERA COMMAND HANDLER) Checking for camera specific commands.")
-        # Handle camera-specific commands
-        match command.split()[0]:  # Split and take first word to match command
-            case "update_camera_settings":
-                self.logger.info("(CAMERA COMMAND HANDLER) Command identified as update camera settings.")
-                try:
-                    # Extract parameters from command string
-                    params_str = command.split(' ', 1)[1]  # Get everything after the command name
-                    params = eval(params_str)  # Convert string representation back to dict
-                    if 'handle_update_camera_settings' in self.callbacks:
-                        success = self.callbacks['handle_update_camera_settings'](params)
-                        if success:
-                            self.communication_manager.send_status({
-                                "type": "camera_settings_updated",
-                                "settings": params,
-                                "success": True
-                            })
-                        else:
-                            self.communication_manager.send_status({
-                                "type": "camera_settings_update_failed",
-                                "error": "Failed to update settings"
-                            })
-                    else:
-                        self.logger.error("(COMMAND HANDLER) No handle_update_camera_settings callback provided")
-                        self.communication_manager.send_status({
-                            "type": "camera_settings_update_failed",
-                            "error": "Module not configured for camera settings"
-                        })
-                except Exception as e:
-                    self.logger.error(f"(COMMAND HANDLER) Error parsing camera settings: {e}")
-                    self.communication_manager.send_status({
-                        "type": "camera_settings_update_failed",
-                        "error": str(e)
-                    })
-                return
-            case "start_streaming":
-                self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
-                try:
-                    # Extract IP and port from command
-                    params = command.split()[1:]
-                    receiver_ip = params[0]
-                    port = int(params[1]) if len(params) > 1 else 10001
+        
+        try:
+            # Parse command and parameters
+            parts = command.split()
+            cmd = parts[0]
+            params = parts[1:] if len(parts) > 1 else []
+            
+            # Handle camera-specific commands
+            match cmd:
+                case "update_camera_settings":
+                    self._handle_update_camera_settings(params)
+                case "start_streaming":
+                    self._handle_start_streaming(params)
+                case "stop_streaming":
+                    self._handle_stop_streaming()
+                case _:
+                    # If not a camera-specific command, pass to parent class
+                    super().handle_command(command)
                     
-                    if 'start_streaming' in self.callbacks:
-                        success = self.callbacks['start_streaming'](receiver_ip, port)
-                        if success:
-                            self.communication_manager.send_status({
-                                "type": "streaming_started",
-                                "receiver_ip": receiver_ip,
-                                "port": port
-                            })
-                        else:
-                            self.communication_manager.send_status({
-                                "type": "streaming_start_failed",
-                                "error": "Failed to start streaming"
-                            })
-                    else:
-                        self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
-                        self.communication_manager.send_status({
-                            "type": "streaming_start_failed",
-                            "error": "Module not configured for streaming"
-                        })
-                except Exception as e:
-                    self.logger.error(f"(COMMAND HANDLER) Error starting stream: {e}")
-                    self.communication_manager.send_status({
-                        "type": "streaming_start_failed",
-                        "error": str(e)
-                    })
-                return
-            case "stop_streaming":
-                self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
-                if 'stop_streaming' in self.callbacks:
-                    success = self.callbacks['stop_streaming']()
-                    if success:
-                        self.communication_manager.send_status({
-                            "type": "streaming_stopped"
-                        })
-                    else:
-                        self.communication_manager.send_status({
-                            "type": "streaming_stop_failed",
-                            "error": "Failed to stop streaming"
-                        })
-                else:
-                    self.logger.error("(COMMAND HANDLER) No stop_streaming callback provided")
-                    self.communication_manager.send_status({
-                        "type": "streaming_stop_failed",
-                        "error": "Module not configured for streaming"
-                    })
-                return
+        except Exception as e:
+            self._handle_error(e)
 
-        # If not a camera-specific command, pass to parent class
-        super().handle_command(command)
+    def _handle_update_camera_settings(self, params: list):
+        """Handle update_camera_settings command"""
+        self.logger.info("(CAMERA COMMAND HANDLER) Command identified as update_camera_settings")
+        try:
+            if not params:
+                raise ValueError("No settings provided for update_camera_settings")
+            
+            settings = json.loads(params[0])
+            if 'handle_update_camera_settings' in self.callbacks:
+                success = self.callbacks['handle_update_camera_settings'](settings)
+                if success:
+                    self.callbacks["send_status"]({
+                        "type": "camera_settings_updated",
+                        "settings": settings,
+                        "success": True
+                    })
+                else:
+                    self.callbacks["send_status"]({
+                        "type": "camera_settings_update_failed",
+                        "error": "Failed to update settings"
+                    })
+            else:
+                self.logger.error("(CAMERA COMMAND HANDLER) No handle_update_camera_settings callback provided")
+                self.callbacks["send_status"]({
+                    "type": "camera_settings_update_failed",
+                    "error": "Module not configured for camera settings"
+                })
+        except json.JSONDecodeError:
+            self.logger.error("(COMMAND HANDLER) Invalid JSON in update_camera_settings command")
+            self.callbacks["send_status"]({
+                "type": "camera_settings_update_failed",
+                "error": "Invalid JSON format"
+            })
+        except Exception as e:
+            self.logger.error(f"(CAMERA COMMAND HANDLER) Error updating camera settings: {str(e)}")
+            self.callbacks["send_status"]({
+                "type": "camera_settings_update_failed",
+                "error": str(e)
+            })
+
+    def _handle_start_streaming(self, params: list):
+        """Handle start_streaming command"""
+        self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
+        try:
+            # Default to localhost if no IP provided
+            receiver_ip = params[0] if params else "127.0.0.1"
+            port = int(params[1]) if len(params) > 1 else 10001
+            
+            if 'start_streaming' in self.callbacks:
+                success = self.callbacks['start_streaming'](receiver_ip, port)
+                if success:
+                    self.callbacks["send_status"]({
+                        "type": "streaming_started",
+                        "receiver_ip": receiver_ip,
+                        "port": port
+                    })
+                else:
+                    self.callbacks["send_status"]({
+                        "type": "streaming_start_failed",
+                        "error": "Failed to start streaming"
+                    })
+            else:
+                self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
+                self.callbacks["send_status"]({
+                    "type": "streaming_start_failed",
+                    "error": "Module not configured for streaming"
+                })
+        except Exception as e:
+            self.logger.error(f"(COMMAND HANDLER) Error starting stream: {str(e)}")
+            self.callbacks["send_status"]({
+                "type": "streaming_start_failed",
+                "error": str(e)
+            })
+
+    def _handle_stop_streaming(self):
+        """Handle stop_streaming command"""
+        self.logger.info("(CAMERA COMMAND HANDLER) Command identified as stop_streaming")
+        if 'stop_streaming' in self.callbacks:
+            success = self.callbacks['stop_streaming']()
+            if success:
+                self.callbacks["send_status"]({
+                    "type": "streaming_stopped"
+                })
+            else:
+                self.callbacks["send_status"]({
+                    "type": "streaming_stop_failed",
+                    "error": "Failed to stop streaming"
+                })
+        else:
+            self.logger.error("(COMMAND HANDLER) No stop_streaming callback provided")
+            self.callbacks["send_status"]({
+                "type": "streaming_stop_failed",
+                "error": "Module not configured for streaming"
+            })
 
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None, config_file_path=None):
-        # Call the parent class constructor first
+        # Initialize command handler before parent class
+        self.command_handler = CameraCommandHandler(
+            logger=logging.getLogger(f"{module_type}.{self.generate_module_id(module_type)}"),
+            module_id=self.generate_module_id(module_type),
+            module_type=module_type,
+            config_manager=None,  # Will be set by parent class
+            start_time=None  # Will be set during start()
+        )
+        
+        # Call the parent class constructor
         super().__init__(module_type, config, config_file_path)
         
         # Set up callbacks
         self.callbacks = {}
-        
-        # Replace the base command handler with our camera-specific one
-        self.command_handler = CameraCommandHandler(
-            logger=self.logger,
-            module_id=self.module_id,
-            module_type=self.module_type,
-            config_manager=self.config_manager,
-            start_time=self.start_time,
-        )
         
         # Set up export manager callbacks
         self.export_manager.set_callbacks({
@@ -204,6 +230,8 @@ class CameraModule(Module):
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming
         })
+
+        self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command_handler.callbacks}")
 
     def configure_camera(self):
         """Configure the camera with current settings"""

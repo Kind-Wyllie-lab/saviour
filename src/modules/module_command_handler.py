@@ -58,12 +58,6 @@ class ModuleCommandHandler:
         
         # Callback dictionary - will be set by set_callbacks method
         self.callbacks = {}
-        self.get_recording_status_callback = None
-        self.get_streaming_status_callback = None
-
-    def register_callbacks(self, get_recording_status, get_streaming_status):
-        self.get_recording_status_callback = get_recording_status
-        self.get_streaming_status_callback = get_streaming_status
         
     def set_callbacks(self, callbacks: Dict[str, Callable]):
         """

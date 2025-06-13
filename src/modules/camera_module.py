@@ -30,14 +30,18 @@ from picamera2.outputs import FileOutput, FfmpegOutput
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
-    # TODO: Is this necessary? Most methods have been moved to the base class. 
     
+    def __init__(self, logger, module_id, module_type, config_manager, start_time):
+        super().__init__(logger, module_id, module_type, config_manager, start_time)
+        self.logger.info("(CAMERA COMMAND HANDLER) Initialised")
+
     def handle_command(self, command: str, **kwargs):
         """Handle camera-specific commands while preserving base functionality"""
-        
+        self.logger.info("(CAMERA COMMAND HANDLER) Checking for camera specific commands.")
         # Handle camera-specific commands
         match command.split()[0]:  # Split and take first word to match command
             case "update_camera_settings":
+                self.logger.info("(CAMERA COMMAND HANDLER) Command identified as update camera settings.")
                 try:
                     # Extract parameters from command string
                     params_str = command.split(' ', 1)[1]  # Get everything after the command name
@@ -69,6 +73,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                     })
                 return
             case "start_streaming":
+                self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
                 try:
                     # Extract IP and port from command
                     params = command.split()[1:]
@@ -102,6 +107,7 @@ class CameraCommandHandler(ModuleCommandHandler):
                     })
                 return
             case "stop_streaming":
+                self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
                 if 'stop_streaming' in self.callbacks:
                     success = self.callbacks['stop_streaming']()
                     if success:
@@ -129,13 +135,16 @@ class CameraModule(Module):
         # Call the parent class constructor first
         super().__init__(module_type, config, config_file_path)
         
+        # Set up callbacks
+        self.callbacks = {}
+        
         # Replace the base command handler with our camera-specific one
         self.command_handler = CameraCommandHandler(
             logger=self.logger,
             module_id=self.module_id,
             module_type=self.module_type,
             config_manager=self.config_manager,
-            start_time=self.start_time
+            start_time=self.start_time,
         )
         
         # Set up export manager callbacks
@@ -368,16 +377,12 @@ class CameraModule(Module):
         """Get the latest recording"""
         return self.latest_recording
 
-    def start_streaming(self, receiver_ip: str = None, port: int = 10001) -> bool:
+    def start_streaming(self, receiver_ip: str, port: int = 10001) -> bool:
         """Start streaming video over network"""
         try:
             if self.is_streaming:
                 self.logger.warning("(MODULE) Already streaming")
                 return False
-
-            # Use controller IP if no receiver_ip provided
-            if receiver_ip is None:
-                receiver_ip = self.service_manager.controller_ip
 
             # Create network output
             self.network_output = FfmpegOutput(f"-f mpegts udp://{receiver_ip}:{port}")

@@ -23,9 +23,10 @@ import numpy as np
 import base64
 import signal
 import shutil
+import threading
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
-import threading
+from picamera2.outputs import FileOutput, FfmpegOutput
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
@@ -137,7 +138,9 @@ class CameraModule(Module):
             'clear_recordings': self.clear_recordings,
             'export_recordings': self.export_recordings,
             'handle_update_camera_settings': self.handle_update_camera_settings,  # Camera specific
-            'get_latest_recording': self.get_latest_recording  # Camera specific
+            'get_latest_recording': self.get_latest_recording,  # Camera specific
+            'start_streaming': self.start_streaming,
+            'stop_streaming': self.stop_streaming
         })
 
     def configure_camera(self):
@@ -150,18 +153,18 @@ class CameraModule(Module):
             
             # Create video configuration
             config = self.picam2.create_video_configuration(
-                main={"size": (width, height)}
+                main={"size": (width, height)},
+                lores={"size": (640, 360)} # Lower, #TODO: take this from config
             )
             
             # Apply configuration
             self.picam2.configure(config)
             
-            # Create encoder with current settings
+            # Create encoders with current settings
             bitrate = self.config_manager.get("camera.bitrate", 10000000)
-            self.encoder = H264Encoder(
-                bitrate=bitrate
-            )
-            
+            self.main_encoder = H264Encoder(bitrate=bitrate)
+            self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
+
             self.logger.info("(MODULE) Camera configured successfully")
             return True
             
@@ -177,8 +180,12 @@ class CameraModule(Module):
             return False
         
         try:
-            # Start recording with camera-specific code
-            self.picam2.start_recording(self.encoder, filename)
+            # Create file output
+            self.file_output = FileOutput(filename)
+            self.main_encoder.output = self.file_output
+            
+            # Start recording
+            self.picam2.start_encoder(self.main_encoder, name="main")
             self.is_recording = True
             self.recording_start_time = time.time()
             self.frame_times = []
@@ -308,6 +315,52 @@ class CameraModule(Module):
     def get_latest_recording(self):
         """Get the latest recording"""
         return self.latest_recording
+
+    def start_streaming(self, receiver_ip: str, port: int = 10001) -> bool:
+        """Start streaming video over network"""
+        try:
+            if self.is_streaming:
+                self.logger.warning("(MODULE) Already streaming")
+                return False
+
+            # Create network output
+            self.network_output = FfmpegOutput(f"-f mpegts udp://{receiver_ip}:{port}")
+            self.lores_encoder.output = self.network_output
+            
+            # Start streaming
+            self.picam2.start_encoder(self.lores_encoder, name="lores")
+            self.is_streaming = True
+            
+            self.communication_manager.send_status({
+                "type": "streaming_started",
+                "receiver_ip": receiver_ip,
+                "port": port
+            })
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error starting stream: {e}")
+            return False
+
+    def stop_streaming(self) -> bool:
+        """Stop streaming video"""
+        try:
+            if not self.is_streaming:
+                return False
+            
+            self.picam2.stop_encoder(self.lores_encoder)
+            self.is_streaming = False
+            
+            self.communication_manager.send_status({
+                "type": "streaming_stopped"
+            })
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error stopping stream: {e}")
+            return False
 
     def stop(self) -> bool:
         """Stop the module and cleanup"""

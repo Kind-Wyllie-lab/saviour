@@ -430,62 +430,93 @@ class CameraModule(Module):
             if not receiver_ip:
                 receiver_ip = self.service_manager.controller_ip
             if not port:
-                port = self.config.get('streaming', {}).get('port', 8554)
+                port = self.config_manager.get('streaming.port', 8554)
             
             # Convert port to integer
             try:
                 port = int(port)
             except (ValueError, TypeError):
                 self.logger.error(f"(MODULE) Invalid port number: {port}")
+                self.communication_manager.send_status({
+                    'type': 'streaming_start_failed',
+                    'error': f"Invalid port number: {port}"
+                })
                 return False
 
             self.logger.info(f"(MODULE) Starting streaming to {receiver_ip}:{port}")
 
-            # Create network output
-            self.network_output = FfmpegOutput(f"-f mpegts udp://{receiver_ip}:{port}")
+            # Start the camera if not already running
+            if not self.picam2.started:
+                self.picam2.start()
+                time.sleep(0.1)  # Give camera time to start
+
+            # Create network output with explicit format and codec settings
+            ffmpeg_cmd = (
+                f"-f mpegts "
+                f"-c:v h264 "
+                f"-preset ultrafast "
+                f"-tune zerolatency "
+                f"-profile:v high "
+                f"-level:v 4.2 "
+                f"-b:v {self.config_manager.get('camera.bitrate', 1000000)} "
+                f"-g 30 "  # Keyframe interval
+                f"-sc_threshold 0 "  # Scene change threshold
+                f"-f mpegts "
+                f"udp://{receiver_ip}:{port}"
+            )
+            self.network_output = FfmpegOutput(ffmpeg_cmd)
             self.lores_encoder.output = self.network_output
 
-            
             # Start streaming
             self.picam2.start_encoder(self.lores_encoder, name="lores")
             self.is_streaming = True
             
             # Send streaming status
-            if self.communication_manager:
-                self.communication_manager.send_status({
-                    'type': 'streaming_started',
-                    'receiver_ip': receiver_ip,
-                    'port': port
-                })
+            self.communication_manager.send_status({
+                'type': 'streaming_started',
+                'receiver_ip': receiver_ip,
+                'port': port,
+                'status': 'success',
+                'message': f'Streaming started to {receiver_ip}:{port}'
+            })
             
             return True
             
         except Exception as e:
             self.logger.error(f"(CAMERA MODULE) Error starting streaming: {str(e)}")
-            if self.communication_manager:
-                self.communication_manager.send_status({
-                    'type': 'error',
-                    'message': f"Failed to start streaming: {str(e)}"
-                })
+            self.communication_manager.send_status({
+                'type': 'streaming_start_failed',
+                'status': 'error',
+                'error': f"Failed to start streaming: {str(e)}"
+            })
             return False
 
     def stop_streaming(self) -> bool:
         """Stop streaming video"""
         try:
             if not self.is_streaming:
+                self.logger.warning("(MODULE) Not currently streaming")
                 return False
             
+            # Stop the encoder
             self.picam2.stop_encoder(self.lores_encoder)
             self.is_streaming = False
             
             self.communication_manager.send_status({
-                "type": "streaming_stopped"
+                "type": "streaming_stopped",
+                "status": "success",
+                "message": "Streaming stopped successfully"
             })
             
             return True
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping stream: {e}")
+            self.communication_manager.send_status({
+                "type": "streaming_stopped",
+                "status": "error",
+                "error": f"Failed to stop streaming: {str(e)}"
+            })
             return False
 
     def stop(self) -> bool:

@@ -7,7 +7,7 @@
         "profile": "high",
         "level": 4.2,
         "bitrate": 8000000,
-        "file_format": "mp4"
+        "file_format": "h264"
     },
     "recording": {
         "segment_length_seconds": 600,
@@ -30,7 +30,7 @@
         "export_folder": "videos"
     },
     "recording_folder": "rec",
-    "recording_filetype": "mp4",
+    "recording_filetype": "h264",
     "controller_share_path": "habitat_share",
     "controller_username": "pi",
     "controller_password": "pass",

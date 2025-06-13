@@ -106,22 +106,14 @@ class CameraCommandHandler(ModuleCommandHandler):
         self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
         try:
             # Default to localhost if no IP provided
-            receiver_ip = params[0] if params else "127.0.0.1"
-            port = int(params[1]) if len(params) > 1 else 10001
+            receiver_ip = params[0] if params else None
+            # Add a check for a controller transmitting it's own IP
+            if receiver_ip == "127.0.0.1":
+                receiver_ip = None # There is a check for this in camera_module.py
+            port = params[1] if len(params) > 1 else "10001"
             
             if 'start_streaming' in self.callbacks:
-                success = self.callbacks['start_streaming'](receiver_ip, port)
-                if success:
-                    self.callbacks["send_status"]({
-                        "type": "streaming_started",
-                        "receiver_ip": receiver_ip,
-                        "port": port
-                    })
-                else:
-                    self.callbacks["send_status"]({
-                        "type": "streaming_start_failed",
-                        "error": "Failed to start streaming"
-                    })
+                self.callbacks['start_streaming'](receiver_ip, port)
             else:
                 self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
                 self.callbacks["send_status"]({
@@ -228,7 +220,8 @@ class CameraModule(Module):
             'handle_update_camera_settings': self.handle_update_camera_settings,  # Camera specific
             'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming
+            'stop_streaming': self.stop_streaming,
+            'get_controller_ip': self.service_manager.controller_ip
         })
 
         self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command_handler.callbacks}")
@@ -270,6 +263,11 @@ class CameraModule(Module):
             return False
         
         try:
+            # Start the camera if not already running
+            if not self.picam2.started:
+                self.picam2.start()
+                time.sleep(0.1)  # Give camera time to start
+            
             # Create file output
             self.file_output = FileOutput(filename)
             self.main_encoder.output = self.file_output
@@ -278,7 +276,7 @@ class CameraModule(Module):
             self.picam2.start_encoder(self.main_encoder, name="main")
             self.is_recording = True
             self.recording_start_time = time.time()
-            self.frame_times = []
+            self.frame_times = []  # Reset frame times
             
             # Start frame capture thread
             self.capture_thread = threading.Thread(target=self._capture_frames)
@@ -306,6 +304,8 @@ class CameraModule(Module):
         """Background thread to capture frame timestamps"""
         while self.is_recording:
             try:
+                # Request a frame to ensure we get metadata
+                self.picam2.capture_metadata()
                 metadata = self.picam2.capture_metadata()
                 frame_wall_clock = metadata.get('FrameWallClock', 'No data')
                 if frame_wall_clock != 'No data':
@@ -322,7 +322,7 @@ class CameraModule(Module):
         
         try:
             # Stop recording with camera-specific code
-            self.picam2.stop_recording()
+            self.picam2.stop_encoder(self.main_encoder)
             
             # Stop frame capture thread
             self.is_recording = False
@@ -330,27 +330,39 @@ class CameraModule(Module):
                 self.capture_thread.join(timeout=1.0)
             
             # Calculate duration
-            duration = time.time() - self.recording_start_time
-            
-            # Save timestamps
-            timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
-            np.savetxt(timestamps_file, self.frame_times)
-            
-            # Send status response after successful recording stop
-            self.communication_manager.send_status({
-                "type": "recording_stopped",
-                "filename": self.current_filename,
-                "session_id": self.recording_session_id,
-                "duration": duration,
-                "frame_count": len(self.frame_times)
-            })
-            
-            return True
+            if self.recording_start_time is not None:
+                duration = time.time() - self.recording_start_time
+                
+                # Save timestamps
+                timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
+                np.savetxt(timestamps_file, self.frame_times)
+                
+                # Send status response after successful recording stop
+                self.communication_manager.send_status({
+                    "type": "recording_stopped",
+                    "filename": self.current_filename,
+                    "session_id": self.recording_session_id,
+                    "duration": duration,
+                    "frame_count": len(self.frame_times),
+                    "status": "success",
+                    "message": f"Recording completed successfully with {len(self.frame_times)} frames"
+                })
+                
+                return True
+            else:
+                self.logger.error("(MODULE) Error: recording_start_time was None")
+                self.communication_manager.send_status({
+                    "type": "recording_stopped",
+                    "status": "error",
+                    "error": "Recording start time was not set, so could not create timestamps."
+                })
+                return False
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping recording: {e}")
             self.communication_manager.send_status({
-                "type": "recording_stop_failed",
+                "type": "recording_stopped",
+                "status": "error",
                 "error": str(e)
             })
             return False
@@ -406,31 +418,55 @@ class CameraModule(Module):
         """Get the latest recording"""
         return self.latest_recording
 
-    def start_streaming(self, receiver_ip: str, port: int = 10001) -> bool:
-        """Start streaming video over network"""
+    def start_streaming(self, receiver_ip=None, port=None) -> bool:
+        """Start streaming video to the specified receiver"""
         try:
+            # Check if already streaming
             if self.is_streaming:
                 self.logger.warning("(MODULE) Already streaming")
                 return False
 
+            # Check for missing ip / port, default to controller ip
+            if not receiver_ip:
+                receiver_ip = self.service_manager.controller_ip
+            if not port:
+                port = self.config.get('streaming', {}).get('port', 8554)
+            
+            # Convert port to integer
+            try:
+                port = int(port)
+            except (ValueError, TypeError):
+                self.logger.error(f"(MODULE) Invalid port number: {port}")
+                return False
+
+            self.logger.info(f"(MODULE) Starting streaming to {receiver_ip}:{port}")
+
             # Create network output
             self.network_output = FfmpegOutput(f"-f mpegts udp://{receiver_ip}:{port}")
             self.lores_encoder.output = self.network_output
+
             
             # Start streaming
             self.picam2.start_encoder(self.lores_encoder, name="lores")
             self.is_streaming = True
             
-            self.communication_manager.send_status({
-                "type": "streaming_started",
-                "receiver_ip": receiver_ip,
-                "port": port
-            })
+            # Send streaming status
+            if self.communication_manager:
+                self.communication_manager.send_status({
+                    'type': 'streaming_started',
+                    'receiver_ip': receiver_ip,
+                    'port': port
+                })
             
             return True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error starting stream: {e}")
+            self.logger.error(f"(CAMERA MODULE) Error starting streaming: {str(e)}")
+            if self.communication_manager:
+                self.communication_manager.send_status({
+                    'type': 'error',
+                    'message': f"Failed to start streaming: {str(e)}"
+                })
             return False
 
     def stop_streaming(self) -> bool:

@@ -20,7 +20,7 @@
     "streaming": {
         "enabled": true,
         "port": 8554,
-        "transport": "udp",
+        "transport": "udp"
     },
     "nas": {
         "enabled": true,

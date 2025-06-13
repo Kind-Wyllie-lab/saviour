@@ -79,13 +79,22 @@ class ModuleHealthManager:
             # Check if it's time to send a heartbeat
             if current_time - last_heartbeat_time >= self.heartbeat_interval:
                 try:
-                        self.logger.info("(HEALTH MANAGER) Sending heartbeat")
-                        status = self.get_health()
-                        status['type'] = 'heartbeat' # Add type field to identify heartbeat status
-                        self.communication_manager.send_status(status)
-                        last_heartbeat_time = current_time
+                    # Check if communication manager is still valid
+                    if not self.communication_manager or not self.communication_manager.controller_ip:
+                        self.logger.warning("(HEALTH MANAGER) Communication manager not available, stopping heartbeats")
+                        self.heartbeats_active = False
+                        break
+                        
+                    self.logger.info("(HEALTH MANAGER) Sending heartbeat")
+                    status = self.get_health()
+                    status['type'] = 'heartbeat' # Add type field to identify heartbeat status
+                    self.communication_manager.send_status(status)
+                    last_heartbeat_time = current_time
                 except Exception as e:
-                        self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
+                    self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
+                    # If we get an error sending the heartbeat, stop the heartbeats
+                    self.heartbeats_active = False
+                    break
             
             # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
             time.sleep(check_interval)

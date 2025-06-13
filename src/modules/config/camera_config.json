@@ -7,7 +7,7 @@
         "profile": "high",
         "level": 4.2,
         "bitrate": 8000000,
-        "file_format": "mp4",
+        "file_format": "mp4"
     },
     "recording": {
         "segment_length_seconds": 600,

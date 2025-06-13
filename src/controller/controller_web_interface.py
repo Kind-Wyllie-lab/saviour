@@ -136,6 +136,8 @@ class WebInterfaceManager:
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect():
+            client_ip = request.remote_addr
+            self.socketio.emit('client_ip', client_ip)
             self.logger.info(f"(WEB INTERFACE MANAGER) Client connected")
             
             # Send initial module list

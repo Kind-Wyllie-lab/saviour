@@ -28,6 +28,8 @@ from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput, FfmpegOutput
 import json
+from flask import Flask, Response
+import cv2
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
@@ -106,11 +108,8 @@ class CameraCommandHandler(ModuleCommandHandler):
         self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
         try:
             # Default to localhost if no IP provided
-            receiver_ip = params[0] if params else None
-            # Add a check for a controller transmitting it's own IP
-            if receiver_ip == "127.0.0.1":
-                receiver_ip = None # There is a check for this in camera_module.py
-            port = params[1] if len(params) > 1 else "10001"
+            receiver_ip = params[0] if params else None # TODO: No longer required
+            port = params[1] if len(params) > 1 else "10001" # TODO: No longer required with flask approach?
             
             if 'start_streaming' in self.callbacks:
                 self.callbacks['start_streaming'](receiver_ip, port)
@@ -170,7 +169,6 @@ class CameraModule(Module):
             'get_controller_ip': lambda: self.service_manager.controller_ip
         })
     
-
         # Initialize camera
         self.picam2 = Picamera2()
 
@@ -178,6 +176,11 @@ class CameraModule(Module):
         self.camera_modes = self.picam2.sensor_modes
         self.logger.info(f"(MODULE) Camera modes: {self.camera_modes}")
         time.sleep(0.1)
+    
+        # Streaming variables
+        self.streaming_app = Flask(__name__)
+        self.streaming_server_thread = None
+        self.register_routes()
 
         # Default camera config if not in config manager
         if not self.config_manager.get("camera"):
@@ -419,7 +422,7 @@ class CameraModule(Module):
         return self.latest_recording
 
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
-        """Start streaming video to the specified receiver"""
+        """Start streaming video to the specified receiver using Flask to send MJPEG"""
         try:
             # Check if already streaming
             if self.is_streaming:
@@ -428,9 +431,9 @@ class CameraModule(Module):
 
             # Check for missing ip / port, default to controller ip
             if not receiver_ip:
-                receiver_ip = self.service_manager.controller_ip
+                receiver_ip = self.service_manager.controller_ip # TODO: No longer required
             if not port:
-                port = self.config_manager.get('streaming.port', 8554)
+                port = self.config_manager.get('streaming.port', 8080)
             
             # Convert port to integer
             try:
@@ -443,32 +446,18 @@ class CameraModule(Module):
                 })
                 return False
 
-            self.logger.info(f"(MODULE) Starting streaming to {receiver_ip}:{port}")
+            self.logger.info(f"(MODULE) Starting streaming from {self.service_manager.ip}:{port}")
 
             # Start the camera if not already running
             if not self.picam2.started:
                 self.picam2.start()
                 time.sleep(0.1)  # Give camera time to start
+            
+            # Start the thread
+            self.streaming_server_thread = threading.Thread(target=self.run_streaming_server)
+            self.streaming_server_thread.start()
 
-            # Create network output with explicit format and codec settings
-            ffmpeg_cmd = (
-                f"-f mpegts "
-                f"-c:v h264 "
-                f"-preset ultrafast "
-                f"-tune zerolatency "
-                f"-profile:v high "
-                f"-level:v 4.2 "
-                f"-b:v {self.config_manager.get('camera.bitrate', 1000000)} "
-                f"-g 30 "  # Keyframe interval
-                f"-sc_threshold 0 "  # Scene change threshold
-                f"-f mpegts "
-                f"udp://{receiver_ip}:{port}"
-            )
-            self.network_output = FfmpegOutput(ffmpeg_cmd)
-            self.lores_encoder.output = self.network_output
-
-            # Start streaming
-            self.picam2.start_encoder(self.lores_encoder, name="lores")
+            # Set flag to true
             self.is_streaming = True
             
             # Send streaming status
@@ -491,6 +480,41 @@ class CameraModule(Module):
             })
             return False
 
+    def generate_streaming_frames(self):
+        """Generate streaming frames for MJPEG stream"""
+        while True:
+            try:
+                frame_yuv = self.picam2.capture_array("lores")  # YUV420 format
+                # Convert YUV420 (I420) to BGR (OpenCV default)
+                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV2BGR_I420)
+                ret, jpeg = cv2.imencode('.jpg', frame_bgr)
+                if not ret:
+                    continue
+                yield (b'--frame\r\n'
+                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+            except Exception as e:
+                self.logger.error(f"Error generating streaming frame: {e}")
+                time.sleep(0.1)  # Small delay to prevent CPU spinning
+
+    def register_routes(self):
+        """Register Flask routes for streaming"""
+        @self.streaming_app.route('/')
+        def index():
+            return '<h1>Live Camera</h1><img src="/video_feed">'
+
+        @self.streaming_app.route('/video_feed')
+        def video_feed():
+            return Response(self.generate_streaming_frames(),
+                            mimetype='multipart/x-mixed-replace; boundary=frame')
+
+    def run_streaming_server(self, port=8080):
+        """Run the flask server to stream upon"""
+        try:
+            self.streaming_app.run(host='0.0.0.0', port=port)
+        except Exception as e:
+            self.logger.error(f"Error running streaming server: {e}")
+            self.is_streaming = False
+
     def stop_streaming(self) -> bool:
         """Stop streaming video"""
         try:
@@ -499,7 +523,7 @@ class CameraModule(Module):
                 return False
             
             # Stop the encoder
-            self.picam2.stop_encoder(self.lores_encoder)
+            self.streaming_server_thread.join(timeout=1.0)
             self.is_streaming = False
             
             self.communication_manager.send_status({

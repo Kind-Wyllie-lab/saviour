@@ -52,6 +52,7 @@ def run_server():
 def generate():
     while True:
         frame = picam2.capture_array("main")
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)      # swap RGB to BGR for OpenCV
         ret, jpeg = cv2.imencode('.jpg', frame)
         if not ret:
             continue

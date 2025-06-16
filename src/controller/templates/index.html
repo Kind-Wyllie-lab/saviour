@@ -14,8 +14,13 @@
     <div class="dashboard-container">
         <div class="dashboard-card">
             <div id="camera_livestream_container">
-                <h1>📡 Live Feed from Pi A</h1>
-                <img src="http://192.168.0.13:8080/video_feed" width="640" height="480">
+                <h1>📡 Live Feed</h1>
+                <div class="stream-controls">
+                    <select id="camera-select" onchange="updateCameraStream()">
+                        <option value="">Select a camera module...</option>
+                    </select>
+                </div>
+                <img id="video-feed" src="" width="640" height="480" style="display: none;" onerror="handleVideoError()">
             </div>
         </div>
         <div class="dashboard-card">
@@ -340,13 +345,30 @@
         });
 
         // Update the module list
+        let availableModules = [];  // Store modules globally
+
         function updateModuleList(modules) {
             console.log('updateModuleList called with:', modules);
             const moduleList = document.getElementById('modules');
+            const cameraSelect = document.getElementById('camera-select');
+            
             if (!moduleList) {
                 console.error('Could not find modules element');
                 return;
             }
+            
+            // Store modules globally
+            availableModules = modules;
+            
+            // Update camera select dropdown
+            cameraSelect.innerHTML = '<option value="">Select a camera module...</option>';
+            modules.filter(module => module.type === 'camera').forEach(module => {
+                const option = document.createElement('option');
+                option.value = module.id;
+                option.textContent = `${module.id} (${module.ip})`;
+                cameraSelect.appendChild(option);
+            });
+            
             moduleList.innerHTML = '';
             
             if (!modules || modules.length === 0) {
@@ -558,6 +580,51 @@
         window.addEventListener('load', function() {
             console.log('Page fully loaded');
         });
+
+        // Add this to your existing JavaScript
+        function updateCameraStream() {
+            const select = document.getElementById('camera-select');
+            const videoFeed = document.getElementById('video-feed');
+            
+            // Handle empty selection or no modules available
+            if (!select.value || !availableModules || availableModules.length === 0) {
+                videoFeed.src = '';
+                videoFeed.style.display = 'none';
+                return;
+            }
+            
+            const selectedModule = availableModules.find(m => m.id === select.value);
+            
+            if (selectedModule) {
+                console.log('Connecting to camera at:', selectedModule.ip);
+                videoFeed.src = `http://${selectedModule.ip}:8080/video_feed`;
+                videoFeed.style.display = 'block';
+                
+                // Add error handling
+                videoFeed.onerror = function() {
+                    console.error('Error loading video feed from:', selectedModule.ip);
+                    alert('Failed to connect to camera. Please check if the camera is running and accessible.');
+                    videoFeed.style.display = 'none';
+                };
+                
+                // Add load handling
+                videoFeed.onload = function() {
+                    console.log('Video feed connected successfully');
+                };
+            } else {
+                console.log('Selected module no longer available');
+                videoFeed.src = '';
+                videoFeed.style.display = 'none';
+                // Reset the select to default option
+                select.value = '';
+            }
+        }
+
+        function handleVideoError() {
+            const videoFeed = document.getElementById('video-feed');
+            console.error('Video feed error');
+            videoFeed.style.display = 'none';
+        }
     </script>
 </body>
 </html> 

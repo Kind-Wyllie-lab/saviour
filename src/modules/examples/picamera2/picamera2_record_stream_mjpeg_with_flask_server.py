@@ -24,6 +24,9 @@ video_config = picam2.create_video_configuration(
     lores={"size": (640, 360)}
 )
 picam2.configure(video_config)
+print("Main stream config:", picam2.stream_configuration("main"))
+print("Lores stream config:", picam2.stream_configuration("lores"))
+
 
 # Encoder for main recording
 main_encoder = H264Encoder()
@@ -40,7 +43,7 @@ time.sleep(1)
 # Function to record video
 def record_video(duration=5):
     # Start main encoder
-    picam2.start_encoder(main_encoder, name="lores")
+    picam2.start_encoder(main_encoder, name="main")
     time.sleep(duration)
     picam2.stop_encoder(main_encoder)
     print(f"Recorded {filename}")
@@ -51,13 +54,15 @@ def run_server():
 
 def generate():
     while True:
-        frame = picam2.capture_array("main")
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)      # swap RGB to BGR for OpenCV
-        ret, jpeg = cv2.imencode('.jpg', frame)
+        frame_yuv = picam2.capture_array("lores")  # YUV420 format
+        # Convert YUV420 (I420) to BGR (OpenCV default)
+        frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV2BGR_I420)
+        ret, jpeg = cv2.imencode('.jpg', frame_bgr)
         if not ret:
             continue
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+
 
 @app.route('/')
 def index():

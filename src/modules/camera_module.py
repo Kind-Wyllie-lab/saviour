@@ -28,7 +28,7 @@ from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput, FfmpegOutput
 import json
-from flask import Flask, Response
+from flask import Flask, Response, request
 import cv2
 
 class CameraCommandHandler(ModuleCommandHandler):
@@ -180,6 +180,9 @@ class CameraModule(Module):
         # Streaming variables
         self.streaming_app = Flask(__name__)
         self.streaming_server_thread = None
+        self.streaming_server = None
+        self.streaming_server_process = None
+        self.should_stop_streaming = False  # Add flag for graceful shutdown
         self.register_routes()
 
         # Default camera config if not in config manager
@@ -240,7 +243,7 @@ class CameraModule(Module):
             # Create video configuration
             config = self.picam2.create_video_configuration(
                 main={"size": (width, height)},
-                lores={"size": (640, 360)} # Lower, #TODO: take this from config
+                lores={"size": (320, 240), "format": "RGB888"} # Lower, #TODO: take this from config
             )
             
             # Apply configuration
@@ -429,23 +432,9 @@ class CameraModule(Module):
                 self.logger.warning("(MODULE) Already streaming")
                 return False
 
-            # Check for missing ip / port, default to controller ip
-            if not receiver_ip:
-                receiver_ip = self.service_manager.controller_ip # TODO: No longer required
-            if not port:
-                port = self.config_manager.get('streaming.port', 8080)
+            # Always use port 8080 for Flask server
+            port = 8080
             
-            # Convert port to integer
-            try:
-                port = int(port)
-            except (ValueError, TypeError):
-                self.logger.error(f"(MODULE) Invalid port number: {port}")
-                self.communication_manager.send_status({
-                    'type': 'streaming_start_failed',
-                    'error': f"Invalid port number: {port}"
-                })
-                return False
-
             self.logger.info(f"(MODULE) Starting streaming from {self.service_manager.ip}:{port}")
 
             # Start the camera if not already running
@@ -453,8 +442,12 @@ class CameraModule(Module):
                 self.picam2.start()
                 time.sleep(0.1)  # Give camera time to start
             
-            # Start the thread
-            self.streaming_server_thread = threading.Thread(target=self.run_streaming_server)
+            # Reset streaming state
+            self.should_stop_streaming = False
+            
+            # Start the thread with the correct port
+            self.streaming_server_thread = threading.Thread(target=self.run_streaming_server, args=(port,))
+            self.streaming_server_thread.daemon = True
             self.streaming_server_thread.start()
 
             # Set flag to true
@@ -480,14 +473,24 @@ class CameraModule(Module):
             })
             return False
 
+    def run_streaming_server(self, port=8080):
+        """Run the flask server to stream upon"""
+        try:
+            from werkzeug.serving import make_server
+            self.streaming_server = make_server('0.0.0.0', port, self.streaming_app)
+            self.logger.info(f"(MODULE) Starting Flask server on port {port}")
+            self.streaming_server.serve_forever()
+        except Exception as e:
+            self.logger.error(f"Error running streaming server: {e}")
+            self.is_streaming = False
+            self.streaming_server = None
+
     def generate_streaming_frames(self):
         """Generate streaming frames for MJPEG stream"""
-        while True:
+        while not self.should_stop_streaming:
             try:
-                frame_yuv = self.picam2.capture_array("lores")  # YUV420 format
-                # Convert YUV420 (I420) to BGR (OpenCV default)
-                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV2BGR_I420)
-                ret, jpeg = cv2.imencode('.jpg', frame_bgr)
+                frame = self.picam2.capture_array("lores")
+                ret, jpeg = cv2.imencode('.jpg', frame)
                 if not ret:
                     continue
                 yield (b'--frame\r\n'
@@ -497,23 +500,23 @@ class CameraModule(Module):
                 time.sleep(0.1)  # Small delay to prevent CPU spinning
 
     def register_routes(self):
-        """Register Flask routes for streaming"""
+        """Register Flask routes"""
         @self.streaming_app.route('/')
         def index():
-            return '<h1>Live Camera</h1><img src="/video_feed">'
-
+            return "Camera Streaming Server"
+            
         @self.streaming_app.route('/video_feed')
         def video_feed():
             return Response(self.generate_streaming_frames(),
-                            mimetype='multipart/x-mixed-replace; boundary=frame')
-
-    def run_streaming_server(self, port=8080):
-        """Run the flask server to stream upon"""
-        try:
-            self.streaming_app.run(host='0.0.0.0', port=port)
-        except Exception as e:
-            self.logger.error(f"Error running streaming server: {e}")
-            self.is_streaming = False
+                          mimetype='multipart/x-mixed-replace; boundary=frame')
+                          
+        @self.streaming_app.route('/shutdown')
+        def shutdown():
+            func = request.environ.get('werkzeug.server.shutdown')
+            if func is None:
+                raise RuntimeError('Not running with the Werkzeug Server')
+            func()
+            return 'Server shutting down...'
 
     def stop_streaming(self) -> bool:
         """Stop streaming video"""
@@ -522,8 +525,25 @@ class CameraModule(Module):
                 self.logger.warning("(MODULE) Not currently streaming")
                 return False
             
-            # Stop the encoder
-            self.streaming_server_thread.join(timeout=1.0)
+            # Set flag to stop frame generation
+            self.should_stop_streaming = True
+            
+            # Stop the Flask server if it's running
+            if self.streaming_server:
+                self.streaming_server.shutdown()
+                self.streaming_server = None
+            
+            # Stop the thread
+            if self.streaming_server_thread and self.streaming_server_thread.is_alive():
+                self.streaming_server_thread.join(timeout=1.0)
+            
+            # Force kill any remaining Flask processes
+            import os
+            try:
+                os.system("pkill -f 'python.*flask'")
+            except:
+                pass
+            
             self.is_streaming = False
             
             self.communication_manager.send_status({
@@ -546,9 +566,9 @@ class CameraModule(Module):
     def stop(self) -> bool:
         """Stop the module and cleanup"""
         try:
-            # Stop recording if active
-            if self.is_recording:
-                self.stop_recording()
+            # Stop streaming if active
+            if self.is_streaming:
+                self.stop_streaming()
                 
             # Call parent stop
             return super().stop()

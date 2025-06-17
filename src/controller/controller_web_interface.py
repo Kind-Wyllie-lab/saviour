@@ -258,15 +258,72 @@ class WebInterfaceManager:
 
         @self.app.route('/api/send_command', methods=['POST'])
         def send_command():
-            """Send a command to a module"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/send_command endpoint called with command: {request.json.get('command')} and module_id: {request.json.get('module_id')}")
-            command = request.json.get('command')
-            module_id = request.json.get('module_id')
-            if self.send_command_callback:
-                self.send_command_callback(module_id, command)
-            else:
-                self.logger.error(f"(WEB INTERFACE MANAGER) No send_command callback registered")
-                return jsonify({"error": "No send_command callback registered"}), 500
+            """
+            Send a command to a module.
+            
+            Request format:
+            {
+                "command": "string",  # The command to execute
+                "module_id": "string", # The module ID or "all"
+                "params": {           # Optional parameters
+                    "key": "value"
+                }
+            }
+            
+            Example:
+            curl -X POST http://192.168.0.98:5000/api/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
+            """
+            try:
+                if not request.is_json:
+                    return jsonify({
+                        "error": "Request must be JSON",
+                        "content_type": request.content_type,
+                        "example": {
+                            "command": "start_recording",
+                            "module_id": "all"
+                        }
+                    }), 400
+                
+                data = request.get_json(force=True)
+                self.logger.info(f"(WEB INTERFACE MANAGER) Received command request: {data}")
+                
+                command = data.get('command')
+                module_id = data.get('module_id')
+                params = data.get('params', {})
+                
+                if not command or not module_id:
+                    return jsonify({
+                        "error": "Missing required fields",
+                        "required": ["command", "module_id"],
+                        "received": {
+                            "command": command,
+                            "module_id": module_id
+                        }
+                    }), 400
+                
+                self.logger.info(f"(WEB INTERFACE MANAGER) Processing command: {command} for module: {module_id}")
+                
+                if self.send_command_callback:
+                    result = self.send_command_callback(module_id, command)
+                    return jsonify({
+                        "status": "success",
+                        "message": "Command sent successfully",
+                        "command": command,
+                        "module_id": module_id
+                    })
+                else:
+                    self.logger.error("(WEB INTERFACE MANAGER) No command callback registered")
+                    return jsonify({
+                        "error": "Command system not available",
+                        "status": "error"
+                    }), 503
+                    
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error in send_command endpoint: {str(e)}")
+                return jsonify({
+                    "error": str(e),
+                    "status": "error"
+                }), 500
                 
         @self.app.route('/api/module_health', methods=['GET'])
         def module_health():

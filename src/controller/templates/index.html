@@ -321,16 +321,20 @@
 
             const command = {
                 type: currentCommand,
-                module_id: moduleId
+                module_id: moduleId,
+                params: {}  // Initialize empty params object
             };
 
-            // Add IP and port for streaming commands
+            // Add parameters for streaming commands
             if (currentCommand === 'start_streaming') {
                 if (!clientIP) {
                     alert('Client IP not available. Please refresh the page and try again.');
                     return;
                 }
-                command.params = [clientIP, 10001]; // Default port 10001
+                command.params = {
+                    client_ip: clientIP,
+                    port: 8080  // Default port
+                };
             }
 
             console.log('Sending command:', command);

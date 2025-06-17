@@ -236,14 +236,23 @@ class CameraModule(Module):
         """Configure the camera with current settings"""
         try:
             # Get camera settings from config
-            fps = self.config_manager.get("camera.fps", 100)
+            fps = self.config_manager.get("camera.fps", 25)  # Changed default to 25fps
             width = self.config_manager.get("camera.width", 1280)
             height = self.config_manager.get("camera.height", 720)
             
-            # Create video configuration
+            # Calculate frame duration in microseconds
+            frame_duration = int(1000000 / fps)
+            
+            # Create video configuration with explicit framerate
             config = self.picam2.create_video_configuration(
-                main={"size": (width, height)},
-                lores={"size": (320, 240), "format": "RGB888"} # Lower, #TODO: take this from config
+                main={"size": (width, height), "format": "RGB888"},
+                lores={"size": (320, 240), "format": "RGB888"},
+                controls={
+                    "FrameDurationLimits": [frame_duration, frame_duration],  # Use list instead of tuple
+                    "NoiseReductionMode": 0,  # Disable noise reduction for better performance
+                    "AwbMode": 0,  # Auto white balance
+                    "ExposureTime": 10000  # Set a reasonable exposure time
+                }
             )
             
             # Apply configuration
@@ -254,11 +263,15 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
-            self.logger.info("(MODULE) Camera configured successfully")
+            self.logger.info(f"(CAMERA MODULE) Camera configured successfully at {fps}fps")
             return True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error configuring camera: {e}")
+            self.logger.error(f"(CAMERA MODULE) Error configuring camera: {e}")
+            # Initialize encoders even if configuration fails
+            bitrate = self.config_manager.get("camera.bitrate", 10000000)
+            self.main_encoder = H264Encoder(bitrate=bitrate)
+            self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
 
     def start_recording(self) -> bool:
@@ -311,7 +324,7 @@ class CameraModule(Module):
         while self.is_recording:
             try:
                 # Request a frame to ensure we get metadata
-                self.picam2.capture_metadata()
+                # self.picam2.capture_metadata()
                 metadata = self.picam2.capture_metadata()
                 frame_wall_clock = metadata.get('FrameWallClock', 'No data')
                 if frame_wall_clock != 'No data':

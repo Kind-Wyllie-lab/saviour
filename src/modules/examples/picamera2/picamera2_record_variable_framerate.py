@@ -14,28 +14,44 @@ import numpy as np
 
 picam2 = Picamera2()
 
+print(f"Available sensor modes: {picam2.sensor_modes}")
 
+fps = 50
+width = 1332
+height = 990
+frame_duration = int(1000000 / fps)
+video_duration = 5
+
+print(f"For fps {fps} frame duration set to {frame_duration}s")
+
+print(f"Width: {width}, height: {height}")
+
+# Method 1
 config = picam2.create_video_configuration(
-    main={"size": (1332,990)}
+    main={"size": (width, height), 
+    "format": "YUV420"
+    },
+    controls={
+        "FrameDurationLimits": [frame_duration, frame_duration],
+        "FrameRate": fps
+    }
 )
+
+# Method 2
+picam2.set_controls({"FrameRate": fps})
 
 # Apply configuration
 picam2.configure(config)
 
-target_fps = 50
-frame_duration = int(1000000/target_fps)
-picam2.set_controls({"FrameDurationLimits": (frame_duration, frame_duration)})
-
 # Create encoder with framerate settings
 encoder = H264Encoder(
-    bitrate=8000000,
-    profile="high",
-    framerate=target_fps
+    bitrate=1000000,
+    profile="high"
 )
 
 video_folder = "rec"
 filename = "fileoutput_method"
-filetype = "h264"  # Changed to mp4 for better container format
+filetype = "mp4"  # Changed to mp4 for better container format
 
 # Global variables
 recording_start_time = None
@@ -56,7 +72,7 @@ def start_recording() -> bool:
     
     try:
         # Create ffmpeg output with correct parameters
-        file_output = FileOutput(filepath)
+        file_output = FfmpegOutput(filepath, audio=False)
         encoder.output = file_output
         
         # Start recording
@@ -127,7 +143,7 @@ picam2.start()
 
 # Record for 3 seconds
 start_recording()
-time.sleep(3)
+time.sleep(video_duration)
 stop_recording()
 
 # Stop the camera

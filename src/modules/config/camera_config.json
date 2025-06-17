@@ -6,7 +6,7 @@
         "codec": "h264",
         "profile": "high",
         "level": 4.2,
-        "bitrate": 8000000,
+        "bitrate": 10000000,
         "file_format": "h264"
     },
     "recording": {

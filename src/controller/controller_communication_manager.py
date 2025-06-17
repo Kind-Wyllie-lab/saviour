@@ -28,6 +28,7 @@ class ControllerCommunicationManager:
         
         # ZeroMQ setup
         # for sending commands to modules
+        # TODO: Change this to a REQ socket
         self.context = zmq.Context() # context object to contain all sockets
         self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
         self.command_socket.bind("tcp://*:5555") # bind the socket to a port

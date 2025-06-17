@@ -111,18 +111,34 @@ class WebInterfaceManager:
 
         @self.socketio.on('command')
         def handle_command(data):
-            """Handle command from frontend"""
+            """
+            Handle command from frontend.
+            Command will be formatted as command_name param1=value1 param2=value2 etc
+            For example, start_streaming client_ip=192.168.0.55 port=8080
+            Communication manager will format this as cmd/<module_id> <command_name> <param1=value1> <param2=value2> etc 
+            
+            Args:
+                command (json): The command received from the frontend. Should contain type, module_id (may be "all" or a specific module), and params field
+            """
             try:
                 command_type = data.get('type')
                 module_id = data.get('module_id')
-                params = data.get('params', [])
+                params = data.get('params', {}) # Params may be none depending on the command
                 
                 self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
                 
                 # Format command with parameters
-                command = command_type
+                command = command_type 
                 if params:
-                    command = f"{command_type} {' '.join(str(p) for p in params)}"
+                    if command_type == 'start_streaming':
+                        # For streaming, we need client_ip and port
+                        client_ip = params.get('client_ip')
+                        port = params.get('port', 8080)  # Default to 8080 if not specified
+                        command = f"{command_type} client_ip={client_ip} port={port}"
+                    else:
+                        # For other commands, format as key=value pairs
+                        param_strings = [f"{k}={v}" for k, v in params.items()]
+                        command = f"{command_type} {' '.join(param_strings)}"
                 
                 # Send command to module
                 if self.send_command_callback:

@@ -157,7 +157,7 @@ class Module:
         # Track when module started for uptime calculation
         self.start_time = None
 
-    def controller_discovered(self, controller_ip: str, controller_port: int):
+    def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"(MODULE) Module will now initialize the necessary managers")

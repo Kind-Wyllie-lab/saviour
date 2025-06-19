@@ -8,6 +8,8 @@ This class is used to manage zeroconf service discovery and registration for mod
 Author: Andrew SG
 Created: 15/05/2025
 License: GPLv3
+
+#TODO: Use callbacks instead of passing through module
 """
 
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery
@@ -91,7 +93,7 @@ class ModuleServiceManager:
             self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
-            self.module.controller_discovered(self.controller_ip, self.controller_port)
+            self.module.when_controller_discovered(self.controller_ip, self.controller_port)
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""

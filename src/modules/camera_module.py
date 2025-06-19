@@ -26,7 +26,7 @@ import shutil
 import threading
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import FileOutput, FfmpegOutput
+from picamera2.outputs import PyavOutput, FfmpegOutput
 import json
 from flask import Flask, Response, request
 import cv2
@@ -174,7 +174,6 @@ class CameraModule(Module):
 
         # Get camera modes
         self.camera_modes = self.picam2.sensor_modes
-        self.logger.info(f"(MODULE) Camera modes: {self.camera_modes}")
         time.sleep(0.1)
     
         # Streaming variables
@@ -236,31 +235,32 @@ class CameraModule(Module):
         """Configure the camera with current settings"""
         try:
             # Get camera settings from config
-            fps = self.config_manager.get("camera.fps", 25)  # Changed default to 25fps
+            fps = self.config_manager.get("camera.fps", 25)  # Default to 25fps
             width = self.config_manager.get("camera.width", 1280)
             height = self.config_manager.get("camera.height", 720)
             
-            # Calculate frame duration in microseconds
-            frame_duration = int(1000000 / fps)
+            # Pick appropriate sensor mode - we will use mode 0 by default
+            mode = self.camera_modes[0]
+
+            sensor = {"output_size": mode["size"], "bit_depth": mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
+            main = {"size": (width, height)} # The main stream - we will use this for recordings.
+            lores = {"size": (320, 240), "format":"RGB888"} # A lores stream for network streaming.
+            controls = {"FrameRate": fps} # target framerate, in reality it might be lower.
             
+            self.logger.info(f"(CAMERA MODULE) Sensor stream set to size {width},{height} and bit depth {mode['bit_depth']} to target {fps}fps.")
+
             # Create video configuration with explicit framerate
-            config = self.picam2.create_video_configuration(
-                main={"size": (width, height), "format": "RGB888"},
-                lores={"size": (320, 240), "format": "RGB888"},
-                controls={
-                    "FrameDurationLimits": [frame_duration, frame_duration],  # Use list instead of tuple
-                    "NoiseReductionMode": 0,  # Disable noise reduction for better performance
-                    "AwbMode": 0,  # Auto white balance
-                    "ExposureTime": 10000  # Set a reasonable exposure time
-                }
-            )
+            config = self.picam2.create_video_configuration(main=main,
+                        lores=lores,
+                        sensor=sensor,
+                        controls=controls)
             
             # Apply configuration
             self.picam2.configure(config)
             
             # Create encoders with current settings
             bitrate = self.config_manager.get("camera.bitrate", 10000000)
-            self.main_encoder = H264Encoder(bitrate=bitrate)
+            self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
             self.logger.info(f"(CAMERA MODULE) Camera configured successfully at {fps}fps")
@@ -288,11 +288,11 @@ class CameraModule(Module):
                 time.sleep(0.1)  # Give camera time to start
             
             # Create file output
-            self.file_output = FileOutput(filename)
-            self.main_encoder.output = self.file_output
+            self.file_output = PyavOutput(filename, format="mp4") # 7.2.4 in docs
+            self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
             
             # Start recording
-            self.picam2.start_encoder(self.main_encoder, name="main")
+            self.picam2.start_encoder(self.main_encoder, name="main") # 
             self.is_recording = True
             self.recording_start_time = time.time()
             self.frame_times = []  # Reset frame times
@@ -574,6 +574,26 @@ class CameraModule(Module):
                 "status": "error",
                 "error": f"Failed to stop streaming: {str(e)}"
             })
+            return False
+    
+    def when_controller_discovered(self):
+        super().when_controller_discovered()
+
+    def start(self) -> bool:
+        """Start the camera module - including streaming"""
+        try:
+            # Start the parent module first
+            if not super().start():
+                return False
+
+            # Start streaming
+            # TODO: add check for config parameter stream_on_start?
+            self.start_streaming()
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"(CAMERA MODULE) Error starting module: {e}")
             return False
 
     def stop(self) -> bool:

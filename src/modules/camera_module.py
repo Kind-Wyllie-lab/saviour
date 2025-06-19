@@ -243,8 +243,8 @@ class CameraModule(Module):
             mode = self.camera_modes[0]
 
             sensor = {"output_size": mode["size"], "bit_depth": mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
-            main = {"size": (width, height)} # The main stream - we will use this for recordings.
-            lores = {"size": (320, 240), "format":"RGB888"} # A lores stream for network streaming.
+            main = {"size": (width, height), "format": "YUV420"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
+            lores = {"size": (320, 240), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
             controls = {"FrameRate": fps} # target framerate, in reality it might be lower.
             
             self.logger.info(f"(CAMERA MODULE) Sensor stream set to size {width},{height} and bit depth {mode['bit_depth']} to target {fps}fps.")
@@ -253,7 +253,8 @@ class CameraModule(Module):
             config = self.picam2.create_video_configuration(main=main,
                         lores=lores,
                         sensor=sensor,
-                        controls=controls)
+                        controls=controls,
+                        buffer_count=16) # Buffer size of 16 increases potential framerate.
             
             # Apply configuration
             self.picam2.configure(config)
@@ -576,8 +577,8 @@ class CameraModule(Module):
             })
             return False
     
-    def when_controller_discovered(self):
-        super().when_controller_discovered()
+    def when_controller_discovered(self, controller_ip: str, controller_port: int):
+        super().when_controller_discovered(controller_ip, controller_port)
 
     def start(self) -> bool:
         """Start the camera module - including streaming"""

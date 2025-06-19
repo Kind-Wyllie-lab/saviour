@@ -14,9 +14,9 @@ mode = picam2.sensor_modes[0]
 
 sensor = {'output_size': mode['size'], 'bit_depth': mode['bit_depth']}
 
-main = {'size': (1332, 990)}
+main = {'size': (1280, 720), "format":"YUV420"}
 controls = {'FrameRate': 120}
-config = picam2.create_video_configuration(main, sensor=sensor, controls=controls)
+config = picam2.create_video_configuration(main, sensor=sensor, controls=controls, buffer_count=16)
 picam2.configure(config)
 
 encoder = H264Encoder(bitrate=10000000)

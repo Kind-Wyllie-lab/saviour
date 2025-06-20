@@ -74,7 +74,7 @@ echo "=== Setting up Virtual Environment ==="
 # Remove existing environment if it exists
 if [ -d "env" ]; then
     echo "Removing existing virtual environment..."
-    rm -rf env
+    sudo rm -rf env
 fi
 
 # Create new virtual environment with system packages

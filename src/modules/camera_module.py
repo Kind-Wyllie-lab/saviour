@@ -13,8 +13,6 @@ For a good discussion of getting frame timestamps and syncing, read this thread:
 Author: Andrew SG
 Created: 17/03/2025
 License: GPLv3
-
-#TODO: Use pre-callbacks to capture metadata for each frame instead of while loop.
 """
 
 import datetime
@@ -265,6 +263,9 @@ class CameraModule(Module):
             
             # Apply configuration
             self.picam2.configure(config)
+
+            # Apply callback
+            self.picam2.pre_callback = self._get_frame_timestamp
             
             # Create encoders with current settings
             bitrate = self.config_manager.get("camera.bitrate", 10000000)
@@ -306,9 +307,9 @@ class CameraModule(Module):
             self.frame_times = []  # Reset frame times
             
             # Start frame capture thread
-            self.capture_thread = threading.Thread(target=self._capture_frames)
-            self.capture_thread.daemon = True
-            self.capture_thread.start()
+            # self.capture_thread = threading.Thread(target=self._capture_frames)
+            # self.capture_thread.daemon = True
+            # self.capture_thread.start()
             
             # Send status response after successful recording start
             self.communication_manager.send_status({
@@ -327,19 +328,29 @@ class CameraModule(Module):
             })
             return False
 
-    def _capture_frames(self):
-        """Background thread to capture frame timestamps"""
-        while self.is_recording:
-            try:
-                # Request a frame to ensure we get metadata
-                # self.picam2.capture_metadata()
-                metadata = self.picam2.capture_metadata()
-                frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-                if frame_wall_clock != 'No data':
-                    self.frame_times.append(frame_wall_clock)
-            except Exception as e:
-                self.logger.error(f"Error capturing frame metadata: {e}")
-                time.sleep(0.001)  # Small delay to prevent CPU spinning
+    # def _capture_frames(self):
+    #     """Background thread to capture frame timestamps"""
+    #     while self.is_recording:
+    #         try:
+    #             # Request a frame to ensure we get metadata
+    #             # self.picam2.capture_metadata()
+    #             metadata = self.picam2.capture_metadata()
+    #             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+    #             if frame_wall_clock != 'No data':
+    #                 self.frame_times.append(frame_wall_clock)
+    #         except Exception as e:
+    #             self.logger.error(f"Error capturing frame metadata: {e}")
+    #             time.sleep(0.001)  # Small delay to prevent CPU spinning
+
+    def _get_frame_timestamp(self):
+        """To be called when picamera2 gets a new frame"""
+        try:
+            metadata = self.picam2.capture_metadata()
+            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+            if frame_wall_clock != 'No data':
+                self.frame_times.append(frame_wall_clock)
+        except Exception as e:
+            self.logger.error(f"Error capturing frame metadata: {e}")
     
     def stop_recording(self) -> bool:
         """Stop continuous video recording"""
@@ -353,8 +364,8 @@ class CameraModule(Module):
             
             # Stop frame capture thread
             self.is_recording = False
-            if hasattr(self, 'capture_thread'):
-                self.capture_thread.join(timeout=1.0)
+            # if hasattr(self, 'capture_thread'):
+            #     self.capture_thread.join(timeout=1.0)
             
             # Calculate duration
             if self.recording_start_time is not None:

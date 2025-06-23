@@ -344,10 +344,9 @@ class CameraModule(Module):
     #             self.logger.error(f"Error capturing frame metadata: {e}")
     #             time.sleep(0.001)  # Small delay to prevent CPU spinning
 
-    def _get_frame_timestamp(self):
-        """To be called when picamera2 gets a new frame"""
+    def _get_frame_timestamp(self, req):
         try:
-            metadata = self.picam2.capture_metadata()
+            metadata = req.get_metadata()
             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
             if frame_wall_clock != 'No data':
                 self.frame_times.append(frame_wall_clock)
@@ -490,10 +489,9 @@ class CameraModule(Module):
             # Send streaming status
             self.communication_manager.send_status({
                 'type': 'streaming_started',
-                'receiver_ip': receiver_ip,
                 'port': port,
                 'status': 'success',
-                'message': f'Streaming started to {receiver_ip}:{port}'
+                'message': f'Streaming started from {self.service_manager.ip}:{port}'
             })
             
             return True
@@ -521,18 +519,33 @@ class CameraModule(Module):
 
     def generate_streaming_frames(self):
         """Generate streaming frames for MJPEG stream"""
+        import time
+        self.logger.info("Starting to generate streaming frames")
         while not self.should_stop_streaming:
             try:
-                frame = self.picam2.capture_array("lores")
+                self.logger.debug("Capturing frame...")
+                # Add a timeout for capture_array if possible, or break after N seconds
+                start_time = time.time()
+                frame = None
+                while frame is None and (time.time() - start_time) < 2.0:
+                    try:
+                        frame = self.picam2.capture_array("lores")
+                    except Exception as e:
+                        self.logger.error(f"Error capturing frame: {e}")
+                        time.sleep(0.1)
+                if frame is None:
+                    self.logger.error("Timeout waiting for frame")
+                    break
                 ret, jpeg = cv2.imencode('.jpg', frame)
                 if not ret:
+                    self.logger.warning("JPEG encoding failed")
                     continue
                 yield (b'--frame\r\n'
-                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
             except Exception as e:
                 self.logger.error(f"Error generating streaming frame: {e}")
-                time.sleep(0.1)  # Small delay to prevent CPU spinning
-
+                time.sleep(0.1)
+        self.logger.info("Stopped generating streaming frames")
 
     def register_routes(self):
         """Register Flask routes"""
@@ -544,6 +557,7 @@ class CameraModule(Module):
         def video_feed():
             return Response(self.generate_streaming_frames(),
                           mimetype='multipart/x-mixed-replace; boundary=frame')
+
                           
         @self.streaming_app.route('/shutdown')
         def shutdown():
@@ -610,7 +624,7 @@ class CameraModule(Module):
 
             # Start streaming
             # TODO: add check for config parameter stream_on_start?
-            self.start_streaming()
+            # self.start_streaming()
 
             return True
 

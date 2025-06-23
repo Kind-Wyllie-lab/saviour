@@ -140,6 +140,7 @@
         console.log('Script starting...'); // Initial script load
 
         var socket = io(); // The socket object receives updates from the controller
+        let isInitialLoad = true; // Flag to track initial page load
         
         // WebSocket event handlers
         socket.on('connect', function() { // When connection is established, log it
@@ -155,6 +156,15 @@
             console.log('Received module update:', data);
             updateModuleList(data.modules);
             updateDashboardOverview(data.modules);
+            
+            // Show all streams only on initial page load
+            if (isInitialLoad && data.modules && data.modules.length > 0) {
+                // Small delay to ensure DOM elements are created
+                setTimeout(() => {
+                    showAllStreams();
+                }, 100);
+                isInitialLoad = false; // Mark initial load as complete
+            }
         });
         
         socket.on('ptp_status', function(data) { // When PTP status is received, log it and update the PTP chart

@@ -31,7 +31,7 @@ import base64
 import signal
 import shutil
 import threading
-from picamera2 import Picamera2
+from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import PyavOutput, FfmpegOutput
 import json
@@ -267,7 +267,7 @@ class CameraModule(Module):
             self.picam2.configure(config)
 
             # Apply callback
-            self.picam2.pre_callback = self._get_frame_timestamp
+            self.picam2.pre_callback = self._get_and_apply_frame_timestamp
             
             # Create encoders with current settings
             bitrate = self.config_manager.get("camera.bitrate", 10000000)
@@ -352,6 +352,21 @@ class CameraModule(Module):
                 self.frame_times.append(frame_wall_clock)
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+
+    def _get_and_apply_frame_timestamp(self, req):
+        try:
+            metadata = req.get_metadata()
+            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+            if frame_wall_clock != 'No data':
+                self.frame_times.append(frame_wall_clock)
+                timestamp = time.strftime("%Y-%m-%d %X")
+                with MappedArray(req, "lores") as m:
+                    cv2.putText(m.array, timestamp, (0,240), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50,255,50), 1) # TODO: Make origin reference lores dimensions.
+        except Exception as e:
+            self.logger.error(f"Error capturing frame metadata: {e}")
+
+
+
     
     def stop_recording(self) -> bool:
         """Stop continuous video recording"""

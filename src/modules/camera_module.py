@@ -330,20 +330,6 @@ class CameraModule(Module):
             })
             return False
 
-    # def _capture_frames(self):
-    #     """Background thread to capture frame timestamps"""
-    #     while self.is_recording:
-    #         try:
-    #             # Request a frame to ensure we get metadata
-    #             # self.picam2.capture_metadata()
-    #             metadata = self.picam2.capture_metadata()
-    #             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-    #             if frame_wall_clock != 'No data':
-    #                 self.frame_times.append(frame_wall_clock)
-    #         except Exception as e:
-    #             self.logger.error(f"Error capturing frame metadata: {e}")
-    #             time.sleep(0.001)  # Small delay to prevent CPU spinning
-
     def _get_frame_timestamp(self, req):
         try:
             metadata = req.get_metadata()
@@ -365,9 +351,6 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
-
-
-    
     def stop_recording(self) -> bool:
         """Stop continuous video recording"""
         # First check if recording using parent class
@@ -380,8 +363,6 @@ class CameraModule(Module):
             
             # Stop frame capture thread
             self.is_recording = False
-            # if hasattr(self, 'capture_thread'):
-            #     self.capture_thread.join(timeout=1.0)
             
             # Calculate duration
             if self.recording_start_time is not None:

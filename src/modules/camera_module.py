@@ -13,6 +13,8 @@ For a good discussion of getting frame timestamps and syncing, read this thread:
 Author: Andrew SG
 Created: 17/03/2025
 License: GPLv3
+
+# TODO: Consider using http.server instead of flask
 """
 
 import datetime
@@ -530,6 +532,7 @@ class CameraModule(Module):
             except Exception as e:
                 self.logger.error(f"Error generating streaming frame: {e}")
                 time.sleep(0.1)  # Small delay to prevent CPU spinning
+
 
     def register_routes(self):
         """Register Flask routes"""

@@ -444,3 +444,188 @@ body {
 .action-button.delete:hover {
     background-color: #c0392b;
 }
+
+/* Stream Cards */
+#stream-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.streams-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.streams-header h1 {
+    margin: 0;
+}
+
+.stream-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.stream-control-btn {
+    background: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.stream-control-btn:hover {
+    background: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+#hide-all-streams {
+    background: #e74c3c;
+}
+
+#hide-all-streams:hover {
+    background: #c0392b;
+}
+
+.stream-card {
+    background: #f8f9fa;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stream-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.stream-card-header {
+    background: var(--primary-color);
+    color: white;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.stream-card-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.stream-ip {
+    font-size: 0.9rem;
+    opacity: 0.8;
+    font-family: monospace;
+}
+
+.stream-content {
+    position: relative;
+}
+
+.stream-placeholder {
+    background: #2c3e50;
+    color: white;
+    padding: 3rem 1rem;
+    text-align: center;
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.placeholder-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+}
+
+.placeholder-icon {
+    font-size: 3rem;
+    opacity: 0.7;
+}
+
+.placeholder-content p {
+    margin: 0;
+    font-size: 1.1rem;
+    opacity: 0.9;
+}
+
+.show-stream-btn, .hide-stream-btn {
+    background: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 0.8rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.show-stream-btn:hover, .hide-stream-btn:hover {
+    background: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.hide-stream-btn {
+    background: #e74c3c;
+    margin-top: 0.5rem;
+}
+
+.hide-stream-btn:hover {
+    background: #c0392b;
+}
+
+.stream-video {
+    position: relative;
+    background: #000;
+}
+
+.stream-video img {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.stream-video .hide-stream-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    margin: 0;
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    background: rgba(231, 76, 60, 0.9);
+    backdrop-filter: blur(4px);
+}
+
+.stream-video .hide-stream-btn:hover {
+    background: rgba(192, 57, 43, 0.9);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #stream-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .stream-card-header {
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
+    }
+}

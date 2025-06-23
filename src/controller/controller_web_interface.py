@@ -92,6 +92,10 @@ class WebInterfaceManager:
         @self.app.route('/')
         def index():
             return render_template('index.html')
+        
+        @self.app.route('/recordings')
+        def recordings():
+            return render_template('recordings.html')
     
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')

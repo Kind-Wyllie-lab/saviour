@@ -8,7 +8,7 @@ This class extends the base Module class to handle camera-specific functionality
 Picamera2 is used for interfacing camera hardware. This is a python wrapper for libcamera / rpicam.
 
 For a good discussion of getting high framerates (via correct sensor mode), read this thread: https://github.com/raspberrypi/picamera2/discussions/111#discussioncomment-13518732
-For a good discussion of getting frame timestamps and syncing, read this thread: https://forums.raspberrypi.com/viewtopic.php?t=377442
+For a good discussion of getting frame timestamps and syncing with precallbacks, read this thread: https://forums.raspberrypi.com/viewtopic.php?t=377442
 
 Author: Andrew SG
 Created: 17/03/2025
@@ -624,7 +624,7 @@ class CameraModule(Module):
 
             # Start streaming
             # TODO: add check for config parameter stream_on_start?
-            # self.start_streaming()
+            self.start_streaming()
 
             return True
 

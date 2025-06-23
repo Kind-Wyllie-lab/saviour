@@ -108,6 +108,34 @@ body {
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
 
+.module-item.recording {
+    border-color: #e74c3c;
+    box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
+}
+
+.module-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.module-header p {
+    margin: 0;
+    font-weight: 600;
+}
+
+.recording-indicator {
+    font-size: 1.2rem;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
 .module-item p {
     margin: 0.25rem 0;
 }

@@ -497,7 +497,7 @@ body {
     margin: 0;
 }
 
-.stream-controls {
+.streams-header .stream-controls {
     display: flex;
     gap: 0.5rem;
 }
@@ -802,7 +802,7 @@ body {
 }
 
 /* Stream Controls */
-.stream-controls {
+.stream-video .stream-controls {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;

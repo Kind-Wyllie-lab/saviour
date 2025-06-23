@@ -347,7 +347,7 @@ class CameraModule(Module):
                 self.frame_times.append(frame_wall_clock)
                 timestamp = time.strftime("%Y-%m-%d %X")
                 with MappedArray(req, "lores") as m:
-                    cv2.putText(m.array, timestamp, (0,240), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50,255,50), 1) # TODO: Make origin reference lores dimensions.
+                    cv2.putText(m.array, timestamp, (0,235), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50,255,50), 1) # TODO: Make origin reference lores dimensions.
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 

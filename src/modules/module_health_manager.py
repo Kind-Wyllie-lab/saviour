@@ -101,7 +101,7 @@ class ModuleHealthManager:
     
     def get_health(self):
         """Get health metrics for the module"""
-        ptp_status = self.get_ptp_offsets()
+        ptp_status = self.callbacks["get_ptp_status"]
         return {
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
@@ -112,7 +112,9 @@ class ModuleHealthManager:
             'ptp4l_offset': ptp_status.get('ptp4l_offset'),
             'ptp4l_freq': ptp_status.get('ptp4l_freq'),
             'phc2sys_offset': ptp_status.get('phc2sys_offset'),
-            'phc2sys_freq': ptp_status.get('phc2sys_freq')
+            'phc2sys_freq': ptp_status.get('phc2sys_freq'),
+            'recording': self.callbacks["get_recording_status"],
+            'streaming': self.callbacks["get_streaming_status"]
         }
 
     def get_cpu_temp(self):
@@ -140,4 +142,16 @@ class ModuleHealthManager:
     def cleanup(self): # TODO: is this redundant with the stop_heartbeats method?
         """Clean up resources"""
         self.stop_heartbeats()
+
+    def set_callbacks(self, callbacks: Dict[str, Callable]):
+        """
+        Set callbacks for data operations that can't be directly handled by the command handler
+        
+        Args:
+            callbacks: Dictionary of callback functions
+                - 'get_ptp_status': Callback to get ptp4l and phc2sys offsets
+                - 'get_streaming_status': Callback to get module streaming status
+                - 'get_recording_status': Callback to get module recording status
+        """
+        self.callbacks = callbacks
         

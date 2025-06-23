@@ -120,7 +120,12 @@ class Module:
         self.session_manager = controller_session_manager.SessionManager()
 
         # Register Callbacks
-        self.health_manager.get_ptp_offsets = self.ptp_manager.get_status # Bind health manager's callback to the ptp_manager method
+        # TODO: Use a single dict of universal callbacks and pass them as needed? Lots of repetition right now
+        self.health_manager.set_callbacks({
+            "get_ptp_status": self.ptp_manager.get_status,
+            "get_recording_status": lambda: self.is_recording,
+            "get_streaming_status": lambda: self.is_streaming,
+        })
         self.communication_manager.command_callback = self.command_handler.handle_command # Set the callback in the communication manager to use the command handler
         self.command_handler.set_callbacks({ # Define callbacks for the command handler
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id), # 

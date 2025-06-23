@@ -71,6 +71,19 @@
         </div>
     </div>
 
+    <!-- Fullscreen Stream Modal -->
+    <div id="fullscreen-modal" class="fullscreen-modal" style="display: none;">
+        <div class="fullscreen-content">
+            <div class="fullscreen-header">
+                <h2 id="fullscreen-title">Camera Stream</h2>
+                <button class="fullscreen-close" onclick="closeFullscreen()">✕</button>
+            </div>
+            <div class="fullscreen-stream">
+                <img id="fullscreen-video" src="" alt="Fullscreen Stream">
+            </div>
+        </div>
+    </div>
+
     <script>
         // Command configuration
         const commands = {
@@ -462,9 +475,14 @@
                              width="640" height="480" 
                              onerror="handleStreamError('${module.id}')"
                              onload="handleStreamLoad('${module.id}')">
-                        <button class="hide-stream-btn" onclick="hideStream('${module.id}')">
-                            Hide Stream
-                        </button>
+                        <div class="stream-controls">
+                            <button class="hide-stream-btn" onclick="hideStream('${module.id}')">
+                                Hide Stream
+                            </button>
+                            <button class="fullscreen-btn" onclick="openFullscreen('${module.id}', '${module.ip}')" title="Fullscreen">
+                                ⛶
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
@@ -554,6 +572,57 @@
             
             console.log(`Hiding all ${cameraModules.length} camera streams`);
         }
+
+        // Function to open fullscreen stream
+        function openFullscreen(moduleId, moduleIp) {
+            const modal = document.getElementById('fullscreen-modal');
+            const title = document.getElementById('fullscreen-title');
+            const video = document.getElementById('fullscreen-video');
+            
+            if (modal && title && video) {
+                title.textContent = `${moduleId} - Fullscreen`;
+                video.src = `http://${moduleIp}:8080/video_feed`;
+                modal.style.display = 'flex';
+                
+                // Prevent body scroll when modal is open
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        // Function to close fullscreen stream
+        function closeFullscreen() {
+            const modal = document.getElementById('fullscreen-modal');
+            const video = document.getElementById('fullscreen-video');
+            
+            if (modal && video) {
+                // Clear the video source to stop the stream
+                video.src = '';
+                modal.style.display = 'none';
+                
+                // Restore body scroll
+                document.body.style.overflow = 'auto';
+            }
+        }
+
+        // Close fullscreen modal when clicking outside the content
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('fullscreen-modal');
+            const content = document.querySelector('.fullscreen-content');
+            
+            if (modal && modal.style.display === 'flex' && event.target === modal) {
+                closeFullscreen();
+            }
+        });
+
+        // Close fullscreen modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const modal = document.getElementById('fullscreen-modal');
+                if (modal && modal.style.display === 'flex') {
+                    closeFullscreen();
+                }
+            }
+        });
 
         // Add cleanup for disconnected modules
         function cleanupDisconnectedModules(activeModules) {

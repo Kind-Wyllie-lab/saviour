@@ -5,7 +5,7 @@ class ModuleItem extends HTMLElement {
 
     // Define the attributes we want to observe
     static get observedAttributes() {
-        return ['module-id', 'module-type', 'module-ip'];
+        return ['module-id', 'module-type', 'module-ip', 'recording'];
     }
 
     // Called when the element is added to the DOM
@@ -24,10 +24,14 @@ class ModuleItem extends HTMLElement {
         const id = this.getAttribute('module-id') || '';
         const type = this.getAttribute('module-type') || '';
         const ip = this.getAttribute('module-ip') || '';
+        const recording = this.getAttribute('recording') === 'true';
 
         this.innerHTML = `
-            <div class="module-item">
-                <p>ID: ${id}</p>
+            <div class="module-item ${recording ? 'recording' : ''}">
+                <div class="module-header">
+                    <p>ID: ${id}</p>
+                    ${recording ? '<span class="recording-indicator" title="Recording">🔴</span>' : ''}
+                </div>
                 <p>Type: ${type}</p>
                 <p>IP: ${ip}</p>
             </div>

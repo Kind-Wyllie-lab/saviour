@@ -297,6 +297,11 @@
             statusCard.innerHTML = statusHTML;
             console.log('Updated status card for module:', data.module_id);
             console.log('=== END STATUS UPDATE ===');
+            
+            // Update recording indicator in module list
+            if (data.status.recording !== undefined) {
+                updateRecordingIndicator(data.module_id, data.status.recording);
+            }
         }
 
         function formatUptime(seconds) {
@@ -412,7 +417,7 @@
                 moduleElement.setAttribute('module-id', module.id);
                 moduleElement.setAttribute('module-type', module.type);
                 moduleElement.setAttribute('module-ip', module.ip);
-                moduleElement.setAttribute('recording', module.recording);
+                moduleElement.setAttribute('recording', module.recording || false);
                 moduleList.appendChild(moduleElement);
             });
 
@@ -421,6 +426,14 @@
             
             // Clean up status cards for disconnected modules
             cleanupDisconnectedModules(activeModuleIds);
+        }
+
+        // Function to update recording indicators
+        function updateRecordingIndicator(moduleId, isRecording) {
+            const moduleElement = document.querySelector(`module-item[module-id="${moduleId}"]`);
+            if (moduleElement) {
+                moduleElement.setAttribute('recording', isRecording);
+            }
         }
 
         // Function to update stream cards for camera modules

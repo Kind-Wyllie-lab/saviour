@@ -190,14 +190,31 @@
             const statusContent = document.getElementById('status-content');
             const timestamp = new Date(data.status.timestamp * 1000).toLocaleString();
             
+            console.log('=== STATUS UPDATE ===');
+            console.log('Module ID:', data.module_id);
+            console.log('Status data:', data.status);
+            console.log('Status content element:', statusContent);
+            
             // Create or update the status card for this module
             let statusCard = document.getElementById(`status-card-${data.module_id}`);
+            console.log('Existing status card:', statusCard);
+            
             if (!statusCard) {
                 statusCard = document.createElement('div');
                 statusCard.id = `status-card-${data.module_id}`;
                 statusCard.className = 'status-card';
                 statusContent.appendChild(statusCard);
+                console.log('Created new status card for module:', data.module_id);
+            } else {
+                console.log('Updating existing status card for module:', data.module_id);
             }
+            
+            // Log all existing status cards
+            const allStatusCards = statusContent.querySelectorAll('.status-card');
+            console.log('Total status cards in DOM:', allStatusCards.length);
+            allStatusCards.forEach((card, index) => {
+                console.log(`Status card ${index}:`, card.id);
+            });
             
             const statusHTML = `
                 <div class="status-header">
@@ -265,6 +282,8 @@
             `;
             
             statusCard.innerHTML = statusHTML;
+            console.log('Updated status card for module:', data.module_id);
+            console.log('=== END STATUS UPDATE ===');
         }
 
         function formatUptime(seconds) {

@@ -5,9 +5,16 @@ Habitat System - Camera Module Class
 
 This class extends the base Module class to handle camera-specific functionality.
 
+Picamera2 is used for interfacing camera hardware. This is a python wrapper for libcamera / rpicam.
+
+For a good discussion of getting high framerates (via correct sensor mode), read this thread: https://github.com/raspberrypi/picamera2/discussions/111#discussioncomment-13518732
+For a good discussion of getting frame timestamps and syncing, read this thread: https://forums.raspberrypi.com/viewtopic.php?t=377442
+
 Author: Andrew SG
 Created: 17/03/2025
 License: GPLv3
+
+#TODO: Use pre-callbacks to capture metadata for each frame instead of while loop.
 """
 
 import datetime

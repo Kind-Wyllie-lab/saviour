@@ -3,10 +3,8 @@
 """
 Module PTP Manager
 
-The PTP manager is responsible for initializing and managing PTP functions.
-Important things to note about PTP on raspberry pi 5:
-- By default, systemd-timesyncd is used to sync the system clock. It must be disabled for PTP to work.
-- PTP updates every 
+The PTP manager is responsible for initializing and managing PTP functions using systemd services.
+This approach is more robust than managing processes directly.
 """
 
 
@@ -16,7 +14,6 @@ import time
 import logging
 import os
 import sys
-import tempfile
 import re
 from enum import Enum
 from typing import Callable, Dict, Any, Optional
@@ -30,7 +27,7 @@ class PTPError(Exception): # We define a custom error class
 
 class PTPManager:
     def __init__(self,
-                 role=PTPRole.MASTER,
+                 role=PTPRole.SLAVE,
                  interface='eth0',
                  logger: logging.Logger = None,
                  history_size=1000):  # Store last 1000 values by default
@@ -53,62 +50,38 @@ class PTPManager:
         self.interface = interface
         self.logger = logger
         
-        # History tracking
-        self.history_size = history_size
-        self.ptp4l_history = {
-            'timestamps': [],
-            'offsets': [],
-            'freqs': []
-        }
-        self.phc2sys_history = {
-            'timestamps': [],
-            'offsets': [],
-            'freqs': []
-        }
-        
         # Check for required packages
         self._check_required_packages()
         
         # Validate interface
         self._validate_interface()
-        
-        # Create temporary config file
-        self.config_file = self._create_config_file()
-        
-        # Configure ptp4l arguments based on role
-        if role == PTPRole.MASTER:
-            self.ptp4l_args = ['ptp4l', '-i', interface, '-m', '-l', '6', '-f', self.config_file]
-            # For master, use autoconfiguration with system clock sync
-            self.phc2sys_args = ['phc2sys', '-a', '-r', '-r']  # -r twice to consider system clock as time source
-        else:
-            # self.ptp4l_args = ['ptp4l', '-i', interface, '-s',  '-l', '6', '-f', self.config_file]
-            self.ptp4l_args = ['ptp4l', '-i', interface, '-s', '-m']
-            # For slave, use manual configuration with the interface as master
-            # self.phc2sys_args = ['phc2sys', '-s', interface, '-w', '-l', '6']
-            self.phc2sys_args = ['phc2sys', '-s', '/dev/ptp0', '-w', '-m']  
-        
-        self.ptp4l_proc = None
-        self.phc2sys_proc = None
-        self.monitor_thread = None
+
+        # Service names - define these before checking services
+        self.ptp4l_service = 'ptp4l'
+        self.phc2sys_service = 'phc2sys'
+
+        # Check if systemd services exist
+        self._check_systemd_services()
+
+        # State variables
         self.running = False
         self.status = 'not running'
         self.last_sync_time = None
+        self.last_offset = None
+        self.last_freq = None
+        self.monitor_thread = None
         
-        # Separate tracking for ptp4l and phc2sys values
-        self.ptp4l_offset = None
-        self.ptp4l_freq = None
-        self.phc2sys_offset = None
-        self.phc2sys_freq = None
-        
-        # For backward compatibility
-        self.last_offset = None  # Will be set to ptp4l_offset
-        self.last_freq = None    # Will be set to ptp4l_freq
-        
-        self.active_ptp4l_processes = None
-        self.active_phc2sys_processes = None
+        # Unified offset buffer for storing all PTP values by timestamp
+        self.ptp_buffer = []
+        self.max_buffer_size = history_size  # Store last 100 timestamp entries
+
+        # Track latest values for each service
+        self.latest_ptp4l_offset = None
+        self.latest_ptp4l_freq = None
+        self.latest_phc2sys_offset = None
+        self.latest_phc2sys_freq = None
 
         # Warning limits
-        # TODO: Thresholds in config files.
         self.ptp4l_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
         self.ptp4l_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
         self.phc2sys_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
@@ -154,23 +127,23 @@ class PTPManager:
         except subprocess.CalledProcessError:
             self.logger.warning(f"(PTP MANAGER) Could not check PTP support for {self.interface}")
 
-    def _create_config_file(self):
-        """Create a temporary configuration file for ptp4l."""
-        config_content = f"""
-        [global]
-        verbose               1
-        time_stamping        hardware
-        tx_timestamp_timeout 1
-        logAnnounceInterval  1
-        logSyncInterval      0
-        logMinDelayReqInterval 0
-        """
-        # Create temporary file
-        fd, path = tempfile.mkstemp(prefix='ptp4l_', suffix='.conf')
-        with os.fdopen(fd, 'w') as f:
-            f.write(config_content)
-        self.logger.debug(f"(PTP MANAGER) Created PTP config file at {path}")
-        return path
+    def _check_systemd_services(self):
+        """Check if the required systemd services exist."""
+        services = [self.ptp4l_service, self.phc2sys_service]
+        
+        for service in services:
+            try:
+                result = subprocess.run(['systemctl', 'status', service], 
+                                       capture_output=True, text=True)
+                if result.returncode == 4:  # Unit not found
+                    raise PTPError(f"(PTP MANAGER) Systemd service {service} not found. "
+                                   f"Please run the setup script to configure PTP services.")
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 4:  # Unit not found
+                    raise PTPError(f"(PTP MANAGER) Systemd service {service} not found. "
+                                   f"Please run the setup script to configure PTP services.")
+                else:
+                    self.logger.warning(f"(PTP MANAGER) Could not check {service} service status: {e}")
 
     def _stop_timesyncd(self):
         """
@@ -215,52 +188,23 @@ class PTPManager:
             self.logger.error(f"(PTP MANAGER) Failed to start timedatectlntp: {str(e)}")
             raise
 
-    def _check_ptp_running(self):
-        """
-        Checks if ptp4l or phc2sys is running.
-        """
+    def _get_service_status(self, service_name):
+        """Get the status of a systemd service."""
+        try:
+            result = subprocess.run(['systemctl', 'is-active', service_name], 
+                                   capture_output=True, text=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return 'unknown'
 
-        p = re.compile('\d+') # The regex pattern that will be used to find processes
-
-        output, _ = subprocess.Popen(["pgrep","ptp4l"],stdout=subprocess.PIPE).communicate()
-        self.active_ptp4l_processes = p.findall(str(output))
-
-        output, _ = subprocess.Popen(["pgrep","phc2sys"],stdout=subprocess.PIPE).communicate()
-        self.active_phc2sys_processes = p.findall(str(output))
-
-    def _kill_ptp_processes(self):
-        """
-        Kill all active ptp4l and phc2sys processes. Part of cleanup procedure.
-        """
-        cmd = [] # Empty array for command arguments
-        for proc in self.active_ptp4l_processes:
-            cmd.append(proc)
-        for proc in self.active_phc2sys_processes:
-            cmd.append(proc)
-        if not cmd:
-            self.logger.info("(PTP MANAGER) Did not find any active processes to kill.")
-            pass
-        else:
-            cmd.append("kill")
-            cmd.reverse() # Reverse so that kill comes at the front - process order shouldn't matter here
-            self.logger.info(f"(PTP MANAGER) Killing all ptp processes with command: {cmd}")
-            subprocess.Popen(cmd)
-
-    def _add_to_history(self, history_dict, timestamp, offset=None, freq=None):
-        """Add values to history, maintaining the specified size limit"""
-        history_dict['timestamps'].append(timestamp)
-        if offset is not None:
-            history_dict['offsets'].append(offset)
-        if freq is not None:
-            history_dict['freqs'].append(freq)
-            
-        # Trim history if it exceeds size limit
-        if len(history_dict['timestamps']) > self.history_size:
-            history_dict['timestamps'].pop(0)
-            if len(history_dict['offsets']) > 0:
-                history_dict['offsets'].pop(0)
-            if len(history_dict['freqs']) > 0:
-                history_dict['freqs'].pop(0)
+    def _get_service_logs(self, service_name, lines=10):
+        """Get recent logs from a systemd service."""
+        try:
+            result = subprocess.run(['journalctl', '-u', service_name, '-n', str(lines), '--no-pager'], 
+                                   capture_output=True, text=True)
+            return result.stdout
+        except subprocess.CalledProcessError:
+            return ""
 
     def start(self):
         self.logger.info(f"(PTP MANAGER) Starting PTP in {self.role.value} mode on {self.interface}")
@@ -268,255 +212,314 @@ class PTPManager:
         # Ensure timesyncd is disabled, or else phc2sys won't work!
         self._stop_timesyncd()
 
-        # Check for any active ptp processes
-        self._check_ptp_running()
+        # Stop any active ptp processes
+        self.stop()
 
-        # Kill them so we start clean
-        self._kill_ptp_processes()
+        try: 
+            # Start ptp4l service
+            self.logger.info("(PTP MANAGER) Starting ptp4l service")
+            subprocess.run(["systemctl", "start", self.ptp4l_service], check=True)
 
-        # Start ptp4l with error capture
-        try:
-            self.ptp4l_proc = subprocess.Popen(
-                    self.ptp4l_args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,  # Line buffered
-                    universal_newlines=True,
-                    env=dict(os.environ, TERM='dumb')  # Disable ANSI escape sequences
-                )
-                
-            # Check if process started successfully
-            time.sleep(0.5)  # Give it a moment to start
-            if self.ptp4l_proc.poll() is not None: # poll() checks the process has terminated.
-                error = self.ptp4l_proc.stderr.read()
-                raise PTPError(f"(PTP MANAGER) ptp4l failed to start: {error}")
+            # Give it a moment to start
+            time.sleep(2)
+
+            # Check if ptp4l started successfully
+            ptp4l_status = self._get_service_status(self.ptp4l_service)
+            if ptp4l_status != "active":
+                logs = self._get_service_logs(self.ptp4l_service)
+                raise PTPError(f"(PTP MANAGER) ptp4l service failed to start. Status: {ptp4l_status}\nLogs: {logs}")
             
             self.logger.info("(PTP MANAGER) ptp4l started successfully")
             
-            # Start phc2sys
-            self.phc2sys_proc = subprocess.Popen(
-                    self.phc2sys_args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,  # Line buffered
-                    universal_newlines=True,
-                    env=dict(os.environ, TERM='dumb')  # Disable ANSI escape sequences
-                )
+            # Start phc2sys service
+            self.logger.info("(PTP MANAGER) Starting phc2sys service")
+            subprocess.run(["systemctl", "start", self.phc2sys_service], check=True)
                 
-            # Check if process started successfully
-            time.sleep(0.5)  # Give it a moment to start
-            if self.phc2sys_proc.poll() is not None:
-                error = self.phc2sys_proc.stderr.read()
-                raise PTPError(f"(PTP MANAGER) phc2sys failed to start: {error}")
+            # Give it a moment to start
+            time.sleep(2)  
+
+            # Check if phc2sys started successfully
+            phc2sys_status = self._get_service_status(self.phc2sys_service)
+            if phc2sys_status != 'active':
+                logs = self._get_service_logs(self.phc2sys_service)
+                raise PTPError(f"(PTP MANAGER) phc2sys service failed to start. Status: {phc2sys_status}\nLogs: {logs}")
             
             self.logger.info("(PTP MANAGER) phc2sys started successfully")
             
-            # Start monitoring thread
-            self.running = True
-            self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
-            self.monitor_thread.start()
-            
-        except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Error starting PTP: {e}")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"(PTP MANAGER) Failed to start PTP services: {e}")
             self.stop()
             raise
+        
+        # Start monitoring thread
+        self.running = True
+        self.status = "starting"
+        self.monitor_thread = threading.Thread(target=self._monitor, daemon=True)
+        self.monitor_thread.start()
 
     def _monitor(self):
-        """Monitor PTP processes and log their output"""
+        """Monitor PTP services and parse their output."""
         while self.running:
-            for proc, name in [(self.ptp4l_proc, 'ptp4l'), (self.phc2sys_proc, 'phc2sys')]:
-                if proc and proc.poll() is not None:
-                    error = proc.stderr.read() if proc.stderr else "No error output"
-                    self.status = f'{name} stopped'
-                    self.logger.error(f"(PTP MANAGER) {name} process stopped unexpectedly! Error: {error}")
+            try:
+                # Check service status
+                ptp4l_status = self._get_service_status(self.ptp4l_service)
+                phc2sys_status = self._get_service_status(self.phc2sys_service)
+
+                if ptp4l_status != 'active' or phc2sys_status != 'active':
+                    self.status = f'ptp4l:{ptp4l_status}, phc2sys:{phc2sys_status}'
+                    self.logger.error(f"(PTP MANAGER) PTP services not active: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
                     self.running = False
                     return
-                
-                line = proc.stdout.readline() if proc and proc.stdout else ''
-                if line:
-                    line = line.strip()
-                    
-                    # Parse offset information
-                    if 'master offset' in line or 'offset' in line:
-                        try:
-                            # Extract offset value from line
-                            offset_str = line.split('offset')[1].split()[0]
-                            offset_value = float(offset_str)
-                            current_time = time.time()
-                            
-                            if name == 'ptp4l':
-                                self.ptp4l_offset = offset_value
-                                self.last_offset = offset_value  # For backward compatibility
-                                self._add_to_history(self.ptp4l_history, current_time, offset=offset_value)
-                            else:  # phc2sys
-                                self.phc2sys_offset = offset_value
-                                self._add_to_history(self.phc2sys_history, current_time, offset=offset_value)
-                            
-                            self.last_sync_time = current_time
-                            self.status = 'synchronized'
-                            
-                            # Log the offset with source identification
-                            self.logger.debug(f"(PTP MANAGER) {name} offset: {offset_value} ns")
-                            
-                        except (IndexError, ValueError):
-                            pass
 
-                    # Parse freq correction information
-                    if 'freq' in line:
-                        try:
-                            # Extract freq correction from line
-                            freq_str = line.split('freq')[1].split()[0]
-                            freq_value = int(freq_str)
-                            current_time = time.time()
-                            
-                            if name == 'ptp4l':
-                                self.ptp4l_freq = freq_value
-                                self.last_freq = freq_value  # For backward compatibility
-                                self._add_to_history(self.ptp4l_history, current_time, freq=freq_value)
-                            else:  # phc2sys
-                                self.phc2sys_freq = freq_value
-                                self._add_to_history(self.phc2sys_history, current_time, freq=freq_value)
-                            
-                            # Log the frequency with source identification
-                            self.logger.debug(f"(PTP MANAGER) {name} frequency correction: {freq_value} ppb")
-                            
-                        except(IndexError, ValueError):
-                            pass
+                # Get recent logs and parse them
+                ptp4l_logs = self._get_service_logs(self.ptp4l_service, lines=5)
+                phc2sys_logs = self._get_service_logs(self.phc2sys_service, lines=5)
 
-                    # Check for successful sync
-                    if 'synchronized' in line.lower():
-                        self.status = 'synchronized'
-                        self.logger.info("(PTP MANAGER) PTP synchronized successfully")
-                    
-                    # Check for port state changes
-                    if 'port state' in line.lower():
-                        self.logger.info(f"(PTP MANAGER) PTP port state change: {line}")
-                        if 'LISTENING' in line:
-                            self.status = 'listening'
-                        elif 'UNCALIBRATED' in line:
-                            self.status = 'uncalibrated'
-                        elif 'SLAVE' in line:
-                            self.status = 'slave'
-                        elif 'MASTER' in line:
-                            self.status = 'master'
-                    
-                    # Check for errors
-                    if 'FAULT' in line or 'error' in line.lower():
-                        self.status = 'error'
-                        self.logger.error(f"(PTP MANAGER) PTP error detected: {line}")
-                    
-                    # Check for clock selection
-                    if 'selected' in line and 'PTP clock' in line:
-                        self.logger.info(f"(PTP MANAGER) PTP clock selected: {line}")
+                # Parse ptp4l logs
+                for line in ptp4l_logs.split('\n'):
+                    if line.strip():
+                        self._parse_ptp4l_line(line)
 
-                    # Check for excessively high freq/offset
-                    # if name == 'ptp4l':  # Only check ptp4l values for warnings
-                    #     if self.ptp4l_offset is not None:
-                    #         if abs(self.ptp4l_offset) > self.ptp4l_offset_warning_threshold:
-                    #             self.logger.warning(f"(PTP MANAGER) Warning: ptp4l offset {self.ptp4l_offset}ns exceeded threshold value {self.ptp4l_offset_warning_threshold}ns")
-                    #             self.ptp4l_threshold_flag = True
-                    #             time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
-                    #     if self.ptp4l_freq is not None:
-                    #         if abs(self.ptp4l_freq) > self.ptp4l_freq_warning_threshold:
-                    #             self.logger.warning(f"(PTP MANAGER) Warning: ptp4l freq {self.ptp4l_freq}ppb exceeded threshold value {self.ptp4l_freq_warning_threshold}ppb")
-                    #             self.ptp4l_threshold_flag = True
-                    #             time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
-                    #     if self.ptp4l_threshold_flag == True:
-                    #         if self.ptp4l_freq is not None and self.ptp4l_offset is not None:
-                    #             if abs(self.ptp4l_freq) < self.ptp4l_freq_warning_threshold and abs(self.ptp4l_offset) < self.ptp4l_offset_warning_threshold:
-                    #                 self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.ptp4l_freq}ppb and {self.ptp4l_offset}ns")
-                    #                 self.ptp4l_threshold_flag = False
-                    #                 time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
-                    # elif name == 'phc2sys':
-                    #     if self.phc2sys_offset is not None:
-                    #         if abs(self.phc2sys_offset) > self.phc2sys_offset_warning_threshold:
-                    #             self.logger.warning(f"(PTP MANAGER) Warning: phc2sys offset {self.phc2sys_offset}ns exceeded threshold value {self.phc2sys_offset_warning_threshold}ns")
-                    #             self.phc2sys_threshold_flag = True  
-                    #             time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
-                    #     if self.phc2sys_freq is not None:
-                    #         if abs(self.phc2sys_freq) > self.phc2sys_freq_warning_threshold:
-                    #             self.logger.warning(f"(PTP MANAGER) Warning: phc2sys freq {self.phc2sys_freq}ppb exceeded threshold value {self.phc2sys_freq_warning_threshold}ppb")
-                    #             self.phc2sys_threshold_flag = True
-                    #             time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
-                    #     if self.phc2sys_threshold_flag == True:
-                    #         if self.phc2sys_freq is not None and self.phc2sys_offset is not None:
-                    #             if abs(self.phc2sys_freq) < self.phc2sys_freq_warning_threshold and abs(self.phc2sys_offset) < self.phc2sys_offset_warning_threshold:
-                    #                 self.logger.info(f"(PTP MANAGER) Threshold flag reset to False as freq and offset are within threshold values: {self.phc2sys_freq}ppb and {self.phc2sys_offset}ns")
-                    #                 self.phc2sys_threshold_flag = False
-                    #                 time.sleep(0.1) # Sleep for 0.1 seconds to avoid busy-waiting
-                                
-                                
-            time.sleep(0.2) # Sleep for 0.2 seconds to avoid busy-waiting
+                # Parse phc2sys logs
+                for line in phc2sys_logs.split('\n'):
+                    if line.strip():
+                        self._parse_phc2sys_line(line)
+
+            except Exception as e:
+                self.logger.error(f"(PTP MANAGER) Error in monitor thread: {e}")
+
+            time.sleep(1)  # Check every second
+
+    def _add_buffer_entry(self, timestamp):
+        """Add a new entry to the buffer with current values."""
+        entry = {
+            'timestamp': timestamp,
+            'ptp4l_freq': self.latest_ptp4l_freq,
+            'ptp4l_offset': self.latest_ptp4l_offset,
+            'phc2sys_freq': self.latest_phc2sys_freq,
+            'phc2sys_offset': self.latest_phc2sys_offset
+        }
+        
+        self.ptp_buffer.append(entry)
+        
+        # Keep buffer size manageable
+        if len(self.ptp_buffer) > self.max_buffer_size:
+            self.ptp_buffer.pop(0)
+
+    def _parse_ptp4l_line(self, line):
+        """Parse a line from ptp4l logs."""
+        line = line.strip()
+        if not line:
+            return
+
+        self.logger.debug(f"ptp4l: {line}")
+
+        # Parse offset information - format: "master offset <number> s2 freq <number>"
+        if 'master offset' in line:
+            try:
+                # Extract offset value from line using regex
+                import re
+                offset_match = re.search(r'master offset\s+(-?\d+)', line)
+                if offset_match:
+                    current_offset = float(offset_match.group(1))
+                    self.latest_ptp4l_offset = current_offset
+                    self.last_offset = current_offset
+                    self.last_sync_time = time.time()
+                    self.status = 'synchronized'
+                    
+                    # Add entry to buffer
+                    self._add_buffer_entry(time.time())
+                    
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse ptp4l offset from line: {line}, error: {e}")
+
+        # Parse freq correction information - format: "s2 freq <number>"
+        if 's2 freq' in line:
+            try:
+                # Extract freq correction from line using regex
+                import re
+                freq_match = re.search(r's2 freq\s+(-?\d+)', line)
+                if freq_match:
+                    self.latest_ptp4l_freq = int(freq_match.group(1))
+                    self.last_freq = self.latest_ptp4l_freq
+                    
+                    # Add entry to buffer if we don't have a recent one
+                    if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
+                        self._add_buffer_entry(time.time())
+                    
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse ptp4l freq from line: {line}, error: {e}")
+
+        # Check for successful sync
+        if 'synchronized' in line.lower():
+            self.status = 'synchronized'
+            self.logger.info("(PTP MANAGER) PTP synchronized successfully")
+
+        # Check for port state changes
+        if 'port state' in line.lower():
+            self.logger.info(f"(PTP MANAGER) PTP port state change: {line}")
+            if 'LISTENING' in line:
+                self.status = 'listening'
+            elif 'UNCALIBRATED' in line:
+                self.status = 'uncalibrated'
+            elif 'SLAVE' in line:
+                self.status = 'slave'
+            elif 'MASTER' in line:
+                self.status = 'master'
+
+        # Check for errors
+        if 'FAULT' in line or 'error' in line.lower():
+            self.status = 'error'
+            self.logger.error(f"(PTP MANAGER) PTP error detected: {line}")
+
+    def _parse_phc2sys_line(self, line):
+        """Parse a line from phc2sys logs."""
+        line = line.strip()
+        if not line:
+            return
+
+        self.logger.debug(f"phc2sys: {line}")
+
+        # Parse offset information from phc2sys - format: "phc offset <number> s2 freq <number>"
+        if 'phc offset' in line:
+            try:
+                # Extract offset value from line using regex
+                import re
+                offset_match = re.search(r'phc offset\s+(-?\d+)', line)
+                if offset_match:
+                    current_offset = float(offset_match.group(1))
+                    self.latest_phc2sys_offset = current_offset
+                    self.last_offset = current_offset
+                    self.last_sync_time = time.time()
+                    self.status = 'synchronized'
+                    
+                    # Add entry to buffer
+                    self._add_buffer_entry(time.time())
+                    
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys offset from line: {line}, error: {e}")
+
+        # Parse freq correction information from phc2sys - format: "s2 freq <number>"
+        if 's2 freq' in line:
+            try:
+                # Extract freq correction from line using regex
+                import re
+                freq_match = re.search(r's2 freq\s+(-?\d+)', line)
+                if freq_match:
+                    self.latest_phc2sys_freq = int(freq_match.group(1))
+                    
+                    # Add entry to buffer if we don't have a recent one
+                    if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
+                        self._add_buffer_entry(time.time())
+                    
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys freq from line: {line}, error: {e}")
+
+        # Check for errors
+        if 'error' in line.lower():
+            self.status = 'error'
+            self.logger.error(f"(PTP MANAGER) PHC2SYS error detected: {line}")
+
 
     def stop(self):
-        """Stop PTP processes and clean up"""
-        self.logger.info("(PTP MANAGER) Stopping PTP processes...")
+        """Stop PTP services using systemd."""
         self.running = False
-
-        # Stop monitoring thread first
-        if self.monitor_thread and self.monitor_thread.is_alive():
-            self.monitor_thread.join(timeout=1.0)
-
-        # Stop processes in reverse order (phc2sys first, then ptp4l)
-        if self.phc2sys_proc:
-            try:
-                self.phc2sys_proc.terminate()
-                self.phc2sys_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.logger.warning("(PTP MANAGER) phc2sys did not terminate gracefully, killing...")
-                self.phc2sys_proc.kill()
-                self.phc2sys_proc.wait()
-            except Exception as e:
-                self.logger.error(f"(PTP MANAGER) Error stopping phc2sys: {e}")
-
-        if self.ptp4l_proc:
-            try:
-                self.ptp4l_proc.terminate()
-                self.ptp4l_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.logger.warning("(PTP MANAGER) ptp4l did not terminate gracefully, killing...")
-                self.ptp4l_proc.kill()
-                self.ptp4l_proc.wait()
-            except Exception as e:
-                self.logger.error(f"(PTP MANAGER) Error stopping ptp4l: {e}")
-
-        # Clean up config file
+        
         try:
-            if hasattr(self, 'config_file') and os.path.exists(self.config_file):
-                os.remove(self.config_file)
-        except OSError as e:
-            self.logger.error(f"(PTP MANAGER) Error removing config file: {e}")
-
-        # Always try to restart timesyncd, even if other cleanup failed
-        try:
-            self._start_timesyncd()
-        except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to restart timesyncd: {e}")
-            # Try one more time after a short delay
-            time.sleep(1)
-            try:
-                self._start_timesyncd()
-            except Exception as e:
-                self.logger.error(f"(PTP MANAGER) Second attempt to restart timesyncd failed: {e}")
+            # Stop phc2sys first
+            subprocess.run(['systemctl', 'stop', self.phc2sys_service], check=False)
+            
+            # Stop ptp4l
+            subprocess.run(['systemctl', 'stop', self.ptp4l_service], check=False)
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"(PTP MANAGER) Error stopping services: {e}")
 
         self.status = 'stopped'
-        self.logger.info("(PTP MANAGER) PTP processes stopped and cleanup completed.")
+        self.logger.info("(PTP MANAGER) Stopped PTP services.")
 
     def get_status(self):
-        """Get current PTP status and history"""
+        """Get current PTP status."""
+        ptp4l_status = self._get_service_status(self.ptp4l_service)
+        phc2sys_status = self._get_service_status(self.phc2sys_service)
+        
         return {
             'role': self.role.value,
             'status': self.status,
+            'ptp4l_service': ptp4l_status,
+            'phc2sys_service': phc2sys_status,
             'last_sync': self.last_sync_time,
-            'ptp4l_offset': self.ptp4l_offset,
-            'ptp4l_freq': self.ptp4l_freq,
-            'phc2sys_offset': self.phc2sys_offset,
-            'phc2sys_freq': self.phc2sys_freq,
+            'last_offset': self.last_offset,
+            'last_freq': self.last_freq,
             'interface': self.interface,
-            'ptp4l_history': self.ptp4l_history,
-            'phc2sys_history': self.phc2sys_history
+            'ptp_buffer_size': len(self.ptp_buffer),
+            # Add individual service values for health manager
+            'ptp4l_offset': self.latest_ptp4l_offset,
+            'ptp4l_freq': self.latest_ptp4l_freq,
+            'phc2sys_offset': self.latest_phc2sys_offset,
+            'phc2sys_freq': self.latest_phc2sys_freq,
+        }
+
+    def get_ptp_buffer(self, max_entries=None):
+        """Get the ptp_buffer data.
+        
+        Args:
+            max_entries: Maximum number of entries to return (None for all)
+            
+        Returns:
+            List of ptp_buffer dictionaries with timestamp, offset, and freq values
+        """
+        if max_entries is None:
+            return self.ptp_buffer.copy()
+        else:
+            return self.ptp_buffer[-max_entries:].copy()
+
+    def get_offset_statistics(self):
+        """Get statistics from the ptp buffer.
+        
+        Returns:
+            Dictionary with offset and freq statistics for both ptp4l and phc2sys
+        """
+        def calculate_stats(values):
+            if not values:
+                return {
+                    'count': 0,
+                    'mean': None,
+                    'std_dev': None,
+                    'min': None,
+                    'max': None
+                }
+            
+            valid_values = [v for v in values if v is not None]
+            if not valid_values:
+                return {
+                    'count': 0,
+                    'mean': None,
+                    'std_dev': None,
+                    'min': None,
+                    'max': None
+                }
+            
+            mean = sum(valid_values) / len(valid_values)
+            return {
+                'count': len(valid_values),
+                'mean': mean,
+                'std_dev': (sum((x - mean) ** 2 for x in valid_values) / len(valid_values)) ** 0.5,
+                'min': min(valid_values),
+                'max': max(valid_values)
+            }
+        
+        # Extract values for each field
+        ptp4l_offsets = [entry['ptp4l_offset'] for entry in self.ptp_buffer]
+        ptp4l_freqs = [entry['ptp4l_freq'] for entry in self.ptp_buffer]
+        phc2sys_offsets = [entry['phc2sys_offset'] for entry in self.ptp_buffer]
+        phc2sys_freqs = [entry['phc2sys_freq'] for entry in self.ptp_buffer]
+        
+        return {
+            'ptp4l_offset': calculate_stats(ptp4l_offsets),
+            'ptp4l_freq': calculate_stats(ptp4l_freqs),
+            'phc2sys_offset': calculate_stats(phc2sys_offsets),
+            'phc2sys_freq': calculate_stats(phc2sys_freqs)
         }
 
     def is_synchronized(self, timeout=5):
@@ -527,3 +530,16 @@ class PTPManager:
     def get_ptp_time(self):
         # If PTP is synced to system clock, just use time.time()
         return time.time()
+
+    def get_service_logs(self, service_name=None, lines=20):
+        """Get logs from PTP services."""
+        if service_name is None:
+            # Get logs from both services
+            ptp4l_logs = self._get_service_logs(self.ptp4l_service, lines)
+            phc2sys_logs = self._get_service_logs(self.phc2sys_service, lines)
+            return {
+                'ptp4l': ptp4l_logs,
+                'phc2sys': phc2sys_logs
+            }
+        else:
+            return self._get_service_logs(service_name, lines)

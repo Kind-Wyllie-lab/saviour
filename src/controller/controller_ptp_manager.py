@@ -269,37 +269,41 @@ class PTPManager:
 
         self.logger.debug(f"ptp4l: {line}")
 
-        # Parse offset information
-        if 'master offset' in line or 'offset' in line:
+        # Parse offset information - format: "master offset <number> s2 freq <number>"
+        if 'master offset' in line:
             try:
-                # Extract offset value from line
-                offset_str = line.split('offset')[1].split()[0]
-                current_offset = float(offset_str)
-                self.latest_ptp4l_offset = current_offset
-                self.last_offset = current_offset
-                self.last_sync_time = time.time()
-                self.status = 'synchronized'
-                
-                # Add entry to buffer
-                self._add_buffer_entry(time.time())
+                # Extract offset value from line using regex
+                import re
+                offset_match = re.search(r'master offset\s+(-?\d+)', line)
+                if offset_match:
+                    current_offset = float(offset_match.group(1))
+                    self.latest_ptp4l_offset = current_offset
+                    self.last_offset = current_offset
+                    self.last_sync_time = time.time()
+                    self.status = 'synchronized'
                     
-            except (IndexError, ValueError):
-                self.logger.warning(f"(PTP MANAGER) Could not parse offset from line: {line}")
-
-        # Parse freq correction information
-        if 'freq' in line:
-            try:
-                # Extract freq correction from line
-                freq_str = line.split('freq')[1].split()[0]
-                self.latest_ptp4l_freq = int(freq_str)
-                self.last_freq = self.latest_ptp4l_freq
-                
-                # Add entry to buffer if we don't have a recent one
-                if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
+                    # Add entry to buffer
                     self._add_buffer_entry(time.time())
                     
-            except(IndexError, ValueError):
-                self.logger.warning(f"(PTP MANAGER) Could not parse freq from line: {line}")
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse ptp4l offset from line: {line}, error: {e}")
+
+        # Parse freq correction information - format: "s2 freq <number>"
+        if 's2 freq' in line:
+            try:
+                # Extract freq correction from line using regex
+                import re
+                freq_match = re.search(r's2 freq\s+(-?\d+)', line)
+                if freq_match:
+                    self.latest_ptp4l_freq = int(freq_match.group(1))
+                    self.last_freq = self.latest_ptp4l_freq
+                    
+                    # Add entry to buffer if we don't have a recent one
+                    if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
+                        self._add_buffer_entry(time.time())
+                    
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse ptp4l freq from line: {line}, error: {e}")
 
         # Check for successful sync
         if 'synchronized' in line.lower():
@@ -331,36 +335,40 @@ class PTPManager:
 
         self.logger.debug(f"phc2sys: {line}")
 
-        # Parse offset information from phc2sys
-        if 'offset' in line:
+        # Parse offset information from phc2sys - format: "phc offset <number> s2 freq <number>"
+        if 'phc offset' in line:
             try:
-                # Extract offset value from line
-                offset_str = line.split('offset')[1].split()[0]
-                current_offset = float(offset_str)
-                self.latest_phc2sys_offset = current_offset
-                self.last_offset = current_offset
-                self.last_sync_time = time.time()
-                self.status = 'synchronized'
-                
-                # Add entry to buffer
-                self._add_buffer_entry(time.time())
+                # Extract offset value from line using regex
+                import re
+                offset_match = re.search(r'phc offset\s+(-?\d+)', line)
+                if offset_match:
+                    current_offset = float(offset_match.group(1))
+                    self.latest_phc2sys_offset = current_offset
+                    self.last_offset = current_offset
+                    self.last_sync_time = time.time()
+                    self.status = 'synchronized'
                     
-            except (IndexError, ValueError):
-                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys offset from line: {line}")
-
-        # Parse freq correction information from phc2sys
-        if 'freq' in line:
-            try:
-                # Extract freq correction from line
-                freq_str = line.split('freq')[1].split()[0]
-                self.latest_phc2sys_freq = int(freq_str)
-                
-                # Add entry to buffer if we don't have a recent one
-                if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
+                    # Add entry to buffer
                     self._add_buffer_entry(time.time())
                     
-            except (IndexError, ValueError):
-                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys freq from line: {line}")
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys offset from line: {line}, error: {e}")
+
+        # Parse freq correction information from phc2sys - format: "s2 freq <number>"
+        if 's2 freq' in line:
+            try:
+                # Extract freq correction from line using regex
+                import re
+                freq_match = re.search(r's2 freq\s+(-?\d+)', line)
+                if freq_match:
+                    self.latest_phc2sys_freq = int(freq_match.group(1))
+                    
+                    # Add entry to buffer if we don't have a recent one
+                    if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
+                        self._add_buffer_entry(time.time())
+                    
+            except (IndexError, ValueError) as e:
+                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys freq from line: {line}, error: {e}")
 
         # Check for errors
         if 'error' in line.lower():
@@ -399,6 +407,11 @@ class PTPManager:
             'last_freq': self.last_freq,
             'interface': self.interface,
             'ptp_buffer_size': len(self.ptp_buffer),
+            # Add individual service values for health manager
+            'ptp4l_offset': self.latest_ptp4l_offset,
+            'ptp4l_freq': self.latest_ptp4l_freq,
+            'phc2sys_offset': self.latest_phc2sys_offset,
+            'phc2sys_freq': self.latest_phc2sys_freq,
         }
 
     def get_ptp_buffer(self, max_entries=None):

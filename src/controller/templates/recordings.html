@@ -31,6 +31,11 @@
                         <button class="tab-button" data-tab="exported-recordings">Exported Recordings</button>
                     </div>
                     <div id="module-recordings" class="recordings-content active">
+                        <div class="recordings-filter">
+                            <label for="experiment-filter">Filter by Experiment:</label>
+                            <input type="text" id="experiment-filter" placeholder="Enter experiment name to filter...">
+                            <button id="clear-filter" class="filter-button">Clear Filter</button>
+                        </div>
                         <div class="recordings-list"></div>
                     </div>
                     <div id="exported-recordings" class="recordings-content">
@@ -411,24 +416,15 @@
                 if (!data.module_recordings || data.module_recordings.length === 0) {
                     moduleRecordingsList.innerHTML = '<p>No recordings found</p>';
                 } else {
-                    const recordingsHTML = data.module_recordings.map(recording => `
-                        <div class="recording-item">
-                            <div class="recording-info">
-                                <span class="recording-name">${recording.filename}</span>
-                                <span class="recording-date">${recording.created}</span>
-                                <span class="recording-size">${formatFileSize(recording.size)}</span>
-                            </div>
-                            <div class="recording-actions">
-                                <button class="action-button export" title="Export Recording" data-filename="${recording.filename}">
-                                    Export
-                                </button>
-                                <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
-                                    Delete
-                                </button>
-                            </div>
-                        </div>
-                    `).join('');
+                    // Group recordings by experiment name
+                    const recordingsByExperiment = groupRecordingsByExperiment(data.module_recordings);
+                    
+                    // Generate HTML for grouped recordings
+                    const recordingsHTML = generateGroupedRecordingsHTML(recordingsByExperiment);
                     moduleRecordingsList.innerHTML = recordingsHTML;
+                    
+                    // Add event listeners for dropdown toggles and action buttons
+                    addRecordingsEventListeners();
                 }
             }
 
@@ -440,26 +436,180 @@
                 if (!data.exported_recordings || data.exported_recordings.length === 0) {
                     exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
                 } else {
-                    const recordingsHTML = data.exported_recordings.map(recording => `
-                        <div class="recording-item">
-                            <div class="recording-info">
-                                <span class="recording-name">${recording.filename}</span>
-                                <span class="recording-date">${recording.created}</span>
-                                <span class="recording-size">${formatFileSize(recording.size)}</span>
-                            </div>
-                            <div class="recording-actions">
-                                <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
-                                    Delete
-                                </button>
-                            </div>
-                        </div>
-                    `).join('');
-                    exportedRecordingsList.innerHTML = recordingsHTML;
+                    // Group exported recordings by experiment name
+                    const exportedRecordingsByExperiment = groupRecordingsByExperiment(data.exported_recordings);
+                    
+                    // Generate HTML for grouped exported recordings
+                    const exportedRecordingsHTML = generateGroupedExportedRecordingsHTML(exportedRecordingsByExperiment);
+                    exportedRecordingsList.innerHTML = exportedRecordingsHTML;
+                    
+                    // Add event listeners for exported recordings
+                    addExportedRecordingsEventListeners();
                 }
             }
+        });
 
-            // Add event listeners for the action buttons
-            moduleRecordingsList.querySelectorAll('.action-button.export').forEach(button => {
+        // Group recordings by experiment name
+        function groupRecordingsByExperiment(recordings) {
+            const groups = {};
+            
+            recordings.forEach(recording => {
+                // Extract experiment name from filename (assuming format: experiment_name_timestamp.ext)
+                const experimentName = extractExperimentName(recording.filename);
+                
+                if (!groups[experimentName]) {
+                    groups[experimentName] = [];
+                }
+                groups[experimentName].push(recording);
+            });
+            
+            return groups;
+        }
+
+        // Extract experiment name from filename
+        function extractExperimentName(filename) {
+            // Remove file extension
+            const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
+            
+            // Split by underscore and take the first part as experiment name
+            const parts = nameWithoutExt.split('_');
+            if (parts.length >= 2) {
+                return parts[0];
+            }
+            
+            // Fallback: return filename without extension
+            return nameWithoutExt;
+        }
+
+        // Generate HTML for grouped recordings
+        function generateGroupedRecordingsHTML(recordingsByExperiment) {
+            let html = '';
+            
+            Object.entries(recordingsByExperiment).forEach(([experimentName, recordings]) => {
+                const totalSize = recordings.reduce((sum, rec) => sum + rec.size, 0);
+                const recordingCount = recordings.length;
+                
+                html += `
+                    <div class="experiment-group" data-experiment="${experimentName}">
+                        <div class="experiment-header">
+                            <div class="experiment-info" onclick="toggleExperimentGroup('${experimentName}')">
+                                <span class="experiment-name">${experimentName}</span>
+                                <span class="experiment-stats">${recordingCount} recording${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
+                            </div>
+                            <div class="experiment-actions">
+                                <button class="action-button delete-all" title="Delete All Recordings for ${experimentName}" onclick="deleteAllRecordings('${experimentName}')">
+                                    Delete All
+                                </button>
+                                <div class="experiment-toggle" onclick="toggleExperimentGroup('${experimentName}')">
+                                    <span class="toggle-icon">▼</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="experiment-recordings" id="recordings-${experimentName}">
+                            ${recordings.map(recording => `
+                                <div class="recording-item">
+                                    <div class="recording-info">
+                                        <span class="recording-name">${recording.filename}</span>
+                                        <span class="recording-date">${recording.created}</span>
+                                        <span class="recording-size">${formatFileSize(recording.size)}</span>
+                                    </div>
+                                    <div class="recording-actions">
+                                        <button class="action-button export" title="Export Recording" data-filename="${recording.filename}">
+                                            Export
+                                        </button>
+                                        <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            return html;
+        }
+
+        // Generate HTML for grouped exported recordings
+        function generateGroupedExportedRecordingsHTML(recordingsByExperiment) {
+            let html = '';
+            
+            Object.entries(recordingsByExperiment).forEach(([experimentName, recordings]) => {
+                const totalSize = recordings.reduce((sum, rec) => sum + rec.size, 0);
+                const recordingCount = recordings.length;
+                
+                html += `
+                    <div class="experiment-group" data-exported-experiment="${experimentName}">
+                        <div class="experiment-header">
+                            <div class="experiment-info" onclick="toggleExportedExperimentGroup('${experimentName}')">
+                                <span class="experiment-name">${experimentName}</span>
+                                <span class="experiment-stats">${recordingCount} exported recording${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
+                            </div>
+                            <div class="experiment-actions">
+                                <button class="action-button delete-all" title="Delete All Exported Recordings for ${experimentName}" onclick="deleteAllExportedRecordings('${experimentName}')">
+                                    Delete All
+                                </button>
+                                <div class="experiment-toggle" onclick="toggleExportedExperimentGroup('${experimentName}')">
+                                    <span class="toggle-icon">▼</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="experiment-recordings" id="exported-recordings-${experimentName}">
+                            ${recordings.map(recording => `
+                                <div class="recording-item">
+                                    <div class="recording-info">
+                                        <span class="recording-name">${recording.filename}</span>
+                                        <span class="recording-date">${recording.created}</span>
+                                        <span class="recording-size">${formatFileSize(recording.size)}</span>
+                                    </div>
+                                    <div class="recording-actions">
+                                        <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            return html;
+        }
+
+        // Toggle experiment group visibility
+        function toggleExperimentGroup(experimentName) {
+            const recordingsDiv = document.getElementById(`recordings-${experimentName}`);
+            const toggleIcon = document.querySelector(`[data-experiment="${experimentName}"] .toggle-icon`);
+            
+            if (recordingsDiv.style.display === 'none') {
+                recordingsDiv.style.display = 'block';
+                toggleIcon.textContent = '▼';
+            } else {
+                recordingsDiv.style.display = 'none';
+                toggleIcon.textContent = '▶';
+            }
+        }
+
+        // Toggle exported experiment group visibility
+        function toggleExportedExperimentGroup(experimentName) {
+            const recordingsDiv = document.getElementById(`exported-recordings-${experimentName}`);
+            const toggleIcon = document.querySelector(`[data-exported-experiment="${experimentName}"] .toggle-icon`);
+            
+            if (recordingsDiv.style.display === 'none') {
+                recordingsDiv.style.display = 'block';
+                toggleIcon.textContent = '▼';
+            } else {
+                recordingsDiv.style.display = 'none';
+                toggleIcon.textContent = '▶';
+            }
+        }
+
+        // Add event listeners for recordings
+        function addRecordingsEventListeners() {
+            // Export buttons
+            document.querySelectorAll('.action-button.export').forEach(button => {
                 button.addEventListener('click', () => {
                     const filename = button.dataset.filename;
                     socket.emit('command', {
@@ -472,7 +622,8 @@
                 });
             });
 
-            moduleRecordingsList.querySelectorAll('.action-button.delete').forEach(button => {
+            // Delete buttons
+            document.querySelectorAll('.action-button.delete').forEach(button => {
                 button.addEventListener('click', () => {
                     const filename = button.dataset.filename;
                     if (confirm(`Are you sure you want to delete ${filename}?`)) {
@@ -486,17 +637,100 @@
                     }
                 });
             });
+        }
 
-            exportedRecordingsList.querySelectorAll('.action-button.delete').forEach(button => {
+        // Add event listeners for exported recordings
+        function addExportedRecordingsEventListeners() {
+            // Delete buttons
+            document.querySelectorAll('.action-button.delete').forEach(button => {
                 button.addEventListener('click', () => {
                     const filename = button.dataset.filename;
                     if (confirm(`Are you sure you want to delete ${filename}?`)) {
-                        // TODO: Implement delete for exported recordings
-                        alert('Deleting exported recordings is not yet implemented');
+                        socket.emit('command', {
+                            type: 'clear_recordings',
+                            module_id: 'all',
+                            params: {
+                                filename: filename
+                            }
+                        });
                     }
                 });
             });
+        }
+
+        // Filter functionality
+        document.getElementById('experiment-filter').addEventListener('input', function() {
+            const filterValue = this.value.toLowerCase();
+            const experimentGroups = document.querySelectorAll('.experiment-group');
+            
+            experimentGroups.forEach(group => {
+                const experimentName = group.dataset.experiment.toLowerCase();
+                const shouldShow = experimentName.includes(filterValue);
+                group.style.display = shouldShow ? 'block' : 'none';
+            });
         });
+
+        // Clear filter button
+        document.getElementById('clear-filter').addEventListener('click', function() {
+            document.getElementById('experiment-filter').value = '';
+            document.querySelectorAll('.experiment-group').forEach(group => {
+                group.style.display = 'block';
+            });
+        });
+
+        // Delete all recordings for a specific experiment
+        function deleteAllRecordings(experimentName) {
+            const recordingCount = document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).length;
+            
+            if (confirm(`Are you sure you want to delete ALL ${recordingCount} recording${recordingCount !== 1 ? 's' : ''} for experiment "${experimentName}"?\n\nThis action cannot be undone.`)) {
+                // Get all filenames for this experiment
+                const filenames = [];
+                document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).forEach(item => {
+                    const filename = item.querySelector('.recording-name').textContent;
+                    filenames.push(filename);
+                });
+                
+                // Send single command with multiple filenames
+                const filenameParam = filenames.join(',');
+                socket.emit('command', {
+                    type: 'clear_recordings',
+                    module_id: 'all',
+                    params: {
+                        filename: filenameParam
+                    }
+                });
+                
+                // Refresh recordings list after a short delay
+                setTimeout(refreshRecordings, 2000);
+            }
+        }
+
+        // Delete all exported recordings for a specific experiment
+        function deleteAllExportedRecordings(experimentName) {
+            const recordingCount = document.querySelectorAll(`[data-exported-experiment="${experimentName}"] .recording-item`).length;
+            
+            if (confirm(`Are you sure you want to delete ALL ${recordingCount} exported recording${recordingCount !== 1 ? 's' : ''} for experiment "${experimentName}"?\n\nThis action cannot be undone.`)) {
+                // Get all filenames for this experiment
+                const filenames = [];
+                document.querySelectorAll(`[data-exported-experiment="${experimentName}"] .recording-item`).forEach(item => {
+                    const filename = item.querySelector('.recording-name').textContent;
+                    filenames.push(filename);
+                });
+                
+                // Send single command with multiple filenames
+                const filenameParam = filenames.join(',');
+                socket.emit('command', {
+                    type: 'clear_recordings',
+                    module_id: 'all',
+                    params: {
+                        filename: filenameParam
+                    }
+                });
+                
+                // Refresh recordings list after a short delay
+                setTimeout(refreshRecordings, 2000);
+            }
+        }
 
         // Handle export complete response
         socket.on('export_complete', function(data) {

@@ -425,21 +425,22 @@ configure_controller_service() {
         log_section "Configuring Controller Systemd Service"
         
         # Stop existing service if running
+        sudo systemctl stop habitat-controller-service 2>/dev/null || true
         sudo systemctl stop habitat-controller 2>/dev/null || true
         
         # Create service file for controller
-        log_message "Creating habitat-controller systemd service..."
-        sudo tee /etc/systemd/system/habitat-controller.service > /dev/null <<EOF
+        log_message "Creating habitat-controller-service systemd service..."
+        sudo tee /etc/systemd/system/habitat-controller-service.service > /dev/null <<EOF
 [Unit]
-Description=Habitat Controller
+Description=Habitat Controller Service
 After=network.target ptp4l.service phc2sys.service
 Wants=network.target ptp4l.service phc2sys.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/habitat/src/controller
-ExecStart=/home/pi/Desktop/habitat/env/bin/python controller.py
+WorkingDirectory=/home/pi/Desktop/habitat/src/controller/examples
+ExecStart=/home/pi/Desktop/habitat/src/controller/examples/controller.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -452,19 +453,22 @@ Environment=PYTHONPATH=/home/pi/Desktop/habitat/src
 WantedBy=multi-user.target
 EOF
 
+        # Make sure controller.sh is executable
+        chmod +x /home/pi/Desktop/habitat/src/controller/examples/controller.sh
+
         # Reload systemd and enable service
         sudo systemctl daemon-reload
-        sudo systemctl enable habitat-controller
+        sudo systemctl enable habitat-controller-service
         
         log_message "Habitat controller service configured and enabled at boot."
         echo "Habitat controller service configured and enabled at boot."
         echo ""
         echo "Controller service control commands:"
-        echo "  Start: sudo systemctl start habitat-controller"
-        echo "  Stop:  sudo systemctl stop habitat-controller"
-        echo "  Status: sudo systemctl status habitat-controller"
-        echo "  Logs: sudo journalctl -u habitat-controller -f"
-        echo "  Restart: sudo systemctl restart habitat-controller"
+        echo "  Start: sudo systemctl start habitat-controller-service"
+        echo "  Stop:  sudo systemctl stop habitat-controller-service"
+        echo "  Status: sudo systemctl status habitat-controller-service"
+        echo "  Logs: sudo journalctl -u habitat-controller-service -f"
+        echo "  Restart: sudo systemctl restart habitat-controller-service"
     fi
 }
 
@@ -634,14 +638,14 @@ Network Configuration:
 
 === Controller Service Setup ===
 Habitat controller service configured and enabled at boot.
-Service: habitat-controller
+Service: habitat-controller-service
 
 Controller service control commands:
-  Start: sudo systemctl start habitat-controller
-  Stop:  sudo systemctl stop habitat-controller
-  Status: sudo systemctl status habitat-controller
-  Logs: sudo journalctl -u habitat-controller -f
-  Restart: sudo systemctl restart habitat-controller"
+  Start: sudo systemctl start habitat-controller-service
+  Stop:  sudo systemctl stop habitat-controller-service
+  Status: sudo systemctl status habitat-controller-service
+  Logs: sudo journalctl -u habitat-controller-service -f
+  Restart: sudo systemctl restart habitat-controller-service"
 else
     SUMMARY_CONTENT="Device Role: MODULE
 Module Type: ${MODULE_TYPE^^}
@@ -731,14 +735,14 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo ""
     echo "=== Controller Service Setup ==="
     echo "Habitat controller service configured and enabled at boot."
-    echo "Service: habitat-controller"
+    echo "Service: habitat-controller-service"
     echo ""
     echo "Controller service control commands:"
-    echo "  Start: sudo systemctl start habitat-controller"
-    echo "  Stop:  sudo systemctl stop habitat-controller"
-    echo "  Status: sudo systemctl status habitat-controller"
-    echo "  Logs: sudo journalctl -u habitat-controller -f"
-    echo "  Restart: sudo systemctl restart habitat-controller"
+    echo "  Start: sudo systemctl start habitat-controller-service"
+    echo "  Stop:  sudo systemctl stop habitat-controller-service"
+    echo "  Status: sudo systemctl status habitat-controller-service"
+    echo "  Logs: sudo journalctl -u habitat-controller-service -f"
+    echo "  Restart: sudo systemctl restart habitat-controller-service"
 else
     echo "=== Module Configuration Summary ==="
     echo "Device Role: MODULE"

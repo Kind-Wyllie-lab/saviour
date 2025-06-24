@@ -222,23 +222,38 @@ class Module:
 
 
     # Recording functions
-    def start_recording(self) -> Optional[str]:
+    def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
         """
         Start recording. Should be extended with module-specific implementation.
+        
+        Args:
+            experiment_name: Optional experiment name to prefix the filename
+            duration: Optional duration parameter (not currently used)
+            
         Returns the filename if setup was successful, None otherwise.
         """
         # Check not already recording
         if self.is_recording:
             self.logger.info("(MODULE) Already recording")
-            self.communication_manager.send_status({
-                "type": "recording_start_failed",
-                "error": "Already recording"
-            })
+            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                self.communication_manager.send_status({
+                    "type": "recording_start_failed",
+                    "error": "Already recording"
+                })
             return None
         
         # Set up recording - filename and folder
         self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
-        self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
+        
+        # Use experiment name in filename if provided
+        if experiment_name:
+            # Sanitize experiment name for filename (remove special characters)
+            safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_experiment_name = safe_experiment_name.replace(' ', '_')
+            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}.{self.recording_filetype}"
+        else:
+            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
+        
         os.makedirs(self.recording_folder, exist_ok=True)
         
         return self.current_filename  # Just return filename, let child class handle status
@@ -304,11 +319,12 @@ class Module:
             })
             raise
 
-    def clear_recordings(self, filename: str = None, older_than: int = None, keep_latest: int = 0):
+    def clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
         """Clear recordings
         
         Args:
             filename: Optional specific filename to delete
+            filenames: Optional list of specific filenames to delete
             older_than: Optional timestamp - delete recordings older than this
             keep_latest: Optional number of latest recordings to keep
             
@@ -318,6 +334,22 @@ class Module:
         try:
             if not os.path.exists(self.recording_folder):
                 return {"deleted_count": 0, "kept_count": 0}
+            
+            # If multiple filenames are provided, delete them
+            if filenames:
+                deleted_count = 0
+                for single_filename in filenames:
+                    try:
+                        filepath = os.path.join(self.recording_folder, single_filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                            deleted_count += 1
+                            self.logger.info(f"(MODULE) Deleted file: {single_filename}")
+                        else:
+                            self.logger.warning(f"(MODULE) File not found: {single_filename}")
+                    except Exception as e:
+                        self.logger.error(f"(MODULE) Error deleting recording {single_filename}: {e}")
+                return {"deleted_count": deleted_count, "kept_count": 0}
             
             # If specific filename is provided, delete just that file
             if filename:

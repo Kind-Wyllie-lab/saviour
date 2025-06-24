@@ -285,10 +285,13 @@ class CameraModule(Module):
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
 
-    def start_recording(self) -> bool:
+    def start_recording(self, experiment_name: str = None, duration: str = None) -> bool:
         """Start continuous video recording"""
+        # Store experiment name for use in timestamps filename
+        self.current_experiment_name = experiment_name
+        
         # First call parent class to handle common recording setup
-        filename = super().start_recording()
+        filename = super().start_recording(experiment_name=experiment_name, duration=duration)
         if not filename:
             return False
         
@@ -307,27 +310,25 @@ class CameraModule(Module):
             self.is_recording = True
             self.recording_start_time = time.time()
             self.frame_times = []  # Reset frame times
-            
-            # Start frame capture thread
-            # self.capture_thread = threading.Thread(target=self._capture_frames)
-            # self.capture_thread.daemon = True
-            # self.capture_thread.start()
-            
+
             # Send status response after successful recording start
-            self.communication_manager.send_status({
-                "type": "recording_started",
-                "filename": filename,
-                "session_id": self.recording_session_id
-            })
+            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                self.communication_manager.send_status({
+                    "type": "recording_started",
+                    "filename": filename,
+                    "recording": True,
+                    "session_id": self.recording_session_id
+                })
             
             return True
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error starting recording: {e}")
-            self.communication_manager.send_status({
-                "type": "recording_start_failed",
-                "error": str(e)
-            })
+            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                self.communication_manager.send_status({
+                    "type": "recording_start_failed",
+                    "error": str(e)
+                })
             return False
 
     def _get_frame_timestamp(self, req):
@@ -368,38 +369,49 @@ class CameraModule(Module):
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
                 
-                # Save timestamps
-                timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
+                # Save timestamps with experiment name if available
+                if hasattr(self, 'current_experiment_name') and self.current_experiment_name:
+                    # Sanitize experiment name for filename (remove special characters)
+                    safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    safe_experiment_name = safe_experiment_name.replace(' ', '_')
+                    timestamps_file = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}_timestamps.txt"
+                else:
+                    timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
+                
                 np.savetxt(timestamps_file, self.frame_times)
                 
                 # Send status response after successful recording stop
-                self.communication_manager.send_status({
-                    "type": "recording_stopped",
-                    "filename": self.current_filename,
-                    "session_id": self.recording_session_id,
-                    "duration": duration,
-                    "frame_count": len(self.frame_times),
-                    "status": "success",
-                    "message": f"Recording completed successfully with {len(self.frame_times)} frames"
-                })
+                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                    self.communication_manager.send_status({
+                        "type": "recording_stopped",
+                        "filename": self.current_filename,
+                        "session_id": self.recording_session_id,
+                        "duration": duration,
+                        "frame_count": len(self.frame_times),
+                        "status": "success",
+                        "recording": False,
+                        "message": f"Recording completed successfully with {len(self.frame_times)} frames"
+                    })
                 
                 return True
             else:
                 self.logger.error("(MODULE) Error: recording_start_time was None")
-                self.communication_manager.send_status({
-                    "type": "recording_stopped",
-                    "status": "error",
-                    "error": "Recording start time was not set, so could not create timestamps."
-                })
+                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                    self.communication_manager.send_status({
+                        "type": "recording_stopped",
+                        "status": "error",
+                        "error": "Recording start time was not set, so could not create timestamps."
+                    })
                 return False
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping recording: {e}")
-            self.communication_manager.send_status({
-                "type": "recording_stopped",
-                "status": "error",
-                "error": str(e)
-            })
+            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                self.communication_manager.send_status({
+                    "type": "recording_stopped",
+                    "status": "error",
+                    "error": str(e)
+                })
             return False
         
     def set_camera_parameters(self, params: dict) -> bool:

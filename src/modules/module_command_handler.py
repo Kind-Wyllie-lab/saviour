@@ -102,7 +102,7 @@ class ModuleCommandHandler:
                 case "get_status":
                     self._handle_get_status()
                 case "start_recording":
-                    self._handle_start_recording()
+                    self._handle_start_recording(params)
                 case "stop_recording":  # Fixed from stop_stream
                     self._handle_stop_recording()
                 case "list_recordings":
@@ -173,14 +173,28 @@ class ModuleCommandHandler:
             }
             self.callbacks["send_status"](status)
 
-    def _handle_start_recording(self):
-        """Handle start_recording command"""
-        self.logger.info("(COMMAND HANDLER) _handle_start_recording called")
+    def _handle_start_recording(self, params: list = None):
+        """Handle start_recording command with parameters"""
+        self.logger.info(f"(COMMAND HANDLER) _handle_start_recording called with parameters: {params}")
         
         if "start_recording" not in self.callbacks:
             raise ValueError("Module not configured for recording")
         
-        self.callbacks["start_recording"]()  # Module will handle status response
+        # Parse parameters
+        experiment_name = None
+        duration = None
+        
+        if params:
+            for param in params:
+                if param.startswith('experiment_name='):
+                    experiment_name = param.split('=', 1)[1]
+                elif param.startswith('duration='):
+                    duration = param.split('=', 1)[1]
+        
+        self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}'")
+        
+        # Call the start_recording method with parsed parameters
+        self.callbacks["start_recording"](experiment_name=experiment_name, duration=duration)
 
     def _handle_stop_recording(self):
         """Handle stop_recordings command"""
@@ -209,26 +223,36 @@ class ModuleCommandHandler:
         
         # Parse parameters
         filename = None
+        filenames = []
         older_than = None
         keep_latest = 0
         
         for param in params:
             if param.startswith('filename='):
-                filename = param.split('=', 1)[1]
+                filename_param = param.split('=', 1)[1]
+                # Check if multiple filenames are provided (comma-separated)
+                if ',' in filename_param:
+                    filenames = [f.strip() for f in filename_param.split(',')]
+                    self.logger.info(f"(COMMAND HANDLER) Multiple filenames detected: {filenames}")
+                else:
+                    filename = filename_param
             elif param.startswith('older_than='):
                 older_than = int(param.split('=', 1)[1])
             elif param.startswith('keep_latest='):
                 keep_latest = int(param.split('=', 1)[1])
         
-        self.logger.info(f"(COMMAND HANDLER) Clear recordings - filename: '{filename}', older_than: {older_than}, keep_latest: {keep_latest}")
+        self.logger.info(f"(COMMAND HANDLER) Clear recordings - filename: '{filename}', filenames: {filenames}, older_than: {older_than}, keep_latest: {keep_latest}")
         
-        # Call the clear_recordings method with parsed parameters
-        if filename:
-            # Delete specific file
-            result = self.callbacks["clear_recordings"](filename=filename)
+        # Call the callback with the parsed parameters
+        if "clear_recordings" in self.callbacks:
+            if filenames:
+                # Multiple filenames provided
+                result = self.callbacks["clear_recordings"](filenames=filenames)
+            else:
+                # Single filename or other parameters
+                result = self.callbacks["clear_recordings"](filename=filename, older_than=older_than, keep_latest=keep_latest)
         else:
-            # Use age-based deletion
-            result = self.callbacks["clear_recordings"](older_than=older_than, keep_latest=keep_latest)
+            raise ValueError("Module not configured for clearing recordings")
         
         # Send status response
         if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:

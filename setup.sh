@@ -570,7 +570,7 @@ then
     pytest
     log_message "Test suite completed"
     echo "Tests completed!"
-fi
+fi 
 
 log_section "Setup Script Completed"
 log_message "Setup script finished successfully" 

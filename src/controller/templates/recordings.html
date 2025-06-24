@@ -559,9 +559,6 @@
                                 <span class="experiment-stats">${recordingCount} exported recording${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
                             </div>
                             <div class="experiment-actions">
-                                <button class="action-button delete-all" title="Delete All Exported Recordings for ${experimentName}" onclick="deleteAllExportedRecordings('${experimentName}')">
-                                    Delete All
-                                </button>
                                 <div class="experiment-toggle" onclick="toggleExportedExperimentGroup('${experimentName}')">
                                     <span class="toggle-icon">▼</span>
                                 </div>
@@ -575,11 +572,6 @@
                                         <span class="recording-date">${recording.created}</span>
                                         <span class="recording-size">${formatFileSize(recording.size)}</span>
                                         <span class="recording-destination">${recording.destination === 'nas' ? 'NAS' : 'Controller'}</span>
-                                    </div>
-                                    <div class="recording-actions">
-                                        <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
-                                            Delete
-                                        </button>
                                     </div>
                                 </div>
                             `).join('')}
@@ -654,21 +646,8 @@
 
         // Add event listeners for exported recordings
         function addExportedRecordingsEventListeners() {
-            // Delete buttons
-            document.querySelectorAll('.action-button.delete').forEach(button => {
-                button.addEventListener('click', () => {
-                    const filename = button.dataset.filename;
-                    if (confirm(`Are you sure you want to delete ${filename}?`)) {
-                        socket.emit('command', {
-                            type: 'clear_recordings',
-                            module_id: 'all',
-                            params: {
-                                filename: filename
-                            }
-                        });
-                    }
-                });
-            });
+            // No delete buttons for exported recordings - they are read-only
+            // Only toggle functionality for experiment groups
         }
 
         // Filter functionality
@@ -699,33 +678,6 @@
                 // Get all filenames for this experiment
                 const filenames = [];
                 document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).forEach(item => {
-                    const filename = item.querySelector('.recording-name').textContent;
-                    filenames.push(filename);
-                });
-                
-                // Send single command with multiple filenames
-                const filenameParam = filenames.join(',');
-                socket.emit('command', {
-                    type: 'clear_recordings',
-                    module_id: 'all',
-                    params: {
-                        filename: filenameParam
-                    }
-                });
-                
-                // Refresh recordings list after a short delay
-                setTimeout(refreshRecordings, 2000);
-            }
-        }
-
-        // Delete all exported recordings for a specific experiment
-        function deleteAllExportedRecordings(experimentName) {
-            const recordingCount = document.querySelectorAll(`[data-exported-experiment="${experimentName}"] .recording-item`).length;
-            
-            if (confirm(`Are you sure you want to delete ALL ${recordingCount} exported recording${recordingCount !== 1 ? 's' : ''} for experiment "${experimentName}"?\n\nThis action cannot be undone.`)) {
-                // Get all filenames for this experiment
-                const filenames = [];
-                document.querySelectorAll(`[data-exported-experiment="${experimentName}"] .recording-item`).forEach(item => {
                     const filename = item.querySelector('.recording-name').textContent;
                     filenames.push(filename);
                 });

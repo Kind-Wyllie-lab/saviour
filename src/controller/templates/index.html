@@ -51,7 +51,12 @@
         </div>
         <div class="dashboard-card">
             <div id="module-status">
-                <h2>Module Status</h2>
+                <div class="status-header">
+                    <h2>Module Status</h2>
+                    <button id="refresh-status" class="refresh-btn" onclick="refreshModuleStatus()">
+                        🔄 Refresh Status
+                    </button>
+                </div>
                 <div id="status-content"></div>
             </div>
         </div>
@@ -142,55 +147,6 @@
                 description: 'Stop recording on selected modules',
                 needsFollowup: false
                 // Expected response: {status: 200, filename: "rec/{experiment_name}_{timestamp}.mp4", is_recording: false, message: "Recording stopped successfully", duration: 125.5, frames: 3765, filesize: 82.7mb}
-            },
-            get_status: {
-                label: 'Get Status',
-                type: 'get_status',
-                description: 'Get the current status of selected modules',
-                needsFollowup: false
-                // Expected response: {status: 200, is_recording: false, is_streaming: false, cpu_temp: 45.2, cpu_usage: 12.5, memory_usage: 34.2, disk_space: 67.8, uptime: 3600}
-            },
-            list_recordings: {
-                label: 'List Recordings',
-                type: 'list_recordings',
-                description: 'List available recordings on selected modules',
-                needsFollowup: false
-                // Expected response: {status: 200, recordings: [{filename: "rec/exp1_060127698.mp4", size: 1024000, created: "2024-01-15T10:30:00Z", duration: 125.5}]}
-            },
-            export_recordings: {
-                label: 'Export Recordings',
-                type: 'export_recordings',
-                description: 'Export recordings from selected modules',
-                needsFollowup: true,
-                // Expected response: {status: 200, exported_files: ["{destination}/path/to/exported/file.mp4"], message: "Export completed successfully"}
-                followupQuestions: [
-                    {
-                        id: 'destination',
-                        label: 'Export Destination',
-                        type: 'select',
-                        options: [
-                            { value: 'nas', label: 'NAS Storage' },
-                            { value: 'controller', label: 'Controller Storage' }
-                        ],
-                        required: true
-                    }
-                ]
-            },
-            clear_recordings: {
-                label: 'Clear Recordings',
-                type: 'clear_recordings',
-                description: 'Clear all recordings on selected modules',
-                needsFollowup: true,
-                // Expected response: {status: 200, deleted_count: 5, message: "5 recordings deleted successfully"}
-                followupQuestions: [
-                    {
-                        id: 'confirmation',
-                        label: 'Are you sure you want to delete ALL recordings on the module?',
-                        type: 'confirmation',
-                        message: 'This action cannot be undone. All recordings on the selected modules will be permanently deleted.',
-                        required: true
-                    }
-                ]
             },
             start_streaming: {
                 label: 'Start Streaming',
@@ -730,6 +686,17 @@
             console.log('Sending command:', command);
             socket.emit('command', command);
             currentCommand = null;
+        }
+
+        // Function to refresh module status
+        function refreshModuleStatus() {
+            console.log('Refreshing module status for all modules');
+            const command = {
+                type: 'get_status',
+                module_id: 'all',
+                params: {}
+            };
+            socket.emit('command', command);
         }
 
         // Add click handler for "All Modules" option

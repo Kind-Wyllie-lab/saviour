@@ -39,6 +39,15 @@
                         <div class="recordings-list"></div>
                     </div>
                     <div id="exported-recordings" class="recordings-content">
+                        <div class="recordings-filter">
+                            <label for="export-destination-filter">Filter by Destination:</label>
+                            <select id="export-destination-filter">
+                                <option value="all">All Destinations</option>
+                                <option value="controller">Controller Storage</option>
+                                <option value="nas">NAS Storage</option>
+                            </select>
+                            <button id="clear-export-filter" class="filter-button">Clear Filter</button>
+                        </div>
                         <div class="recordings-list"></div>
                     </div>
                 </div>
@@ -357,6 +366,12 @@
             console.log('WebSocket connection established');
             refreshRecordings();
             socket.emit('get_experiment_name'); // Request current experiment name
+            
+            // Load exported recordings if exported recordings tab is active
+            const exportedRecordingsTab = document.querySelector('#exported-recordings');
+            if (exportedRecordingsTab && exportedRecordingsTab.classList.contains('active')) {
+                loadExportedRecordings();
+            }
         });
         
         socket.on('disconnect', function() {
@@ -435,16 +450,13 @@
                 
                 if (!data.exported_recordings || data.exported_recordings.length === 0) {
                     exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
+                    allExportedRecordings = [];
                 } else {
-                    // Group exported recordings by experiment name
-                    const exportedRecordingsByExperiment = groupRecordingsByExperiment(data.exported_recordings);
+                    // Store all exported recordings for filtering
+                    allExportedRecordings = data.exported_recordings;
                     
-                    // Generate HTML for grouped exported recordings
-                    const exportedRecordingsHTML = generateGroupedExportedRecordingsHTML(exportedRecordingsByExperiment);
-                    exportedRecordingsList.innerHTML = exportedRecordingsHTML;
-                    
-                    // Add event listeners for exported recordings
-                    addExportedRecordingsEventListeners();
+                    // Apply current filter
+                    filterExportedRecordings();
                 }
             }
         });
@@ -562,6 +574,7 @@
                                         <span class="recording-name">${recording.filename}</span>
                                         <span class="recording-date">${recording.created}</span>
                                         <span class="recording-size">${formatFileSize(recording.size)}</span>
+                                        <span class="recording-destination">${recording.destination === 'nas' ? 'NAS' : 'Controller'}</span>
                                     </div>
                                     <div class="recording-actions">
                                         <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
@@ -770,11 +783,218 @@
                 button.classList.add('active');
                 const tabId = button.dataset.tab;
                 document.getElementById(tabId).classList.add('active');
+                
+                // Load exported recordings if exported recordings tab is selected
+                if (tabId === 'exported-recordings') {
+                    loadExportedRecordings();
+                }
             });
         });
 
         // Auto-refresh recordings every 30 seconds
         setInterval(refreshRecordings, 30000);
+
+        // Export destination filter functionality
+        const exportDestinationFilter = document.getElementById('export-destination-filter');
+        const clearExportFilter = document.getElementById('clear-export-filter');
+        let currentExportDestinationFilter = 'all';
+        let allExportedRecordings = []; // Store all exported recordings for filtering
+
+        // Event listener for export destination filter
+        exportDestinationFilter.addEventListener('change', function() {
+            currentExportDestinationFilter = this.value;
+            filterExportedRecordings();
+        });
+
+        // Event listener for clear export filter button
+        clearExportFilter.addEventListener('click', function() {
+            exportDestinationFilter.value = 'all';
+            currentExportDestinationFilter = 'all';
+            filterExportedRecordings();
+        });
+
+        // Filter exported recordings based on destination
+        function filterExportedRecordings() {
+            const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
+            if (!exportedRecordingsList || allExportedRecordings.length === 0) return;
+
+            let filteredRecordings = allExportedRecordings;
+
+            if (currentExportDestinationFilter !== 'all') {
+                filteredRecordings = allExportedRecordings.filter(recording => {
+                    // Use the destination field from the recording data
+                    const destination = recording.destination || 'controller'; // Default to controller if not specified
+                    return destination === currentExportDestinationFilter;
+                });
+            }
+
+            // Display filtered recordings
+            if (filteredRecordings.length === 0) {
+                exportedRecordingsList.innerHTML = '<p>No exported recordings found for selected destination</p>';
+            } else {
+                // Group filtered recordings by experiment name
+                const filteredRecordingsByExperiment = groupRecordingsByExperiment(filteredRecordings);
+                
+                // Generate HTML for grouped filtered recordings
+                const filteredRecordingsHTML = generateGroupedExportedRecordingsHTML(filteredRecordingsByExperiment);
+                exportedRecordingsList.innerHTML = filteredRecordingsHTML;
+                
+                // Add event listeners for filtered recordings
+                addExportedRecordingsEventListeners();
+            }
+        }
+
+        // Handle module status changes (online/offline)
+        socket.on('module_status_change', function(data) {
+            console.log('Module status change:', data);
+            const moduleId = data.module_id;
+            const status = data.status;
+            
+            // Find the module item for this module
+            const moduleItem = document.querySelector(`[data-module-id="${moduleId}"]`);
+            if (moduleItem) {
+                if (status === 'offline') {
+                    // Mark module as offline
+                    moduleItem.classList.add('offline');
+                    
+                    // Add offline indicator to module name
+                    const moduleName = moduleItem.querySelector('.module-name');
+                    if (moduleName && !moduleName.innerHTML.includes('OFFLINE')) {
+                        moduleName.innerHTML = `${moduleId} <span class="offline-indicator">(OFFLINE)</span>`;
+                    }
+                } else if (status === 'online') {
+                    // Mark module as online
+                    moduleItem.classList.remove('offline');
+                    
+                    // Remove offline indicator from module name
+                    const moduleName = moduleItem.querySelector('.module-name');
+                    if (moduleName) {
+                        moduleName.innerHTML = moduleId;
+                    }
+                }
+            }
+        });
+
+        // Delete all recordings for a specific experiment within a module
+        function deleteExperimentRecordings(moduleId, experimentName) {
+            const recordingCount = document.querySelectorAll(`[data-module-id="${moduleId}"] [data-experiment="${experimentName}"] .recording-item`).length;
+            
+            if (confirm(`Are you sure you want to delete ALL ${recordingCount} recording${recordingCount !== 1 ? 's' : ''} for experiment "${experimentName}" on module "${moduleId}"?\n\nThis action cannot be undone.`)) {
+                // Get all filenames for this experiment on this module
+                const filenames = [];
+                document.querySelectorAll(`[data-module-id="${moduleId}"] [data-experiment="${experimentName}"] .recording-item`).forEach(item => {
+                    const filename = item.querySelector('.recording-name').textContent;
+                    filenames.push(filename);
+                });
+                
+                // Send single command with multiple filenames
+                const filenameParam = filenames.join(',');
+                socket.emit('command', {
+                    type: 'clear_recordings',
+                    module_id: moduleId,
+                    params: {
+                        filename: filenameParam
+                    }
+                });
+                
+                // Refresh recordings list after a short delay
+                setTimeout(refreshRecordings, 2000);
+            }
+        }
+
+        function displayModuleRecordings(moduleId, recordings) {
+            const moduleList = document.getElementById('module-list');
+            
+            // Create module item if it doesn't exist
+            let moduleItem = document.querySelector(`[data-module-id="${moduleId}"]`);
+            if (!moduleItem) {
+                moduleItem = document.createElement('div');
+                moduleItem.className = 'module-item';
+                moduleItem.setAttribute('data-module-id', moduleId);
+                moduleList.appendChild(moduleItem);
+            }
+            
+            // Create module header
+            const moduleHeader = document.createElement('div');
+            moduleHeader.className = 'module-header';
+            moduleHeader.innerHTML = `
+                <h3 class="module-name">${moduleId}</h3>
+                <button class="delete-all-btn" onclick="deleteAllRecordings('${moduleId}')">Delete All</button>
+            `;
+            
+            // Clear existing content and add header
+            moduleItem.innerHTML = '';
+            moduleItem.appendChild(moduleHeader);
+            
+            // Group recordings by experiment name
+            const recordingsByExperiment = {};
+            recordings.forEach(recording => {
+                const experimentName = recording.experiment_name || 'Unknown Experiment';
+                if (!recordingsByExperiment[experimentName]) {
+                    recordingsByExperiment[experimentName] = [];
+                }
+                recordingsByExperiment[experimentName].push(recording);
+            });
+            
+            // Create experiment sections
+            Object.keys(recordingsByExperiment).forEach(experimentName => {
+                const experimentSection = document.createElement('div');
+                experimentSection.className = 'experiment-section';
+                experimentSection.setAttribute('data-experiment', experimentName);
+                
+                const experimentHeader = document.createElement('div');
+                experimentHeader.className = 'experiment-header';
+                experimentHeader.innerHTML = `
+                    <h4>${experimentName}</h4>
+                    <button class="delete-experiment-btn" onclick="deleteExperimentRecordings('${moduleId}', '${experimentName}')">Delete All</button>
+                `;
+                
+                const recordingsList = document.createElement('div');
+                recordingsList.className = 'recordings-list';
+                
+                recordingsByExperiment[experimentName].forEach(recording => {
+                    const recordingItem = document.createElement('div');
+                    recordingItem.className = 'recording-item';
+                    recordingItem.innerHTML = `
+                        <span class="recording-name">${recording.filename}</span>
+                        <span class="recording-size">${formatFileSize(recording.size)}</span>
+                        <button class="delete-btn" onclick="deleteRecording('${moduleId}', '${recording.filename}')">Delete</button>
+                    `;
+                    recordingsList.appendChild(recordingItem);
+                });
+                
+                experimentSection.appendChild(experimentHeader);
+                experimentSection.appendChild(recordingsList);
+                moduleItem.appendChild(experimentSection);
+            });
+        }
+
+        // Function to load exported recordings
+        function loadExportedRecordings() {
+            console.log('Loading exported recordings...');
+            socket.emit('get_exported_recordings');
+        }
+
+        // Handle exported recordings list response
+        socket.on('exported_recordings_list', function(data) {
+            console.log('Received exported recordings list:', data);
+            
+            const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
+            if (exportedRecordingsList) {
+                exportedRecordingsList.innerHTML = '';
+                
+                if (!data.exported_recordings || data.exported_recordings.length === 0) {
+                    exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
+                    allExportedRecordings = [];
+                } else {
+                    // Store all exported recordings for filtering
+                    allExportedRecordings = data.exported_recordings;
+                    
+                    // Apply current filter
+                    filterExportedRecordings();
+                }
+            }
+        });
     </script>
 </body>
 </html> 

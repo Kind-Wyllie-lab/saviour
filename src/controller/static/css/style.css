@@ -483,8 +483,18 @@ body {
 }
 
 .recording-size {
-    font-size: 0.9rem;
-    color: #666;
+    color: #6c757d;
+    font-size: 0.9em;
+}
+
+.recording-destination {
+    color: #007bff;
+    font-size: 0.8em;
+    font-weight: 600;
+    padding: 2px 6px;
+    background-color: #e3f2fd;
+    border-radius: 3px;
+    margin-left: 8px;
 }
 
 .recording-actions {
@@ -1264,6 +1274,22 @@ body {
     font-size: 14px;
 }
 
+.recordings-filter select {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+    background-color: white;
+    cursor: pointer;
+}
+
+.recordings-filter select:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
 .filter-button {
     padding: 8px 16px;
     background-color: #6c757d;
@@ -1394,4 +1420,53 @@ body {
 
 .experiment-recordings .recording-item:last-child {
     border-bottom: none;
+}
+
+/* Status card offline styling */
+.status-card.offline {
+    border: 2px solid #dc3545;
+    opacity: 0.7;
+    background-color: #f8f9fa;
+}
+
+.status-card.offline .status-header {
+    background-color: #dc3545;
+    color: white;
+}
+
+.status-card.offline .status-header h3 {
+    color: white;
+}
+
+.offline-indicator {
+    color: #ff6b6b;
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+/* Module list offline indicators */
+.module-item.offline {
+    border-left: 4px solid #dc3545;
+    opacity: 0.7;
+    background-color: #f8f9fa;
+}
+
+.module-item.offline .module-name::after {
+    content: " (OFFLINE)";
+    color: #dc3545;
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+/* Recording indicator offline styling */
+.recording-indicator.offline {
+    background-color: #dc3545;
+    opacity: 0.7;
+}
+
+.recording-indicator.offline::after {
+    content: " (OFFLINE)";
+    color: #dc3545;
+    font-weight: bold;
+    font-size: 0.8em;
 }

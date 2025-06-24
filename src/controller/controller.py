@@ -155,6 +155,10 @@ class Controller:
                 self.service_manager.on_module_removed = lambda module: self.web_interface_manager.notify_module_update()
                 self.logger.info(f"(CONTROLLER) Module discovery callback registered")
         
+        # Register status change callback with health monitor
+        self.health_monitor.register_status_change_callback(self.on_module_status_change)
+        self.logger.info(f"(CONTROLLER) Status change callback registered with health monitor")
+        
         # CLI 
         if self.cli_interface:
             self.cli_interface.register_callbacks(
@@ -185,6 +189,16 @@ class Controller:
                     self.logger.info(f"(CONTROLLER) Unknown status type from {module_id}: {status_type}")
         except Exception as e:
             self.logger.error(f"(CONTROLLER) Error parsing status data for module {module_id}: {e}")
+
+    def on_module_status_change(self, module_id: str, status: str):
+        """Callback for when module status changes (online/offline)"""
+        self.logger.info(f"(CONTROLLER) Module {module_id} status changed to: {status}")
+        
+        # Send status change event to web interface
+        self.web_interface_manager.socketio.emit('module_status_change', {
+            'module_id': module_id,
+            'status': status
+        })
 
     def handle_data_update(self, topic: str, data: str):
         """Handle a data update from a module"""

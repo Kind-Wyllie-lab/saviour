@@ -304,7 +304,60 @@
 
         socket.on('module_status', function(data) {
             console.log('Received module status:', data);
-            displayModuleStatus(data);
+            updateModuleStatus(data);
+        });
+
+        socket.on('module_status_change', function(data) {
+            console.log('Module status change:', data);
+            const moduleId = data.module_id;
+            const status = data.status;
+            
+            // Find the status card for this module
+            const statusCard = document.getElementById(`status-${moduleId}`);
+            if (statusCard) {
+                if (status === 'offline') {
+                    // Mark module as offline
+                    statusCard.classList.add('offline');
+                    
+                    // Update the status data to mark as offline
+                    let statusData = {};
+                    try {
+                        statusData = JSON.parse(statusCard.dataset.statusData || '{}');
+                    } catch (e) {
+                        console.warn('Failed to parse status data:', e);
+                    }
+                    statusData.status = 'offline';
+                    statusCard.dataset.statusData = JSON.stringify(statusData);
+                    
+                    // Update the header to show offline indicator
+                    const header = statusCard.querySelector('.status-header h3');
+                    if (header && !header.innerHTML.includes('OFFLINE')) {
+                        header.innerHTML = `${moduleId} <span class="offline-indicator">(OFFLINE)</span>`;
+                    }
+                    
+                    // Update the status display to show offline status
+                    updateOfflineStatusDisplay(statusCard);
+                } else if (status === 'online') {
+                    // Mark module as online
+                    statusCard.classList.remove('offline');
+                    
+                    // Update the status data to mark as online
+                    let statusData = {};
+                    try {
+                        statusData = JSON.parse(statusCard.dataset.statusData || '{}');
+                    } catch (e) {
+                        console.warn('Failed to parse status data:', e);
+                    }
+                    statusData.status = 'online';
+                    statusCard.dataset.statusData = JSON.stringify(statusData);
+                    
+                    // Remove offline indicator from header
+                    const header = statusCard.querySelector('.status-header h3');
+                    if (header) {
+                        header.innerHTML = moduleId;
+                    }
+                }
+            }
         });
 
         socket.on('client_ip', function(ip) {
@@ -328,25 +381,23 @@
             socket.emit('save_experiment_name', {experiment_name: experimentName});
         });
 
-        function displayModuleStatus(data) {
+        // Update module status display
+        function updateModuleStatus(data) {
+            console.log('=== STATUS UPDATE ===');
+            console.log('Module:', data.module_id);
+            console.log('Status data:', data.status);
+            
             const statusContent = document.getElementById('status-content');
             const timestamp = new Date(data.status.timestamp * 1000).toLocaleString();
+            let statusCard = document.getElementById(`status-${data.module_id}`);
             
-            console.log('=== STATUS UPDATE ===');
-            console.log('Module ID:', data.module_id);
-            console.log('Status data:', data.status);
-            console.log('Status content element:', statusContent);
-            
-            // Create or update the status card for this module
-            let statusCard = document.getElementById(`status-card-${data.module_id}`);
-            console.log('Existing status card:', statusCard);
-            
+            // Create status card if it doesn't exist
             if (!statusCard) {
+                console.log('Creating new status card for module:', data.module_id);
                 statusCard = document.createElement('div');
-                statusCard.id = `status-card-${data.module_id}`;
+                statusCard.id = `status-${data.module_id}`;
                 statusCard.className = 'status-card';
                 statusContent.appendChild(statusCard);
-                console.log('Created new status card for module:', data.module_id);
             } else {
                 console.log('Updating existing status card for module:', data.module_id);
             }
@@ -367,6 +418,16 @@
             // Store the updated status data in the card's dataset
             statusCard.dataset.statusData = JSON.stringify(updatedStatus);
             
+            // Check if module is offline based on status field
+            const isOffline = updatedStatus.status === 'offline';
+            
+            // Add offline styling if module is offline
+            if (isOffline) {
+                statusCard.classList.add('offline');
+            } else {
+                statusCard.classList.remove('offline');
+            }
+            
             // Log all existing status cards
             const allStatusCards = statusContent.querySelectorAll('.status-card');
             console.log('Total status cards in DOM:', allStatusCards.length);
@@ -376,53 +437,57 @@
             
             const statusHTML = `
                 <div class="status-header">
-                    <h3>${data.module_id}</h3>
+                    <h3>${data.module_id}${isOffline ? ' <span class="offline-indicator">(OFFLINE)</span>' : ''}</h3>
                     <span class="status-timestamp">${timestamp}</span>
                 </div>
                 <div class="status-grid">
                     <div class="status-item">
+                        <span class="status-label">Status</span>
+                        <span class="status-value">${isOffline ? 'Offline/Fault' : 'Online'}</span>
+                    </div>
+                    <div class="status-item">
                         <span class="status-label">CPU Temperature</span>
-                        <span class="status-value">${updatedStatus.cpu_temp !== undefined ? updatedStatus.cpu_temp + '°C' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.cpu_temp !== undefined ? updatedStatus.cpu_temp + '°C' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">CPU Usage</span>
-                        <span class="status-value">${updatedStatus.cpu_usage !== undefined ? updatedStatus.cpu_usage + '%' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.cpu_usage !== undefined ? updatedStatus.cpu_usage + '%' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Memory Usage</span>
-                        <span class="status-value">${updatedStatus.memory_usage !== undefined ? updatedStatus.memory_usage + '%' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.memory_usage !== undefined ? updatedStatus.memory_usage + '%' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Uptime</span>
-                        <span class="status-value">${updatedStatus.uptime !== undefined ? formatUptime(updatedStatus.uptime) : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.uptime !== undefined ? formatUptime(updatedStatus.uptime) : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Disk Space</span>
-                        <span class="status-value">${updatedStatus.disk_space !== undefined ? updatedStatus.disk_space + '%' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.disk_space !== undefined ? updatedStatus.disk_space + '%' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">PTP4L Offset</span>
-                        <span class="status-value">${updatedStatus.ptp4l_offset !== undefined && updatedStatus.ptp4l_offset !== null ? updatedStatus.ptp4l_offset + 'ns' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.ptp4l_offset !== undefined && updatedStatus.ptp4l_offset !== null ? updatedStatus.ptp4l_offset + 'ns' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">PTP4L Frequency</span>
-                        <span class="status-value">${updatedStatus.ptp4l_freq !== undefined && updatedStatus.ptp4l_freq !== null ? updatedStatus.ptp4l_freq + 'ppb' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.ptp4l_freq !== undefined && updatedStatus.ptp4l_freq !== null ? updatedStatus.ptp4l_freq + 'ppb' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">PHC2SYS Offset</span>
-                        <span class="status-value">${updatedStatus.phc2sys_offset !== undefined && updatedStatus.phc2sys_offset !== null ? updatedStatus.phc2sys_offset + 'ns' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.phc2sys_offset !== undefined && updatedStatus.phc2sys_offset !== null ? updatedStatus.phc2sys_offset + 'ns' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">PHC2SYS Frequency</span>
-                        <span class="status-value">${updatedStatus.phc2sys_freq !== undefined && updatedStatus.phc2sys_freq !== null ? updatedStatus.phc2sys_freq + 'ppb' : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.phc2sys_freq !== undefined && updatedStatus.phc2sys_freq !== null ? updatedStatus.phc2sys_freq + 'ppb' : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Recording</span>
-                        <span class="status-value">${updatedStatus.recording !== undefined ? (updatedStatus.recording ? 'Yes' : 'No') : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.recording !== undefined ? (updatedStatus.recording ? 'Yes' : 'No') : 'N/A')}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Streaming</span>
-                        <span class="status-value">${updatedStatus.streaming !== undefined ? (updatedStatus.streaming ? 'Yes' : 'No') : 'N/A'}</span>
+                        <span class="status-value">${isOffline ? 'N/A' : (updatedStatus.streaming !== undefined ? (updatedStatus.streaming ? 'Yes' : 'No') : 'N/A')}</span>
                     </div>
                 </div>
             `;
@@ -434,6 +499,29 @@
             // Update recording indicator in module list
             if (data.status.recording !== undefined) {
                 updateRecordingIndicator(data.module_id, data.status.recording);
+            }
+        }
+
+        // Update offline status display
+        function updateOfflineStatusDisplay(statusCard) {
+            const statusGrid = statusCard.querySelector('.status-grid');
+            if (statusGrid) {
+                // Update all status values to show N/A for offline modules
+                const statusValues = statusGrid.querySelectorAll('.status-value');
+                statusValues.forEach(value => {
+                    if (!value.textContent.includes('Status')) {
+                        value.textContent = 'N/A';
+                    }
+                });
+                
+                // Ensure the Status field shows "Offline/Fault"
+                const statusItem = statusGrid.querySelector('.status-item');
+                if (statusItem) {
+                    const statusValue = statusItem.querySelector('.status-value');
+                    if (statusValue) {
+                        statusValue.textContent = 'Offline/Fault';
+                    }
+                }
             }
         }
 

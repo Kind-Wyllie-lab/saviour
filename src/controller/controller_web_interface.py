@@ -49,7 +49,8 @@ class WebInterfaceManager:
         self.test = False
         self._running = False
 
-        self.habitat_share_dir = Path("../habitat_share")
+        # Set up paths
+        self.habitat_share_dir = Path("/home/pi/controller_share")
 
     def register_callbacks(self, get_modules=None, get_ptp_history=None, send_command=None, get_module_health=None):
         """Register callbacks for getting data from the command handler"""
@@ -375,6 +376,21 @@ class WebInterfaceManager:
                 return jsonify(health)
             return jsonify({})
 
+        @self.app.route('/api/exported_recordings', methods=['GET'])
+        def get_exported_recordings_api():
+            """Get list of exported recordings"""
+            self.logger.info("(WEB INTERFACE MANAGER) /api/exported_recordings endpoint called")
+            exported_recordings = self.get_exported_recordings()
+            return jsonify({"exported_recordings": exported_recordings})
+
+        @self.socketio.on('get_exported_recordings')
+        def handle_get_exported_recordings():
+            """Handle request for exported recordings via WebSocket"""
+            self.logger.info("(WEB INTERFACE MANAGER) Received get_exported_recordings request")
+            exported_recordings = self.get_exported_recordings()
+            self.socketio.emit('exported_recordings_list', {
+                'exported_recordings': exported_recordings
+            })
 
     def get_modules(self):
         """Get the list of modules"""
@@ -427,18 +443,113 @@ class WebInterfaceManager:
         return jsonify({"modules": modules})
 
     def get_exported_recordings(self):
-        """Get list of exported recordings from habitat_share directory"""
+        """Get list of exported recordings from controller share and NAS directories"""
         recordings = []
+        
+        # Get controller share recordings
         if self.habitat_share_dir.exists():
             for file in self.habitat_share_dir.glob('**/*'):
                 if file.is_file() and file.suffix in ['.mp4', '.txt']:
                     recordings.append({
-                        'filename': str(file.relative_to(self.habitat_share_dir)),
+                        'filename': f"controller/{str(file.relative_to(self.habitat_share_dir))}",
                         'size': file.stat().st_size,
                         'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                        'is_exported': True
+                        'is_exported': True,
+                        'destination': 'controller'
                     })
+        
+        # Get NAS recordings (if mounted)
+        nas_recordings = self.get_nas_recordings()
+        recordings.extend(nas_recordings)
+        
         return recordings
+
+    def get_nas_recordings(self):
+        """Get list of exported recordings from NAS"""
+        recordings = []
+        nas_mount_point = Path("/mnt/nas")
+        
+        self.logger.info(f"(WEB INTERFACE MANAGER) Scanning NAS for recordings...")
+        
+        # Try to mount NAS if not already mounted
+        if not nas_mount_point.exists() or not nas_mount_point.is_mount():
+            self.logger.info(f"(WEB INTERFACE MANAGER) NAS not mounted, attempting to mount...")
+            if not self.mount_nas():
+                self.logger.error(f"(WEB INTERFACE MANAGER) Failed to mount NAS, returning empty list")
+                return recordings  # Return empty list if mounting failed
+        
+        self.logger.info(f"(WEB INTERFACE MANAGER) NAS is mounted at {nas_mount_point}")
+        
+        # Check what's in the root NAS directory
+        if nas_mount_point.exists():
+            self.logger.info(f"(WEB INTERFACE MANAGER) NAS root contents: {list(nas_mount_point.iterdir())}")
+        
+        # Scan multiple directories for recordings
+        directories_to_scan = ["recordings", "videos", "ttl"]
+        
+        for dir_name in directories_to_scan:
+            scan_path = nas_mount_point / dir_name
+            self.logger.info(f"(WEB INTERFACE MANAGER) Looking for recordings in: {scan_path}")
+            
+            if scan_path.exists():
+                self.logger.info(f"(WEB INTERFACE MANAGER) {dir_name} directory exists, scanning for files...")
+                for file in scan_path.glob('**/*'):
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Found file: {file} (suffix: {file.suffix})")
+                    if file.is_file() and file.suffix in ['.mp4', '.txt']:
+                        self.logger.info(f"(WEB INTERFACE MANAGER) Adding file to recordings list: {file}")
+                        recordings.append({
+                            'filename': f"nas/{dir_name}/{str(file.relative_to(scan_path))}",
+                            'size': file.stat().st_size,
+                            'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                            'is_exported': True,
+                            'destination': 'nas'
+                        })
+            else:
+                self.logger.info(f"(WEB INTERFACE MANAGER) {dir_name} directory does not exist: {scan_path}")
+        
+        self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(recordings)} NAS recordings")
+        return recordings
+
+    def mount_nas(self):
+        """Mount the NAS share"""
+        try:
+            import subprocess
+            
+            # NAS configuration - updated to match working module_export_manager implementation
+            nas_ip = "192.168.0.2"
+            share_path = "data"
+            username = "sidbit"
+            password = "RaspberryWonder1305"
+            mount_point = "/mnt/nas"
+            
+            # Create mount point if it doesn't exist
+            mount_path = Path(mount_point)
+            mount_path.mkdir(exist_ok=True)
+            
+            # Unmount if already mounted
+            if mount_path.is_mount():
+                subprocess.run(['sudo', 'umount', mount_point], check=True)
+            
+            # Mount the NAS share - matching module_export_manager implementation
+            mount_cmd = [
+                'sudo', 'mount', '-t', 'cifs',
+                f'//{nas_ip}/{share_path}',
+                mount_point,
+                '-o', f'username={username},password={password}'
+            ]
+            
+            result = subprocess.run(mount_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Failed to mount NAS: {result.stderr}")
+                return False
+            
+            self.logger.info(f"(WEB INTERFACE MANAGER) Successfully mounted NAS at {mount_point}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(WEB INTERFACE MANAGER) NAS mount failed: {str(e)}")
+            return False
 
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""

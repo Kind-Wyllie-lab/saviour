@@ -16,7 +16,7 @@
 
 /* Body */
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
     line-height: 1.6;
     color: var(--text-color);
     background-color: var(--background-color);
@@ -196,23 +196,28 @@ body {
 
 #quick-commands-content {
     display: flex;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     margin-top: 1rem;
-    align-items: center;
-    padding: 1rem;
 }
 
 .command-button {
-    background-color: var(--secondary-color);
+    background: var(--secondary-color);
     color: white;
     border: none;
-    padding: 0.8rem 1.5rem;
-    border-radius: 8px;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
     cursor: pointer;
     font-size: 0.9rem;
     font-weight: 500;
     transition: all 0.2s ease;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    flex: 1 1 auto;
+    min-width: 120px;
+    max-width: 200px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .command-button:hover {
@@ -623,13 +628,15 @@ body {
 
 .placeholder-icon {
     font-size: 3rem;
-    opacity: 0.7;
+    display: block;
+    margin-bottom: 1rem;
+    font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
 }
 
 .placeholder-content p {
-    margin: 0;
-    font-size: 1.1rem;
-    opacity: 0.9;
+    margin: 0.5rem 0 1rem 0;
+    color: #666;
+    font-size: 0.9rem;
 }
 
 .show-stream-btn, .hide-stream-btn {
@@ -696,6 +703,193 @@ body {
         flex-direction: column;
         gap: 0.5rem;
         text-align: center;
+    }
+    
+    .dashboard-container {
+        padding: 0.5rem;
+    }
+    
+    .dashboard-card {
+        padding: 1rem;
+    }
+    
+    #quick-commands-content {
+        gap: 0.5rem;
+    }
+    
+    .command-button {
+        flex: 1 1 calc(50% - 0.25rem);
+        min-width: 100px;
+        max-width: none;
+        padding: 0.6rem 1rem;
+        font-size: 0.8rem;
+    }
+}
+
+/* Pi Touchscreen specific breakpoints (720x1280) */
+@media (max-width: 720px) and (orientation: portrait) {
+    .dashboard-container {
+        padding: 0.25rem;
+        gap: 0.5rem;
+    }
+    
+    .dashboard-card {
+        padding: 0.75rem;
+        border-radius: 6px;
+    }
+    
+    #quick-commands-content {
+        gap: 0.4rem;
+    }
+    
+    .command-button {
+        flex: 1 1 calc(50% - 0.2rem);
+        min-width: 80px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.75rem;
+        border-radius: 4px;
+    }
+    
+    .streams-header {
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
+    }
+    
+    .streams-header h1 {
+        font-size: 1.2rem;
+        margin: 0;
+    }
+    
+    .stream-controls {
+        justify-content: center;
+    }
+    
+    .stream-control-btn {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.8rem;
+    }
+    
+    .module-item {
+        min-width: 150px;
+        flex: 1 1 150px;
+        padding: 0.75rem;
+    }
+    
+    .status-card {
+        padding: 0.75rem;
+    }
+    
+    .status-grid {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    
+    .status-item {
+        padding: 0.5rem;
+    }
+    
+    .status-label {
+        font-size: 0.8rem;
+    }
+    
+    .status-value {
+        font-size: 0.9rem;
+    }
+    
+    .placeholder-icon {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .placeholder-content p {
+        font-size: 0.8rem;
+        margin: 0.25rem 0 0.75rem 0;
+    }
+}
+
+/* Small mobile devices */
+@media (max-width: 480px) {
+    .dashboard-container {
+        padding: 0.25rem;
+    }
+    
+    .dashboard-card {
+        padding: 0.5rem;
+    }
+    
+    #quick-commands-content {
+        gap: 0.3rem;
+    }
+    
+    .command-button {
+        flex: 1 1 100%;
+        min-width: 60px;
+        padding: 0.4rem 0.6rem;
+        font-size: 0.7rem;
+    }
+    
+    .stream-card-header h3 {
+        font-size: 0.9rem;
+    }
+    
+    .stream-ip {
+        font-size: 0.7rem;
+    }
+    
+    .module-item {
+        min-width: 120px;
+        flex: 1 1 120px;
+        padding: 0.5rem;
+    }
+    
+    .module-header p {
+        font-size: 0.8rem;
+    }
+    
+    .recording-indicator {
+        font-size: 1rem;
+    }
+    
+    .placeholder-icon {
+        font-size: 1.5rem;
+        margin-bottom: 0.25rem;
+    }
+    
+    .placeholder-content p {
+        font-size: 0.7rem;
+        margin: 0.2rem 0 0.5rem 0;
+    }
+}
+
+/* Landscape orientation adjustments for Pi touchscreen */
+@media (max-height: 720px) and (orientation: landscape) {
+    .dashboard-container {
+        gap: 0.5rem;
+    }
+    
+    .dashboard-card {
+        padding: 0.75rem;
+    }
+    
+    #quick-commands-content {
+        gap: 0.4rem;
+    }
+    
+    .command-button {
+        flex: 1 1 calc(33.333% - 0.27rem);
+        min-width: 80px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.75rem;
+    }
+    
+    .streams-header {
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    .streams-header h1 {
+        font-size: 1.1rem;
     }
 }
 

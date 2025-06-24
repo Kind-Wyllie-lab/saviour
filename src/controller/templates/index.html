@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Habitat Controller</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="icon" type="image/x-icon" href="/static/uofe_logo.png">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script> <!--Import socketio, used for websocket communication i.e. updates pushed from controller-->
@@ -52,7 +53,7 @@
         <div class="dashboard-card">
             <div id="camera_streams_container">
                 <div class="streams-header">
-                    <h1>📡 Live Streams</h1>
+                    <h1>&#128161; Live Streams</h1>
                     <div class="stream-controls">
                         <button id="show-all-streams" class="stream-control-btn" onclick="showAllStreams()">
                             Show All
@@ -537,7 +538,7 @@
                 <div class="stream-content">
                     <div class="stream-placeholder" id="placeholder-${module.id}">
                         <div class="placeholder-content">
-                            <span class="placeholder-icon">📹</span>
+                            <span class="placeholder-icon">&#128247;</span>
                             <p>Camera Stream</p>
                             <button class="show-stream-btn" onclick="showStream('${module.id}', '${module.ip}')">
                                 Show Stream
@@ -881,11 +882,6 @@
         window.addEventListener('load', function() {
             console.log('Page fully loaded');
         });
-
-        // Check for chrome and flag warning about MJPEG stream
-        if (navigator.userAgent.includes('Chrome') && !navigator.userAgent.includes('Edg')) {
-            alert('Chrome does not support MJPEG streams. Please use Edge, Firefox, or Safari.');
-        }
     </script>
 </body>
 </html> 

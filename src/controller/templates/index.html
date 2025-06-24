@@ -271,6 +271,7 @@
         socket.on('connect', function() { // When connection is established, log it
             console.log('WebSocket connection established');
             socket.emit('module_update'); // Request initial module data
+            socket.emit('get_experiment_name'); // Request current experiment name
         });
     
         socket.on('disconnect', function() { // When connection is closed, log it
@@ -311,6 +312,22 @@
             console.log('Received client IP:', ip);
         });
 
+        socket.on('experiment_name_update', function(data) {
+            console.log('Received experiment name update:', data);
+            const experimentNameInput = document.getElementById('experiment-name');
+            if (experimentNameInput && data.experiment_name !== undefined) {
+                experimentNameInput.value = data.experiment_name;
+                console.log('Updated experiment name input:', data.experiment_name);
+            }
+        });
+
+        // Save experiment name when it changes
+        document.getElementById('experiment-name').addEventListener('input', function() {
+            const experimentName = this.value.trim();
+            console.log('Experiment name changed:', experimentName);
+            socket.emit('save_experiment_name', {experiment_name: experimentName});
+        });
+
         function displayModuleStatus(data) {
             const statusContent = document.getElementById('status-content');
             const timestamp = new Date(data.status.timestamp * 1000).toLocaleString();
@@ -334,6 +351,22 @@
                 console.log('Updating existing status card for module:', data.module_id);
             }
             
+            // Get existing status data from the card if it exists
+            let existingStatus = {};
+            if (statusCard.dataset.statusData) {
+                try {
+                    existingStatus = JSON.parse(statusCard.dataset.statusData);
+                } catch (e) {
+                    console.warn('Failed to parse existing status data:', e);
+                }
+            }
+            
+            // Merge new status data with existing data (partial update)
+            const updatedStatus = { ...existingStatus, ...data.status };
+            
+            // Store the updated status data in the card's dataset
+            statusCard.dataset.statusData = JSON.stringify(updatedStatus);
+            
             // Log all existing status cards
             const allStatusCards = statusContent.querySelectorAll('.status-card');
             console.log('Total status cards in DOM:', allStatusCards.length);
@@ -349,60 +382,48 @@
                 <div class="status-grid">
                     <div class="status-item">
                         <span class="status-label">CPU Temperature</span>
-                        <span class="status-value">${data.status.cpu_temp}°C</span>
+                        <span class="status-value">${updatedStatus.cpu_temp !== undefined ? updatedStatus.cpu_temp + '°C' : 'N/A'}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">CPU Usage</span>
-                        <span class="status-value">${data.status.cpu_usage}%</span>
+                        <span class="status-value">${updatedStatus.cpu_usage !== undefined ? updatedStatus.cpu_usage + '%' : 'N/A'}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Memory Usage</span>
-                        <span class="status-value">${data.status.memory_usage}%</span>
+                        <span class="status-value">${updatedStatus.memory_usage !== undefined ? updatedStatus.memory_usage + '%' : 'N/A'}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Uptime</span>
-                        <span class="status-value">${formatUptime(data.status.uptime)}</span>
+                        <span class="status-value">${updatedStatus.uptime !== undefined ? formatUptime(updatedStatus.uptime) : 'N/A'}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Disk Space</span>
-                        <span class="status-value">${data.status.disk_space}%</span>
+                        <span class="status-value">${updatedStatus.disk_space !== undefined ? updatedStatus.disk_space + '%' : 'N/A'}</span>
                     </div>
-                    ${data.status.ptp4l_offset !== null ? `
-                        <div class="status-item">
-                            <span class="status-label">PTP4L Offset</span>
-                            <span class="status-value">${data.status.ptp4l_offset}ns</span>
-                        </div>
-                    ` : ''}
-                    ${data.status.ptp4l_freq !== null ? `
-                        <div class="status-item">
-                            <span class="status-label">PTP4L Frequency</span>
-                            <span class="status-value">${data.status.ptp4l_freq}ppb</span>
-                        </div>
-                    ` : ''}
-                    ${data.status.phc2sys_offset !== null ? `
-                        <div class="status-item">
-                            <span class="status-label">PHC2SYS Offset</span>
-                            <span class="status-value">${data.status.phc2sys_offset}ns</span>
-                        </div>
-                    ` : ''}
-                    ${data.status.phc2sys_freq !== null ? `
-                        <div class="status-item">
-                            <span class="status-label">PHC2SYS Frequency</span>
-                            <span class="status-value">${data.status.phc2sys_freq}ppb</span>
-                        </div>
-                    ` : ''}
-                    ${data.status.recording !== undefined ? `
-                        <div class="status-item">
-                            <span class="status-label">Recording</span>
-                            <span class="status-value">${data.status.recording_status ? 'Yes' : 'No'}</span>
-                        </div>
-                    ` : ''}
-                    ${data.status.streaming !== undefined ? `
-                        <div class="status-item">
-                            <span class="status-label">Streaming</span>
-                            <span class="status-value">${data.status.streaming_status ? 'Yes' : 'No'}</span>
-                        </div>
-                    ` : ''}
+                    <div class="status-item">
+                        <span class="status-label">PTP4L Offset</span>
+                        <span class="status-value">${updatedStatus.ptp4l_offset !== undefined && updatedStatus.ptp4l_offset !== null ? updatedStatus.ptp4l_offset + 'ns' : 'N/A'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">PTP4L Frequency</span>
+                        <span class="status-value">${updatedStatus.ptp4l_freq !== undefined && updatedStatus.ptp4l_freq !== null ? updatedStatus.ptp4l_freq + 'ppb' : 'N/A'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">PHC2SYS Offset</span>
+                        <span class="status-value">${updatedStatus.phc2sys_offset !== undefined && updatedStatus.phc2sys_offset !== null ? updatedStatus.phc2sys_offset + 'ns' : 'N/A'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">PHC2SYS Frequency</span>
+                        <span class="status-value">${updatedStatus.phc2sys_freq !== undefined && updatedStatus.phc2sys_freq !== null ? updatedStatus.phc2sys_freq + 'ppb' : 'N/A'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Recording</span>
+                        <span class="status-value">${updatedStatus.recording !== undefined ? (updatedStatus.recording ? 'Yes' : 'No') : 'N/A'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Streaming</span>
+                        <span class="status-value">${updatedStatus.streaming !== undefined ? (updatedStatus.streaming ? 'Yes' : 'No') : 'N/A'}</span>
+                    </div>
                 </div>
             `;
             
@@ -1044,7 +1065,9 @@
                     socket.emit('command', {
                         type: 'export_recordings',
                         module_id: 'all',
-                        filename: filename
+                        params: {
+                            filename: filename
+                        }
                     });
                 });
             });
@@ -1056,7 +1079,9 @@
                         socket.emit('command', {
                             type: 'clear_recordings',
                             module_id: 'all',
-                            filename: filename
+                            params: {
+                                filename: filename
+                            }
                         });
                     }
                 });

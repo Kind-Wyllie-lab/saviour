@@ -43,6 +43,10 @@
         <div class="dashboard-card">
             <div id="recording-commands">
                 <h2>Recording Commands</h2>
+                <div id="experiment-name-section">
+                    <label for="experiment-name">Experiment Name (no spaces):</label>
+                    <input type="text" id="experiment-name" placeholder="Enter experiment name" pattern="[^\s]+" title="No spaces allowed">
+                </div>
                 <div id="recording-commands-content">
                     <!-- Recording command buttons will be generated here -->
                 </div>
@@ -341,6 +345,7 @@
         socket.on('connect', function() {
             console.log('WebSocket connection established');
             refreshRecordings();
+            socket.emit('get_experiment_name'); // Request current experiment name
         });
         
         socket.on('disconnect', function() {
@@ -349,6 +354,22 @@
         
         socket.on('error', function(error) {
             console.error('WebSocket error:', error);
+        });
+
+        socket.on('experiment_name_update', function(data) {
+            console.log('Received experiment name update:', data);
+            const experimentNameInput = document.getElementById('experiment-name');
+            if (experimentNameInput && data.experiment_name !== undefined) {
+                experimentNameInput.value = data.experiment_name;
+                console.log('Updated experiment name input:', data.experiment_name);
+            }
+        });
+
+        // Save experiment name when it changes
+        document.getElementById('experiment-name').addEventListener('input', function() {
+            const experimentName = this.value.trim();
+            console.log('Experiment name changed:', experimentName);
+            socket.emit('save_experiment_name', {experiment_name: experimentName});
         });
 
         // Handle module updates for the selection dialog
@@ -438,7 +459,9 @@
                     socket.emit('command', {
                         type: 'export_recordings',
                         module_id: 'all',
-                        filename: filename
+                        params: {
+                            filename: filename
+                        }
                     });
                 });
             });
@@ -450,7 +473,9 @@
                         socket.emit('command', {
                             type: 'clear_recordings',
                             module_id: 'all',
-                            filename: filename
+                            params: {
+                                filename: filename
+                            }
                         });
                     }
                 });

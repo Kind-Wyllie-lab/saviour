@@ -40,6 +40,9 @@ class WebInterfaceManager:
         self.ptp_update_handlers = []
         self.module_update_handlers = []
         
+        # Experiment name persistence
+        self.current_experiment_name = ""
+        
         self.register_routes() # Register routes e.g. index, camera, status etc
     
         # Test mode
@@ -108,10 +111,43 @@ class WebInterfaceManager:
             modules = self.get_modules()
             self.logger.info(f"(WEB INTERFACE MANAGER) Sending initial module list to new client: {len(modules)} modules")
             self.socketio.emit('module_update', {"modules": modules})
+            
+            # Send current experiment name to new client
+            if self.current_experiment_name:
+                self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
+                self.logger.info(f"(WEB INTERFACE MANAGER) Sent current experiment name to new client: {self.current_experiment_name}")
 
         @self.socketio.on('disconnect')
         def handle_disconnect():
             self.logger.info(f"(WEB INTERFACE MANAGER) Client disconnected")
+
+        @self.socketio.on('save_experiment_name')
+        def handle_save_experiment_name(data):
+            """Handle saving experiment name from frontend"""
+            try:
+                experiment_name = data.get('experiment_name', '').strip()
+                self.current_experiment_name = experiment_name
+                self.logger.info(f"(WEB INTERFACE MANAGER) Saved experiment name: {experiment_name}")
+                
+                # Broadcast to all clients
+                self.socketio.emit('experiment_name_update', {"experiment_name": experiment_name})
+                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasted experiment name update to all clients")
+                
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error saving experiment name: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
+
+        @self.socketio.on('get_experiment_name')
+        def handle_get_experiment_name():
+            """Handle request for current experiment name"""
+            try:
+                self.logger.info(f"(WEB INTERFACE MANAGER) Client requested experiment name")
+                self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
+                self.logger.info(f"(WEB INTERFACE MANAGER) Sent experiment name to client: {self.current_experiment_name}")
+                
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting experiment name: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
 
         @self.socketio.on('command')
         def handle_command(data):

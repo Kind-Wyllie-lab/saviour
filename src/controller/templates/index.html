@@ -8,130 +8,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script> <!--Import socketio, used for websocket communication i.e. updates pushed from controller-->
     <script src="{{ url_for('static', filename='js/header.js') }}"></script> <!--Import header.js, used for the header of the page-->
     <script src="{{ url_for('static', filename='js/module-item.js') }}"></script> <!--Import module-item.js, used for the module list-->
-    <style>
-        #experiment-name-section {
-            margin-bottom: 1rem;
-            padding: 1rem;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            border: 1px solid #dcdde1;
-        }
-        
-        #experiment-name-section label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-            color: #2c3e50;
-        }
-        
-        #experiment-name {
-            width: 100%;
-            max-width: 300px;
-            padding: 0.75rem;
-            border: 1px solid #dcdde1;
-            border-radius: 4px;
-            font-size: 0.9rem;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease;
-        }
-        
-        #experiment-name:focus {
-            outline: none;
-            border-color: #3498db;
-            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
-        }
-        
-        #experiment-name:invalid {
-            border-color: #e74c3c;
-            box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
-        }
-        
-        /* Follow-up dialog styles */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-            color: #2c3e50;
-        }
-        
-        .form-group input[type="text"],
-        .form-group input[type="number"],
-        .form-group select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #dcdde1;
-            border-radius: 4px;
-            font-size: 0.9rem;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease;
-        }
-        
-        .form-group input[type="text"]:focus,
-        .form-group input[type="number"]:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #3498db;
-            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
-        }
-        
-        .form-group input[type="checkbox"] {
-            margin-right: 0.5rem;
-            transform: scale(1.2);
-        }
-        
-        .form-group input[type="checkbox"] + label {
-            display: inline;
-            font-weight: normal;
-        }
-        
-        .confirmation-message {
-            background-color: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 4px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            color: #856404;
-        }
-        
-        .dialog-buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: flex-end;
-            margin-top: 1.5rem;
-        }
-        
-        .dialog-confirm {
-            background-color: #27ae60;
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background-color 0.2s ease;
-        }
-        
-        .dialog-confirm:hover {
-            background-color: #229954;
-        }
-        
-        .dialog-cancel {
-            background-color: #95a5a6;
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background-color 0.2s ease;
-        }
-        
-        .dialog-cancel:hover {
-            background-color: #7f8c8d;
-        }
-    </style>
 </head>
 <body>
     <main-header></main-header>
@@ -230,17 +106,12 @@
     <script>
         // Command configuration
         const commands = {
-            get_status: {
-                label: 'Get Status',
-                type: 'get_status',
-                description: 'Get the current status of selected modules',
-                needsFollowup: false
-            },
             start_recording: {
                 label: 'Start Recording',
                 type: 'start_recording',
                 description: 'Start recording on selected modules',
                 needsFollowup: true,
+                // Expected response: {status: 200, filename: "rec/{experiment_name}_{timestamp}.mp4", is_recording: true, message: "Recording started successfully"}
                 followupQuestions: [
                     {
                         id: 'experiment_name',
@@ -270,18 +141,28 @@
                 type: 'stop_recording',
                 description: 'Stop recording on selected modules',
                 needsFollowup: false
+                // Expected response: {status: 200, filename: "rec/{experiment_name}_{timestamp}.mp4", is_recording: false, message: "Recording stopped successfully", duration: 125.5, frames: 3765, filesize: 82.7mb}
+            },
+            get_status: {
+                label: 'Get Status',
+                type: 'get_status',
+                description: 'Get the current status of selected modules',
+                needsFollowup: false
+                // Expected response: {status: 200, is_recording: false, is_streaming: false, cpu_temp: 45.2, cpu_usage: 12.5, memory_usage: 34.2, disk_space: 67.8, uptime: 3600}
             },
             list_recordings: {
                 label: 'List Recordings',
                 type: 'list_recordings',
                 description: 'List available recordings on selected modules',
                 needsFollowup: false
+                // Expected response: {status: 200, recordings: [{filename: "rec/exp1_060127698.mp4", size: 1024000, created: "2024-01-15T10:30:00Z", duration: 125.5}]}
             },
             export_recordings: {
                 label: 'Export Recordings',
                 type: 'export_recordings',
                 description: 'Export recordings from selected modules',
                 needsFollowup: true,
+                // Expected response: {status: 200, exported_files: ["{destination}/path/to/exported/file.mp4"], message: "Export completed successfully"}
                 followupQuestions: [
                     {
                         id: 'destination',
@@ -300,6 +181,7 @@
                 type: 'clear_recordings',
                 description: 'Clear all recordings on selected modules',
                 needsFollowup: true,
+                // Expected response: {status: 200, deleted_count: 5, message: "5 recordings deleted successfully"}
                 followupQuestions: [
                     {
                         id: 'confirmation',
@@ -315,6 +197,7 @@
                 type: 'start_streaming',
                 description: 'Start streaming on selected modules - CAMERA ONLY',
                 needsFollowup: true,
+                // Expected response: {status: 200, stream_url: "http://{module_ip}:8080/video_feed", is_streaming: true, message: "Streaming started successfully"}
                 followupQuestions: [
                     {
                         id: 'stream_port',
@@ -345,6 +228,7 @@
                 type: 'stop_streaming',
                 description: 'Stop streaming on selected modules - CAMERA ONLY',
                 needsFollowup: false
+                // Expected response: {status: 200, is_streaming: false, message: "Streaming stopped successfully"}
             },
         };
 
@@ -356,7 +240,16 @@
             Object.entries(commands).forEach(([id, command]) => {
                 const button = document.createElement('button');
                 button.id = id;
-                button.className = 'command-button';
+                
+                // Special styling for start/stop recording buttons
+                if (id === 'start_recording') {
+                    button.className = 'command-button start-recording-btn';
+                } else if (id === 'stop_recording') {
+                    button.className = 'command-button stop-recording-btn';
+                } else {
+                    button.className = 'command-button';
+                }
+                
                 button.textContent = command.label;
                 button.title = command.description;
                 
@@ -585,23 +478,32 @@
                 formHTML += `<div class="form-group">`;
                 formHTML += `<label for="${question.id}">${question.label}</label>`;
 
+                // Check if this is the experiment name field and if there's already a value on the page
+                let defaultValue = question.default || '';
+                if (question.id === 'experiment_name') {
+                    const existingExperimentName = document.getElementById('experiment-name');
+                    if (existingExperimentName && existingExperimentName.value.trim()) {
+                        defaultValue = existingExperimentName.value.trim();
+                    }
+                }
+
                 switch (question.type) {
                     case 'text':
-                        formHTML += `<input type="text" id="${question.id}" placeholder="${question.placeholder || ''}" ${question.required ? 'required' : ''}>`;
+                        formHTML += `<input type="text" id="${question.id}" placeholder="${question.placeholder || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
                         break;
                     case 'number':
-                        formHTML += `<input type="number" id="${question.id}" placeholder="${question.placeholder || ''}" min="${question.min || ''}" max="${question.max || ''}" value="${question.default || ''}" ${question.required ? 'required' : ''}>`;
+                        formHTML += `<input type="number" id="${question.id}" placeholder="${question.placeholder || ''}" min="${question.min || ''}" max="${question.max || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
                         break;
                     case 'select':
                         formHTML += `<select id="${question.id}" ${question.required ? 'required' : ''}>`;
                         question.options.forEach(option => {
-                            const selected = option.value === question.default ? 'selected' : '';
+                            const selected = option.value === defaultValue ? 'selected' : '';
                             formHTML += `<option value="${option.value}" ${selected}>${option.label}</option>`;
                         });
                         formHTML += `</select>`;
                         break;
                     case 'checkbox':
-                        const checked = question.default ? 'checked' : '';
+                        const checked = defaultValue ? 'checked' : '';
                         formHTML += `<input type="checkbox" id="${question.id}" ${checked}>`;
                         break;
                     case 'confirmation':

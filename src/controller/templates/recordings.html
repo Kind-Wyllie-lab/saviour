@@ -39,11 +39,304 @@
                 </div>
             </div>
         </div>
+        
+        <div class="dashboard-card">
+            <div id="recording-commands">
+                <h2>Recording Commands</h2>
+                <div id="recording-commands-content">
+                    <!-- Recording command buttons will be generated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Selection Dialog -->
+    <div id="module-selection-dialog" class="dialog" style="display: none;">
+        <div class="dialog-content">
+            <h3>Select Module</h3>
+            <div class="dialog-options">
+                <button class="dialog-option" data-module="all">All Modules</button>
+                <div id="module-options"></div>
+            </div>
+            <button class="dialog-close">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Follow-up Questions Dialog -->
+    <div id="followup-dialog" class="dialog" style="display: none;">
+        <div class="dialog-content">
+            <h3 id="followup-title">Additional Parameters</h3>
+            <div id="followup-content">
+                <!-- Dynamic content will be generated here -->
+            </div>
+            <div class="dialog-buttons">
+                <button id="followup-confirm" class="dialog-confirm">Confirm</button>
+                <button id="followup-cancel" class="dialog-cancel">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <script>
         var socket = io();
         
+        // Recording command configuration
+        const recordingCommands = {
+            list_recordings: {
+                label: 'List Recordings',
+                type: 'list_recordings',
+                description: 'List available recordings on selected modules',
+                needsFollowup: false
+                // Expected response: {status: 200, recordings: [{filename: "rec/exp1_060127698.mp4", size: 1024000, created: "2024-01-15T10:30:00Z", duration: 125.5}]}
+            },
+            export_recordings: {
+                label: 'Export Recordings',
+                type: 'export_recordings',
+                description: 'Export recordings from selected modules',
+                needsFollowup: true,
+                // Expected response: {status: 200, exported_files: ["{destination}/path/to/exported/file.mp4"], message: "Export completed successfully"}
+                followupQuestions: [
+                    {
+                        id: 'destination',
+                        label: 'Export Destination',
+                        type: 'select',
+                        options: [
+                            { value: 'nas', label: 'NAS Storage' },
+                            { value: 'controller', label: 'Controller Storage' }
+                        ],
+                        required: true
+                    }
+                ]
+            },
+            clear_recordings: {
+                label: 'Clear Recordings',
+                type: 'clear_recordings',
+                description: 'Clear all recordings on selected modules',
+                needsFollowup: true,
+                // Expected response: {status: 200, deleted_count: 5, message: "5 recordings deleted successfully"}
+                followupQuestions: [
+                    {
+                        id: 'confirmation',
+                        label: 'Are you sure you want to delete ALL recordings on the module?',
+                        type: 'confirmation',
+                        message: 'This action cannot be undone. All recordings on the selected modules will be permanently deleted.',
+                        required: true
+                    }
+                ]
+            }
+        };
+
+        // Generate recording command buttons
+        function generateRecordingCommandButtons() {
+            const container = document.getElementById('recording-commands-content');
+            container.innerHTML = ''; // Clear existing buttons
+
+            Object.entries(recordingCommands).forEach(([id, command]) => {
+                const button = document.createElement('button');
+                button.id = id;
+                button.className = 'command-button';
+                button.textContent = command.label;
+                button.title = command.description;
+                
+                button.addEventListener('click', () => {
+                    currentCommand = command.type;
+                    dialog.style.display = 'flex';
+                });
+                
+                container.appendChild(button);
+            });
+        }
+
+        // Module selection dialog
+        const dialog = document.getElementById('module-selection-dialog');
+        const moduleOptions = document.getElementById('module-options');
+        const closeButton = document.querySelector('.dialog-close');
+        let currentCommand = null;
+        let selectedModuleId = null;
+
+        // Follow-up dialog elements
+        const followupDialog = document.getElementById('followup-dialog');
+        const followupTitle = document.getElementById('followup-title');
+        const followupContent = document.getElementById('followup-content');
+        const followupConfirm = document.getElementById('followup-confirm');
+        const followupCancel = document.getElementById('followup-cancel');
+
+        // Command Button Event Listeners
+        closeButton.addEventListener('click', () => {
+            dialog.style.display = 'none';
+            currentCommand = null;
+            selectedModuleId = null;
+        });
+
+        // Follow-up dialog event listeners
+        followupCancel.addEventListener('click', () => {
+            followupDialog.style.display = 'none';
+            currentCommand = null;
+            selectedModuleId = null;
+        });
+
+        followupConfirm.addEventListener('click', () => {
+            const formData = collectFollowupData();
+            if (formData) {
+                sendCommandWithParams(selectedModuleId, formData);
+                followupDialog.style.display = 'none';
+            }
+        });
+
+        // Generate follow-up form
+        function generateFollowupForm(commandType) {
+            const command = recordingCommands[commandType];
+            if (!command || !command.needsFollowup) return '';
+
+            followupTitle.textContent = `Configure ${command.label}`;
+            let formHTML = '';
+
+            command.followupQuestions.forEach(question => {
+                formHTML += `<div class="form-group">`;
+                formHTML += `<label for="${question.id}">${question.label}</label>`;
+
+                let defaultValue = question.default || '';
+
+                switch (question.type) {
+                    case 'text':
+                        formHTML += `<input type="text" id="${question.id}" placeholder="${question.placeholder || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
+                        break;
+                    case 'number':
+                        formHTML += `<input type="number" id="${question.id}" placeholder="${question.placeholder || ''}" min="${question.min || ''}" max="${question.max || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
+                        break;
+                    case 'select':
+                        formHTML += `<select id="${question.id}" ${question.required ? 'required' : ''}>`;
+                        question.options.forEach(option => {
+                            const selected = option.value === defaultValue ? 'selected' : '';
+                            formHTML += `<option value="${option.value}" ${selected}>${option.label}</option>`;
+                        });
+                        formHTML += `</select>`;
+                        break;
+                    case 'checkbox':
+                        const checked = defaultValue ? 'checked' : '';
+                        formHTML += `<input type="checkbox" id="${question.id}" ${checked}>`;
+                        break;
+                    case 'confirmation':
+                        formHTML += `<div class="confirmation-message">${question.message}</div>`;
+                        formHTML += `<input type="checkbox" id="${question.id}" ${question.required ? 'required' : ''}> I understand and want to proceed`;
+                        break;
+                }
+
+                formHTML += `</div>`;
+            });
+
+            return formHTML;
+        }
+
+        // Collect data from follow-up form
+        function collectFollowupData() {
+            const command = recordingCommands[currentCommand];
+            if (!command || !command.needsFollowup) return {};
+
+            const formData = {};
+            let isValid = true;
+
+            command.followupQuestions.forEach(question => {
+                const element = document.getElementById(question.id);
+                if (!element) return;
+
+                let value;
+                switch (question.type) {
+                    case 'text':
+                    case 'number':
+                        value = element.value.trim();
+                        break;
+                    case 'select':
+                        value = element.value;
+                        break;
+                    case 'checkbox':
+                        value = element.checked;
+                        break;
+                    case 'confirmation':
+                        value = element.checked;
+                        break;
+                }
+
+                // Validation
+                if (question.required && (value === '' || value === false || value === null)) {
+                    showError(`${question.label} is required`);
+                    isValid = false;
+                    return;
+                }
+
+                if (question.validation && value !== '') {
+                    const error = question.validation(value);
+                    if (error) {
+                        showError(error);
+                        isValid = false;
+                        return;
+                    }
+                }
+
+                formData[question.id] = value;
+            });
+
+            return isValid ? formData : null;
+        }
+
+        // Show error message
+        function showError(message) {
+            alert(message);
+        }
+
+        // Send command with parameters
+        function sendCommandWithParams(moduleId, params) {
+            const command = {
+                type: currentCommand,
+                module_id: moduleId,
+                params: params
+            };
+
+            console.log('Sending command with params:', command);
+            socket.emit('command', command);
+            currentCommand = null;
+            selectedModuleId = null;
+        }
+
+        // Update the module selection dialog options
+        function updateModuleOptions(modules) {
+            moduleOptions.innerHTML = '';
+            modules.forEach(module => {
+                const button = document.createElement('button');
+                button.className = 'dialog-option';
+                button.textContent = `${module.type} (${module.id})`;
+                button.dataset.moduleId = module.id;
+                button.addEventListener('click', () => {
+                    selectedModuleId = module.id;
+                    handleModuleSelection();
+                });
+                moduleOptions.appendChild(button);
+            });
+        }
+
+        // Handle module selection
+        function handleModuleSelection() {
+            dialog.style.display = 'none';
+            
+            const command = recordingCommands[currentCommand];
+            if (command && command.needsFollowup) {
+                // Show follow-up dialog
+                followupContent.innerHTML = generateFollowupForm(currentCommand);
+                followupDialog.style.display = 'flex';
+            } else {
+                // Send command immediately
+                sendCommandWithParams(selectedModuleId, {});
+            }
+        }
+
+        // Add click handler for "All Modules" option
+        document.querySelector('[data-module="all"]').addEventListener('click', () => {
+            selectedModuleId = 'all';
+            handleModuleSelection();
+        });
+
+        // Initialize recording command buttons
+        generateRecordingCommandButtons();
+
         // WebSocket event handlers
         socket.on('connect', function() {
             console.log('WebSocket connection established');
@@ -56,6 +349,27 @@
         
         socket.on('error', function(error) {
             console.error('WebSocket error:', error);
+        });
+
+        // Handle module updates for the selection dialog
+        socket.on('module_update', function(data) {
+            console.log('Received module update:', data);
+            if (data.modules) {
+                updateModuleOptions(data.modules);
+            }
+        });
+
+        // Handle command responses
+        socket.on('command_response', function(data) {
+            console.log('Received command response:', data);
+            if (data.success) {
+                // Refresh recordings list after successful commands
+                if (['export_recordings', 'clear_recordings'].includes(data.command_type)) {
+                    setTimeout(refreshRecordings, 1000); // Small delay to allow module to process
+                }
+            } else {
+                alert(`Command failed: ${data.error || 'Unknown error'}`);
+            }
         });
 
         // Handle recordings list response

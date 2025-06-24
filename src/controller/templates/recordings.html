@@ -277,6 +277,12 @@
                 }
 
                 formData[question.id] = value;
+                
+                // Auto-save experiment name if this is the experiment_name field
+                if (question.id === 'experiment_name' && value.trim()) {
+                    console.log('Auto-saving experiment name from follow-up dialog:', value);
+                    socket.emit('save_experiment_name', {experiment_name: value.trim()});
+                }
             });
 
             return isValid ? formData : null;

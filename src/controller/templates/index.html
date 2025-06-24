@@ -487,58 +487,6 @@
             }
         });
 
-        // Generate follow-up form
-        function generateFollowupForm(commandType) {
-            const command = commands[commandType];
-            if (!command || !command.needsFollowup) return '';
-
-            followupTitle.textContent = `Configure ${command.label}`;
-            let formHTML = '';
-
-            command.followupQuestions.forEach(question => {
-                formHTML += `<div class="form-group">`;
-                formHTML += `<label for="${question.id}">${question.label}</label>`;
-
-                // Check if this is the experiment name field and if there's already a value on the page
-                let defaultValue = question.default || '';
-                if (question.id === 'experiment_name') {
-                    const existingExperimentName = document.getElementById('experiment-name');
-                    if (existingExperimentName && existingExperimentName.value.trim()) {
-                        defaultValue = existingExperimentName.value.trim();
-                    }
-                }
-
-                switch (question.type) {
-                    case 'text':
-                        formHTML += `<input type="text" id="${question.id}" placeholder="${question.placeholder || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
-                        break;
-                    case 'number':
-                        formHTML += `<input type="number" id="${question.id}" placeholder="${question.placeholder || ''}" min="${question.min || ''}" max="${question.max || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
-                        break;
-                    case 'select':
-                        formHTML += `<select id="${question.id}" ${question.required ? 'required' : ''}>`;
-                        question.options.forEach(option => {
-                            const selected = option.value === defaultValue ? 'selected' : '';
-                            formHTML += `<option value="${option.value}" ${selected}>${option.label}</option>`;
-                        });
-                        formHTML += `</select>`;
-                        break;
-                    case 'checkbox':
-                        const checked = defaultValue ? 'checked' : '';
-                        formHTML += `<input type="checkbox" id="${question.id}" ${checked}>`;
-                        break;
-                    case 'confirmation':
-                        formHTML += `<div class="confirmation-message">${question.message}</div>`;
-                        formHTML += `<input type="checkbox" id="${question.id}" ${question.required ? 'required' : ''}> I understand and want to proceed`;
-                        break;
-                }
-
-                formHTML += `</div>`;
-            });
-
-            return formHTML;
-        }
-
         // Collect data from follow-up form
         function collectFollowupData() {
             const command = commands[currentCommand];
@@ -585,6 +533,12 @@
                 }
 
                 formData[question.id] = value;
+                
+                // Auto-save experiment name if this is the experiment_name field
+                if (question.id === 'experiment_name' && value.trim()) {
+                    console.log('Auto-saving experiment name from follow-up dialog:', value);
+                    socket.emit('save_experiment_name', {experiment_name: value.trim()});
+                }
             });
 
             return isValid ? formData : null;
@@ -1138,6 +1092,58 @@
         window.addEventListener('load', function() {
             console.log('Page fully loaded');
         });
+
+        // Generate follow-up form
+        function generateFollowupForm(commandType) {
+            const command = commands[commandType];
+            if (!command || !command.needsFollowup) return '';
+
+            followupTitle.textContent = `Configure ${command.label}`;
+            let formHTML = '';
+
+            command.followupQuestions.forEach(question => {
+                formHTML += `<div class="form-group">`;
+                formHTML += `<label for="${question.id}">${question.label}</label>`;
+
+                // Check if this is the experiment name field and if there's already a value on the page
+                let defaultValue = question.default || '';
+                if (question.id === 'experiment_name') {
+                    const existingExperimentName = document.getElementById('experiment-name');
+                    if (existingExperimentName && existingExperimentName.value.trim()) {
+                        defaultValue = existingExperimentName.value.trim();
+                    }
+                }
+
+                switch (question.type) {
+                    case 'text':
+                        formHTML += `<input type="text" id="${question.id}" placeholder="${question.placeholder || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
+                        break;
+                    case 'number':
+                        formHTML += `<input type="number" id="${question.id}" placeholder="${question.placeholder || ''}" min="${question.min || ''}" max="${question.max || ''}" value="${defaultValue}" ${question.required ? 'required' : ''}>`;
+                        break;
+                    case 'select':
+                        formHTML += `<select id="${question.id}" ${question.required ? 'required' : ''}>`;
+                        question.options.forEach(option => {
+                            const selected = option.value === defaultValue ? 'selected' : '';
+                            formHTML += `<option value="${option.value}" ${selected}>${option.label}</option>`;
+                        });
+                        formHTML += `</select>`;
+                        break;
+                    case 'checkbox':
+                        const checked = defaultValue ? 'checked' : '';
+                        formHTML += `<input type="checkbox" id="${question.id}" ${checked}>`;
+                        break;
+                    case 'confirmation':
+                        formHTML += `<div class="confirmation-message">${question.message}</div>`;
+                        formHTML += `<input type="checkbox" id="${question.id}" ${question.required ? 'required' : ''}> I understand and want to proceed`;
+                        break;
+                }
+
+                formHTML += `</div>`;
+            });
+
+            return formHTML;
+        }
     </script>
 </body>
 </html> 

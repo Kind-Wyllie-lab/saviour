@@ -94,6 +94,9 @@ class ModuleCommandHandler:
             cmd = parts[0]
             params = parts[1:] if len(parts) > 1 else []
             
+            # Debug logging for command parsing
+            self.logger.info(f"(COMMAND HANDLER) Parsed command: '{cmd}', parameters: {params}")
+            
             # Handle command
             match cmd:
                 case "get_status":
@@ -202,12 +205,41 @@ class ModuleCommandHandler:
 
     def _handle_clear_recordings(self, params: list):
         """Handle clear_recordings command with parameters"""
-        self.logger.info("(COMMAND HANDLER) _handle_clear_recordings called")
-        self.callbacks["clear_recordings"](params)
+        self.logger.info(f"(COMMAND HANDLER) _handle_clear_recordings called with parameters: {params}")
+        
+        # Parse parameters
+        filename = None
+        older_than = None
+        keep_latest = 0
+        
+        for param in params:
+            if param.startswith('filename='):
+                filename = param.split('=', 1)[1]
+            elif param.startswith('older_than='):
+                older_than = int(param.split('=', 1)[1])
+            elif param.startswith('keep_latest='):
+                keep_latest = int(param.split('=', 1)[1])
+        
+        self.logger.info(f"(COMMAND HANDLER) Clear recordings - filename: '{filename}', older_than: {older_than}, keep_latest: {keep_latest}")
+        
+        # Call the clear_recordings method with parsed parameters
+        if filename:
+            # Delete specific file
+            result = self.callbacks["clear_recordings"](filename=filename)
+        else:
+            # Use age-based deletion
+            result = self.callbacks["clear_recordings"](older_than=older_than, keep_latest=keep_latest)
+        
+        # Send status response
+        if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+            self.communication_manager.send_status({
+                "type": "clear_recordings_complete",
+                "result": result
+            })
 
     def _handle_export_recordings(self, params: list):
         """Handle export_recordings command with parameters"""
-        self.logger.info("(COMMAND HANDLER) _handle_export_recordings called")
+        self.logger.info(f"(COMMAND HANDLER) _handle_export_recordings called with parameters: {params}")
         
         if "export_recordings" not in self.callbacks:
             raise ValueError("Module not configured for exporting recordings")
@@ -216,6 +248,8 @@ class ModuleCommandHandler:
         filename = params[0] if params else "all"
         length = int(params[1]) if len(params) > 1 else 0
         destination = params[2] if len(params) > 2 else "controller"
+        
+        self.logger.info(f"(COMMAND HANDLER) Export parameters - filename: '{filename}', length: {length}, destination: '{destination}'")
         
         result = self.callbacks["export_recordings"](filename, length, destination)
         

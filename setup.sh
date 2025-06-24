@@ -27,6 +27,13 @@ save_summary() {
 Habitat Setup Summary
 Generated: $timestamp
 Device Role: $DEVICE_ROLE
+EOF
+
+    if [ "$DEVICE_ROLE" = "module" ]; then
+        echo "Module Type: $MODULE_TYPE" >> "$SUMMARY_FILE"
+    fi
+
+    cat >> "$SUMMARY_FILE" <<EOF
 
 $1
 
@@ -72,6 +79,59 @@ ask_user_role() {
                 ;;
         esac
     done
+}
+
+# Function to ask user about module type
+ask_module_type() {
+    if [ "$DEVICE_ROLE" = "module" ]; then
+        log_section "Module Type Configuration"
+        echo "Please specify the type of module:"
+        echo "1) Camera - Video recording and streaming module"
+        echo "2) Microphone - Audio recording module"
+        echo "3) RFID - RFID reader module"
+        echo "4) TTL - TTL signal module"
+        echo "5) Generic - Generic module template"
+        echo ""
+        
+        while true; do
+            read -p "Enter your choice (1-5): " choice
+            case $choice in
+                1)
+                    MODULE_TYPE="camera"
+                    log_message "Module type configured as CAMERA"
+                    echo "Module type configured as CAMERA"
+                    break
+                    ;;
+                2)
+                    MODULE_TYPE="microphone"
+                    log_message "Module type configured as MICROPHONE"
+                    echo "Module type configured as MICROPHONE"
+                    break
+                    ;;
+                3)
+                    MODULE_TYPE="rfid"
+                    log_message "Module type configured as RFID"
+                    echo "Module type configured as RFID"
+                    break
+                    ;;
+                4)
+                    MODULE_TYPE="ttl"
+                    log_message "Module type configured as TTL"
+                    echo "Module type configured as TTL"
+                    break
+                    ;;
+                5)
+                    MODULE_TYPE="generic"
+                    log_message "Module type configured as GENERIC"
+                    echo "Module type configured as GENERIC"
+                    break
+                    ;;
+                *)
+                    echo "Invalid choice. Please enter 1-5."
+                    ;;
+            esac
+        done
+    fi
 }
 
 # Function to configure PTP services
@@ -310,6 +370,104 @@ EOF
     echo "To enable at boot: sudo systemctl enable dnsmasq"
 }
 
+# Function to configure module systemd service
+configure_module_service() {
+    if [ "$DEVICE_ROLE" = "module" ]; then
+        log_section "Configuring Module Systemd Service"
+        
+        # Stop existing service if running
+        sudo systemctl stop habitat-${MODULE_TYPE}-module 2>/dev/null || true
+        
+        # Create service file based on module type
+        log_message "Creating habitat-${MODULE_TYPE}-module systemd service..."
+        sudo tee /etc/systemd/system/habitat-${MODULE_TYPE}-module.service > /dev/null <<EOF
+[Unit]
+Description=Habitat ${MODULE_TYPE^} Module
+After=network.target ptp4l.service phc2sys.service
+Wants=network.target ptp4l.service phc2sys.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/Desktop/habitat/src/modules/examples
+ExecStart=/home/pi/Desktop/habitat/env/bin/python ${MODULE_TYPE}_example.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH=/home/pi/Desktop/habitat/src
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        # Reload systemd and enable service
+        sudo systemctl daemon-reload
+        sudo systemctl enable habitat-${MODULE_TYPE}-module
+        
+        log_message "Habitat ${MODULE_TYPE} module service configured and enabled at boot."
+        echo "Habitat ${MODULE_TYPE} module service configured and enabled at boot."
+        echo ""
+        echo "Module service control commands:"
+        echo "  Start: sudo systemctl start habitat-${MODULE_TYPE}-module"
+        echo "  Stop:  sudo systemctl stop habitat-${MODULE_TYPE}-module"
+        echo "  Status: sudo systemctl status habitat-${MODULE_TYPE}-module"
+        echo "  Logs: sudo journalctl -u habitat-${MODULE_TYPE}-module -f"
+        echo "  Restart: sudo systemctl restart habitat-${MODULE_TYPE}-module"
+    fi
+}
+
+# Function to configure controller systemd service
+configure_controller_service() {
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        log_section "Configuring Controller Systemd Service"
+        
+        # Stop existing service if running
+        sudo systemctl stop habitat-controller 2>/dev/null || true
+        
+        # Create service file for controller
+        log_message "Creating habitat-controller systemd service..."
+        sudo tee /etc/systemd/system/habitat-controller.service > /dev/null <<EOF
+[Unit]
+Description=Habitat Controller
+After=network.target ptp4l.service phc2sys.service
+Wants=network.target ptp4l.service phc2sys.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/Desktop/habitat/src/controller
+ExecStart=/home/pi/Desktop/habitat/env/bin/python controller.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH=/home/pi/Desktop/habitat/src
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        # Reload systemd and enable service
+        sudo systemctl daemon-reload
+        sudo systemctl enable habitat-controller
+        
+        log_message "Habitat controller service configured and enabled at boot."
+        echo "Habitat controller service configured and enabled at boot."
+        echo ""
+        echo "Controller service control commands:"
+        echo "  Start: sudo systemctl start habitat-controller"
+        echo "  Stop:  sudo systemctl stop habitat-controller"
+        echo "  Status: sudo systemctl status habitat-controller"
+        echo "  Logs: sudo journalctl -u habitat-controller -f"
+        echo "  Restart: sudo systemctl restart habitat-controller"
+    fi
+}
+
 # Initialize logging
 log_section "Habitat Setup Started"
 log_message "Setup script version: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -381,6 +539,9 @@ fi
 # Ask user about their device role
 ask_user_role
 
+# Ask user about module type
+ask_module_type
+
 # Configure PTP services based on device role
 configure_ptp_services
 
@@ -399,6 +560,12 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
 else
     log_message "Module Pi detected. Skipping DHCP server configuration."
 fi
+
+# Configure module systemd service
+configure_module_service
+
+# Configure controller systemd service
+configure_controller_service
 
 log_section "Setting up Virtual Environment"
 # Remove existing environment if it exists
@@ -463,11 +630,34 @@ Network Configuration:
   - DHCP range: 192.168.1.100-192.168.1.200
   - Gateway: 192.168.1.1 (this Pi)
   - Interface: eth0 only (no wlan0)
-  - No internet routing - devices use wlan0 for internet"
+  - No internet routing - devices use wlan0 for internet
+
+=== Controller Service Setup ===
+Habitat controller service configured and enabled at boot.
+Service: habitat-controller
+
+Controller service control commands:
+  Start: sudo systemctl start habitat-controller
+  Stop:  sudo systemctl stop habitat-controller
+  Status: sudo systemctl status habitat-controller
+  Logs: sudo journalctl -u habitat-controller -f
+  Restart: sudo systemctl restart habitat-controller"
 else
     SUMMARY_CONTENT="Device Role: MODULE
+Module Type: ${MODULE_TYPE^^}
 PTP Configuration: SLAVE mode
-This module will synchronize to the controller's PTP master."
+This module will synchronize to the controller's PTP master.
+
+=== Module Service Setup ===
+Habitat ${MODULE_TYPE} module service configured and enabled at boot.
+Service: habitat-${MODULE_TYPE}-module
+
+Module service control commands:
+  Start: sudo systemctl start habitat-${MODULE_TYPE}-module
+  Stop:  sudo systemctl stop habitat-${MODULE_TYPE}-module
+  Status: sudo systemctl status habitat-${MODULE_TYPE}-module
+  Logs: sudo journalctl -u habitat-${MODULE_TYPE}-module -f
+  Restart: sudo systemctl restart habitat-${MODULE_TYPE}-module"
 fi
 
 SUMMARY_CONTENT="$SUMMARY_CONTENT
@@ -538,11 +728,34 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "  - Gateway: 192.168.1.1 (this Pi)"
     echo "  - Interface: eth0 only (no wlan0)"
     echo "  - No internet routing - devices use wlan0 for internet"
+    echo ""
+    echo "=== Controller Service Setup ==="
+    echo "Habitat controller service configured and enabled at boot."
+    echo "Service: habitat-controller"
+    echo ""
+    echo "Controller service control commands:"
+    echo "  Start: sudo systemctl start habitat-controller"
+    echo "  Stop:  sudo systemctl stop habitat-controller"
+    echo "  Status: sudo systemctl status habitat-controller"
+    echo "  Logs: sudo journalctl -u habitat-controller -f"
+    echo "  Restart: sudo systemctl restart habitat-controller"
 else
     echo "=== Module Configuration Summary ==="
     echo "Device Role: MODULE"
+    echo "Module Type: ${MODULE_TYPE^^}"
     echo "PTP Configuration: SLAVE mode"
     echo "This module will synchronize to the controller's PTP master."
+    echo ""
+    echo "=== Module Service Setup ==="
+    echo "Habitat ${MODULE_TYPE} module service configured and enabled at boot."
+    echo "Service: habitat-${MODULE_TYPE}-module"
+    echo ""
+    echo "Module service control commands:"
+    echo "  Start: sudo systemctl start habitat-${MODULE_TYPE}-module"
+    echo "  Stop:  sudo systemctl stop habitat-${MODULE_TYPE}-module"
+    echo "  Status: sudo systemctl status habitat-${MODULE_TYPE}-module"
+    echo "  Logs: sudo journalctl -u habitat-${MODULE_TYPE}-module -f"
+    echo "  Restart: sudo systemctl restart habitat-${MODULE_TYPE}-module"
 fi
 
 echo ""

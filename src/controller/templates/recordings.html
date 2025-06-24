@@ -32,8 +32,8 @@
                     </div>
                     <div id="module-recordings" class="recordings-content active">
                         <div class="recordings-filter">
-                            <label for="experiment-filter">Filter by Experiment:</label>
-                            <input type="text" id="experiment-filter" placeholder="Enter experiment name to filter...">
+                            <label for="experiment-filter">Filter by Name:</label>
+                            <input type="text" id="experiment-filter" placeholder="Enter experiment name or folder name to filter...">
                             <button id="clear-filter" class="filter-button">Clear Filter</button>
                         </div>
                         <div class="recordings-list"></div>
@@ -478,6 +478,36 @@
             return groups;
         }
 
+        // Group exported recordings by folder structure
+        function groupExportedRecordingsByFolder(recordings) {
+            const groups = {};
+            
+            recordings.forEach(recording => {
+                // Extract folder path from filename (e.g., "controller/test.txt" -> "controller")
+                const folderPath = extractFolderPath(recording.filename);
+                
+                if (!groups[folderPath]) {
+                    groups[folderPath] = [];
+                }
+                groups[folderPath].push(recording);
+            });
+            
+            return groups;
+        }
+
+        // Extract folder path from filename
+        function extractFolderPath(filename) {
+            // Split by '/' and take everything except the last part (the actual filename)
+            const parts = filename.split('/');
+            if (parts.length > 1) {
+                // Return the folder path (everything except the filename)
+                return parts.slice(0, -1).join('/');
+            }
+            
+            // If no folder structure, return "Root"
+            return "Root";
+        }
+
         // Extract experiment name from filename
         function extractExperimentName(filename) {
             // Remove file extension
@@ -544,31 +574,31 @@
         }
 
         // Generate HTML for grouped exported recordings
-        function generateGroupedExportedRecordingsHTML(recordingsByExperiment) {
+        function generateGroupedExportedRecordingsHTML(recordingsByFolder) {
             let html = '';
             
-            Object.entries(recordingsByExperiment).forEach(([experimentName, recordings]) => {
+            Object.entries(recordingsByFolder).forEach(([folderPath, recordings]) => {
                 const totalSize = recordings.reduce((sum, rec) => sum + rec.size, 0);
                 const recordingCount = recordings.length;
                 
                 html += `
-                    <div class="experiment-group" data-exported-experiment="${experimentName}">
+                    <div class="experiment-group" data-exported-folder="${folderPath}">
                         <div class="experiment-header">
-                            <div class="experiment-info" onclick="toggleExportedExperimentGroup('${experimentName}')">
-                                <span class="experiment-name">${experimentName}</span>
-                                <span class="experiment-stats">${recordingCount} exported recording${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
+                            <div class="experiment-info" onclick="toggleExportedFolderGroup('${folderPath}')">
+                                <span class="experiment-name">📁 ${folderPath}</span>
+                                <span class="experiment-stats">${recordingCount} file${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
                             </div>
                             <div class="experiment-actions">
-                                <div class="experiment-toggle" onclick="toggleExportedExperimentGroup('${experimentName}')">
+                                <div class="experiment-toggle" onclick="toggleExportedFolderGroup('${folderPath}')">
                                     <span class="toggle-icon">▼</span>
                                 </div>
                             </div>
                         </div>
-                        <div class="experiment-recordings" id="exported-recordings-${experimentName}">
+                        <div class="experiment-recordings" id="exported-folder-${folderPath.replace(/[^a-zA-Z0-9]/g, '_')}">
                             ${recordings.map(recording => `
                                 <div class="recording-item">
                                     <div class="recording-info">
-                                        <span class="recording-name">${recording.filename}</span>
+                                        <span class="recording-name">${recording.filename.split('/').pop()}</span>
                                         <span class="recording-date">${recording.created}</span>
                                         <span class="recording-size">${formatFileSize(recording.size)}</span>
                                         <span class="recording-destination">${recording.destination === 'nas' ? 'NAS' : 'Controller'}</span>
@@ -597,10 +627,10 @@
             }
         }
 
-        // Toggle exported experiment group visibility
-        function toggleExportedExperimentGroup(experimentName) {
-            const recordingsDiv = document.getElementById(`exported-recordings-${experimentName}`);
-            const toggleIcon = document.querySelector(`[data-exported-experiment="${experimentName}"] .toggle-icon`);
+        // Toggle exported folder group visibility
+        function toggleExportedFolderGroup(folderPath) {
+            const recordingsDiv = document.getElementById(`exported-folder-${folderPath.replace(/[^a-zA-Z0-9]/g, '_')}`);
+            const toggleIcon = document.querySelector(`[data-exported-folder="${folderPath}"] .toggle-icon`);
             
             if (recordingsDiv.style.display === 'none') {
                 recordingsDiv.style.display = 'block';
@@ -647,7 +677,7 @@
         // Add event listeners for exported recordings
         function addExportedRecordingsEventListeners() {
             // No delete buttons for exported recordings - they are read-only
-            // Only toggle functionality for experiment groups
+            // Only toggle functionality for folder groups
         }
 
         // Filter functionality
@@ -656,9 +686,20 @@
             const experimentGroups = document.querySelectorAll('.experiment-group');
             
             experimentGroups.forEach(group => {
-                const experimentName = group.dataset.experiment.toLowerCase();
-                const shouldShow = experimentName.includes(filterValue);
-                group.style.display = shouldShow ? 'block' : 'none';
+                // Check if this is an exported recordings group (has data-exported-folder attribute)
+                const isExportedGroup = group.hasAttribute('data-exported-folder');
+                
+                if (isExportedGroup) {
+                    // For exported recordings, filter by folder name
+                    const folderName = group.dataset.exportedFolder.toLowerCase();
+                    const shouldShow = folderName.includes(filterValue);
+                    group.style.display = shouldShow ? 'block' : 'none';
+                } else {
+                    // For module recordings, filter by experiment name
+                    const experimentName = group.dataset.experiment.toLowerCase();
+                    const shouldShow = experimentName.includes(filterValue);
+                    group.style.display = shouldShow ? 'block' : 'none';
+                }
             });
         });
 
@@ -784,11 +825,11 @@
             if (filteredRecordings.length === 0) {
                 exportedRecordingsList.innerHTML = '<p>No exported recordings found for selected destination</p>';
             } else {
-                // Group filtered recordings by experiment name
-                const filteredRecordingsByExperiment = groupRecordingsByExperiment(filteredRecordings);
+                // Group filtered recordings by folder structure
+                const filteredRecordingsByFolder = groupExportedRecordingsByFolder(filteredRecordings);
                 
                 // Generate HTML for grouped filtered recordings
-                const filteredRecordingsHTML = generateGroupedExportedRecordingsHTML(filteredRecordingsByExperiment);
+                const filteredRecordingsHTML = generateGroupedExportedRecordingsHTML(filteredRecordingsByFolder);
                 exportedRecordingsList.innerHTML = filteredRecordingsHTML;
                 
                 // Add event listeners for filtered recordings

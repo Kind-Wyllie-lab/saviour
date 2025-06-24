@@ -507,6 +507,23 @@ class WebInterfaceManager:
             else:
                 self.logger.info(f"(WEB INTERFACE MANAGER) {dir_name} directory does not exist: {scan_path}")
         
+        # Also scan for export directories (like export_20250624_220253) in the root
+        self.logger.info(f"(WEB INTERFACE MANAGER) Scanning for export directories in root...")
+        for item in nas_mount_point.iterdir():
+            if item.is_dir() and item.name.startswith('export_'):
+                self.logger.info(f"(WEB INTERFACE MANAGER) Found export directory: {item}")
+                for file in item.glob('**/*'):
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Found file in export directory: {file} (suffix: {file.suffix})")
+                    if file.is_file() and file.suffix in ['.mp4', '.txt']:
+                        self.logger.info(f"(WEB INTERFACE MANAGER) Adding export file to recordings list: {file}")
+                        recordings.append({
+                            'filename': f"nas/{item.name}/{str(file.relative_to(item))}",
+                            'size': file.stat().st_size,
+                            'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                            'is_exported': True,
+                            'destination': 'nas'
+                        })
+        
         self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(recordings)} NAS recordings")
         return recordings
 

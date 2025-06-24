@@ -1237,3 +1237,161 @@ body {
     min-width: 120px;
     max-width: 200px;
 }
+
+/* Recordings page specific styles */
+.recordings-filter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.recordings-filter label {
+    font-weight: 600;
+    color: #495057;
+    margin: 0;
+}
+
+.recordings-filter input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.filter-button {
+    padding: 8px 16px;
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.filter-button:hover {
+    background-color: #5a6268;
+}
+
+/* Experiment grouping styles */
+.experiment-group {
+    margin-bottom: 15px;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.experiment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.experiment-header:hover {
+    background-color: #e9ecef;
+}
+
+.experiment-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+    flex: 1;
+}
+
+.experiment-name {
+    font-weight: 600;
+    font-size: 16px;
+    color: #495057;
+}
+
+.experiment-stats {
+    font-size: 14px;
+    color: #6c757d;
+}
+
+.experiment-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.experiment-toggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.toggle-icon {
+    font-size: 12px;
+    color: #6c757d;
+    transition: transform 0.2s;
+}
+
+/* Delete all button styling */
+.action-button.delete-all {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.action-button.delete-all:hover {
+    background-color: #c82333;
+}
+
+/* Responsive design for recordings */
+@media (max-width: 768px) {
+    .recordings-filter {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .experiment-header {
+        padding: 12px 15px;
+    }
+    
+    .experiment-name {
+        font-size: 14px;
+    }
+    
+    .experiment-stats {
+        font-size: 12px;
+    }
+}
+
+.action-button.delete-all:hover {
+    background-color: #c82333;
+}
+
+.experiment-recordings {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.experiment-recordings .recording-item {
+    border-bottom: 1px solid #f1f3f4;
+    margin: 0;
+    border-radius: 0;
+}
+
+.experiment-recordings .recording-item:last-child {
+    border-bottom: none;
+}

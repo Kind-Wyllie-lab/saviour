@@ -152,6 +152,11 @@ class ModuleCommunicationManager:
             self.logger.warning("(COMMUNICATION MANAGER) Cannot send status: not connected to controller")
             return
             
+        # Check if status socket is available
+        if not self.status_socket:
+            self.logger.warning("(COMMUNICATION MANAGER) Cannot send status: status socket not available")
+            return
+            
         # Check for type field in status_data
         if 'type' not in status_data:
             self.logger.warning("(COMMUNICATION MANAGER) Status data missing 'type' field")

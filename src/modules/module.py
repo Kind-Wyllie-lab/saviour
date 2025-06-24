@@ -304,10 +304,11 @@ class Module:
             })
             raise
 
-    def clear_recordings(self, older_than: int = None, keep_latest: int = 0):
-        """Clear old recordings
+    def clear_recordings(self, filename: str = None, older_than: int = None, keep_latest: int = 0):
+        """Clear recordings
         
         Args:
+            filename: Optional specific filename to delete
             older_than: Optional timestamp - delete recordings older than this
             keep_latest: Optional number of latest recordings to keep
             
@@ -317,6 +318,20 @@ class Module:
         try:
             if not os.path.exists(self.recording_folder):
                 return {"deleted_count": 0, "kept_count": 0}
+            
+            # If specific filename is provided, delete just that file
+            if filename:
+                try:
+                    filepath = os.path.join(self.recording_folder, filename)
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        return {"deleted_count": 1, "kept_count": 0}
+                    else:
+                        self.logger.warning(f"(MODULE) File not found: {filename}")
+                        return {"deleted_count": 0, "kept_count": 0}
+                except Exception as e:
+                    self.logger.error(f"(MODULE) Error deleting recording {filename}: {e}")
+                    return {"deleted_count": 0, "kept_count": 0}
                 
             # Get list of recordings using internal method
             recordings = self._get_recordings_list()

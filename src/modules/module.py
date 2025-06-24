@@ -24,7 +24,7 @@ import threading
 import random
 import psutil
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 import numpy as np
 from enum import Enum, auto
 import datetime
@@ -408,21 +408,35 @@ class Module:
             self.logger.error(f"(MODULE) Error clearing recordings: {e}")
             raise
 
-    def export_recordings(self, filename: str, length: int = 0, destination: ExportManager.ExportDestination = ExportManager.ExportDestination.CONTROLLER):
+    def export_recordings(self, filename: str, length: int = 0, destination: Union[str, ExportManager.ExportDestination] = ExportManager.ExportDestination.CONTROLLER, experiment_name: str = None):
         """Export a video to the specified destination
         
         Args:
             filename: Name of the file to export
             length: Optional length of the video
-            destination: Where to export to - ExportManager.ExportDestination.CONTROLLER or ExportManager.ExportDestination.NAS
+            destination: Where to export to - string or ExportManager.ExportDestination enum
+            experiment_name: Optional experiment name to include in export directory
             
         Returns:
             bool: True if export successful
         """
         try:
+            # Convert string destination to enum if needed
+            if isinstance(destination, str):
+                try:
+                    destination = ExportManager.ExportDestination.from_string(destination)
+                except ValueError as e:
+                    self.logger.error(f"(MODULE) Invalid destination '{destination}': {e}")
+                    self.communication_manager.send_status({
+                        "type": "export_failed",
+                        "filename": filename,
+                        "error": f"Invalid destination: {destination}"
+                    })
+                    return False
+            
             if filename == "all":
                 # Export all recordings in a single export session
-                if not self.export_manager.export_all_files(destination):
+                if not self.export_manager.export_all_files(destination, experiment_name):
                     self.communication_manager.send_status({
                         "type": "export_failed",
                         "filename": "all",
@@ -434,7 +448,7 @@ class Module:
             elif filename == "latest":
                 # Export latest recording
                 latest_recording = self.get_latest_recording()
-                if not self.export_manager.export_file(latest_recording["filename"], destination):
+                if not self.export_manager.export_file(latest_recording["filename"], destination, experiment_name):
                     self.communication_manager.send_status({
                         "type": "export_failed",
                         "filename": latest_recording["filename"],
@@ -444,7 +458,7 @@ class Module:
                 return True
                 
             # Export specific file
-            if not self.export_manager.export_file(filename, destination):
+            if not self.export_manager.export_file(filename, destination, experiment_name):
                 self.communication_manager.send_status({
                     "type": "export_failed",
                     "filename": filename,
@@ -459,6 +473,7 @@ class Module:
                 "session_id": self.stream_session_id,
                 "length": length,
                 "destination": destination.value,
+                "experiment_name": experiment_name,
                 "has_timestamps": os.path.exists(f"{filename}_timestamps.txt")
             })
             return True

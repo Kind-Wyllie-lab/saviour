@@ -268,20 +268,68 @@ class ModuleCommandHandler:
         if "export_recordings" not in self.callbacks:
             raise ValueError("Module not configured for exporting recordings")
         
-        # Parse parameters
-        filename = params[0] if params else "all"
-        length = int(params[1]) if len(params) > 1 else 0
-        destination = params[2] if len(params) > 2 else "controller"
+        # Parse parameters - support both positional and key-value formats
+        filename = "all"  # Default to export all
+        length = 0
+        destination = "controller"  # Default destination
+        experiment_name = None
         
-        self.logger.info(f"(COMMAND HANDLER) Export parameters - filename: '{filename}', length: {length}, destination: '{destination}'")
+        if params:
+            # First, check if any parameters use key=value format
+            has_key_value = any('=' in param for param in params)
+            
+            if has_key_value:
+                # Parse key-value parameters
+                for param in params:
+                    if param.startswith('filename='):
+                        filename = param.split('=', 1)[1]
+                    elif param.startswith('length='):
+                        length = int(param.split('=', 1)[1])
+                    elif param.startswith('destination='):
+                        destination = param.split('=', 1)[1]
+                    elif param.startswith('experiment_name='):
+                        experiment_name = param.split('=', 1)[1]
+            else:
+                # Parse positional parameters: filename length destination
+                if len(params) >= 1:
+                    filename = params[0]
+                if len(params) >= 2:
+                    try:
+                        length = int(params[1])
+                    except ValueError:
+                        # If second parameter is not a number, it might be destination
+                        destination = params[1]
+                if len(params) >= 3:
+                    # Third parameter is destination (if second was length) or experiment_name
+                    if length == 0:  # Second parameter was not a number
+                        destination = params[2]
+                    else:
+                        destination = params[2]
+                if len(params) >= 4:
+                    # Fourth parameter is experiment_name
+                    experiment_name = params[3]
         
-        result = self.callbacks["export_recordings"](filename, length, destination)
+        self.logger.info(f"(COMMAND HANDLER) Export parameters - filename: '{filename}', length: {length}, destination: '{destination}', experiment_name: '{experiment_name}'")
+        
+        # Validate destination
+        valid_destinations = ['controller', 'nas']
+        if destination not in valid_destinations:
+            self.logger.error(f"(COMMAND HANDLER) Invalid destination '{destination}'. Must be one of: {valid_destinations}")
+            self.callbacks["send_status"]({
+                "type": "export_failed",
+                "filename": filename,
+                "error": f"Invalid destination: {destination}. Must be one of: {valid_destinations}"
+            })
+            return
+        
+        result = self.callbacks["export_recordings"](filename, length, destination, experiment_name)
         
         # Send status response
         self.callbacks["send_status"]({
             "type": "export_complete",
             "timestamp": time.time(),
             "filename": filename,
+            "experiment_name": experiment_name,
             "success": bool(result)
         })
 

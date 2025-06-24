@@ -820,6 +820,11 @@
         window.addEventListener('load', function() {
             console.log('Page fully loaded');
         });
+
+        // Check for chrome and flag warning about MJPEG stream
+        if (navigator.userAgent.includes('Chrome') && !navigator.userAgent.includes('Edg')) {
+            alert('Chrome does not support MJPEG streams. Please use Edge, Firefox, or Safari.');
+        }
     </script>
 </body>
 </html> 

@@ -7,6 +7,43 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script> <!--Import socketio, used for websocket communication i.e. updates pushed from controller-->
     <script src="{{ url_for('static', filename='js/header.js') }}"></script> <!--Import header.js, used for the header of the page-->
     <script src="{{ url_for('static', filename='js/module-item.js') }}"></script> <!--Import module-item.js, used for the module list-->
+    <style>
+        #experiment-name-section {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #dcdde1;
+        }
+        
+        #experiment-name-section label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        
+        #experiment-name {
+            width: 100%;
+            max-width: 300px;
+            padding: 0.75rem;
+            border: 1px solid #dcdde1;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        #experiment-name:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        
+        #experiment-name:invalid {
+            border-color: #e74c3c;
+            box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
+        }
+    </style>
 </head>
 <body>
     <main-header></main-header>
@@ -39,6 +76,10 @@
         <div class="dashboard-card">
             <div id="quick-commands">
                 <h2>Quick Commands</h2>
+                <div id="experiment-name-section">
+                    <label for="experiment-name">Experiment Name (no spaces):</label>
+                    <input type="text" id="experiment-name" placeholder="Enter experiment name" pattern="[^\s]+" title="No spaces allowed">
+                </div>
                 <div id="quick-commands-content">
                     <!-- Command buttons will be generated here -->
                 </div>
@@ -368,6 +409,26 @@
                 command.params = {
                     client_ip: clientIP,
                     port: 8080  // Default port
+                };
+            }
+
+            // Add experiment name for start_recording command
+            if (currentCommand === 'start_recording') {
+                const experimentNameInput = document.getElementById('experiment-name');
+                const experimentName = experimentNameInput.value.trim();
+                
+                if (!experimentName) {
+                    alert('Please enter an experiment name before starting recording.');
+                    return;
+                }
+                
+                if (experimentName.includes(' ')) {
+                    alert('Experiment name cannot contain spaces. Please use underscores or hyphens instead.');
+                    return;
+                }
+                
+                command.params = {
+                    experiment_name: experimentName
                 };
             }
 

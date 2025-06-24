@@ -5,6 +5,7 @@ import hashlib
 import re
 import secrets
 import string
+import uuid
 from base64 import urlsafe_b64decode
 from datetime import datetime
 from json import loads
@@ -287,29 +288,6 @@ def is_http_url(url: str) -> bool:
     return urlparse(url).scheme in {"https", "http"}
 
 
-def is_valid_jwt(value: str) -> bool:
-    """Checks if value looks like a JWT, does not do any extra parsing."""
-    if not isinstance(value, str):
-        return False
-
-    # Remove trailing whitespaces if any.
-    value = value.strip()
-
-    # Remove "Bearer " prefix if any.
-    if value.startswith("Bearer "):
-        value = value[7:]
-
-    # Valid JWT must have 2 dots (Header.Paylod.Signature)
-    if value.count(".") != 2:
-        return False
-
-    for part in value.split("."):
-        if not re.search(BASE64URL_REGEX, part, re.IGNORECASE):
-            return False
-
-    return True
-
-
 def validate_exp(exp: int) -> None:
     if not exp:
         raise AuthInvalidJwtError("JWT has no expiration time")
@@ -317,3 +295,11 @@ def validate_exp(exp: int) -> None:
     time_now = datetime.now().timestamp()
     if exp <= time_now:
         raise AuthInvalidJwtError("JWT has expired")
+
+
+def is_valid_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except ValueError:
+        return False

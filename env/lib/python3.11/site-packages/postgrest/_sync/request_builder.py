@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, Optional, TypeVar, Union
 
-from httpx import Headers, QueryParams
+from httpx import Client, Headers, QueryParams
 from pydantic import ValidationError
 
 from ..base_request_builder import (
@@ -20,7 +20,7 @@ from ..base_request_builder import (
 )
 from ..exceptions import APIError, APIErrorFromJSON, generate_default_error_message
 from ..types import ReturnMethod
-from ..utils import SyncClient, get_origin_and_cast
+from ..utils import get_origin_and_cast, model_validate_json
 
 _ReturnT = TypeVar("_ReturnT")
 
@@ -28,7 +28,7 @@ _ReturnT = TypeVar("_ReturnT")
 class SyncQueryRequestBuilder(Generic[_ReturnT]):
     def __init__(
         self,
-        session: SyncClient,
+        session: Client,
         path: str,
         http_method: str,
         headers: Headers,
@@ -74,7 +74,7 @@ class SyncQueryRequestBuilder(Generic[_ReturnT]):
                             return body
                 return APIResponse[_ReturnT].from_http_request_response(r)
             else:
-                json_obj = APIErrorFromJSON.model_validate_json(r.content)
+                json_obj = model_validate_json(APIErrorFromJSON, r.content)
                 raise APIError(dict(json_obj))
         except ValidationError as e:
             raise APIError(generate_default_error_message(r))
@@ -83,7 +83,7 @@ class SyncQueryRequestBuilder(Generic[_ReturnT]):
 class SyncSingleRequestBuilder(Generic[_ReturnT]):
     def __init__(
         self,
-        session: SyncClient,
+        session: Client,
         path: str,
         http_method: str,
         headers: Headers,
@@ -122,7 +122,7 @@ class SyncSingleRequestBuilder(Generic[_ReturnT]):
             ):  # Response.ok from JS (https://developer.mozilla.org/en-US/docs/Web/API/Response/ok)
                 return SingleAPIResponse[_ReturnT].from_http_request_response(r)
             else:
-                json_obj = APIErrorFromJSON.model_validate_json(r.content)
+                json_obj = model_validate_json(APIErrorFromJSON, r.content)
                 raise APIError(dict(json_obj))
         except ValidationError as e:
             raise APIError(generate_default_error_message(r))
@@ -152,7 +152,7 @@ class SyncMaybeSingleRequestBuilder(SyncSingleRequestBuilder[_ReturnT]):
 class SyncFilterRequestBuilder(BaseFilterRequestBuilder[_ReturnT], SyncQueryRequestBuilder[_ReturnT]):  # type: ignore
     def __init__(
         self,
-        session: SyncClient,
+        session: Client,
         path: str,
         http_method: str,
         headers: Headers,
@@ -173,7 +173,7 @@ class SyncRPCFilterRequestBuilder(
 ):
     def __init__(
         self,
-        session: SyncClient,
+        session: Client,
         path: str,
         http_method: str,
         headers: Headers,
@@ -192,7 +192,7 @@ class SyncRPCFilterRequestBuilder(
 class SyncSelectRequestBuilder(BaseSelectRequestBuilder[_ReturnT], SyncQueryRequestBuilder[_ReturnT]):  # type: ignore
     def __init__(
         self,
-        session: SyncClient,
+        session: Client,
         path: str,
         http_method: str,
         headers: Headers,
@@ -271,7 +271,7 @@ class SyncSelectRequestBuilder(BaseSelectRequestBuilder[_ReturnT], SyncQueryRequ
 
 
 class SyncRequestBuilder(Generic[_ReturnT]):
-    def __init__(self, session: SyncClient, path: str) -> None:
+    def __init__(self, session: Client, path: str) -> None:
         self.session = session
         self.path = path
 
@@ -287,7 +287,7 @@ class SyncRequestBuilder(Generic[_ReturnT]):
             *columns: The names of the columns to fetch.
             count: The method to use to get the count of rows returned.
         Returns:
-            :class:`AsyncSelectRequestBuilder`
+            :class:`SyncSelectRequestBuilder`
         """
         method, params, headers, json = pre_select(*columns, count=count, head=head)
         return SyncSelectRequestBuilder[_ReturnT](
@@ -314,7 +314,7 @@ class SyncRequestBuilder(Generic[_ReturnT]):
                 Otherwise, use the default value for the column.
                 Only applies for bulk inserts.
         Returns:
-            :class:`AsyncQueryRequestBuilder`
+            :class:`SyncQueryRequestBuilder`
         """
         method, params, headers, json = pre_insert(
             json,
@@ -350,7 +350,7 @@ class SyncRequestBuilder(Generic[_ReturnT]):
                 not when merging with existing rows under `ignoreDuplicates: false`.
                 This also only applies when doing bulk upserts.
         Returns:
-            :class:`AsyncQueryRequestBuilder`
+            :class:`SyncQueryRequestBuilder`
         """
         method, params, headers, json = pre_upsert(
             json,
@@ -378,7 +378,7 @@ class SyncRequestBuilder(Generic[_ReturnT]):
             count: The method to use to get the count of rows returned.
             returning: Either 'minimal' or 'representation'
         Returns:
-            :class:`AsyncFilterRequestBuilder`
+            :class:`SyncFilterRequestBuilder`
         """
         method, params, headers, json = pre_update(
             json,
@@ -401,7 +401,7 @@ class SyncRequestBuilder(Generic[_ReturnT]):
             count: The method to use to get the count of rows returned.
             returning: Either 'minimal' or 'representation'
         Returns:
-            :class:`AsyncFilterRequestBuilder`
+            :class:`SyncFilterRequestBuilder`
         """
         method, params, headers, json = pre_delete(
             count=count,

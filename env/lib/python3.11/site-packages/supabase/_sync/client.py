@@ -16,6 +16,7 @@ from storage3.constants import DEFAULT_TIMEOUT as DEFAULT_STORAGE_CLIENT_TIMEOUT
 from supafunc import SyncFunctionsClient
 
 from ..lib.client_options import SyncClientOptions as ClientOptions
+from ..lib.client_options import SyncHttpxClient
 from .auth_client import SyncSupabaseAuthClient
 
 
@@ -57,19 +58,16 @@ class SyncClient:
         if not re.match(r"^(https?)://.+", supabase_url):
             raise SupabaseException("Invalid URL")
 
-        # Check if the key is a valid JWT
-        if not re.match(
-            r"^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$", supabase_key
-        ):
-            raise SupabaseException("Invalid API key")
-
         if options is None:
             options = ClientOptions(storage=SyncMemoryStorage())
 
         self.supabase_url = supabase_url
         self.supabase_key = supabase_key
         self.options = copy.copy(options)
-        self.options.headers = copy.copy(self._get_auth_headers())
+        self.options.headers = {
+            **options.headers,
+            **self._get_auth_headers(),
+        }
 
         self.rest_url = f"{supabase_url}/rest/v1"
         self.realtime_url = f"{supabase_url}/realtime/v1".replace("http", "ws")
@@ -176,6 +174,7 @@ class SyncClient:
                 headers=self.options.headers,
                 schema=self.options.schema,
                 timeout=self.options.postgrest_client_timeout,
+                http_client=self.options.httpx_client,
             )
 
         return self._postgrest
@@ -187,6 +186,7 @@ class SyncClient:
                 storage_url=self.storage_url,
                 headers=self.options.headers,
                 storage_client_timeout=self.options.storage_client_timeout,
+                http_client=self.options.httpx_client,
             )
         return self._storage
 
@@ -194,9 +194,14 @@ class SyncClient:
     def functions(self):
         if self._functions is None:
             self._functions = SyncFunctionsClient(
-                self.functions_url,
-                self.options.headers,
-                self.options.function_client_timeout,
+                url=self.functions_url,
+                headers=self.options.headers,
+                timeout=(
+                    self.options.function_client_timeout
+                    if self.options.httpx_client is None
+                    else None
+                ),
+                http_client=self.options.httpx_client,
             )
         return self._functions
 
@@ -234,9 +239,23 @@ class SyncClient:
         storage_client_timeout: int = DEFAULT_STORAGE_CLIENT_TIMEOUT,
         verify: bool = True,
         proxy: Optional[str] = None,
+        http_client: Union[SyncHttpxClient, None] = None,
     ) -> SyncStorageClient:
+        if http_client is not None:
+            # If an http client is provided, use it
+            kwargs = {"http_client": http_client}
+        else:
+            kwargs = {
+                "timeout": storage_client_timeout,
+                "verify": verify,
+                "proxy": proxy,
+                "http_client": None,
+            }
+
         return SyncStorageClient(
-            storage_url, headers, storage_client_timeout, verify, proxy
+            url=storage_url,
+            headers=headers,
+            **kwargs,
         )
 
     @staticmethod
@@ -256,6 +275,7 @@ class SyncClient:
             flow_type=client_options.flow_type,
             verify=verify,
             proxy=proxy,
+            http_client=client_options.httpx_client,
         )
 
     @staticmethod
@@ -266,15 +286,25 @@ class SyncClient:
         timeout: Union[int, float, Timeout] = DEFAULT_POSTGREST_CLIENT_TIMEOUT,
         verify: bool = True,
         proxy: Optional[str] = None,
+        http_client: Union[SyncHttpxClient, None] = None,
     ) -> SyncPostgrestClient:
         """Private helper for creating an instance of the Postgrest client."""
+        if http_client is not None:
+            # If an http client is provided, use it
+            kwargs = {"http_client": http_client}
+        else:
+            kwargs = {
+                "timeout": timeout,
+                "verify": verify,
+                "proxy": proxy,
+                "http_client": None,
+            }
+
         return SyncPostgrestClient(
             rest_url,
             headers=headers,
             schema=schema,
-            timeout=timeout,
-            verify=verify,
-            proxy=proxy,
+            **kwargs,
         )
 
     def _create_auth_header(self, token: str):

@@ -6,6 +6,80 @@
     <link rel="icon" type="image/x-icon" href="/static/uofe_logo.png">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="{{ url_for('static', filename='js/header.js') }}"></script>
+    <style>
+        /* Custom styles for recordings page tabs layout */
+        .recordings-tabs {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+        
+        .tabs-left {
+            display: flex;
+            gap: 1rem;
+        }
+        
+        .tabs-right {
+            display: flex;
+            align-items: center;
+        }
+        
+        .recordings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .recordings-header h1 {
+            margin: 0;
+        }
+        
+        /* Export all button styling */
+        .action-button.export-all {
+            background-color: var(--secondary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-right: 8px;
+        }
+        
+        .action-button.export-all:hover {
+            background-color: #2980b9;
+        }
+        
+        /* Delete all button styling - make it bigger too */
+        .action-button.delete-all {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-right: 8px;
+        }
+        
+        .action-button.delete-all:hover {
+            background-color: #c82333;
+        }
+        
+        .recording-actions .action-button {
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: normal;
+        }
+    </style>
 </head>
 <body>
     <main-header></main-header>
@@ -14,12 +88,7 @@
         <div class="dashboard-card">
             <div class="recordings-header">
                 <h1>📹 Recordings</h1>
-                <div class="recordings-actions">
-                    <button id="refresh-recordings" class="action-button" onclick="refreshRecordings()">
-                        Refresh
-                    </button>
-                    <a href="/" class="back-button">Back to Dashboard</a>
-                </div>
+                <a href="/" class="back-button">Back to Dashboard</a>
             </div>
         </div>
         
@@ -27,8 +96,15 @@
             <div id="recordings-section">
                 <div class="recordings-container">
                     <div class="recordings-tabs">
-                        <button class="tab-button active" data-tab="module-recordings">Module Recordings</button>
-                        <button class="tab-button" data-tab="exported-recordings">Exported Recordings</button>
+                        <div class="tabs-left">
+                            <button class="tab-button active" data-tab="module-recordings">Module Recordings</button>
+                            <button class="tab-button" data-tab="exported-recordings">Exported Recordings</button>
+                        </div>
+                        <div class="tabs-right">
+                            <button id="refresh-recordings" class="refresh-btn" onclick="refreshRecordings()">
+                                🔄 Refresh
+                            </button>
+                        </div>
                     </div>
                     <div id="module-recordings" class="recordings-content active">
                         <div class="recordings-filter">
@@ -57,10 +133,6 @@
         <div class="dashboard-card">
             <div id="recording-commands">
                 <h2>Recording Commands</h2>
-                <div id="experiment-name-section">
-                    <label for="experiment-name">Experiment Name (no spaces):</label>
-                    <input type="text" id="experiment-name" placeholder="Enter experiment name" pattern="[^\s]+" title="No spaces allowed">
-                </div>
                 <div id="recording-commands-content">
                     <!-- Recording command buttons will be generated here -->
                 </div>
@@ -183,6 +255,8 @@
             dialog.style.display = 'none';
             currentCommand = null;
             selectedModuleId = null;
+            window.currentExportFilename = null;
+            window.currentExportExperimentName = null; // Clear stored experiment name
         });
 
         // Follow-up dialog event listeners
@@ -190,6 +264,8 @@
             followupDialog.style.display = 'none';
             currentCommand = null;
             selectedModuleId = null;
+            window.currentExportFilename = null;
+            window.currentExportExperimentName = null; // Clear stored experiment name
         });
 
         followupConfirm.addEventListener('click', () => {
@@ -314,6 +390,32 @@
                 module_id: moduleId,
                 params: params
             };
+
+            // If we have a stored filename (from individual export button), add it to params
+            if (window.currentExportFilename && currentCommand === 'export_recordings') {
+                command.params.filename = window.currentExportFilename;
+                
+                // Use stored experiment name if available (from "Export All" button)
+                if (window.currentExportExperimentName) {
+                    command.params.experiment_name = window.currentExportExperimentName;
+                    window.currentExportExperimentName = null; // Clear it
+                } else {
+                    // Extract experiment name from the filename(s)
+                    let experimentName = "unknown";
+                    if (window.currentExportFilename.includes(',')) {
+                        // Multiple files - extract from first filename
+                        const firstFilename = window.currentExportFilename.split(',')[0];
+                        experimentName = extractExperimentName(firstFilename);
+                    } else {
+                        // Single file
+                        experimentName = extractExperimentName(window.currentExportFilename);
+                    }
+                    command.params.experiment_name = experimentName;
+                }
+                
+                // Clear the stored filename
+                window.currentExportFilename = null;
+            }
 
             console.log('Sending command with params:', command);
             socket.emit('command', command);
@@ -488,6 +590,9 @@
                                 <span class="experiment-stats">${recordingCount} recording${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
                             </div>
                             <div class="experiment-actions">
+                                <button class="action-button export-all" title="Export All Recordings for ${experimentName}" onclick="exportAllRecordings('${experimentName}')">
+                                    Export All
+                                </button>
                                 <button class="action-button delete-all" title="Delete All Recordings for ${experimentName}" onclick="deleteAllRecordings('${experimentName}')">
                                     Delete All
                                 </button>
@@ -596,13 +701,12 @@
             document.querySelectorAll('.action-button.export').forEach(button => {
                 button.addEventListener('click', () => {
                     const filename = button.dataset.filename;
-                    socket.emit('command', {
-                        type: 'export_recordings',
-                        module_id: 'all',
-                        params: {
-                            filename: filename
-                        }
-                    });
+                    // Store the filename for later use
+                    window.currentExportFilename = filename;
+                    // Set the current command to export_recordings
+                    currentCommand = 'export_recordings';
+                    // Show the module selection dialog
+                    dialog.style.display = 'flex';
                 });
             });
 
@@ -687,6 +791,27 @@
             }
         }
 
+        // Export all recordings for a specific experiment
+        function exportAllRecordings(experimentName) {
+            const recordingCount = document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).length;
+            
+            if (confirm(`Are you sure you want to export ALL ${recordingCount} recording${recordingCount !== 1 ? 's' : ''} for experiment "${experimentName}"?`)) {
+                // Get all filenames for this experiment
+                const filenames = [];
+                document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).forEach(item => {
+                    const filename = item.querySelector('.recording-name').textContent;
+                    filenames.push(filename);
+                });
+                
+                // Store the filenames for later use
+                window.currentExportFilename = filenames.join(',');
+                // Set the current command to export_recordings
+                currentCommand = 'export_recordings';
+                // Show the module selection dialog
+                dialog.style.display = 'flex';
+            }
+        }
+
         // Handle export complete response
         socket.on('export_complete', function(data) {
             if (data.success) {
@@ -697,13 +822,37 @@
             }
         });
 
-        // Function to refresh recordings
+        // Function to refresh recordings (contextual - refreshes the active tab)
         function refreshRecordings() {
-            console.log('Refreshing recordings...');
-            socket.emit('command', {
-                type: 'list_recordings',
-                module_id: 'all'
-            });
+            const activeTab = document.querySelector('.tab-button.active').getAttribute('data-tab');
+            console.log('Refreshing recordings for active tab:', activeTab);
+            
+            // Update button text to show what's being refreshed
+            const refreshButton = document.getElementById('refresh-recordings');
+            if (refreshButton) {
+                // Add loading state
+                refreshButton.disabled = true;
+                refreshButton.classList.add('loading');
+                
+                if (activeTab === 'module-recordings') {
+                    refreshButton.innerHTML = '🔄 Refreshing Module Recordings...';
+                } else if (activeTab === 'exported-recordings') {
+                    refreshButton.innerHTML = '🔄 Refreshing Exported Recordings...';
+                }
+                
+                // Reset button text and state after 2 seconds
+                setTimeout(() => {
+                    refreshButton.innerHTML = '🔄 Refresh';
+                    refreshButton.disabled = false;
+                    refreshButton.classList.remove('loading');
+                }, 2000);
+            }
+            
+            if (activeTab === 'module-recordings') {
+                updateModuleRecordings();
+            } else if (activeTab === 'exported-recordings') {
+                loadExportedRecordings();
+            }
         }
 
         // Helper function to format file size
@@ -721,13 +870,32 @@
             socket.emit('get_exported_recordings');
         }
 
+        // Function to clear recordings content when switching tabs
+        function clearRecordingsContent() {
+            const moduleRecordingsList = document.querySelector('#module-recordings .recordings-list');
+            const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
+            
+            if (moduleRecordingsList) {
+                moduleRecordingsList.innerHTML = '<p>Loading...</p>';
+            }
+            if (exportedRecordingsList) {
+                exportedRecordingsList.innerHTML = '<p>Loading...</p>';
+            }
+        }
+
         // Tab switching functionality
         document.querySelectorAll('.tab-button').forEach(button => {
             button.addEventListener('click', function() {
                 const targetTab = this.getAttribute('data-tab');
                 
+                // Update current active tab
+                currentActiveTab = targetTab;
+                
+                // Clear content before switching
+                clearRecordingsContent();
+                
                 // Hide all tabs
-                document.querySelectorAll('.tab-content').forEach(tab => {
+                document.querySelectorAll('.recordings-content').forEach(tab => {
                     tab.classList.remove('active');
                 });
                 
@@ -743,14 +911,61 @@
                 // Load appropriate data based on tab
                 if (targetTab === 'module-recordings') {
                     updateModuleRecordings();
+                    startModuleRecordingsAutoRefresh();
                 } else if (targetTab === 'exported-recordings') {
                     loadExportedRecordings();
+                    startExportedRecordingsAutoRefresh();
                 }
             });
         });
 
-        // Auto-refresh module recordings every 2 minutes (less frequent to prevent disappearing)
-        setInterval(updateModuleRecordings, 120000);
+        // Auto-refresh system - only refresh the active tab
+        let moduleRecordingsInterval = null;
+        let exportedRecordingsInterval = null;
+        let currentActiveTab = 'module-recordings'; // Track which tab is currently active
+
+        function startModuleRecordingsAutoRefresh() {
+            // Clear any existing intervals
+            if (moduleRecordingsInterval) {
+                clearInterval(moduleRecordingsInterval);
+            }
+            if (exportedRecordingsInterval) {
+                clearInterval(exportedRecordingsInterval);
+            }
+            
+            // Start module recordings auto-refresh (every 2 minutes)
+            moduleRecordingsInterval = setInterval(() => {
+                // Only refresh if module recordings tab is active
+                if (currentActiveTab === 'module-recordings') {
+                    console.log('Auto-refreshing module recordings...');
+                    updateModuleRecordings();
+                }
+            }, 120000);
+            console.log('Started module recordings auto-refresh');
+        }
+
+        function startExportedRecordingsAutoRefresh() {
+            // Clear any existing intervals
+            if (moduleRecordingsInterval) {
+                clearInterval(moduleRecordingsInterval);
+            }
+            if (exportedRecordingsInterval) {
+                clearInterval(exportedRecordingsInterval);
+            }
+            
+            // Start exported recordings auto-refresh (every 2 minutes)
+            exportedRecordingsInterval = setInterval(() => {
+                // Only refresh if exported recordings tab is active
+                if (currentActiveTab === 'exported-recordings') {
+                    console.log('Auto-refreshing exported recordings...');
+                    loadExportedRecordings();
+                }
+            }, 120000);
+            console.log('Started exported recordings auto-refresh');
+        }
+
+        // Start with module recordings auto-refresh by default (since that tab is active initially)
+        startModuleRecordingsAutoRefresh();
 
         // Export destination filter functionality
         const exportDestinationFilter = document.getElementById('export-destination-filter');
@@ -860,76 +1075,42 @@
             }
         }
 
-        function displayModuleRecordings(moduleId, recordings) {
-            const moduleList = document.getElementById('module-list');
+        // Function to display module recordings
+        function displayModuleRecordings(recordings) {
+            const moduleRecordingsList = document.querySelector('#module-recordings .recordings-list');
+            if (!moduleRecordingsList) return;
             
-            // Create module item if it doesn't exist
-            let moduleItem = document.querySelector(`[data-module-id="${moduleId}"]`);
-            if (!moduleItem) {
-                moduleItem = document.createElement('div');
-                moduleItem.className = 'module-item';
-                moduleItem.setAttribute('data-module-id', moduleId);
-                moduleList.appendChild(moduleItem);
+            // Only display if we're on the module recordings tab
+            if (currentActiveTab !== 'module-recordings') {
+                console.log('Module recordings tab not active, skipping display');
+                return;
             }
             
-            // Create module header
-            const moduleHeader = document.createElement('div');
-            moduleHeader.className = 'module-header';
-            moduleHeader.innerHTML = `
-                <h3 class="module-name">${moduleId}</h3>
-                <button class="delete-all-btn" onclick="deleteAllRecordings('${moduleId}')">Delete All</button>
-            `;
-            
-            // Clear existing content and add header
-            moduleItem.innerHTML = '';
-            moduleItem.appendChild(moduleHeader);
+            if (recordings.length === 0) {
+                moduleRecordingsList.innerHTML = '<p>No recordings found on any modules</p>';
+                return;
+            }
             
             // Group recordings by experiment name
-            const recordingsByExperiment = {};
-            recordings.forEach(recording => {
-                const experimentName = recording.experiment_name || 'Unknown Experiment';
-                if (!recordingsByExperiment[experimentName]) {
-                    recordingsByExperiment[experimentName] = [];
-                }
-                recordingsByExperiment[experimentName].push(recording);
-            });
+            const recordingsByExperiment = groupRecordingsByExperiment(recordings);
             
-            // Create experiment sections
-            Object.keys(recordingsByExperiment).forEach(experimentName => {
-                const experimentSection = document.createElement('div');
-                experimentSection.className = 'experiment-section';
-                experimentSection.setAttribute('data-experiment', experimentName);
-                
-                const experimentHeader = document.createElement('div');
-                experimentHeader.className = 'experiment-header';
-                experimentHeader.innerHTML = `
-                    <h4>${experimentName}</h4>
-                    <button class="delete-experiment-btn" onclick="deleteExperimentRecordings('${moduleId}', '${experimentName}')">Delete All</button>
-                `;
-                
-                const recordingsList = document.createElement('div');
-                recordingsList.className = 'recordings-list';
-                
-                recordingsByExperiment[experimentName].forEach(recording => {
-                    const recordingItem = document.createElement('div');
-                    recordingItem.className = 'recording-item';
-                    recordingItem.innerHTML = `
-                        <span class="recording-name">${recording.filename}</span>
-                        <span class="recording-size">${formatFileSize(recording.size)}</span>
-                        <button class="delete-btn" onclick="deleteRecording('${moduleId}', '${recording.filename}')">Delete</button>
-                    `;
-                    recordingsList.appendChild(recordingItem);
-                });
-                
-                experimentSection.appendChild(experimentHeader);
-                experimentSection.appendChild(recordingsList);
-                moduleItem.appendChild(experimentSection);
-            });
+            // Generate HTML for grouped recordings
+            const recordingsHTML = generateGroupedRecordingsHTML(recordingsByExperiment);
+            moduleRecordingsList.innerHTML = recordingsHTML;
+            
+            // Add event listeners for dropdown toggles and action buttons
+            addRecordingsEventListeners();
         }
 
         // Handle exported recordings list response
         socket.on('exported_recordings_list', function(data) {
             console.log('Received exported recordings list:', data);
+            
+            // Only process if we're on the exported recordings tab
+            if (currentActiveTab !== 'exported-recordings') {
+                console.log('Exported recordings tab not active, skipping display');
+                return;
+            }
             
             const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
             if (exportedRecordingsList) {
@@ -1007,27 +1188,6 @@
             }, 5000); // 5 second timeout
         });
 
-        // Function to display module recordings
-        function displayModuleRecordings(recordings) {
-            const moduleRecordingsList = document.querySelector('#module-recordings .recordings-list');
-            if (!moduleRecordingsList) return;
-            
-            if (recordings.length === 0) {
-                moduleRecordingsList.innerHTML = '<p>No recordings found on any modules</p>';
-                return;
-            }
-            
-            // Group recordings by experiment name
-            const recordingsByExperiment = groupRecordingsByExperiment(recordings);
-            
-            // Generate HTML for grouped recordings
-            const recordingsHTML = generateGroupedRecordingsHTML(recordingsByExperiment);
-            moduleRecordingsList.innerHTML = recordingsHTML;
-            
-            // Add event listeners for dropdown toggles and action buttons
-            addRecordingsEventListeners();
-        }
-
         // Handle individual module recordings response
         socket.on('module_recordings', function(data) {
             console.log('Received module recordings from', data.module_id, ':', data.recordings);
@@ -1055,12 +1215,6 @@
                 displayModuleRecordings(allModuleRecordings);
             }
         });
-
-        // Function to refresh recordings (now only for module recordings)
-        function refreshRecordings() {
-            console.log('Refreshing module recordings...');
-            updateModuleRecordings();
-        }
     </script>
 </body>
 </html> 

@@ -540,7 +540,15 @@ class WebInterfaceManager:
         
         # Check what's in the root NAS directory
         if nas_mount_point.exists():
-            self.logger.info(f"(WEB INTERFACE MANAGER) NAS root contents: {list(nas_mount_point.iterdir())}")
+            root_contents = list(nas_mount_point.iterdir())
+            self.logger.info(f"(WEB INTERFACE MANAGER) NAS root contents: {[item.name for item in root_contents]}")
+            
+            # Look specifically for export directories
+            export_dirs = [item for item in root_contents if item.is_dir() and item.name.startswith('export_')]
+            self.logger.info(f"(WEB INTERFACE MANAGER) Found export directories: {[item.name for item in export_dirs]}")
+        else:
+            self.logger.error(f"(WEB INTERFACE MANAGER) NAS mount point does not exist: {nas_mount_point}")
+            return recordings
         
         # Scan multiple directories for recordings
         directories_to_scan = ["recordings", "videos", "ttl"]
@@ -568,6 +576,7 @@ class WebInterfaceManager:
         # Also scan for export directories (like export_20250624_220253) in the root
         self.logger.info(f"(WEB INTERFACE MANAGER) Scanning for export directories in root...")
         for item in nas_mount_point.iterdir():
+            self.logger.info(f"(WEB INTERFACE MANAGER) Checking item: {item.name} (is_dir: {item.is_dir()}, starts_with_export: {item.name.startswith('export_')})")
             if item.is_dir() and item.name.startswith('export_'):
                 self.logger.info(f"(WEB INTERFACE MANAGER) Found export directory: {item}")
                 for file in item.glob('**/*'):

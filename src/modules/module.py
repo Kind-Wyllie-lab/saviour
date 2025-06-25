@@ -474,7 +474,8 @@ class Module:
                     self.communication_manager.send_status({
                         "type": "export_failed",
                         "filename": "all",
-                        "error": "Failed to export files"
+                        "error": "Failed to export files",
+                        "success": False
                     })
                     return False
                 return True
@@ -486,7 +487,8 @@ class Module:
                     self.communication_manager.send_status({
                         "type": "export_failed",
                         "filename": latest_recording["filename"],
-                        "error": "Failed to export file"
+                        "error": "Failed to export file",
+                        "success": False
                     })
                     return False
                 return True
@@ -496,19 +498,21 @@ class Module:
                 self.communication_manager.send_status({
                     "type": "export_failed",
                     "filename": filename,
-                    "error": "Failed to export file"
+                    "error": "Failed to export file",
+                    "success": False
                 })
                 return False
                 
             # Send success status
             self.communication_manager.send_status({
-                "type": "video_export_complete",
+                "type": "export_complete",
                 "filename": filename,
                 "session_id": self.stream_session_id,
                 "length": length,
                 "destination": destination.value,
                 "experiment_name": experiment_name,
-                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt")
+                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt"),
+                "success": True
             })
             return True
             
@@ -517,7 +521,8 @@ class Module:
             self.communication_manager.send_status({
                 "type": "export_failed",
                 "filename": filename,
-                "error": str(e)
+                "error": str(e),
+                "success": False
             })
             return False
 

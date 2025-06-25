@@ -29,7 +29,6 @@ import numpy as np
 from enum import Enum, auto
 import datetime
 
-
 # Import managers
 from src.modules.module_file_transfer_manager import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
@@ -139,7 +138,8 @@ class Module:
             'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
             'clear_recordings': self.clear_recordings,
-            'export_recordings': self.export_recordings
+            'export_recordings': self.export_recordings,
+            'shutdown': self._shutdown,
         })
         self.export_manager.set_callbacks({
             'get_controller_ip': lambda: self.service_manager.controller_ip  # or whatever the callback function is
@@ -611,6 +611,18 @@ class Module:
         self.is_running = False
         self.logger.info(f"(MODULE) Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
+
+    def _shutdown(self): 
+        """Shut down the module"""
+        try:
+            # Stop the module gracefully
+            if self.stop():
+                # Only shutdown system if module stopped successfully
+                subprocess.run(["sudo", "shutdown", "now"])
+            else:
+                self.logger.error("(MODULE) Failed to stop module, not shutting down system")
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error during shutdown: {e}")
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""

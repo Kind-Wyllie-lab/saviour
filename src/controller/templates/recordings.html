@@ -361,41 +361,26 @@
         // Initialize recording command buttons
         generateRecordingCommandButtons();
 
-        // WebSocket event handlers
+        // When page loads, get initial data
         socket.on('connect', function() {
-            console.log('WebSocket connection established');
-            refreshRecordings();
-            socket.emit('get_experiment_name'); // Request current experiment name
-            
-            // Load exported recordings if exported recordings tab is active
-            const exportedRecordingsTab = document.querySelector('#exported-recordings');
-            if (exportedRecordingsTab && exportedRecordingsTab.classList.contains('active')) {
-                loadExportedRecordings();
-            }
+            console.log('Connected to server');
+            // Load initial module recordings
+            updateModuleRecordings();
+            // Request current experiment name
+            socket.emit('get_experiment_name');
         });
-        
+
         socket.on('disconnect', function() {
-            console.log('WebSocket connection closed');
+            console.log('Disconnected from server');
         });
-        
+
         socket.on('error', function(error) {
-            console.error('WebSocket error:', error);
+            console.error('Socket error:', error);
         });
 
         socket.on('experiment_name_update', function(data) {
-            console.log('Received experiment name update:', data);
-            const experimentNameInput = document.getElementById('experiment-name');
-            if (experimentNameInput && data.experiment_name !== undefined) {
-                experimentNameInput.value = data.experiment_name;
-                console.log('Updated experiment name input:', data.experiment_name);
-            }
-        });
-
-        // Save experiment name when it changes
-        document.getElementById('experiment-name').addEventListener('input', function() {
-            const experimentName = this.value.trim();
-            console.log('Experiment name changed:', experimentName);
-            socket.emit('save_experiment_name', {experiment_name: experimentName});
+            console.log('Experiment name updated:', data);
+            document.getElementById('experiment-name').textContent = data.experiment_name || 'No experiment set';
         });
 
         // Handle module updates for the selection dialog
@@ -412,53 +397,17 @@
             if (data.success) {
                 // Refresh recordings list after successful commands
                 if (['export_recordings', 'clear_recordings'].includes(data.command_type)) {
-                    setTimeout(refreshRecordings, 1000); // Small delay to allow module to process
+                    setTimeout(updateModuleRecordings, 1000); // Small delay to allow module to process
                 }
             } else {
                 alert(`Command failed: ${data.error || 'Unknown error'}`);
             }
         });
 
-        // Handle recordings list response
+        // Handle recordings list response (legacy - keeping for backward compatibility)
         socket.on('recordings_list', function(data) {
-            console.log('Received recordings list:', data);
-            
-            // Handle module recordings
-            const moduleRecordingsList = document.querySelector('#module-recordings .recordings-list');
-            if (moduleRecordingsList) {
-                moduleRecordingsList.innerHTML = '';
-                
-                if (!data.module_recordings || data.module_recordings.length === 0) {
-                    moduleRecordingsList.innerHTML = '<p>No recordings found</p>';
-                } else {
-                    // Group recordings by experiment name
-                    const recordingsByExperiment = groupRecordingsByExperiment(data.module_recordings);
-                    
-                    // Generate HTML for grouped recordings
-                    const recordingsHTML = generateGroupedRecordingsHTML(recordingsByExperiment);
-                    moduleRecordingsList.innerHTML = recordingsHTML;
-                    
-                    // Add event listeners for dropdown toggles and action buttons
-                    addRecordingsEventListeners();
-                }
-            }
-
-            // Handle exported recordings
-            const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
-            if (exportedRecordingsList) {
-                exportedRecordingsList.innerHTML = '';
-                
-                if (!data.exported_recordings || data.exported_recordings.length === 0) {
-                    exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
-                    allExportedRecordings = [];
-                } else {
-                    // Store all exported recordings for filtering
-                    allExportedRecordings = data.exported_recordings;
-                    
-                    // Apply current filter
-                    filterExportedRecordings();
-                }
-            }
+            console.log('Received legacy recordings list:', data);
+            // This is now handled by the new module_recordings system
         });
 
         // Group recordings by experiment name
@@ -750,6 +699,7 @@
 
         // Function to refresh recordings
         function refreshRecordings() {
+            console.log('Refreshing recordings...');
             socket.emit('command', {
                 type: 'list_recordings',
                 module_id: 'all'
@@ -765,27 +715,42 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
+        // Function to load exported recordings (controller only, no module communication)
+        function loadExportedRecordings() {
+            console.log('Loading exported recordings from controller...');
+            socket.emit('get_exported_recordings');
+        }
+
         // Tab switching functionality
         document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', () => {
-                // Remove active class from all buttons and contents
-                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-                document.querySelectorAll('.recordings-content').forEach(content => content.classList.remove('active'));
+            button.addEventListener('click', function() {
+                const targetTab = this.getAttribute('data-tab');
                 
-                // Add active class to clicked button and corresponding content
-                button.classList.add('active');
-                const tabId = button.dataset.tab;
-                document.getElementById(tabId).classList.add('active');
+                // Hide all tabs
+                document.querySelectorAll('.tab-content').forEach(tab => {
+                    tab.classList.remove('active');
+                });
                 
-                // Load exported recordings if exported recordings tab is selected
-                if (tabId === 'exported-recordings') {
+                // Remove active class from all buttons
+                document.querySelectorAll('.tab-button').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                
+                // Show target tab
+                document.getElementById(targetTab).classList.add('active');
+                this.classList.add('active');
+                
+                // Load appropriate data based on tab
+                if (targetTab === 'module-recordings') {
+                    updateModuleRecordings();
+                } else if (targetTab === 'exported-recordings') {
                     loadExportedRecordings();
                 }
             });
         });
 
-        // Auto-refresh recordings every 30 seconds
-        setInterval(refreshRecordings, 30000);
+        // Auto-refresh module recordings every 2 minutes (less frequent to prevent disappearing)
+        setInterval(updateModuleRecordings, 120000);
 
         // Export destination filter functionality
         const exportDestinationFilter = document.getElementById('export-destination-filter');
@@ -962,32 +927,140 @@
             });
         }
 
-        // Function to load exported recordings
-        function loadExportedRecordings() {
-            console.log('Loading exported recordings...');
-            socket.emit('get_exported_recordings');
-        }
-
         // Handle exported recordings list response
         socket.on('exported_recordings_list', function(data) {
             console.log('Received exported recordings list:', data);
             
             const exportedRecordingsList = document.querySelector('#exported-recordings .recordings-list');
             if (exportedRecordingsList) {
-                exportedRecordingsList.innerHTML = '';
-                
-                if (!data.exported_recordings || data.exported_recordings.length === 0) {
-                    exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
-                    allExportedRecordings = [];
-                } else {
+                if (data.exported_recordings && data.exported_recordings.length > 0) {
                     // Store all exported recordings for filtering
                     allExportedRecordings = data.exported_recordings;
                     
                     // Apply current filter
                     filterExportedRecordings();
+                } else if (data.exported_recordings && data.exported_recordings.length === 0) {
+                    exportedRecordingsList.innerHTML = '<p>No exported recordings found</p>';
+                    allExportedRecordings = [];
                 }
+                // If data.exported_recordings is undefined/null, don't change the display
             }
         });
+
+        // Module recordings management
+        let allModuleRecordings = []; // Store all recordings from all modules
+        let pendingModuleResponses = new Set(); // Track which modules we're waiting for
+        let moduleRecordingsTimeout = null; // Timeout for aggregation
+
+        // Function to update module recordings (aggregates from all modules)
+        function updateModuleRecordings() {
+            console.log('Updating module recordings from all modules...');
+            
+            // Clear any existing timeout
+            if (moduleRecordingsTimeout) {
+                clearTimeout(moduleRecordingsTimeout);
+            }
+            
+            // Request list of modules
+            socket.emit('get_modules');
+        }
+
+        // Handle modules list response
+        socket.on('modules_list', function(data) {
+            console.log('Received modules list:', data);
+            const modules = data.modules || [];
+            
+            if (modules.length === 0) {
+                console.log('No modules found');
+                displayModuleRecordings([]);
+                return;
+            }
+            
+            // Clear previous recordings and set up pending responses
+            allModuleRecordings = [];
+            pendingModuleResponses.clear();
+            
+            // Add all module IDs to pending set
+            modules.forEach(module => {
+                if (module.id) {
+                    pendingModuleResponses.add(module.id);
+                }
+            });
+            
+            console.log(`Requesting recordings from ${pendingModuleResponses.size} modules:`, Array.from(pendingModuleResponses));
+            
+            // Request recordings from each module
+            modules.forEach(module => {
+                if (module.id) {
+                    socket.emit('command', {
+                        type: 'list_recordings',
+                        module_id: module.id
+                    });
+                }
+            });
+            
+            // Set timeout to display results even if some modules don't respond
+            moduleRecordingsTimeout = setTimeout(() => {
+                console.log('Module recordings timeout - displaying what we have');
+                displayModuleRecordings(allModuleRecordings);
+                pendingModuleResponses.clear();
+            }, 5000); // 5 second timeout
+        });
+
+        // Function to display module recordings
+        function displayModuleRecordings(recordings) {
+            const moduleRecordingsList = document.querySelector('#module-recordings .recordings-list');
+            if (!moduleRecordingsList) return;
+            
+            if (recordings.length === 0) {
+                moduleRecordingsList.innerHTML = '<p>No recordings found on any modules</p>';
+                return;
+            }
+            
+            // Group recordings by experiment name
+            const recordingsByExperiment = groupRecordingsByExperiment(recordings);
+            
+            // Generate HTML for grouped recordings
+            const recordingsHTML = generateGroupedRecordingsHTML(recordingsByExperiment);
+            moduleRecordingsList.innerHTML = recordingsHTML;
+            
+            // Add event listeners for dropdown toggles and action buttons
+            addRecordingsEventListeners();
+        }
+
+        // Handle individual module recordings response
+        socket.on('module_recordings', function(data) {
+            console.log('Received module recordings from', data.module_id, ':', data.recordings);
+            
+            // Remove this module from pending responses
+            pendingModuleResponses.delete(data.module_id);
+            
+            // Add recordings to our collection (with module_id for reference)
+            if (data.recordings && Array.isArray(data.recordings)) {
+                data.recordings.forEach(recording => {
+                    recording.module_id = data.module_id; // Add module_id to each recording
+                    allModuleRecordings.push(recording);
+                });
+            }
+            
+            console.log(`Module ${data.module_id} responded. ${pendingModuleResponses.size} modules still pending.`);
+            
+            // If all modules have responded, display the results
+            if (pendingModuleResponses.size === 0) {
+                if (moduleRecordingsTimeout) {
+                    clearTimeout(moduleRecordingsTimeout);
+                    moduleRecordingsTimeout = null;
+                }
+                console.log('All modules responded, displaying aggregated recordings');
+                displayModuleRecordings(allModuleRecordings);
+            }
+        });
+
+        // Function to refresh recordings (now only for module recordings)
+        function refreshRecordings() {
+            console.log('Refreshing module recordings...');
+            updateModuleRecordings();
+        }
     </script>
 </body>
 </html> 

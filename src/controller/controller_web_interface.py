@@ -270,32 +270,13 @@ class WebInterfaceManager:
                 
                 # Handle recordings list response
                 if status.get('type') == 'recordings_list':
-                    with self._pending_recordings_lock:
-                        if self._pending_recordings_requests is not None and module_id in self._pending_recordings_requests['expected']:
-                            self._pending_recordings_requests['received'][module_id] = status.get('recordings', [])
-                            # If all expected responses received, emit and cancel timer
-                            if self._pending_recordings_requests['expected'] == set(self._pending_recordings_requests['received'].keys()):
-                                all_recordings = []
-                                for mod_id, recs in self._pending_recordings_requests['received'].items():
-                                    for rec in recs:
-                                        rec['module_id'] = mod_id
-                                        all_recordings.append(rec)
-                                self.socketio.emit('recordings_list', {
-                                    'module_recordings': all_recordings,
-                                    'exported_recordings': self.get_exported_recordings()
-                                })
-                                if self._pending_recordings_requests['timer']:
-                                    self._pending_recordings_requests['timer'].cancel()
-                                self._pending_recordings_requests = None
-                                return
-                    # If not aggregating, fall back to old behavior (single module)
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recordings list for module {module_id}")
+                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
-                    exported_recordings = self.get_exported_recordings()
-                    self.socketio.emit('recordings_list', {
+                    
+                    # Send individual module recordings response
+                    self.socketio.emit('module_recordings', {
                         'module_id': module_id,
-                        'module_recordings': module_recordings,
-                        'exported_recordings': exported_recordings
+                        'recordings': module_recordings
                     })
                     return
                 
@@ -440,15 +421,37 @@ class WebInterfaceManager:
 
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():
-            """Handle request for exported recordings via WebSocket"""
-            self.logger.info("(WEB INTERFACE MANAGER) Received get_exported_recordings request")
-            exported_recordings = self.get_exported_recordings()
-            self.socketio.emit('exported_recordings_list', {
-                'exported_recordings': exported_recordings
-            })
+            """Handle request for exported recordings"""
+            try:
+                recordings = self.get_exported_recordings()
+                self.socketio.emit('exported_recordings_list', {
+                    'exported_recordings': recordings
+                })
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting exported recordings: {str(e)}")
+                self.socketio.emit('exported_recordings_list', {
+                    'exported_recordings': [],
+                    'error': str(e)
+                })
+
+        @self.socketio.on('get_modules')
+        def handle_get_modules():
+            """Handle request for list of modules"""
+            try:
+                modules = self.get_modules()
+                self.socketio.emit('modules_list', {
+                    'modules': modules
+                })
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting modules: {str(e)}")
+                self.socketio.emit('modules_list', {
+                    'modules': [],
+                    'error': str(e)
+                })
 
     def get_modules(self):
-        """Get the list of modules"""
+        """Get list of all discovered modules"""
+        self.logger.info("(WEB INTERFACE MANAGER) Getting modules list")
         if self.get_modules_callback:
             return self.get_modules_callback()
         return []
@@ -634,17 +637,13 @@ class WebInterfaceManager:
 
             # Handle recordings list response
             if status.get('type') == 'recordings_list':
-                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recordings list for module {module_id}")
-                # Get module recordings
+                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting module recordings for module {module_id}")
                 module_recordings = status.get('recordings', [])
-                # Get exported recordings
-                exported_recordings = self.get_exported_recordings()
                 
-                # Send both lists separately
-                self.socketio.emit('recordings_list', {
+                # Send individual module recordings response
+                self.socketio.emit('module_recordings', {
                     'module_id': module_id,
-                    'module_recordings': module_recordings,
-                    'exported_recordings': exported_recordings
+                    'recordings': module_recordings
                 })
                 return
 

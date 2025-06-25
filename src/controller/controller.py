@@ -185,6 +185,8 @@ class Controller:
                 case 'ptp_status':
                     self.logger.info(f"(CONTROLLER) PTP status received from {module_id}: {status_data}")
                     self.buffer_manager.add_ptp_history(module_id, status_data)
+                case 'recordings_list':
+                    self.logger.info(f"(CONTROLLER) Recordings list received from {module_id}")
                 case _:
                     self.logger.info(f"(CONTROLLER) Unknown status type from {module_id}: {status_type}")
         except Exception as e:

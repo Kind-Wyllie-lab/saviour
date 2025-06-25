@@ -41,16 +41,6 @@ EOF
     log_message "Summary saved to: $SUMMARY_FILE"
 }
 
-# Function to check if this is a controller Pi
-is_controller() {
-    # Check if controller-specific packages are installed
-    if dpkg -s python3-picamera2 &> /dev/null; then
-        return 0  # This is a controller Pi
-    else
-        return 1  # This is not a controller Pi
-    fi
-}
-
 # Function to ask user about their role
 ask_user_role() {
     log_section "Device Role Configuration"

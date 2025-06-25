@@ -148,6 +148,13 @@
                 needsFollowup: false
                 // Expected response: {status: 200, filename: "rec/{experiment_name}_{timestamp}.mp4", is_recording: false, message: "Recording stopped successfully", duration: 125.5, frames: 3765, filesize: 82.7mb}
             },
+            shutdown: {
+                label: 'Shutdown',
+                type: 'shutdown',
+                description, 'Shutdown selected modules',
+                needsFollowup: true
+                // Expected response: {status: 200, timestamp: 172990083, type: 'shutdown_initiated'}
+            },
             start_streaming: {
                 label: 'Start Streaming',
                 type: 'start_streaming',

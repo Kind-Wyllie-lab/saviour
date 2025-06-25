@@ -446,7 +446,7 @@ class Module:
         """Export a video to the specified destination
         
         Args:
-            filename: Name of the file to export
+            filename: Name of the file to export (can be comma-separated list)
             length: Optional length of the video
             destination: Where to export to - string or ExportManager.ExportDestination enum
             experiment_name: Optional experiment name to include in export directory
@@ -492,8 +492,36 @@ class Module:
                     })
                     return False
                 return True
+            
+            # Handle comma-separated filenames
+            if ',' in filename:
+                filenames = [f.strip() for f in filename.split(',')]
+                self.logger.info(f"(MODULE) Exporting multiple files: {filenames}")
                 
-            # Export specific file
+                # Export each file individually
+                for single_filename in filenames:
+                    if not self.export_manager.export_file(single_filename, destination, experiment_name):
+                        self.communication_manager.send_status({
+                            "type": "export_failed",
+                            "filename": single_filename,
+                            "error": "Failed to export file",
+                            "success": False
+                        })
+                        return False
+                
+                # Send success status for all files
+                self.communication_manager.send_status({
+                    "type": "export_complete",
+                    "filename": filename,  # Original comma-separated string
+                    "session_id": self.stream_session_id,
+                    "length": length,
+                    "destination": destination.value,
+                    "experiment_name": experiment_name,
+                    "success": True
+                })
+                return True
+                
+            # Export specific single file
             if not self.export_manager.export_file(filename, destination, experiment_name):
                 self.communication_manager.send_status({
                     "type": "export_failed",

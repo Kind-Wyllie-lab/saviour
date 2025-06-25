@@ -113,6 +113,8 @@ class ModuleCommandHandler:
                     self._handle_export_recordings(params)
                 case "ptp_status":
                     self._handle_ptp_status()
+                case "shutdown":
+                    self._handle_shutdown()
                 case _:
                     self._handle_unknown_command(command)
                 
@@ -345,13 +347,26 @@ class ModuleCommandHandler:
             self.logger.error("(COMMAND HANDLER) No get_ptp_status callback was given to command handler")
             self.callbacks["send_status"]({"error": "No get_ptp_status callback given to command handler"})
     
+    def _handle_shutdown(self):
+        """Shutdown the module"""
+        self.logger.info("(COMMAND HANDLER) Command identified as shutdown")
+        if "shutdown" in self.callbacks:
+            # Respond before shutting down
+            self.callbacks["send_status"]({
+                "type": "shutdown_initiated",
+                "timestamp": time.time(),
+                "status": 200
+            })
+            self.callbacks["shutdown"]()
+        else:
+            self.logger.error("(COMMAND HANDLER) No shutdown callback given to command handler")
+            self.callbacks["send_status"]({"error": "No shutdown callback given to command handler"})
+
     def _handle_unknown_command(self, command: str):
         """Handle unrecognized command"""
         self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
         self.callbacks["send_status"]({"type": "error", "error": "Command not recognized"})
 
-
-    
     def cleanup(self):
         """Clean up resources used by the command handler"""
         if self.streaming:

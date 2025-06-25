@@ -233,7 +233,8 @@ class CameraModule(Module):
             'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.service_manager.controller_ip
+            'get_controller_ip': self.service_manager.controller_ip,
+            'shutdown': self._shutdown,
         })
 
         self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command_handler.callbacks}")

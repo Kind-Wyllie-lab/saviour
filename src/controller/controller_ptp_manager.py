@@ -487,6 +487,10 @@ class PTPManager:
         # If PTP is synced to system clock, just use time.time()
         return time.time()
 
+    def sync_to_network_time(self):
+        """Suspend ptp and sync with ptp before resuming ptp"""
+        
+
     def get_service_logs(self, service_name=None, lines=20):
         """Get logs from PTP services."""
         if service_name is None:

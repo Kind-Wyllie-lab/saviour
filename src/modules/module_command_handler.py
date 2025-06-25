@@ -326,14 +326,9 @@ class ModuleCommandHandler:
         
         result = self.callbacks["export_recordings"](filename, length, destination, experiment_name)
         
-        # Send status response
-        self.callbacks["send_status"]({
-            "type": "export_complete",
-            "timestamp": time.time(),
-            "filename": filename,
-            "experiment_name": experiment_name,
-            "success": bool(result)
-        })
+        # The module already sends the export_complete status, so we don't need to send another one
+        # Just log the result for debugging
+        self.logger.info(f"(COMMAND HANDLER) Export recordings result: {result}")
 
     def _handle_ptp_status(self):
         """Return PTP information to the controller"""

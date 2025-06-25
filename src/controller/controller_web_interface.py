@@ -52,6 +52,9 @@ class WebInterfaceManager:
         # Set up paths
         self.habitat_share_dir = Path("/home/pi/controller_share")
 
+        self._pending_recordings_requests = None  # For aggregating recordings_list responses
+        self._pending_recordings_lock = threading.Lock()
+
     def register_callbacks(self, get_modules=None, get_ptp_history=None, send_command=None, get_module_health=None):
         """Register callbacks for getting data from the command handler"""
         # TODO: Swich to dict based callback registration
@@ -164,9 +167,46 @@ class WebInterfaceManager:
             try:
                 command_type = data.get('type')
                 module_id = data.get('module_id')
-                params = data.get('params', {}) # Params may be none depending on the command
+                params = data.get('params', {})
                 
                 self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
+                
+                # Special handling for list_recordings to all modules
+                if command_type == 'list_recordings' and module_id == 'all':
+                    modules = self.get_modules()
+                    if not modules:
+                        self.logger.warning("(WEB INTERFACE MANAGER) No modules found for list_recordings aggregation.")
+                        self.socketio.emit('recordings_list', {'module_recordings': [], 'exported_recordings': self.get_exported_recordings()})
+                        return
+                    with self._pending_recordings_lock:
+                        self._pending_recordings_requests = {
+                            'expected': set(m['id'] for m in modules if 'id' in m),
+                            'received': {},
+                            'timer': None
+                        }
+                    # Send list_recordings to all modules
+                    for m in modules:
+                        if 'id' in m and self.send_command_callback:
+                            self.send_command_callback(m['id'], 'list_recordings')
+                    # Start a timer to emit after timeout
+                    def emit_aggregated():
+                        with self._pending_recordings_lock:
+                            if self._pending_recordings_requests is None:
+                                return
+                            all_recordings = []
+                            for mod_id, recs in self._pending_recordings_requests['received'].items():
+                                for rec in recs:
+                                    rec['module_id'] = mod_id
+                                    all_recordings.append(rec)
+                            self.socketio.emit('recordings_list', {
+                                'module_recordings': all_recordings,
+                                'exported_recordings': self.get_exported_recordings()
+                            })
+                            self._pending_recordings_requests = None
+                    timer = threading.Timer(2.0, emit_aggregated)
+                    self._pending_recordings_requests['timer'] = timer
+                    timer.start()
+                    return
                 
                 # Format command with parameters
                 command = command_type 
@@ -230,13 +270,28 @@ class WebInterfaceManager:
                 
                 # Handle recordings list response
                 if status.get('type') == 'recordings_list':
+                    with self._pending_recordings_lock:
+                        if self._pending_recordings_requests is not None and module_id in self._pending_recordings_requests['expected']:
+                            self._pending_recordings_requests['received'][module_id] = status.get('recordings', [])
+                            # If all expected responses received, emit and cancel timer
+                            if self._pending_recordings_requests['expected'] == set(self._pending_recordings_requests['received'].keys()):
+                                all_recordings = []
+                                for mod_id, recs in self._pending_recordings_requests['received'].items():
+                                    for rec in recs:
+                                        rec['module_id'] = mod_id
+                                        all_recordings.append(rec)
+                                self.socketio.emit('recordings_list', {
+                                    'module_recordings': all_recordings,
+                                    'exported_recordings': self.get_exported_recordings()
+                                })
+                                if self._pending_recordings_requests['timer']:
+                                    self._pending_recordings_requests['timer'].cancel()
+                                self._pending_recordings_requests = None
+                                return
+                    # If not aggregating, fall back to old behavior (single module)
                     self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recordings list for module {module_id}")
-                    # Get module recordings
                     module_recordings = status.get('recordings', [])
-                    # Get exported recordings
                     exported_recordings = self.get_exported_recordings()
-                    
-                    # Send both lists separately
                     self.socketio.emit('recordings_list', {
                         'module_id': module_id,
                         'module_recordings': module_recordings,

@@ -278,25 +278,54 @@ class Module:
         """Internal method to get list of recordings with metadata"""
         try:
             recordings = []
+            
+            # Ensure recording folder exists
             if not os.path.exists(self.recording_folder):
+                self.logger.info(f"(MODULE) Recording folder does not exist, creating: {self.recording_folder}")
+                try:
+                    os.makedirs(self.recording_folder, exist_ok=True)
+                except Exception as e:
+                    self.logger.error(f"(MODULE) Error creating recording folder {self.recording_folder}: {e}")
+                    return []
+            
+            # Check if we can access the folder
+            if not os.access(self.recording_folder, os.R_OK):
+                self.logger.error(f"(MODULE) No read permission for recording folder: {self.recording_folder}")
                 return []
                 
-            for filename in os.listdir(self.recording_folder):
-                filepath = os.path.join(self.recording_folder, filename)
-                stat = os.stat(filepath)
-                recordings.append({
-                    "filename": filename,
-                    "size": stat.st_size,
-                    "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                })
-            
-            # Sort by creation time, newest first
-            recordings.sort(key=lambda x: x["created"], reverse=True)
-            return recordings
-            
+            try:
+                for filename in os.listdir(self.recording_folder):
+                    try:
+                        filepath = os.path.join(self.recording_folder, filename)
+                        if os.path.isfile(filepath):  # Only include files, not directories
+                            stat = os.stat(filepath)
+                            recordings.append({
+                                "filename": filename,
+                                "size": stat.st_size,
+                                "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                            })
+                    except (OSError, IOError) as e:
+                        # Skip files that can't be accessed
+                        self.logger.warning(f"(MODULE) Skipping file {filename} due to access error: {e}")
+                        continue
+                    except Exception as e:
+                        # Skip files that cause other errors
+                        self.logger.warning(f"(MODULE) Skipping file {filename} due to error: {e}")
+                        continue
+                
+                # Sort by creation time, newest first
+                recordings.sort(key=lambda x: x["created"], reverse=True)
+                self.logger.info(f"(MODULE) Found {len(recordings)} recordings in {self.recording_folder}")
+                return recordings
+                
+            except (OSError, IOError) as e:
+                self.logger.error(f"(MODULE) Error accessing recording folder {self.recording_folder}: {e}")
+                return []
+                
         except Exception as e:
-            self.logger.error(f"(MODULE) Error getting recordings list: {e}")
-            raise
+            self.logger.error(f"(MODULE) Unexpected error getting recordings list: {e}")
+            # Don't re-raise the exception - return empty list instead
+            return []
 
     def list_recordings(self):
         """List all recorded files with metadata and send to controller"""
@@ -313,11 +342,16 @@ class Module:
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error listing recordings: {e}")
-            self.communication_manager.send_status({
-                "type": "recordings_list_failed",
-                "error": str(e)
-            })
-            raise
+            # Send error status but don't re-raise the exception
+            try:
+                self.communication_manager.send_status({
+                    "type": "recordings_list_failed",
+                    "error": str(e)
+                })
+            except Exception as send_error:
+                self.logger.error(f"(MODULE) Error sending failure status: {send_error}")
+            # Return empty list instead of re-raising
+            return []
 
     def clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
         """Clear recordings

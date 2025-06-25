@@ -24,8 +24,7 @@ class ModuleHealthManager:
     def __init__(self, logger: logging.Logger, 
                  config_manager=None,
                  communication_manager=None,
-                 start_time=None,
-                 ptp_callback=None):
+                 start_time=None):
         
         # Imported managers from module.py
         self.logger = logger
@@ -35,8 +34,6 @@ class ModuleHealthManager:
             self.start_time = time.time()
         else:
             self.start_time = start_time
-
-        self.get_ptp_offsets = ptp_callback
 
         # Heartbeat parameters
         self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval", 30)
@@ -72,29 +69,37 @@ class ModuleHealthManager:
         """Internal method: Loop sending heartbeats until stopped"""
         self.logger.info("(HEALTH MANAGER) Heartbeat thread started")
         last_heartbeat_time = 0
-        check_interval = 0.1  # Check for stop flag every 100ms
+        check_interval = 0.1  # Check for stop flag every 10ms
         
         while self.heartbeats_active:
             current_time = time.time()
             # Check if it's time to send a heartbeat
             if current_time - last_heartbeat_time >= self.heartbeat_interval:
                 try:
-                        self.logger.info("(HEALTH MANAGER) Sending heartbeat")
-                        status = self.get_health()
-                        self.communication_manager.send_status(status)
-                        last_heartbeat_time = current_time
+                    # Check if communication manager is still valid
+                    if not self.communication_manager or not self.communication_manager.controller_ip:
+                        self.logger.warning("(HEALTH MANAGER) Communication manager not available, stopping heartbeats")
+                        self.heartbeats_active = False
+                        break
+                        
+                    self.logger.info("(HEALTH MANAGER) Sending heartbeat")
+                    status = self.get_health()
+                    status['type'] = 'heartbeat' # Add type field to identify heartbeat status
+                    self.communication_manager.send_status(status)
+                    last_heartbeat_time = current_time
                 except Exception as e:
-                        self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
+                    self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
+                    # If we get an error sending the heartbeat, stop the heartbeats
+                    self.heartbeats_active = False
+                    break
             
-            # Sleep for a short interval rather than the full heartbeat interval
-            # This allows for quicker response to stop requests
+            # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
             time.sleep(check_interval)
     
     def get_health(self):
-        """Get health metrics for the module to be sent as heartbeat"""
-        ptp_status = self.get_ptp_offsets()
+        """Get health metrics for the module"""
+        ptp_status = self.callbacks["get_ptp_status"]()
         return {
-            "type": "heartbeat",  # Add type field to identify heartbeat status
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
             'cpu_usage': psutil.cpu_percent(),
@@ -104,7 +109,9 @@ class ModuleHealthManager:
             'ptp4l_offset': ptp_status.get('ptp4l_offset'),
             'ptp4l_freq': ptp_status.get('ptp4l_freq'),
             'phc2sys_offset': ptp_status.get('phc2sys_offset'),
-            'phc2sys_freq': ptp_status.get('phc2sys_freq')
+            'phc2sys_freq': ptp_status.get('phc2sys_freq'),
+            'recording': self.callbacks["get_recording_status"](),
+            'streaming': self.callbacks["get_streaming_status"]()
         }
 
     def get_cpu_temp(self):
@@ -132,4 +139,16 @@ class ModuleHealthManager:
     def cleanup(self): # TODO: is this redundant with the stop_heartbeats method?
         """Clean up resources"""
         self.stop_heartbeats()
+
+    def set_callbacks(self, callbacks: Dict[str, Callable]):
+        """
+        Set callbacks for data operations that can't be directly handled by the command handler
+        
+        Args:
+            callbacks: Dictionary of callback functions
+                - 'get_ptp_status': Callback to get ptp4l and phc2sys offsets
+                - 'get_streaming_status': Callback to get module streaming status
+                - 'get_recording_status': Callback to get module recording status
+        """
+        self.callbacks = callbacks
         

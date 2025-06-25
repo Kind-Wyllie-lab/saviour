@@ -39,6 +39,9 @@ class ControllerHealthMonitor:
         # Control flags
         self.is_monitoring = False
         self.monitor_thread = None
+        
+        # Callback for status changes
+        self.status_change_callback = None
     
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
         """
@@ -204,11 +207,23 @@ class ControllerHealthMonitor:
                             f"{self.heartbeat_timeout} seconds. Marking as offline."
                         )
                         self.module_health[module_id]['status'] = 'offline'
+                        # Trigger callback for offline status
+                        if self.status_change_callback:
+                            try:
+                                self.status_change_callback(module_id, 'offline')
+                            except Exception as e:
+                                self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
                 else:
                     # Module is responsive, ensure it's marked as online
                     if self.module_health[module_id]['status'] == 'offline':
                         self.logger.info(f"Module {module_id} is back online")
                         self.module_health[module_id]['status'] = 'online'
+                        # Trigger callback for online status
+                        if self.status_change_callback:
+                            try:
+                                self.status_change_callback(module_id, 'online')
+                            except Exception as e:
+                                self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
             
             time.sleep(self.heartbeat_interval)
     
@@ -266,3 +281,12 @@ class ControllerHealthMonitor:
             'offline_module_ids': offline_modules,
             'average_metrics': avg_metrics
         }
+
+    def register_status_change_callback(self, callback):
+        """Register a callback to be called when module status changes (online/offline)
+        
+        Args:
+            callback: Function to call with (module_id, status) where status is 'online' or 'offline'
+        """
+        self.status_change_callback = callback
+        self.logger.info("(HEALTH MONITOR) Status change callback registered")

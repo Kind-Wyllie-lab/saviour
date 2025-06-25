@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Controller File Transfer Manager
+
+The file transfer manager is responsible for receiving files from modules and saving them to the controller.
+
+
+# TODO: This is a work in progress. It is not yet functional.
+"""
 from aiohttp import web
 import logging
 import os

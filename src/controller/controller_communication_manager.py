@@ -22,12 +22,13 @@ class ControllerCommunicationManager:
                  data_callback: Callable[[str, str], None] = None): # Use callbacks to handle data updates in the controller.py program, not here.
         """Initialize the communication manager"""
         self.logger = logger
-        self.status_callback = status_callback
-        self.data_callback = data_callback
         self.is_running = True
+        self.status_callback = None
+        self.data_callback = None
         
         # ZeroMQ setup
         # for sending commands to modules
+        # TODO: Change this to a REQ socket
         self.context = zmq.Context() # context object to contain all sockets
         self.command_socket = self.context.socket(zmq.PUB) # publisher socket for sending commands
         self.command_socket.bind("tcp://*:5555") # bind the socket to a port
@@ -35,13 +36,20 @@ class ControllerCommunicationManager:
         # for receiving status updates from modules
         self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
         self.status_socket.subscribe("status/") # subscribe to status updates
-        self.status_socket.subscribe("data/") # subscribe to data updates
+        self.status_socket.subscribe("data/") # subscribe to data updates - is this necessary?
         self.status_socket.bind("tcp://*:5556") # bind the socket to a port
 
         # Start the zmq listener thread
         self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)
         self.listener_thread.start()
-    
+
+        # Register callbacks
+        self.register_callbacks(status_callback, data_callback)
+
+    def register_callbacks(self, status_callback: Callable[[str, str], None], data_callback: Callable[[str, str], None]):
+        """Register callbacks for status and data updates"""
+        self.status_callback = status_callback
+        self.data_callback = data_callback
 
     # ZeroMQ methods
     def send_command(self, module_id: str, command: str):
@@ -59,9 +67,9 @@ class ControllerCommunicationManager:
                 topic, data = message.split(' ', 1)
                 self.logger.debug(f"(COMMUNICATION MANAGER) Received update: {message}")
                 
-                if topic.startswith('status/'):
+                if topic.startswith('status/'): # If status message, pass it to the status callback
                     self.handle_status_update(topic, data)
-                elif topic.startswith('data/'):
+                elif topic.startswith('data/'): # If data message, pass it to the data callback
                     self.handle_data_update(topic, data)
                     
             except zmq.Again:
@@ -76,12 +84,12 @@ class ControllerCommunicationManager:
                 break
 
     def handle_status_update(self, topic: str, data: str):
-        """Handle a status update from a module"""
+        """Handle a status update from a module, and pass it to the callback, which passes it to the controller"""
         if self.status_callback:
             self.status_callback(topic, data)
 
     def handle_data_update(self, topic: str, data: str):
-        """Buffer incoming data from modules"""
+        """Handle a data update from a module, and pass it to the callback, which passes it to the controller"""
         if self.data_callback:
             self.data_callback(topic, data)
 

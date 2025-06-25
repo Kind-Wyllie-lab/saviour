@@ -24,8 +24,10 @@ import threading
 import random
 import psutil
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 import numpy as np
+from enum import Enum, auto
+import datetime
 
 
 # Import managers
@@ -36,6 +38,7 @@ import src.controller.controller_session_manager as controller_session_manager #
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
 from src.modules.module_ptp_manager import PTPManager, PTPRole
+from src.modules.module_export_manager import ExportManager
 
 class Module:
     """
@@ -50,10 +53,17 @@ class Module:
         config (dict): Configuration parameters for the module
 
     """
-    def __init__(self, module_type: str, config: dict = None, config_file_path: str = None):
+    def __init__(self, module_type: str, config: dict = None, config_path: str = None):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
+        self.config_path = config_path
+        self.recording_folder = "rec"  # Default recording folder
+        
+        # Create recording folder if it doesn't exist
+        if not os.path.exists(self.recording_folder):
+            os.makedirs(self.recording_folder)
+            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
         
         # Setup logging first
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
@@ -69,77 +79,90 @@ class Module:
             self.logger.addHandler(console_handler)
 
         # Managers
-        self.logger.info(f"(MODULE) Initializing managers")
-        self.config_manager = ModuleConfigManager(self.logger, self.module_type, config_file_path)
-        self.config = config or {} # Store direct config reference for backwards compatibility
-        self.file_transfer = None  # Will be initialized when controller is discovered
-        self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
-            self.logger, 
-            self.module_id,
-            # Command handling moved to command_handler
-            config_manager=self.config_manager
+        self.logger.info(f"(MODULE) Initialising managers")
+        self.logger.info(f"(MODULE) Initialising config manager")
+        self.config_manager = ModuleConfigManager(self.logger, self.module_type, self.config_path)
+        self.export_manager = ExportManager(
+            module_id=self.module_id,
+            recording_folder=self.recording_folder,
+            config=self.config_manager.get_all(),
+            logger=self.logger
         )
+        self.logger.info(f"(MODULE) Initialising communication manager")
+        self.communication_manager = ModuleCommunicationManager(         # Communication manager - handles ZMQ messaging
+            self.logger, # Pass in the logger
+            self.module_id, # Pass in the module ID for use in messages
+            config_manager=self.config_manager # Pass in the config manager for getting properties
+        )
+        self.logger.info(f"(MODULE) Initialising health manager")
         self.health_manager = ModuleHealthManager(
             self.logger, 
             config_manager=self.config_manager,
             communication_manager=self.communication_manager
         )
+        self.logger.info(f"(MODULE) Initialising PTP manager")
         self.ptp_manager = PTPManager(
             logger=self.logger,
             role=PTPRole.SLAVE)
-
-        # Initialize command handler if not already set
-        if not hasattr(self, 'command_handler'):
+        if not hasattr(self, 'command_handler'): # Initialize command handler if not already set - extensions of module class might set their own command handler
+            self.logger.info(f"(MODULE) Initialising command handler")
             self.command_handler = ModuleCommandHandler(
                 self.logger,
                 self.module_id,
                 self.module_type,
-                communication_manager=self.communication_manager,
-                health_manager=self.health_manager,
                 config_manager=self.config_manager,
-                ptp_manager=self.ptp_manager,
                 start_time=None # Will be set during start()
             )
-
-        # Bind health manager's callback to the ptp_manager method
-        self.health_manager.get_ptp_offsets = self.ptp_manager.get_status
-
-        # Set the callback in the communication manager to use the command handler
-        self.communication_manager.command_callback = self.command_handler.handle_command
-        
-        # Define callbacks for the command handler
-        self.command_handler.set_callbacks({
-            'read_data': self.read_fake_data,
-            'stream_data': self.stream_data,
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'samplerate': self.config_manager.get("module.samplerate", 200),
-            'ptp_status': self.ptp_manager.get_status()
-        })
-        
-        # Lazy import and initialization of ServiceManager to avoid circular imports
-        from src.modules.module_service_manager import ModuleServiceManager
+        from src.modules.module_service_manager import ModuleServiceManager # Lazy import and initialization of ServiceManager to avoid circular imports
+        self.logger.info(f"(MODULE) Initialising service manager")
         self.service_manager = ModuleServiceManager(self.logger, self)
-        
+        self.logger.info(f"(MODULE) Initialising service manager")
         self.session_manager = controller_session_manager.SessionManager()
 
-        # Session management
-        self.stream_session_id = None
+        # Register Callbacks
+        # TODO: Use a single dict of universal callbacks and pass them as needed? Lots of repetition right now
+        self.health_manager.set_callbacks({
+            "get_ptp_status": self.ptp_manager.get_status,
+            "get_recording_status": lambda: self.is_recording,
+            "get_streaming_status": lambda: self.is_streaming,
+        })
+        self.communication_manager.command_callback = self.command_handler.handle_command # Set the callback in the communication manager to use the command handler
+        self.command_handler.set_callbacks({ # Define callbacks for the command handler
+            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id), # 
+            'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
+            'get_ptp_status': self.ptp_manager.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+            'get_streaming_status': lambda: self.is_streaming,
+            'get_recording_status': lambda: self.is_recording,
+            'send_status': lambda status: self.communication_manager.send_status(status),
+            'get_health': self.health_manager.get_health,
+            'start_recording': self.start_recording,
+            'stop_recording': self.stop_recording,
+            'list_recordings': self.list_recordings,
+            'clear_recordings': self.clear_recordings,
+            'export_recordings': self.export_recordings
+        })
+        self.export_manager.set_callbacks({
+            'get_controller_ip': lambda: self.service_manager.controller_ip  # or whatever the callback function is
+        })
+        
+        # Recording management
+        self.recording_session_id = None
+        self.current_filename = None
 
         # Parameters from config
-        # self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval")
         self.samplerate = self.config_manager.get("module.samplerate")
+        self.recording_folder = self.config_manager.get("recording_folder")
+        self.recording_filetype = self.config_manager.get(f"{self.module_type}.file_format", None) # Find the appropriate filetype for this module type, 
 
         # Control flags
         self.is_running = False  # Start as False
-        self.streaming = False
+        self.is_recording = False # Flag to indicate if the module is recording e.g. video, TTL, audio, etc.
+        self.is_streaming = False # Flag to indicate if the module is streaming on a network port e.g. video, TTL, audio, etc.
         
         # Track when module started for uptime calculation
         self.start_time = None
-        
-        # Data parameters - Thread
-        self.stream_thread = None
 
-    def controller_discovered(self, controller_ip: str, controller_port: int):
+    def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"(MODULE) Module will now initialize the necessary managers")
@@ -189,15 +212,316 @@ class Module:
 
     def controller_disconnected(self):
         """Callback when controller is disconnected"""
+        # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
         self.logger.info("(MODULE) Controller disconnected")
         self.ptp_manager.stop()
         self.communication_manager.cleanup()
         self.file_transfer = None
         self.is_running = False
-        self.streaming = False
-        self.stream_thread = None
-        
+        self.is_streaming = False
 
+
+    # Recording functions
+    def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
+        """
+        Start recording. Should be extended with module-specific implementation.
+        
+        Args:
+            experiment_name: Optional experiment name to prefix the filename
+            duration: Optional duration parameter (not currently used)
+            
+        Returns the filename if setup was successful, None otherwise.
+        """
+        # Check not already recording
+        if self.is_recording:
+            self.logger.info("(MODULE) Already recording")
+            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+                self.communication_manager.send_status({
+                    "type": "recording_start_failed",
+                    "error": "Already recording"
+                })
+            return None
+        
+        # Set up recording - filename and folder
+        self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
+        
+        # Use experiment name in filename if provided
+        if experiment_name:
+            # Sanitize experiment name for filename (remove special characters)
+            safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_experiment_name = safe_experiment_name.replace(' ', '_')
+            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}.{self.recording_filetype}"
+        else:
+            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
+        
+        os.makedirs(self.recording_folder, exist_ok=True)
+        
+        return self.current_filename  # Just return filename, let child class handle status
+
+    def stop_recording(self) -> bool:
+        """
+        Stop recording. Should be extended with module-specific implementation.
+        Returns True if ready to stop, False otherwise.
+        """
+        # Check if recording
+        if not self.is_recording:
+            self.logger.info("(MODULE) Already stopped recording")
+            self.communication_manager.send_status({
+                "type": "recording_stop_failed",
+                "error": "Not recording"
+            })
+            return False
+        
+        return True  # Just return True, let child class handle status
+
+    def _get_recordings_list(self):
+        """Internal method to get list of recordings with metadata"""
+        try:
+            recordings = []
+            
+            # Ensure recording folder exists
+            if not os.path.exists(self.recording_folder):
+                self.logger.info(f"(MODULE) Recording folder does not exist, creating: {self.recording_folder}")
+                try:
+                    os.makedirs(self.recording_folder, exist_ok=True)
+                except Exception as e:
+                    self.logger.error(f"(MODULE) Error creating recording folder {self.recording_folder}: {e}")
+                    return []
+            
+            # Check if we can access the folder
+            if not os.access(self.recording_folder, os.R_OK):
+                self.logger.error(f"(MODULE) No read permission for recording folder: {self.recording_folder}")
+                return []
+                
+            try:
+                for filename in os.listdir(self.recording_folder):
+                    try:
+                        filepath = os.path.join(self.recording_folder, filename)
+                        if os.path.isfile(filepath):  # Only include files, not directories
+                            stat = os.stat(filepath)
+                            recordings.append({
+                                "filename": filename,
+                                "size": stat.st_size,
+                                "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                            })
+                    except (OSError, IOError) as e:
+                        # Skip files that can't be accessed
+                        self.logger.warning(f"(MODULE) Skipping file {filename} due to access error: {e}")
+                        continue
+                    except Exception as e:
+                        # Skip files that cause other errors
+                        self.logger.warning(f"(MODULE) Skipping file {filename} due to error: {e}")
+                        continue
+                
+                # Sort by creation time, newest first
+                recordings.sort(key=lambda x: x["created"], reverse=True)
+                self.logger.info(f"(MODULE) Found {len(recordings)} recordings in {self.recording_folder}")
+                return recordings
+                
+            except (OSError, IOError) as e:
+                self.logger.error(f"(MODULE) Error accessing recording folder {self.recording_folder}: {e}")
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"(MODULE) Unexpected error getting recordings list: {e}")
+            # Don't re-raise the exception - return empty list instead
+            return []
+
+    def list_recordings(self):
+        """List all recorded files with metadata and send to controller"""
+        try:
+            recordings = self._get_recordings_list()
+            
+            # Send status response
+            self.communication_manager.send_status({
+                "type": "recordings_list",
+                "recordings": recordings
+            })
+            
+            return recordings
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error listing recordings: {e}")
+            # Send error status but don't re-raise the exception
+            try:
+                self.communication_manager.send_status({
+                    "type": "recordings_list_failed",
+                    "error": str(e)
+                })
+            except Exception as send_error:
+                self.logger.error(f"(MODULE) Error sending failure status: {send_error}")
+            # Return empty list instead of re-raising
+            return []
+
+    def clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
+        """Clear recordings
+        
+        Args:
+            filename: Optional specific filename to delete
+            filenames: Optional list of specific filenames to delete
+            older_than: Optional timestamp - delete recordings older than this
+            keep_latest: Optional number of latest recordings to keep
+            
+        Returns:
+            dict with deleted_count and kept_count
+        """
+        try:
+            if not os.path.exists(self.recording_folder):
+                return {"deleted_count": 0, "kept_count": 0}
+            
+            # If multiple filenames are provided, delete them
+            if filenames:
+                deleted_count = 0
+                for single_filename in filenames:
+                    try:
+                        filepath = os.path.join(self.recording_folder, single_filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                            deleted_count += 1
+                            self.logger.info(f"(MODULE) Deleted file: {single_filename}")
+                        else:
+                            self.logger.warning(f"(MODULE) File not found: {single_filename}")
+                    except Exception as e:
+                        self.logger.error(f"(MODULE) Error deleting recording {single_filename}: {e}")
+                return {"deleted_count": deleted_count, "kept_count": 0}
+            
+            # If specific filename is provided, delete just that file
+            if filename:
+                try:
+                    filepath = os.path.join(self.recording_folder, filename)
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        return {"deleted_count": 1, "kept_count": 0}
+                    else:
+                        self.logger.warning(f"(MODULE) File not found: {filename}")
+                        return {"deleted_count": 0, "kept_count": 0}
+                except Exception as e:
+                    self.logger.error(f"(MODULE) Error deleting recording {filename}: {e}")
+                    return {"deleted_count": 0, "kept_count": 0}
+                
+            # Get list of recordings using internal method
+            recordings = self._get_recordings_list()
+            if not recordings:
+                return {"deleted_count": 0, "kept_count": 0}
+                
+            # Sort by creation time, newest first
+            recordings.sort(key=lambda x: x["created"], reverse=True)
+            
+            deleted_count = 0
+            kept_count = 0
+            
+            # Keep the latest N recordings if specified
+            if keep_latest > 0:
+                kept_recordings = recordings[:keep_latest]
+                recordings = recordings[keep_latest:]
+                kept_count = len(kept_recordings)
+            
+            # Delete recordings older than timestamp if specified
+            for recording in recordings:
+                if older_than and recording["created"] >= older_than:
+                    continue
+                    
+                try:
+                    filepath = os.path.join(self.recording_folder, recording["filename"])
+                    os.remove(filepath)
+                    # Also try to remove associated timestamp file if it exists
+                    base_name = os.path.splitext(recording["filename"])[0]
+                    timestamp_file = os.path.join(self.recording_folder, f"{base_name}_timestamps.txt")
+                    if os.path.exists(timestamp_file):
+                        os.remove(timestamp_file)
+                    deleted_count += 1
+                except Exception as e:
+                    self.logger.error(f"(MODULE) Error deleting recording {recording['filename']}: {e}")
+            
+            return {
+                "deleted_count": deleted_count,
+                "kept_count": kept_count
+            }
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error clearing recordings: {e}")
+            raise
+
+    def export_recordings(self, filename: str, length: int = 0, destination: Union[str, ExportManager.ExportDestination] = ExportManager.ExportDestination.CONTROLLER, experiment_name: str = None):
+        """Export a video to the specified destination
+        
+        Args:
+            filename: Name of the file to export
+            length: Optional length of the video
+            destination: Where to export to - string or ExportManager.ExportDestination enum
+            experiment_name: Optional experiment name to include in export directory
+            
+        Returns:
+            bool: True if export successful
+        """
+        try:
+            # Convert string destination to enum if needed
+            if isinstance(destination, str):
+                try:
+                    destination = ExportManager.ExportDestination.from_string(destination)
+                except ValueError as e:
+                    self.logger.error(f"(MODULE) Invalid destination '{destination}': {e}")
+                    self.communication_manager.send_status({
+                        "type": "export_failed",
+                        "filename": filename,
+                        "error": f"Invalid destination: {destination}"
+                    })
+                    return False
+            
+            if filename == "all":
+                # Export all recordings in a single export session
+                if not self.export_manager.export_all_files(destination, experiment_name):
+                    self.communication_manager.send_status({
+                        "type": "export_failed",
+                        "filename": "all",
+                        "error": "Failed to export files"
+                    })
+                    return False
+                return True
+                
+            elif filename == "latest":
+                # Export latest recording
+                latest_recording = self.get_latest_recording()
+                if not self.export_manager.export_file(latest_recording["filename"], destination, experiment_name):
+                    self.communication_manager.send_status({
+                        "type": "export_failed",
+                        "filename": latest_recording["filename"],
+                        "error": "Failed to export file"
+                    })
+                    return False
+                return True
+                
+            # Export specific file
+            if not self.export_manager.export_file(filename, destination, experiment_name):
+                self.communication_manager.send_status({
+                    "type": "export_failed",
+                    "filename": filename,
+                    "error": "Failed to export file"
+                })
+                return False
+                
+            # Send success status
+            self.communication_manager.send_status({
+                "type": "video_export_complete",
+                "filename": filename,
+                "session_id": self.stream_session_id,
+                "length": length,
+                "destination": destination.value,
+                "experiment_name": experiment_name,
+                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt")
+            })
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error exporting recordings: {e}")
+            self.communication_manager.send_status({
+                "type": "export_failed",
+                "filename": filename,
+                "error": str(e)
+            })
+            return False
+
+    # Start and stop functions
     def start(self) -> bool:
         """
         Start the module.
@@ -275,6 +599,10 @@ class Module:
             self.logger.info("(MODULE) Cleaning up communication manager...")
             self.communication_manager.cleanup()
 
+            # Unmount any mounted destination
+            if hasattr(self, 'export_manager'):
+                self.export_manager.unmount()
+
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping module: {e}")
             return False
@@ -289,64 +617,3 @@ class Module:
         mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
-    
-    # Sensor data methods
-    def stream_data(self):
-        """Function to continuously read and transmit data"""
-        while self.streaming:
-            data=str(self.read_fake_data())
-            self.communication_manager.send_data(data)
-            time.sleep(self.samplerate/1000)
-
-    def read_fake_data(self): 
-        """Stand in for future sensor integration. Returns a random float between 0 and 1."""
-        return random.random()
-    
-    def read_fake_camera_frame(self):
-        """Generate fake camera frame data"""
-        # Create random 640x480 RGB frame
-        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        return frame.tobytes()  # Convert to bytes for transmission
-
-    def read_fake_audio(self):
-        """Generate fake audio samples"""
-        # Generate 1 second of fake audio at 192kHz
-        samples = np.random.uniform(-1, 1, 192000)
-        return samples.tobytes()
-
-    def read_fake_rfid(self):
-        """Generate fake RFID readings"""
-        tags = ['A1B2C3D4', 'E5F6G7H8', 'I9J0K1L2']
-        return random.choice(tags)
-
-    def read_fake_ttl(self):
-        """Generate fake TTL I/O readings"""
-        digital_in = [random.choice([0, 1]) for _ in range(8)]  # 8 digital inputs
-        analog_in = [random.uniform(0, 5) for _ in range(4)]    # 4 analog inputs (0-5V)
-        return {
-            'digital': digital_in,
-            'analog': analog_in
-        }
-
-
-    def send_file(self, filepath: str, remote_path: str = None) -> bool:
-        """Send a file to the controller"""
-        if not self.file_transfer:
-            self.logger.error("File transfer not initialized - controller not discovered")
-            return False
-            
-        try:
-            # Create a new event loop for this thread if needed
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            # Run the file transfer
-            success = loop.run_until_complete(self.file_transfer.send_file(filepath, remote_path))
-            return success
-        except Exception as e:
-            self.logger.error(f"Error sending file: {e}")
-            return False
-            

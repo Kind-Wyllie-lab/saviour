@@ -2,31 +2,15 @@
     "camera": {
         "width": 1280,
         "height": 720,
-        "fps": 30,
+        "fps": 60,
         "codec": "h264",
         "profile": "high",
         "level": 4.2,
-        "bitrate": 8000000,
-        "file_format": "mp4",
-        "intra": 30,
-        "rotation": 0,
-        "auto_white_balance": true,
-        "white_balance_mode": "auto",
-        "exposure_mode": "auto",
-        "iso": 0,
-        "metering_mode": "average",
-        "saturation": 0,
-        "sharpness": 0,
-        "contrast": 0,
-        "brightness": 50,
-        "quality": 75,
-        "image_folder": "images"
+        "bitrate": 10000000,
+        "file_format": "mp4"
     },
     "recording": {
-        "segment_length_seconds": 60,
-        "auto_record_on_startup": false,
-        "motion_detection_enabled": false,
-        "motion_sensitivity": 50,
+        "segment_length_seconds": 600,
         "pre_record_seconds": 5,
         "post_record_seconds": 5,
         "timestamp_overlay": true,
@@ -36,16 +20,23 @@
     "streaming": {
         "enabled": true,
         "port": 8554,
-        "transport": "rtsp",
-        "quality": "medium",
-        "overlay_status": false
+        "transport": "udp"
     },
     "nas": {
         "enabled": true,
-        "host": "192.168.0.16",
+        "host": "192.168.0.2",
         "share": "data",
         "mount_point": "/mnt/nas",
         "export_folder": "videos"
     },
-    "video_folder": "rec"
+    "recording_folder": "rec",
+    "recording_filetype": "h264",
+    "controller_share_path": "controller_share",
+    "controller_username": "pi",
+    "controller_password": "habitat",
+    "nas_ip": "192.168.0.2",
+    "nas_share_path": "data",
+    "nas_recordings_path": "recordings",
+    "nas_username": "sidbit",
+    "nas_password": "RaspberryWonder1305"
 }

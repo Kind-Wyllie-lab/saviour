@@ -116,6 +116,7 @@ class ModuleCommunicationManager:
 
     def listen_for_commands(self):
         """Listen for commands from the controller"""
+        # Commands look like cmd/<module_id> <command> <params>
         self.logger.info("(COMMUNICATION MANAGER) Starting command listener thread")
         while self.command_listener_running:
             try:
@@ -151,24 +152,21 @@ class ModuleCommunicationManager:
             self.logger.warning("(COMMUNICATION MANAGER) Cannot send status: not connected to controller")
             return
             
+        # Check if status socket is available
+        if not self.status_socket:
+            self.logger.warning("(COMMUNICATION MANAGER) Cannot send status: status socket not available")
+            return
+            
+        # Check for type field in status_data
+        if 'type' not in status_data:
+            self.logger.warning("(COMMUNICATION MANAGER) Status data missing 'type' field")
+            status_data['type'] = 'unknown'
+            return
+        
         message = f"status/{self.module_id} {status_data}"
         self.status_socket.send_string(message)
         self.logger.info(f"(COMMUNICATION MANAGER) Status sent: {message}")
-
-    def send_data(self, data: Any):
-        """Send data to the controller
         
-        Args:
-            data: Data to send to the controller
-        """
-        if not self.controller_ip:
-            self.logger.warning("(COMMUNICATION MANAGER) Cannot send data: not connected to controller")
-            return
-            
-        message = f"data/{self.module_id} {data}"
-        self.status_socket.send_string(message)
-        self.logger.info(f"(COMMUNICATION MANAGER) Data sent: {message}")
-
     def cleanup(self):
         """Clean up ZMQ connections"""
         self.logger.info(f"(COMMUNICATION MANAGER) Cleaning up communication manager for module {self.module_id}")

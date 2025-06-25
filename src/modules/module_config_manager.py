@@ -121,9 +121,9 @@ class ModuleConfigManager:
                 
                 # Merge base config into config
                 self._merge_configs(config, base_config)
-                self.logger.info(f"Loaded base configuration from {self.base_config_file_path}")
+                self.logger.info(f"(CONFIG MANAGER) Loaded base configuration from {self.base_config_file_path}")
             except Exception as e:
-                self.logger.error(f"Error loading base config file: {e}")
+                self.logger.error(f"(CONFIG MANAGER) Error loading base config file: {e}")
         
         # Override with environment variables
         for env_var, config_path in self.ENV_CONFIG_MAPPING.items():
@@ -161,9 +161,9 @@ class ModuleConfigManager:
                 
                 # Recursively merge file config into config
                 self._merge_configs(config, file_config)
-                self.logger.info(f"Loaded module-specific configuration from {self.config_file_path}")
+                self.logger.info(f"(CONFIG MANAGER) Loaded module-specific configuration from {self.config_file_path}")
             except Exception as e:
-                self.logger.error(f"Error loading module-specific config file: {e}")
+                self.logger.error(f"(CONFIG MANAGER) Error loading module-specific config file: {e}")
         
         return config
     

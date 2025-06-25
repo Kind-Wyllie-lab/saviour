@@ -55,3 +55,10 @@ videos/
 
 # Work in progress
 wip/
+
+# Share folder
+habitat_share/
+
+# Setup files
+system_setup_summary.txt
+system_setup.log

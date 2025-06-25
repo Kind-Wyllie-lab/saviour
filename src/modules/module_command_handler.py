@@ -9,6 +9,8 @@ providing a central place for command parsing and execution.
 Author: Andrew SG
 Created: 16/05/2025         
 License: GPLv3
+
+#TODO: This is really tightly coupled right now. Better to move it towards looser coupling.
 """
 
 import time
@@ -22,18 +24,15 @@ class ModuleCommandHandler:
     """
     Manages commands for habitat modules.
     
-    This class provides a centralized command handling interface, decoupling
-    command processing from the module itself.
+    This class provides a centralized command handling interface, decoupling command processing from the module itself.
+    It routes receives commands to the necessary methods.
     """
     
     def __init__(self, 
                  logger: logging.Logger,
                  module_id: str,
                  module_type: str,
-                 communication_manager=None,
-                 health_manager=None,
                  config_manager=None,
-                 ptp_manager=None,
                  start_time=None):
         """
         Initialize the command handler
@@ -42,18 +41,13 @@ class ModuleCommandHandler:
             logger: Logger instance
             module_id: The unique identifier for the module
             module_type: The type of module (camera, microphone, etc.)
-            communication_manager: Manager for sending/receiving messages
-            health_manager: Manager for health monitoring
             config_manager: Manager for configuration
             start_time: When the module was started
         """
         self.logger = logger
         self.module_id = module_id
         self.module_type = module_type
-        self.communication_manager = communication_manager
-        self.health_manager = health_manager
         self.config_manager = config_manager
-        self.ptp_manager = ptp_manager
         self.start_time = start_time
         
         # Control flags and parameters
@@ -75,9 +69,15 @@ class ModuleCommandHandler:
                 - 'stream_data': Callback to stream data
                 - 'generate_session_id': Callback to generate session ID
         """
+        # Validate required callbacks
+        required_callbacks = ['send_status']
+        missing_callbacks = [cb for cb in required_callbacks if cb not in callbacks]
+        if missing_callbacks:
+            raise ValueError(f"Missing required callbacks: {missing_callbacks}")
+            
         self.callbacks = callbacks
-        if 'samplerate' in callbacks:
-            self.samplerate = callbacks['samplerate']
+        if 'get_samplerate' in callbacks:
+            self.samplerate = callbacks['get_samplerate']
     
     def handle_command(self, command: str):
         """
@@ -88,123 +88,269 @@ class ModuleCommandHandler:
         """
         self.logger.info(f"(COMMAND HANDLER) Handling command: {command}") 
         
-        match command:
-            case "get_status":
-                self._handle_get_status()
+        try:
+            # Parse command and parameters
+            parts = command.split()
+            cmd = parts[0]
+            params = parts[1:] if len(parts) > 1 else []
             
-            case "get_data":
-                self._handle_get_data()
-
-            case "start_stream":
-                self._handle_start_stream()
+            # Debug logging for command parsing
+            self.logger.info(f"(COMMAND HANDLER) Parsed command: '{cmd}', parameters: {params}")
             
-            case "stop_stream":
-                self._handle_stop_stream()
+            # Handle command
+            match cmd:
+                case "get_status":
+                    self._handle_get_status()
+                case "start_recording":
+                    self._handle_start_recording(params)
+                case "stop_recording":  # Fixed from stop_stream
+                    self._handle_stop_recording()
+                case "list_recordings":
+                    self._handle_list_recordings()
+                case "clear_recordings":
+                    self._handle_clear_recordings(params)
+                case "export_recordings":
+                    self._handle_export_recordings(params)
+                case "ptp_status":
+                    self._handle_ptp_status()
+                case _:
+                    self._handle_unknown_command(command)
+                
+        except Exception as e:
+            self._handle_error(e)
 
-            case "ptp_status":
-                self._handle_ptp_status()
+    def _handle_error(self, error: Exception):
+        """Standard error handling"""
+        self.logger.error(f"(COMMAND HANDLER) Error handling command: {error}")
+        self.callbacks["send_status"]({
+            "type": "error",
+            "timestamp": time.time(),
+            "error": str(error)
+        })
 
-            case _:
-                self._handle_unknown_command(command)
-
-    
     def _handle_get_status(self):
         """Handle get_status command"""
-        self.logger.info("(COMMAND HANDLER) Command identified as get_status")
+        self.logger.info("(COMMAND HANDLER) _handle_get_status called")
         try:
-            # Get PTP status first
-            ptp_status = self.ptp_manager.get_status()
+            # Initialize status with proper structure
+            status = {
+                "type": "status",
+                "timestamp": time.time(),
+                "recording_status": None,
+                "streaming_status": None
+            }
+
+            # Get recording and streaming status safely
+            if "get_recording_status" in self.callbacks:
+                status["recording_status"] = self.callbacks["get_recording_status"]()
+            else:
+                self.logger.warning("(COMMAND HANDLER) No get_recording_status in command handler callbacks!")
+
+            if "get_streaming_status" in self.callbacks:
+                status["streaming_status"] = self.callbacks["get_streaming_status"]()
+            else:
+                self.logger.warning("(COMMAND HANDLER) No get_streaming_status in command handler callbacks!")
             
             # Calculate uptime safely
-            current_time = time.time()
-            uptime = 0.0
             if self.start_time and isinstance(self.start_time, (int, float)):
-                uptime = current_time - float(self.start_time)
+                status["uptime"] = time.time() - float(self.start_time)
             
-            status = {
-                "timestamp": current_time,
-                "cpu_temp": self.health_manager.get_cpu_temp(),
-                "cpu_usage": psutil.cpu_percent(),
-                "memory_usage": psutil.virtual_memory().percent,
-                "uptime": uptime,
-                "disk_space": psutil.disk_usage('/').percent,
-                "ptp4l_offset": ptp_status.get('ptp4l_offset'),
-                "ptp4l_freq": ptp_status.get('ptp4l_freq'),
-                "phc2sys_offset": ptp_status.get('phc2sys_offset'),
-                "phc2sys_freq": ptp_status.get('phc2sys_freq')
-            }
-            self.communication_manager.send_status(status)
+            # Get health metrics from callback
+            if "get_health" in self.callbacks:
+                health_data = self.callbacks["get_health"]()
+                status.update(health_data)
+            
+            self.logger.info(f"(COMMAND HANDLER) Status: {status}")
+            self.callbacks["send_status"](status)
+            
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
             # Send a minimal status if we can't get all metrics
-            status = {"timestamp": time.time(), "error": str(e)}
-            self.communication_manager.send_status(status)
-    
-    def _handle_get_data(self):
-        """Handle get_data command"""
-        self.logger.info("(COMMAND HANDLER) Command identified as get_data")
-        if 'read_data' in self.callbacks:
-            data = str(self.callbacks['read_data']())
-            self.communication_manager.send_data(data)
+            status = {
+                "type": "status",
+                "timestamp": time.time(),
+                "error": str(e)
+            }
+            self.callbacks["send_status"](status)
+
+    def _handle_start_recording(self, params: list = None):
+        """Handle start_recording command with parameters"""
+        self.logger.info(f"(COMMAND HANDLER) _handle_start_recording called with parameters: {params}")
+        
+        if "start_recording" not in self.callbacks:
+            raise ValueError("Module not configured for recording")
+        
+        # Parse parameters
+        experiment_name = None
+        duration = None
+        
+        if params:
+            for param in params:
+                if param.startswith('experiment_name='):
+                    experiment_name = param.split('=', 1)[1]
+                elif param.startswith('duration='):
+                    duration = param.split('=', 1)[1]
+        
+        self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}'")
+        
+        # Call the start_recording method with parsed parameters
+        self.callbacks["start_recording"](experiment_name=experiment_name, duration=duration)
+
+    def _handle_stop_recording(self):
+        """Handle stop_recordings command"""
+        self.logger.info("(COMMAND HANDLER) _handle_stop_recording called")
+        
+        if "stop_recording" not in self.callbacks:
+            raise ValueError("Module not configured for recording")
+        
+        self.callbacks["stop_recording"]()  # Module will handle status response
+
+    def _handle_list_recordings(self):
+        """Handle list_recordings command"""
+        self.logger.info("(COMMAND HANDLER) _handle_list_recordings called")
+        if "list_recordings" in self.callbacks:
+            self.callbacks["list_recordings"]()  # Just call the callback, let module handle status
         else:
-            self.logger.error("No read_data callback provided")
-            self.communication_manager.send_data("Error: Module not configured for data reading")
-    
-    def _handle_start_stream(self):
-        """Handle start_stream command"""
-        self.logger.info("(COMMAND HANDLER) Command identified as start_stream")
-        if not self.streaming:  # Only start if not already streaming
-            if 'stream_data' in self.callbacks and 'generate_session_id' in self.callbacks:
-                self.streaming = True
-                self.stream_session_id = self.callbacks['generate_session_id'](self.module_id)
-                self.logger.debug(f"Stream session ID generated as {self.stream_session_id}")
-                self.stream_thread = threading.Thread(target=self._stream_data_thread, daemon=True)
-                self.stream_thread.start()
+            self.logger.error("(COMMAND HANDLER) No list_recordings callback provided")
+            self.callbacks["send_status"]({
+                "type": "recordings_list_failed",
+                "error": "Module not configured for listing recordings"
+            })
+
+    def _handle_clear_recordings(self, params: list):
+        """Handle clear_recordings command with parameters"""
+        self.logger.info(f"(COMMAND HANDLER) _handle_clear_recordings called with parameters: {params}")
+        
+        # Parse parameters
+        filename = None
+        filenames = []
+        older_than = None
+        keep_latest = 0
+        
+        for param in params:
+            if param.startswith('filename='):
+                filename_param = param.split('=', 1)[1]
+                # Check if multiple filenames are provided (comma-separated)
+                if ',' in filename_param:
+                    filenames = [f.strip() for f in filename_param.split(',')]
+                    self.logger.info(f"(COMMAND HANDLER) Multiple filenames detected: {filenames}")
+                else:
+                    filename = filename_param
+            elif param.startswith('older_than='):
+                older_than = int(param.split('=', 1)[1])
+            elif param.startswith('keep_latest='):
+                keep_latest = int(param.split('=', 1)[1])
+        
+        self.logger.info(f"(COMMAND HANDLER) Clear recordings - filename: '{filename}', filenames: {filenames}, older_than: {older_than}, keep_latest: {keep_latest}")
+        
+        # Call the callback with the parsed parameters
+        if "clear_recordings" in self.callbacks:
+            if filenames:
+                # Multiple filenames provided
+                result = self.callbacks["clear_recordings"](filenames=filenames)
             else:
-                self.logger.error("Missing required callbacks for streaming")
-                self.communication_manager.send_data("Error: Module not configured for streaming")
-    
-    def _handle_stop_stream(self):
-        """Handle stop_stream command"""
-        self.logger.info("(COMMAND HANDLER) Command identified as stop_stream")
-        self.streaming = False  # Thread will stop on next loop
-        if self.stream_thread: # If there is a thread still
-            self.stream_thread.join(timeout=1.0)  # Wait for thread to finish
-            self.stream_thread = None # Empty the thread
-    
-    def _handle_unknown_command(self, command: str):
-        """Handle unrecognized command"""
-        self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
-        self.communication_manager.send_data("Command not recognized")
-    
-    def _stream_data_thread(self):
-        """Thread function for streaming data"""
-        while self.streaming:
-            if 'stream_data' in self.callbacks:
-                # Use the dedicated stream_data callback if provided
-                self.callbacks['stream_data']()
-            elif 'read_data' in self.callbacks:
-                # Fall back to using read_data if stream_data isn't available
-                data = str(self.callbacks['read_data']())
-                self.communication_manager.send_data(data)
-            else:
-                self.logger.error("No streaming callbacks available")
-                self.streaming = False
-                break
+                # Single filename or other parameters
+                result = self.callbacks["clear_recordings"](filename=filename, older_than=older_than, keep_latest=keep_latest)
+        else:
+            raise ValueError("Module not configured for clearing recordings")
+        
+        # Send status response
+        if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
+            self.communication_manager.send_status({
+                "type": "clear_recordings_complete",
+                "result": result
+            })
+
+    def _handle_export_recordings(self, params: list):
+        """Handle export_recordings command with parameters"""
+        self.logger.info(f"(COMMAND HANDLER) _handle_export_recordings called with parameters: {params}")
+        
+        if "export_recordings" not in self.callbacks:
+            raise ValueError("Module not configured for exporting recordings")
+        
+        # Parse parameters - support both positional and key-value formats
+        filename = "all"  # Default to export all
+        length = 0
+        destination = "controller"  # Default destination
+        experiment_name = None
+        
+        if params:
+            # First, check if any parameters use key=value format
+            has_key_value = any('=' in param for param in params)
             
-            time.sleep(self.samplerate/1000)
+            if has_key_value:
+                # Parse key-value parameters
+                for param in params:
+                    if param.startswith('filename='):
+                        filename = param.split('=', 1)[1]
+                    elif param.startswith('length='):
+                        length = int(param.split('=', 1)[1])
+                    elif param.startswith('destination='):
+                        destination = param.split('=', 1)[1]
+                    elif param.startswith('experiment_name='):
+                        experiment_name = param.split('=', 1)[1]
+            else:
+                # Parse positional parameters: filename length destination
+                if len(params) >= 1:
+                    filename = params[0]
+                if len(params) >= 2:
+                    try:
+                        length = int(params[1])
+                    except ValueError:
+                        # If second parameter is not a number, it might be destination
+                        destination = params[1]
+                if len(params) >= 3:
+                    # Third parameter is destination (if second was length) or experiment_name
+                    if length == 0:  # Second parameter was not a number
+                        destination = params[2]
+                    else:
+                        destination = params[2]
+                if len(params) >= 4:
+                    # Fourth parameter is experiment_name
+                    experiment_name = params[3]
+        
+        self.logger.info(f"(COMMAND HANDLER) Export parameters - filename: '{filename}', length: {length}, destination: '{destination}', experiment_name: '{experiment_name}'")
+        
+        # Validate destination
+        valid_destinations = ['controller', 'nas']
+        if destination not in valid_destinations:
+            self.logger.error(f"(COMMAND HANDLER) Invalid destination '{destination}'. Must be one of: {valid_destinations}")
+            self.callbacks["send_status"]({
+                "type": "export_failed",
+                "filename": filename,
+                "error": f"Invalid destination: {destination}. Must be one of: {valid_destinations}"
+            })
+            return
+        
+        result = self.callbacks["export_recordings"](filename, length, destination, experiment_name)
+        
+        # Send status response
+        self.callbacks["send_status"]({
+            "type": "export_complete",
+            "timestamp": time.time(),
+            "filename": filename,
+            "experiment_name": experiment_name,
+            "success": bool(result)
+        })
 
     def _handle_ptp_status(self):
         """Return PTP information to the controller"""
         self.logger.info("(COMMAND HANDLER) Command identified as ptp_status")
-        if self.ptp_manager:
-            ptp_status = self.ptp_manager.get_status()
+        if "get_ptp_status" in self.callbacks:
+            ptp_status = self.callbacks["get_ptp_status"]()
             # add type to the status
             ptp_status['type'] = 'ptp_status'
-            self.communication_manager.send_status(ptp_status)
+            self.callbacks["send_status"](ptp_status)
         else:
-            self.logger.error("No PTP manager available")
-            self.communication_manager.send_status({"error": "PTP manager not available"})
+            self.logger.error("(COMMAND HANDLER) No get_ptp_status callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No get_ptp_status callback given to command handler"})
+    
+    def _handle_unknown_command(self, command: str):
+        """Handle unrecognized command"""
+        self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
+        self.callbacks["send_status"]({"type": "error", "error": "Command not recognized"})
+
+
     
     def cleanup(self):
         """Clean up resources used by the command handler"""

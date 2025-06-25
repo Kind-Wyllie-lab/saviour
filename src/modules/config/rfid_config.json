@@ -31,5 +31,6 @@
             "log_event": true,
             "send_to_controller": true
         }
-    }
+    },
+    "recording_folder": "rec"
 } 

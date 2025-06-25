@@ -12,12 +12,12 @@
   <p align="center">
     A modular and highly usable approach to I/O tasks within the Kind lab and beyond
     <br />
-    <a href="https://github.com/yourusername/habitat"><strong>Explore the docs »</strong></a>
+    <a href="https://github.com/Kind-Wyllie-lab/habitat"><strong>Explore the docs »</strong></a>
     <br />
     <br />
-    <a href="https://github.com/yourusername/habitat/issues">Report Bug</a>
+    <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Report Bug</a>
     ·
-    <a href="https://github.com/yourusername/habitat/issues">Request Feature</a>
+    <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Request Feature</a>
   </p>
 </div>
 
@@ -87,6 +87,7 @@ The system includes:
 - PoE-capable network switch
 - 1x Raspberry Pi 5 for controller
 - 1x Raspberry Pi 5 per module, plus module specific hardware e.g. camera, audiomoth USV microphone 
+- An external storage device, e.g., Synology NAS DS1522+, or perhaps a controller Pi with NVME/SSD storage 
 
 
 
@@ -101,27 +102,13 @@ The system includes:
    cd habitat
    ```
 
-2. Create a virtual environment
-   ```sh
-   # Make sure you're in the habitat directory
-   mkdir env
-   python -m venv env
-   source env/bin/activate
-   ```
-
-3. Install required packages
-   ```sh
-   # Ensure you're in the habitat directory with activated virtual environment
-   pip install -r requirements.txt
-   ```
-
-4. Install linuxptp
-   ```sh
-   # System-wide installation
-   sudo apt-get install linuxptp
-   ```
+2. Run the setup script
+    ```sh
+    # Make sure you're in the habitat directory
+    . setup.sh
+    # You will be prompted to run tests. You can either choose yes or no. After this, setup is complete.
   
-5. Navigate to and run device specific program
+3. Navigate to and run device specific program
    ```sh
    # For controller
    cd src/controller/examples
@@ -144,11 +131,12 @@ Detailed usage instructions can be found in the [System Requirements Specificati
 - [X] Develop sensor module interfaces
 - [X] Implement data storage and retrieval
 - [X] Add monitoring and health checks
+- [X] pyproject.toml style setup
 - [ ] Graphical user interface
 - [ ] REST endpoints for synchronisation with webapp and other apps
 - [ ] Reliable PTP synchronisation
 - [ ] Add documentation
-- [ ] manifest.yoml style setup
+
 
 <!-- CONTRIBUTING -->
 ## Contributing
@@ -174,10 +162,10 @@ Project Link: [https://github.com/Kind-Wyllie-lab/habitat](https://github.com/Ki
 [contributors-shield]: https://img.shields.io/github/contributors/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
 [contributors-url]: https://github.com/Kind-Wyllie-lab/habitat/graphs/contributors
 [forks-shield]: https://img.shields.io/github/forks/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[forks-url]: https://github.com/yourusername/habitat/network/members
-[stars-shield]: https://img.shields.io/github/stars/yourusername/habitat.svg?style=for-the-badge
-[stars-url]: https://github.com/yourusername/habitat/stargazers
-[issues-shield]: https://img.shields.io/github/issues/yourusername/habitat.svg?style=for-the-badge
-[issues-url]: https://github.com/yourusername/habitat/issues
-[license-shield]: https://img.shields.io/github/license/yourusername/habitat.svg?style=for-the-badge
-[license-url]: https://github.com/yourusername/habitat/blob/master/LICENSE.txt
+[forks-url]: https://github.com/Kind-Wyllie-lab/habitat/network/members
+[stars-shield]: https://img.shields.io/github/stars/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
+[stars-url]: https://github.com/Kind-Wyllie-lab/habitat/stargazers
+[issues-shield]: https://img.shields.io/github/issues/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
+[issues-url]: https://github.com/Kind-Wyllie-lab/habitat/issues
+[license-shield]: https://img.shields.io/github/license/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
+[license-url]: https://github.com/Kind-Wyllie-lab/habitat/blob/master/LICENSE.txt

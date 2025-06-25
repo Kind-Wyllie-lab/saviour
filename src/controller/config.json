@@ -3,22 +3,21 @@
         "max_buffer_size": 2000,
         "manual_control": true,
         "print_received_data": false,
-        "commands": ["get_status",
-        "get_data",
-        "start_stream",
-        "stop_stream",
-        "record_video",
+        "cli_commands": ["help", 
+        "quit", 
+        "list",
+        "zmq send", 
+        "health status", 
+        "health history"],
+        "zmq_commands": ["get_status",
         "start_recording",
         "stop_recording",
         "export_recordings",
-        "ptp_status",
-        "custom_command",
-        "update_camera_settings",
+        "update_settings",
         "list_recordings",
-        "clear_recordings",
-        "show_buffer"
+        "clear_recordings"
     ]},
-    "service": {
+    "zeroconf": {
         "port": 5353,
         "service_type": "_controller._tcp.local.",
         "service_name": "controller._controller._tcp.local."
@@ -45,7 +44,7 @@
         "format": "%(asctime)s - %(levelname)s - %(message)s"
     },
     "interface": {
-        "cli": true,
+        "cli": false,
         "web_interface": true,
         "web_interface_port": 5000
     }

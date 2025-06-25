@@ -3,7 +3,7 @@ import os
 import time
 import argparse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from controller import Controller
+from src.controller.controller import Controller
 
 # Main entry point
 def main():

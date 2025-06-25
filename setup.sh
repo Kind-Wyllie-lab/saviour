@@ -428,7 +428,7 @@ configure_controller_service() {
         sudo systemctl stop habitat-controller-service 2>/dev/null || true
         sudo systemctl stop habitat-controller 2>/dev/null || true
         
-        # Create service file for controller
+        # Create service file for controller (match module service style)
         log_message "Creating habitat-controller-service systemd service..."
         sudo tee /etc/systemd/system/habitat-controller-service.service > /dev/null <<EOF
 [Unit]
@@ -440,7 +440,7 @@ Wants=network.target ptp4l.service phc2sys.service
 Type=simple
 User=root
 WorkingDirectory=/home/pi/Desktop/habitat/src/controller/examples
-ExecStart=/home/pi/Desktop/habitat/src/controller/examples/controller.sh
+ExecStart=/home/pi/Desktop/habitat/env/bin/python controller_example.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -453,15 +453,12 @@ Environment=PYTHONPATH=/home/pi/Desktop/habitat/src
 WantedBy=multi-user.target
 EOF
 
-        # Make sure controller.sh is executable
-        chmod +x /home/pi/Desktop/habitat/src/controller/examples/controller.sh
-
         # Reload systemd and enable service
         sudo systemctl daemon-reload
         sudo systemctl enable habitat-controller-service
         
-        log_message "Habitat controller service configured and enabled at boot."
-        echo "Habitat controller service configured and enabled at boot."
+        log_message "Habitat controller service configured and enabled at boot. (module style)"
+        echo "Habitat controller service configured and enabled at boot. (module style)"
         echo ""
         echo "Controller service control commands:"
         echo "  Start: sudo systemctl start habitat-controller-service"
@@ -637,7 +634,7 @@ Network Configuration:
   - No internet routing - devices use wlan0 for internet
 
 === Controller Service Setup ===
-Habitat controller service configured and enabled at boot.
+Habitat controller service configured and enabled at boot. (module style)
 Service: habitat-controller-service
 
 Controller service control commands:
@@ -734,7 +731,7 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "  - No internet routing - devices use wlan0 for internet"
     echo ""
     echo "=== Controller Service Setup ==="
-    echo "Habitat controller service configured and enabled at boot."
+    echo "Habitat controller service configured and enabled at boot. (module style)"
     echo "Service: habitat-controller-service"
     echo ""
     echo "Controller service control commands:"

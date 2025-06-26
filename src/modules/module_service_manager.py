@@ -52,33 +52,64 @@ class ModuleServiceManager:
             self.ip = os.popen('hostname -I').read().split()[0]
         
         # Get service configuration from config manager if available
-        service_port = 5353 # Default value
-        service_type = "_module._tcp.local."  # Use standard service type format
-        service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
+        self.service_port = 5353 # Default value
+        self.service_type = "_module._tcp.local."  # Use standard service type format
+        self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
         
         if self.config_manager:
-            service_port = self.config_manager.get("service.port", service_port)
-            service_type = self.config_manager.get("service.service_type", service_type)
-            service_name = self.config_manager.get("service.service_name", service_name)
+            self.service_port = self.config_manager.get("service.port", self.service_port)
+            self.service_type = self.config_manager.get("service.service_type", self.service_type)
+            self.service_name = self.config_manager.get("service.service_name", self.service_name)
 
-        # Initialize zeroconf
+        # Initialize zeroconf but don't register service yet
         self.zeroconf = Zeroconf()
-        self.service_info = ServiceInfo(
-            service_type, # the service type - tcp protocol, local domain
-            service_name, # a unique name for the service to advertise itself
-            addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
-            port=service_port, # the port number of the controller
-            properties={
-                'type': self.module_type,
-                'id': self.module_id  # Important: Add module_id to properties
-            } # the properties of the service
-        )
-        self.zeroconf.register_service(self.service_info) # register the service with the above info
-        self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self) # Browse for habitat_module services"
+        self.service_info = None
+        self.service_browser = None
+        self.service_registered = False
 
-        self.logger.info(f"(SERVICE MANAGER) Module service registered with service info: {self.service_info}")
-    
-        # zeroconf methods
+        self.logger.info(f"(SERVICE MANAGER) Module service manager initialized (service not yet registered)")
+
+    def register_service(self):
+        """Register the service with current IP address"""
+        if self.service_registered:
+            self.logger.info("(SERVICE MANAGER) Service already registered")
+            return True
+            
+        try:
+            # Update IP address to current value
+            if os.name == 'nt': # Windows
+                self.ip = socket.gethostbyname(socket.gethostname())
+            else: # Linux/Unix
+                self.ip = os.popen('hostname -I').read().split()[0]
+            
+            self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
+            
+            # Create service info with current IP
+            self.service_info = ServiceInfo(
+                self.service_type, # the service type - tcp protocol, local domain
+                self.service_name, # a unique name for the service to advertise itself
+                addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
+                port=self.service_port, # the port number of the controller
+                properties={
+                    'type': self.module_type,
+                    'id': self.module_id  # Important: Add module_id to properties
+                } # the properties of the service
+            )
+            
+            # Register the service
+            self.zeroconf.register_service(self.service_info)
+            
+            # Start browsing for controller services
+            self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
+            
+            self.service_registered = True
+            self.logger.info(f"(SERVICE MANAGER) Module service registered with service info: {self.service_info}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(SERVICE MANAGER) Error registering service: {e}")
+            return False
+
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
         # Ignore our own service

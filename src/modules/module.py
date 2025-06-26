@@ -568,34 +568,97 @@ class Module:
         if self.is_running:
             self.logger.info("(MODULE) Module already running")
             return False
-        else:
-            self.is_running = True
-            self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.logger.info(f"(MODULE) Module started at {self.start_time}")
-            
-            # Update start time in command handler
-            self.command_handler.start_time = self.start_time
-            
-            # Start command listener thread if controller is discovered
-            if self.service_manager.controller_ip:
-                self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service_manager.controller_ip}")
-                # Connect to the controller
-                self.communication_manager.connect(
-                    self.service_manager.controller_ip,
-                    self.service_manager.controller_port
-                )
-                self.communication_manager.start_command_listener()
+        
+        # Wait for proper network connectivity (DHCP-assigned IP)
+        if not self._wait_for_network_ready():
+            self.logger.error("(MODULE) Failed to get proper network connectivity within timeout")
+            return False
+        
+        # Register service with proper IP address
+        if not self.service_manager.register_service():
+            self.logger.error("(MODULE) Failed to register service")
+            return False
+        
+        self.is_running = True
+        self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.logger.info(f"(MODULE) Module started at {self.start_time}")
+        
+        # Update start time in command handler
+        self.command_handler.start_time = self.start_time
+        
+        # Start command listener thread if controller is discovered
+        if self.service_manager.controller_ip:
+            self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service_manager.controller_ip}")
+            # Connect to the controller
+            self.communication_manager.connect(
+                self.service_manager.controller_ip,
+                self.service_manager.controller_port
+            )
+            self.communication_manager.start_command_listener()
 
-                # Start PTP only if it's not already running
-                if not self.ptp_manager.running:
-                    time.sleep(0.1)
-                    self.ptp_manager.start()
-
-                # Start sending heartbeats
+            # Start PTP only if it's not already running
+            if not self.ptp_manager.running:
                 time.sleep(0.1)
-                self.health_manager.start_heartbeats()
-            
+                self.ptp_manager.start()
+
+            # Start sending heartbeats
+            time.sleep(0.1)
+            self.health_manager.start_heartbeats()
+        
         return True
+
+    def _wait_for_network_ready(self, timeout: int = 60, check_interval: float = 2.0) -> bool:
+        """
+        Wait for proper network connectivity with DHCP-assigned IP address.
+        
+        Args:
+            timeout: Maximum time to wait in seconds (default: 60)
+            check_interval: Time between checks in seconds (default: 2.0)
+            
+        Returns:
+            bool: True if proper IP is obtained, False if timeout
+        """
+        self.logger.info(f"(MODULE) Waiting for proper network connectivity (timeout: {timeout}s)")
+        
+        start_time = time.time()
+        attempts = 0
+        
+        while time.time() - start_time < timeout:
+            attempts += 1
+            
+            try:
+                # Get all IP addresses
+                result = subprocess.run(['hostname', '-I'], 
+                                      capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    ip_addresses = result.stdout.strip().split()
+                    
+                    # Check for proper DHCP-assigned IP (192.168.x.x)
+                    for ip in ip_addresses:
+                        if ip.startswith('192.168.'):
+                            self.logger.info(f"(MODULE) Network ready! Got IP: {ip} (attempt {attempts})")
+                            return True
+                    
+                    # Log current IPs for debugging
+                    if ip_addresses:
+                        self.logger.info(f"(MODULE) Attempt {attempts}: Current IPs: {ip_addresses}")
+                    else:
+                        self.logger.info(f"(MODULE) Attempt {attempts}: No IP addresses found")
+                        
+                else:
+                    self.logger.warning(f"(MODULE) Attempt {attempts}: hostname -I failed: {result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                self.logger.warning(f"(MODULE) Attempt {attempts}: hostname -I timed out")
+            except Exception as e:
+                self.logger.warning(f"(MODULE) Attempt {attempts}: Error checking network: {e}")
+            
+            # Wait before next check
+            time.sleep(check_interval)
+        
+        self.logger.error(f"(MODULE) Network readiness timeout after {attempts} attempts")
+        return False
 
     def stop(self) -> bool:
         """

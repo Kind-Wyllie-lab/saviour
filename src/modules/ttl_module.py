@@ -16,6 +16,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
+import random
 from src.modules.module import Module
 from src.modules.module_command_handler import ModuleCommandHandler
 import logging
@@ -118,6 +119,16 @@ class TTLModule(Module):
         self.recording_stop_time = None
         self.recording = False
 
+        # Pulse generation variables
+        self.pulse_generation_active = False
+        self.pulse_generation_thread = None
+        self.pulse_generation_pin = None
+        self.pulse_generation_config = {
+            'min_interval': 1.0,  # Minimum interval between pulses in seconds
+            'max_interval': 10.0,  # Maximum interval between pulses in seconds
+            'pulse_duration': 0.01  # Duration of low pulse in seconds
+        }
+
         self.logger.info(f"Initialized TTL module with {len(self.input_pins)} input pins and {len(self.output_pins)} output pins")
 
     def handle_command(self, command: str, **kwargs):
@@ -215,6 +226,156 @@ class TTLModule(Module):
         with open(filename, "w") as f:
             for event in self.ttl_event_buffer:
                 f.write(f"{event}\n")
+    
+    def start_pseudo_random_pulses(self, pin_number, min_interval=1.0, max_interval=10.0, pulse_duration=0.01):
+        """
+        Start generating pseudo-random pulses on a specified output pin.
+        
+        Args:
+            pin_number: GPIO pin number to generate pulses on
+            min_interval: Minimum interval between pulses in seconds (default: 1.0)
+            max_interval: Maximum interval between pulses in seconds (default: 10.0)
+            pulse_duration: Duration of low pulse in seconds (default: 0.01)
+            
+        Returns:
+            bool: True if started successfully, False otherwise
+        """
+        try:
+            # Check if pin is valid
+            if pin_number not in self.ttl_output_pins:
+                self.logger.error(f"Pin {pin_number} is not configured as an output pin")
+                return False
+            
+            # Stop any existing pulse generation
+            if self.pulse_generation_active:
+                self.stop_pseudo_random_pulses()
+            
+            # Find the pin object
+            pin_obj = None
+            for pin in self.output_pins:
+                if pin.pin.number == pin_number:
+                    pin_obj = pin
+                    break
+            
+            if not pin_obj:
+                self.logger.error(f"Could not find pin object for pin {pin_number}")
+                return False
+            
+            # Update configuration
+            self.pulse_generation_config.update({
+                'min_interval': min_interval,
+                'max_interval': max_interval,
+                'pulse_duration': pulse_duration
+            })
+            
+            # Set initial state to low
+            pin_obj.off()
+            self.logger.info(f"Set pin {pin_number} to initial low state")
+            
+            # Start pulse generation thread
+            self.pulse_generation_active = True
+            self.pulse_generation_pin = pin_obj
+            
+            self.pulse_generation_thread = threading.Thread(
+                target=self._pulse_generation_worker,
+                args=(pin_obj,),
+                daemon=True
+            )
+            self.pulse_generation_thread.start()
+            
+            self.logger.info(f"Started pseudo-random pulse generation on pin {pin_number}")
+            self.logger.info(f"Configuration: min_interval={min_interval}s, max_interval={max_interval}s, pulse_duration={pulse_duration}s")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error starting pseudo-random pulses: {e}")
+            return False
+    
+    def stop_pseudo_random_pulses(self):
+        """
+        Stop generating pseudo-random pulses.
+        
+        Returns:
+            bool: True if stopped successfully, False otherwise
+        """
+        try:
+            if not self.pulse_generation_active:
+                self.logger.info("Pulse generation was not active")
+                return True
+            
+            # Stop the thread
+            self.pulse_generation_active = False
+            
+            # Wait for thread to finish
+            if self.pulse_generation_thread and self.pulse_generation_thread.is_alive():
+                self.pulse_generation_thread.join(timeout=2.0)
+            
+            # Set pin back to high state
+            if self.pulse_generation_pin:
+                self.pulse_generation_pin.on()
+                self.logger.info(f"Set pin {self.pulse_generation_pin.pin.number} back to high state")
+            
+            self.pulse_generation_pin = None
+            self.pulse_generation_thread = None
+            
+            self.logger.info("Stopped pseudo-random pulse generation")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping pseudo-random pulses: {e}")
+            return False
+    
+    def _pulse_generation_worker(self, pin_obj):
+        """
+        Worker thread for generating pseudo-random pulses.
+        
+        Args:
+            pin_obj: GPIO pin object to generate pulses on
+        """
+        try:
+            # Set pin to high initially
+            pin_obj.on()
+            self.logger.info(f"Pulse generation worker started on pin {pin_obj.pin.number}")
+            
+            while self.pulse_generation_active:
+                # Generate random interval
+                interval = random.uniform(
+                    self.pulse_generation_config['min_interval'],
+                    self.pulse_generation_config['max_interval']
+                )
+                
+                # Wait for the interval
+                time.sleep(interval)
+                
+                # Check if we should still be running
+                if not self.pulse_generation_active:
+                    break
+                
+                # Generate pulse (set low, then high)
+                pin_obj.off()
+                time.sleep(self.pulse_generation_config['pulse_duration'])
+                pin_obj.on()
+                
+                self.logger.debug(f"Generated pulse on pin {pin_obj.pin.number} after {interval:.3f}s interval")
+                
+        except Exception as e:
+            self.logger.error(f"Error in pulse generation worker: {e}")
+        finally:
+            self.logger.info(f"Pulse generation worker stopped for pin {pin_obj.pin.number}")
+    
+    def get_pulse_generation_status(self):
+        """
+        Get the current status of pulse generation.
+        
+        Returns:
+            dict: Status information about pulse generation
+        """
+        return {
+            'active': self.pulse_generation_active,
+            'pin': self.pulse_generation_pin.pin.number if self.pulse_generation_pin else None,
+            'config': self.pulse_generation_config.copy()
+        }
     
     def list_recordings(self):
         """List all recorded videos with metadata"""

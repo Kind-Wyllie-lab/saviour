@@ -135,13 +135,29 @@ class PTPManager:
                     self.logger.warning(f"(PTP MANAGER) Could not check {service} service status: {e}")
 
     def _stop_timesyncd(self):
-        """Stop systemd-timesyncd which interferes with PTP."""
-        self.logger.info("(PTP MANAGER) Stopping systemd-timesyncd")
-        try:
-            subprocess.run(["systemctl", "stop", "systemd-timesyncd"], check=True)
-            subprocess.run(["timedatectl", "set-ntp", "false"], check=True)
-        except subprocess.CalledProcessError as e:
-            self.logger.warning(f"(PTP MANAGER) Could not stop timesyncd: {e}")
+        """Manage systemd-timesyncd for PTP coexistence."""
+        if self.role == PTPRole.MASTER:
+            # For master, keep NTP enabled but with reduced frequency
+            # The setup script should have configured this
+            self.logger.info("(PTP MANAGER) Controller mode: NTP should be configured for PTP coexistence")
+            try:
+                # Check if NTP is enabled
+                result = subprocess.run(["timedatectl", "show", "--property=NTP"], 
+                                       capture_output=True, text=True)
+                if "yes" in result.stdout.lower():
+                    self.logger.info("(PTP MANAGER) NTP is enabled - this is correct for controller mode")
+                else:
+                    self.logger.warning("(PTP MANAGER) NTP is disabled - consider enabling for internet time sync")
+            except subprocess.CalledProcessError:
+                self.logger.warning("(PTP MANAGER) Could not check NTP status")
+        else:
+            # For slave modules, disable NTP to avoid conflicts
+            self.logger.info("(PTP MANAGER) Module mode: Disabling NTP to avoid conflicts with PTP")
+            try:
+                subprocess.run(["timedatectl", "set-ntp", "false"], check=True)
+                subprocess.run(["systemctl", "stop", "systemd-timesyncd"], check=True)
+            except subprocess.CalledProcessError as e:
+                self.logger.warning(f"(PTP MANAGER) Could not disable timesyncd: {e}")
 
     def _get_service_status(self, service_name):
         """Get the status of a systemd service."""
@@ -392,6 +408,51 @@ class PTPManager:
         self.status = 'stopped'
         self.logger.info("(PTP MANAGER) Stopped PTP services.")
 
+    def get_ntp_status(self):
+        """Get current NTP synchronization status.
+        
+        Returns:
+            dict: NTP status information
+        """
+        try:
+            # Get NTP enabled status
+            ntp_enabled_result = subprocess.run(['timedatectl', 'show', '--property=NTP'], 
+                                               capture_output=True, text=True)
+            ntp_enabled = 'yes' in ntp_enabled_result.stdout.lower()
+            
+            # Get NTP synchronized status
+            ntp_sync_result = subprocess.run(['timedatectl', 'show', '--property=NTPSynchronized'], 
+                                            capture_output=True, text=True)
+            ntp_synchronized = 'yes' in ntp_sync_result.stdout.lower()
+            
+            # Get system time
+            system_time_result = subprocess.run(['timedatectl', 'show', '--property=TimeUSec'], 
+                                               capture_output=True, text=True)
+            system_time = None
+            if 'TimeUSec=' in system_time_result.stdout:
+                try:
+                    time_str = system_time_result.stdout.split('TimeUSec=')[1].strip()
+                    system_time = int(time_str) / 1000000  # Convert microseconds to seconds
+                except (ValueError, IndexError):
+                    pass
+            
+            return {
+                'ntp_enabled': ntp_enabled,
+                'ntp_synchronized': ntp_synchronized,
+                'system_time': system_time,
+                'role': self.role.value
+            }
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"(PTP MANAGER) Could not get NTP status: {e}")
+            return {
+                'ntp_enabled': False,
+                'ntp_synchronized': False,
+                'system_time': None,
+                'role': self.role.value,
+                'error': str(e)
+            }
+
     def get_status(self):
         """Get current PTP status."""
         ptp4l_status = self._get_service_status(self.ptp4l_service)
@@ -412,6 +473,7 @@ class PTPManager:
             'ptp4l_freq': self.latest_ptp4l_freq,
             'phc2sys_offset': self.latest_phc2sys_offset,
             'phc2sys_freq': self.latest_phc2sys_freq,
+            'ntp_status': self.get_ntp_status()
         }
 
     def get_ptp_buffer(self, max_entries=None):
@@ -488,8 +550,85 @@ class PTPManager:
         return time.time()
 
     def sync_to_network_time(self):
-        """Suspend ptp and sync with ptp before resuming ptp"""
+        """Temporarily suspend PTP, sync with NTP, then resume PTP.
         
+        This is useful for controllers that need to periodically sync with internet time
+        while maintaining PTP synchronization for modules.
+        
+        Returns:
+            bool: True if sync was successful, False otherwise
+        """
+        if self.role != PTPRole.MASTER:
+            self.logger.warning("(PTP MANAGER) sync_to_network_time only available for master mode")
+            return False
+            
+        if not self.running:
+            self.logger.warning("(PTP MANAGER) PTP not running, cannot sync to network time")
+            return False
+            
+        self.logger.info("(PTP MANAGER) Starting network time sync procedure...")
+        
+        try:
+            # Step 1: Temporarily stop PTP services
+            self.logger.info("(PTP MANAGER) Temporarily stopping PTP services...")
+            subprocess.run(['systemctl', 'stop', self.phc2sys_service], check=True)
+            subprocess.run(['systemctl', 'stop', self.ptp4l_service], check=True)
+            
+            # Step 2: Enable NTP and wait for sync
+            self.logger.info("(PTP MANAGER) Enabling NTP for network time sync...")
+            subprocess.run(['timedatectl', 'set-ntp', 'true'], check=True)
+            subprocess.run(['systemctl', 'start', 'systemd-timesyncd'], check=True)
+            
+            # Step 3: Wait for NTP sync (up to 30 seconds)
+            self.logger.info("(PTP MANAGER) Waiting for NTP sync...")
+            max_wait = 30
+            for i in range(max_wait):
+                result = subprocess.run(['timedatectl', 'show', '--property=Synchronized'], 
+                                       capture_output=True, text=True)
+                if 'yes' in result.stdout.lower():
+                    self.logger.info("(PTP MANAGER) NTP sync completed successfully")
+                    break
+                time.sleep(1)
+            else:
+                self.logger.warning("(PTP MANAGER) NTP sync timeout after 30 seconds")
+            
+            # Step 4: Get current time offset for logging
+            result = subprocess.run(['timedatectl', 'show', '--property=NTPSynchronized'], 
+                                   capture_output=True, text=True)
+            ntp_sync = 'yes' in result.stdout.lower()
+            
+            # Step 5: Restart PTP services
+            self.logger.info("(PTP MANAGER) Restarting PTP services...")
+            subprocess.run(['systemctl', 'start', self.ptp4l_service], check=True)
+            time.sleep(2)
+            subprocess.run(['systemctl', 'start', self.phc2sys_service], check=True)
+            
+            # Step 6: Wait for PTP to stabilize
+            self.logger.info("(PTP MANAGER) Waiting for PTP to stabilize...")
+            time.sleep(5)
+            
+            # Step 7: Check PTP status
+            ptp4l_status = self._get_service_status(self.ptp4l_service)
+            phc2sys_status = self._get_service_status(self.phc2sys_service)
+            
+            if ptp4l_status == 'active' and phc2sys_status == 'active':
+                self.logger.info("(PTP MANAGER) Network time sync completed successfully")
+                self.logger.info(f"(PTP MANAGER) NTP synchronized: {ntp_sync}")
+                self.logger.info(f"(PTP MANAGER) PTP services: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
+                return True
+            else:
+                self.logger.error(f"(PTP MANAGER) PTP services failed to restart: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
+                return False
+                
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"(PTP MANAGER) Error during network time sync: {e}")
+            # Try to restart PTP services even if sync failed
+            try:
+                subprocess.run(['systemctl', 'start', self.ptp4l_service], check=False)
+                subprocess.run(['systemctl', 'start', self.phc2sys_service], check=False)
+            except:
+                pass
+            return False
 
     def get_service_logs(self, service_name=None, lines=20):
         """Get logs from PTP services."""

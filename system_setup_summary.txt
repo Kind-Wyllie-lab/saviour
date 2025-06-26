@@ -1,56 +1,27 @@
 Habitat Setup Summary
-Generated: 2025-06-25 14:37:42
-Device Role: controller
+Generated: 2025-06-26 16:49:41
+Device Role: module
+Module Type: camera
 
-Device Role: CONTROLLER
-PTP Configuration: MASTER mode
+Device Role: MODULE
+Module Type: CAMERA
+PTP Configuration: SLAVE mode
+This module will synchronize to the controller's PTP master.
 
-=== Samba Share Setup ===
-Samba share configured successfully!
-Share name: controller_share
-Path: /home/pi/controller_share
-Username: pi
-Password: habitat
+=== Module Service Setup ===
+Habitat camera module service configured and enabled at boot.
+Service: habitat-camera-module
 
-Access from other devices:
-  Windows: \\192.168.0.32\controller_share
-  Linux/Mac: smb://192.168.0.32/controller_share
-
-Samba control commands:
-  Start: sudo systemctl start smbd nmbd
-  Stop:  sudo systemctl stop smbd nmbd
-  Status: sudo systemctl status smbd nmbd
-  Restart: sudo systemctl restart smbd nmbd
-
-=== DHCP Server Setup ===
-DHCP server is configured but disabled by default.
-Commands to manage DHCP server:
-  Start: sudo systemctl start dnsmasq
-  Stop:  sudo systemctl stop dnsmasq
-  Status: sudo systemctl status dnsmasq
-  Enable at boot: sudo systemctl enable dnsmasq
-  Disable at boot: sudo systemctl disable dnsmasq
-
-Network Configuration:
-  - DHCP range: 192.168.1.100-192.168.1.200
-  - Gateway: 192.168.1.1 (this Pi)
-  - Interface: eth0 only (no wlan0)
-  - No internet routing - devices use wlan0 for internet
-
-=== Controller Service Setup ===
-Habitat controller service configured and enabled at boot.
-Service: habitat-controller-service
-
-Controller service control commands:
-  Start: sudo systemctl start habitat-controller-service
-  Stop:  sudo systemctl stop habitat-controller-service
-  Status: sudo systemctl status habitat-controller-service
-  Logs: sudo journalctl -u habitat-controller-service -f
-  Restart: sudo systemctl restart habitat-controller-service
+Module service control commands:
+  Start: sudo systemctl start habitat-camera-module
+  Stop:  sudo systemctl stop habitat-camera-module
+  Status: sudo systemctl status habitat-camera-module
+  Logs: sudo journalctl -u habitat-camera-module -f
+  Restart: sudo systemctl restart habitat-camera-module
 
 === PTP Services Status ===
 PTP services are configured and enabled at boot:
-  - ptp4l: PTP daemon (controller mode)
+  - ptp4l: PTP daemon (module mode)
   - phc2sys: Hardware clock synchronization
 
 PTP Control Commands:

@@ -3,7 +3,7 @@
 # Install system dependencies and set up virtual environment for the habitat project
 # Usage: bash setup.sh
 
-set -e
+set -e # If any function throws an error (doesn't return 0), exit immediately.
 
 # Setup logging
 LOG_FILE="system_setup.log"
@@ -553,10 +553,18 @@ else
 fi
 
 # Configure module systemd service
-configure_module_service
+if [ "$DEVICE_ROLE" = "module" ]; then
+    configure_module_service
+else
+    log_message "Controller Pi detected. Skipping module service configuration."
+fi
 
 # Configure controller systemd service
-configure_controller_service
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    configure_controller_service
+else
+    log_message "Module Pi detected. Skipping controller service configuration."
+fiq
 
 log_section "Setting up Virtual Environment"
 # Remove existing environment if it exists

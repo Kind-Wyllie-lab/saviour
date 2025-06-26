@@ -41,7 +41,23 @@ class ControllerServiceManager():
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
-            self.ip = os.popen('hostname -I').read().split()[0]
+            try:
+                # Try hostname -I first
+                hostname_output = os.popen('hostname -I').read().strip()
+                if hostname_output:
+                    self.ip = hostname_output.split()[0]
+                else:
+                    # Fallback to socket method
+                    self.ip = socket.gethostbyname(socket.gethostname())
+            except (IndexError, Exception) as e:
+                # Fallback to socket method if hostname -I fails
+                self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname -I: {e}, using fallback method")
+                try:
+                    self.ip = socket.gethostbyname(socket.gethostname())
+                except Exception as e2:
+                    # Last resort fallback
+                    self.logger.error(f"(SERVICE MANAGER) Failed to get IP address: {e2}, using localhost")
+                    self.ip = "127.0.0.1"
 
         # Get service configuration from config manager if available
         service_port = 5353 # Default value #TODO: Read this from config_manager    

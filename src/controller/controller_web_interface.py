@@ -104,6 +104,10 @@ class WebInterfaceManager:
         def recordings():
             return render_template('recordings.html')
     
+        @self.app.route('/guide')
+        def guide():
+            return render_template('guide.html')
+
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect():

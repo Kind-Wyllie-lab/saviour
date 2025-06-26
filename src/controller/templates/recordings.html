@@ -590,12 +590,12 @@
                                 <span class="experiment-stats">${recordingCount} recording${recordingCount !== 1 ? 's' : ''} • ${formatFileSize(totalSize)}</span>
                             </div>
                             <div class="experiment-actions">
-                                <button class="action-button export-all" title="Export All Recordings for ${experimentName}" onclick="exportAllRecordings('${experimentName}')">
+                                <!-- <button class="action-button export-all" title="Export All Recordings for ${experimentName}" onclick="exportAllRecordings('${experimentName}')">
                                     Export All
                                 </button>
                                 <button class="action-button delete-all" title="Delete All Recordings for ${experimentName}" onclick="deleteAllRecordings('${experimentName}')">
                                     Delete All
-                                </button>
+                                </button> -->
                                 <div class="experiment-toggle" onclick="toggleExperimentGroup('${experimentName}')">
                                     <span class="toggle-icon">▼</span>
                                 </div>
@@ -610,12 +610,12 @@
                                         <span class="recording-size">${formatFileSize(recording.size)}</span>
                                     </div>
                                     <div class="recording-actions">
-                                        <button class="action-button export" title="Export Recording" data-filename="${recording.filename}">
+                                        <!-- <button class="action-button export" title="Export Recording" data-filename="${recording.filename}">
                                             Export
                                         </button>
                                         <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
                                             Delete
-                                        </button>
+                                        </button> -->
                                     </div>
                                 </div>
                             `).join('')}

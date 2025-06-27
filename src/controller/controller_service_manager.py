@@ -42,12 +42,24 @@ class ControllerServiceManager():
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
             try:
-                # Try hostname -I first
+                # Try hostname -I first (most reliable on Linux)
                 hostname_output = os.popen('hostname -I').read().strip()
                 if hostname_output:
-                    self.ip = hostname_output.split()[0]
+                    # Get the first non-loopback IP address
+                    ips = hostname_output.split()
+                    self.logger.info(f"(SERVICE MANAGER) Available IPs from hostname -I: {ips}")
+                    for ip in ips:
+                        if not ip.startswith('127.'):
+                            self.ip = ip
+                            self.logger.info(f"(SERVICE MANAGER) Selected non-loopback IP: {self.ip}")
+                            break
+                    else:
+                        # If no non-loopback IP found, use the first one
+                        self.ip = ips[0] if ips else "127.0.0.1"
+                        self.logger.warning(f"(SERVICE MANAGER) No non-loopback IP found, using: {self.ip}")
                 else:
                     # Fallback to socket method
+                    self.logger.warning("(SERVICE MANAGER) hostname -I returned empty, using socket fallback")
                     self.ip = socket.gethostbyname(socket.gethostname())
             except (IndexError, Exception) as e:
                 # Fallback to socket method if hostname -I fails
@@ -58,6 +70,8 @@ class ControllerServiceManager():
                     # Last resort fallback
                     self.logger.error(f"(SERVICE MANAGER) Failed to get IP address: {e2}, using localhost")
                     self.ip = "127.0.0.1"
+        
+        self.logger.info(f"(SERVICE MANAGER) Controller IP address: {self.ip}")
 
         # Get service configuration from config manager if available
         service_port = 5353 # Default value #TODO: Read this from config_manager    

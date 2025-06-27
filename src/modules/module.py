@@ -166,10 +166,17 @@ class Module:
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"(MODULE) Module will now initialize the necessary managers")
-        # Only proceed if we're not already connected
-        if self.communication_manager.controller_ip:
-            self.logger.info("(MODULE) Already connected to controller")
+        
+        # Check if we're already connected to this controller
+        if (self.communication_manager.controller_ip == controller_ip and 
+            self.communication_manager.controller_port == controller_port):
+            self.logger.info("(MODULE) Already connected to this controller")
             return
+            
+        # If we're connected to a different controller, disconnect first
+        if self.communication_manager.controller_ip:
+            self.logger.info("(MODULE) Connected to different controller, disconnecting first")
+            self.controller_disconnected()
             
         try:
             # 1. Initialize file transfer
@@ -183,12 +190,14 @@ class Module:
             
             # 2. Connect communication manager
             self.logger.info("(MODULE) Connecting communication manager to controller")
-            self.communication_manager.connect(controller_ip, controller_port)
+            if not self.communication_manager.connect(controller_ip, controller_port):
+                raise Exception("Failed to connect communication manager")
             self.logger.info("(MODULE) Communication manager connected to controller")
             
             # 3. Start command listener
             self.logger.info("(MODULE) Requesting communication manager to start command listener")
-            self.communication_manager.start_command_listener()
+            if not self.communication_manager.start_command_listener():
+                raise Exception("Failed to start command listener")
             self.logger.info("(MODULE) Command listener started")
             
             # 4. Start heartbeats if module is running
@@ -214,12 +223,26 @@ class Module:
         """Callback when controller is disconnected"""
         # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
         self.logger.info("(MODULE) Controller disconnected")
+        
+        # Stop recording if active
+        if self.is_recording:
+            self.logger.info("(MODULE) Stopping recording due to controller disconnect")
+            self.stop_recording()
+        
+        # Stop PTP services
         self.ptp_manager.stop()
+        
+        # Stop heartbeats before cleaning up communication
+        self.health_manager.stop_heartbeats()
+        
+        # Clean up communication manager (this will recreate ZMQ context and sockets)
         self.communication_manager.cleanup()
+        
+        # Clean up file transfer
         self.file_transfer = None
-        self.is_running = False
         self.is_streaming = False
-
+        
+        self.logger.info("(MODULE) Controller disconnection cleanup complete, ready for reconnection")
 
     # Recording functions
     def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:

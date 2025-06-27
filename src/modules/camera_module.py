@@ -40,7 +40,6 @@ import cv2
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
-    
     def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
         super().__init__(logger, module_id, module_type, config_manager, start_time)
         self.logger.info("(CAMERA COMMAND HANDLER) Initialised")

@@ -520,6 +520,12 @@ log_message "Setup script version: $(date '+%Y-%m-%d %H:%M:%S')"
 log_message "System: $(uname -a)"
 log_message "User: $(whoami)"
 
+# Ask user about their device role first
+ask_user_role
+
+# Ask user about module type if this is a module
+ask_module_type
+
 # Synchronize system time before proceeding
 log_section "Synchronizing System Time"
 sudo timedatectl set-ntp true
@@ -582,12 +588,6 @@ if ! grep -q "camera_auto_detect=1" /boot/config.txt; then
     echo "Camera interface enabled. A reboot may be required."
 fi
 
-# Ask user about their device role
-ask_user_role
-
-# Ask user about module type
-ask_module_type
-
 # Configure NTP for PTP coexistence (controllers only)
 if [ "$DEVICE_ROLE" = "controller" ]; then
     log_message "Controller Pi detected. Configuring NTP for PTP coexistence..."
@@ -627,7 +627,7 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     configure_controller_service
 else
     log_message "Module Pi detected. Skipping controller service configuration."
-fiq
+fi
 
 log_section "Setting up Virtual Environment"
 # Remove existing environment if it exists

@@ -1,17 +1,31 @@
 {
-    "ttl_io": {
-        "interface_type": "gpio",
-        "i2c_address": 0,
-        "spi_bus": 0,
-        "spi_device": 0
+    "pins": {
+        "2": {
+            "type": "output",
+            "output_type": "experiment_clock",
+            "duty_cycle": "75%",
+            "description": "Experiment clock with 75% duty cycle"
+        },
+        "3": {
+            "type": "input",
+            "description": "Debug output from GPIO2"
+        },
+        "19": {
+            "type": "output",
+            "output_type": "pseudorandom",
+            "min_interval": 2.0,
+            "max_interval": 8.0,
+            "pulse_duration": 0.05,
+            "description": "Pseudorandom pulses with 2-8 second intervals"
+        }
     },
-    "digital_inputs": {
-        "pins": [16],
-        "pull_up": true
-    },
-    "digital_outputs": {
-        "pins": [20, 21],
-        "default_state": "high"
-    },
-    "recording_folder": "rec"
+    "recording_folder": "rec",
+    "controller_share_path": "controller_share",
+    "controller_username": "pi",
+    "controller_password": "habitat",
+    "nas_ip": "192.168.0.2",
+    "nas_share_path": "data",
+    "nas_recordings_path": "recordings",
+    "nas_username": "sidbit",
+    "nas_password": "RaspberryWonder1305"
 } 

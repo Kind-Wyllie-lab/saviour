@@ -243,7 +243,9 @@ class Module:
             return None
         
         # Set up recording - filename and folder
-        self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
+        # self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.recording_session_id = f"{timestamp}_{self.module_id}"
         
         # Use experiment name in filename if provided
         if experiment_name:

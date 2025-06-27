@@ -26,6 +26,29 @@ import datetime
 import json
 from typing import Dict, Any, Optional, Callable
 
+# Add GPIO cleanup at module level
+import atexit
+import signal
+
+# Global GPIO cleanup function
+def cleanup_gpio():
+    """Clean up all GPIO resources"""
+    try:
+        gpiozero.Device.pin_factory.close()
+    except:
+        pass
+
+# Register cleanup function
+atexit.register(cleanup_gpio)
+
+# Handle signals for cleanup
+def signal_handler(signum, frame):
+    cleanup_gpio()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 class TTLCommandHandler(ModuleCommandHandler):
     """Command handler specific to TTL functionality"""
     def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
@@ -326,11 +349,13 @@ class TTLModule(Module):
         self.logger.info(f"Stopped monitoring output pin {pin.pin}")
 
     def _handle_input_pin_low(self, pin):
-        self.ttl_event_buffer.append((time.time_ns(), pin.pin, "low"))
+        """Handle input pin going low (pressed)"""
+        self.ttl_event_buffer.append((time.time_ns(), pin.pin.number, "low"))
         self.logger.info(f"(MODULE) Input pin {pin.pin} went low (pressed)")
 
     def _handle_input_pin_high(self, pin):
-        self.ttl_event_buffer.append((time.time_ns(), pin.pin, "high"))
+        """Handle input pin going high (released)"""
+        self.ttl_event_buffer.append((time.time_ns(), pin.pin.number, "high"))
         self.logger.info(f"(MODULE) Input pin {pin.pin} went high (released)") 
 
     def _print_ttl_event_buffer(self):
@@ -339,22 +364,65 @@ class TTLModule(Module):
             self.logger.info(f"(MODULE) TTL event: {event}")
 
     def _save_ttl_event_buffer_to_file(self, filename="ttl_event_buffer.txt"):
-        """Save TTL event buffer to file with structured format"""
+        """Save TTL event buffer to file with Excel-friendly format"""
         try:
             with open(filename, "w") as f:
-                # Write header
+                # Write header with metadata
                 f.write("# TTL Event Recording\n")
                 f.write(f"# Session ID: {getattr(self, 'recording_session_id', 'unknown')}\n")
                 f.write(f"# Recording Start: {getattr(self, 'recording_start_time', 'unknown')}\n")
                 f.write(f"# Recording Stop: {getattr(self, 'recording_stop_time', 'unknown')}\n")
                 f.write(f"# Total Events: {len(self.ttl_event_buffer)}\n")
-                f.write("# Format: timestamp_ns, pin_number, state\n")
                 f.write("#\n")
                 
-                # Write events
+                # Write CSV header for Excel compatibility (no comment prefix)
+                f.write("Timestamp_Nanoseconds,Timestamp_Seconds,Timestamp_ISO,Pin_Number,Pin_State,Event_Type,Pin_Description\n")
+                
+                # Write events in CSV format
                 for event in self.ttl_event_buffer:
                     timestamp_ns, pin_number, state = event
-                    f.write(f"{timestamp_ns},{pin_number},{state}\n")
+                    timestamp_s = timestamp_ns / 1e9
+                    
+                    # Convert to ISO format for human readability
+                    timestamp_iso = datetime.datetime.fromtimestamp(timestamp_s).isoformat()
+                    
+                    # Normalize pin number (remove 'GPIO' prefix if present)
+                    if isinstance(pin_number, str) and pin_number.startswith('GPIO'):
+                        pin_number = pin_number[4:]  # Remove 'GPIO' prefix
+                    
+                    # Determine event type and description based on pin configuration
+                    event_type = "unknown"
+                    pin_description = "Unknown pin"
+                    
+                    if str(pin_number) in self.pin_configs:
+                        pin_config = self.pin_configs[str(pin_number)]
+                        pin_description = pin_config.get('description', 'No description')
+                        
+                        if pin_config.get('type') == 'input':
+                            event_type = "input"
+                        elif pin_config.get('type') == 'output':
+                            output_type = pin_config.get('output_type', 'standard')
+                            event_type = output_type
+                    else:
+                        # Fallback for legacy pins
+                        if pin_number in self.experiment_clock_pins:
+                            event_type = "experiment_clock"
+                            pin_description = "Experiment clock pin"
+                        elif pin_number in self.pseudorandom_pins:
+                            event_type = "pseudorandom"
+                            pin_description = "Pseudorandom pin"
+                        else:
+                            # Check if it's an input pin
+                            for pin in self.input_pins:
+                                if pin.pin.number == pin_number:
+                                    event_type = "input"
+                                    pin_description = "Input pin"
+                                    break
+                            if event_type == "unknown":
+                                event_type = "output"
+                                pin_description = "Output pin"
+                    
+                    f.write(f"{timestamp_ns},{timestamp_s:.6f},{timestamp_iso},{pin_number},{state},{event_type},{pin_description}\n")
                 
             self.logger.info(f"Saved {len(self.ttl_event_buffer)} TTL events to {filename}")
             
@@ -544,7 +612,7 @@ class TTLModule(Module):
             # Reassign pins with new configuration
             self.assign_pins()
             
-            self.logger.info(f"Successfully updated pin configuration: {pins_config}")
+            self.logger.info(f"(TTL MODULE) Successfully updated pin configuration: {pins_config}")
             
             # Send status response
             self.communication_manager.send_status({
@@ -589,16 +657,19 @@ class TTLModule(Module):
     def assign_pins(self):
         """Assign pins based on configuration from config file"""
         try:
+            # Clean up any existing GPIO resources first
+            self._cleanup_gpio()
+            
             # Get pin configuration from config
             pins_config = self.config_manager.get("pins", {})
             
             if not pins_config:
-                self.logger.warning("No pin configuration found in config file")
+                self.logger.warning("(TTL MODULE) No pin configuration found in config file")
                 # Fall back to old method if no config
                 self._assign_pins_legacy()
                 return
             
-            self.logger.info(f"Assigning pins from config: {pins_config}")
+            self.logger.info(f"(TTL MODULE) Assigning pins from config: {pins_config}")
             
             # Clear existing pin lists
             self.input_pins = []
@@ -622,57 +693,95 @@ class TTLModule(Module):
                     self.pin_configs[pin_number] = pin_config
                     
                     if pin_type == "input":
-                        # Create input pin (Button object)
-                        pin_obj = gpiozero.Button(pin_number, bounce_time=0)
-                        self.input_pins.append(pin_obj)
-                        input_pins_assigned.append(pin_number)
-                        self.logger.info(f"Assigned input pin {pin_number}")
+                        # Create input pin (Button object) with proper error handling
+                        try:
+                            pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=True)
+                            self.input_pins.append(pin_obj)
+                            input_pins_assigned.append(pin_number)
+                            self.logger.info(f"(TTL MODULE) Assigned input pin {pin_number}")
+                        except Exception as e:
+                            self.logger.error(f"(TTL MODULE) Failed to assign input pin {pin_number}: {e}")
+                            # Try to clean up and retry once
+                            self._cleanup_gpio()
+                            try:
+                                pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=True)
+                                self.input_pins.append(pin_obj)
+                                input_pins_assigned.append(pin_number)
+                                self.logger.info(f"(TTL MODULE) Successfully assigned input pin {pin_number} after retry")
+                            except Exception as e2:
+                                self.logger.error(f"(TTL MODULE) Failed to assign input pin {pin_number} after retry: {e2}")
                         
                     elif pin_type == "output":
-                        # Create output pin (LED object)
-                        pin_obj = gpiozero.LED(pin_number)
-                        self.output_pins.append(pin_obj)
-                        output_pins_assigned.append(pin_number)
-                        
-                        # Set initial state based on output type
-                        output_type = pin_config.get("output_type", "standard")
-                        if output_type == "experiment_clock":
-                            # For experiment clock, start in low state (will go high when recording starts)
-                            pin_obj.off()
-                            self.experiment_clock_pins.append(pin_number)
-                            self.logger.info(f"Assigned output pin {pin_number} as experiment_clock (initial state: LOW)")
-                        elif output_type == "pseudorandom":
-                            # For pseudorandom, start in low state
-                            pin_obj.off()
-                            self.pseudorandom_pins.append(pin_number)
-                            self.logger.info(f"Assigned output pin {pin_number} as pseudorandom (initial state: LOW)")
-                        else:
-                            # Standard output, start in low state
-                            pin_obj.off()
-                            self.logger.info(f"Assigned output pin {pin_number} as standard (initial state: LOW)")
+                        # Create output pin (LED object) with proper error handling
+                        try:
+                            pin_obj = gpiozero.LED(pin_number)
+                            self.output_pins.append(pin_obj)
+                            output_pins_assigned.append(pin_number)
+                            
+                            # Set initial state based on output type
+                            output_type = pin_config.get("output_type", "standard")
+                            if output_type == "experiment_clock":
+                                # For experiment clock, start in low state (will go high when recording starts)
+                                pin_obj.off()
+                                self.experiment_clock_pins.append(pin_number)
+                                self.logger.info(f"(TTL MODULE) Assigned output pin {pin_number} as experiment_clock (initial state: LOW)")
+                            elif output_type == "pseudorandom":
+                                # For pseudorandom, start in low state
+                                pin_obj.off()
+                                self.pseudorandom_pins.append(pin_number)
+                                self.logger.info(f"(TTL MODULE) Assigned output pin {pin_number} as pseudorandom (initial state: LOW)")
+                            else:
+                                # Standard output, start in low state
+                                pin_obj.off()
+                                self.logger.info(f"(TTL MODULE) Assigned output pin {pin_number} as standard (initial state: LOW)")
+                        except Exception as e:
+                            self.logger.error(f"(TTL MODULE) Failed to assign output pin {pin_number}: {e}")
+                            # Try to clean up and retry once
+                            self._cleanup_gpio()
+                            try:
+                                pin_obj = gpiozero.LED(pin_number)
+                                self.output_pins.append(pin_obj)
+                                output_pins_assigned.append(pin_number)
+                                pin_obj.off()
+                                self.logger.info(f"(TTL MODULE) Successfully assigned output pin {pin_number} after retry")
+                            except Exception as e2:
+                                self.logger.error(f"(TTL MODULE) Failed to assign output pin {pin_number} after retry: {e2}")
                             
                     else:
-                        self.logger.warning(f"Unknown pin type '{pin_type}' for pin {pin_number}")
+                        self.logger.warning(f"(TTL MODULE) Unknown pin type '{pin_type}' for pin {pin_number}")
                         
                 except ValueError as e:
-                    self.logger.error(f"Invalid pin number '{pin_number}': {e}")
+                    self.logger.error(f"(TTL MODULE) Invalid pin number '{pin_number}': {e}")
                 except Exception as e:
-                    self.logger.error(f"Error assigning pin {pin_number}: {e}")
+                    self.logger.error(f"(TTL MODULE) Error assigning pin {pin_number}: {e}")
             
             # Update the pin lists for backward compatibility
             self.ttl_input_pins = input_pins_assigned
             self.ttl_output_pins = output_pins_assigned
             
-            self.logger.info(f"Pin assignment complete: {len(self.input_pins)} input pins, {len(self.output_pins)} output pins")
+            self.logger.info(f"(TTL MODULE) Pin assignment complete: {len(self.input_pins)} input pins, {len(self.output_pins)} output pins")
             
         except Exception as e:
-            self.logger.error(f"Error in assign_pins: {e}")
+            self.logger.error(f"(TTL MODULE) Error in assign_pins: {e}")
             # Fall back to legacy method
             self._assign_pins_legacy()
     
+    def _cleanup_gpio(self):
+        """Clean up GPIO resources to prevent conflicts"""
+        try:
+            # Close existing pin factory
+            gpiozero.Device.pin_factory.close()
+            # Small delay to ensure cleanup
+            time.sleep(0.1)
+        except Exception as e:
+            self.logger.debug(f"(TTL MODULE) GPIO cleanup error (non-critical): {e}")
+    
     def _assign_pins_legacy(self):
         """Legacy pin assignment - fallback when no config file is available"""
-        self.logger.info("Using legacy pin assignment")
+        self.logger.info("(TTL MODULE) Using legacy pin assignment")
+        
+        # Clean up GPIO first
+        self._cleanup_gpio()
         
         # Handle None values from config
         if self.ttl_input_pins is None:
@@ -682,15 +791,22 @@ class TTLModule(Module):
         
         # Assign input pins
         for pin in self.ttl_input_pins:
-            self.input_pins.append(gpiozero.Button(pin, bounce_time=0))
-            self.logger.info(f"Legacy: Assigned input pin {pin}")
+            try:
+                pin_obj = gpiozero.Button(pin, bounce_time=0, pull_up=True)
+                self.input_pins.append(pin_obj)
+                self.logger.info(f"Legacy: Assigned input pin {pin}")
+            except Exception as e:
+                self.logger.error(f"Legacy: Failed to assign input pin {pin}: {e}")
         
         # Assign output pins
         for pin in self.ttl_output_pins:
-            pin_obj = gpiozero.LED(pin)
-            pin_obj.off()  # Start in low state
-            self.output_pins.append(pin_obj)
-            self.logger.info(f"Legacy: Assigned output pin {pin} (initial state: LOW)")
+            try:
+                pin_obj = gpiozero.LED(pin)
+                pin_obj.off()  # Start in low state
+                self.output_pins.append(pin_obj)
+                self.logger.info(f"Legacy: Assigned output pin {pin} (initial state: LOW)")
+            except Exception as e:
+                self.logger.error(f"Legacy: Failed to assign output pin {pin}: {e}")
 
     def _start_pin_generators(self):
         """Start experiment clock and pseudorandom generators for all configured pins"""
@@ -859,3 +975,41 @@ class TTLModule(Module):
             self.logger.error(f"Error in pseudorandom worker for pin {pin_number}: {e}")
         finally:
             self.logger.info(f"Pseudorandom worker stopped for pin {pin_number}")
+    
+    def cleanup(self):
+        """Clean up TTL module resources"""
+        try:
+            self.logger.info("(TTL MODULE) Cleaning up TTL module resources")
+            
+            # Stop recording if active
+            if self.recording:
+                self.stop_recording()
+            
+            # Stop all pin generators
+            self._stop_pin_generators()
+            
+            # Turn off all output pins
+            for pin in self.output_pins:
+                try:
+                    pin.off()
+                except:
+                    pass
+            
+            # Clear pin lists
+            self.input_pins.clear()
+            self.output_pins.clear()
+            
+            # Clean up GPIO
+            self._cleanup_gpio()
+            
+            self.logger.info("(TTL MODULE) TTL module cleanup complete")
+            
+        except Exception as e:
+            self.logger.error(f"(TTL MODULE) Error during cleanup: {e}")
+    
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        try:
+            self.cleanup()
+        except:
+            pass

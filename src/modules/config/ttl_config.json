@@ -10,13 +10,17 @@
             "type": "input",
             "description": "Debug output from GPIO2"
         },
-        "19": {
+        "14": {
             "type": "output",
             "output_type": "pseudorandom",
-            "min_interval": 2.0,
-            "max_interval": 8.0,
+            "min_interval": 0.5,
+            "max_interval": 5.0,
             "pulse_duration": 0.05,
-            "description": "Pseudorandom pulses with 2-8 second intervals"
+            "description": "Pseudorandom pulses with 0.5-5 second intervals"
+        },
+        "15": {
+            "type": "input",
+            "description": "Debug output from GPIO4"
         }
     },
     "recording_folder": "rec",

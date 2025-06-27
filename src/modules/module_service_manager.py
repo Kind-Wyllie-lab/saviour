@@ -49,7 +49,37 @@ class ModuleServiceManager:
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
-            self.ip = os.popen('hostname -I').read().split()[0]
+            try:
+                # Try hostname -I first (most reliable on Linux)
+                hostname_output = os.popen('hostname -I').read().strip()
+                if hostname_output:
+                    # Get the first non-loopback IP address
+                    ips = hostname_output.split()
+                    self.logger.info(f"(SERVICE MANAGER) Available IPs from hostname -I: {ips}")
+                    for ip in ips:
+                        if not ip.startswith('127.'):
+                            self.ip = ip
+                            self.logger.info(f"(SERVICE MANAGER) Selected non-loopback IP: {self.ip}")
+                            break
+                    else:
+                        # If no non-loopback IP found, use the first one
+                        self.ip = ips[0] if ips else "127.0.0.1"
+                        self.logger.warning(f"(SERVICE MANAGER) No non-loopback IP found, using: {self.ip}")
+                else:
+                    # Fallback to socket method
+                    self.logger.warning("(SERVICE MANAGER) hostname -I returned empty, using socket fallback")
+                    self.ip = socket.gethostbyname(socket.gethostname())
+            except (IndexError, Exception) as e:
+                # Fallback to socket method if hostname -I fails
+                self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname -I: {e}, using fallback method")
+                try:
+                    self.ip = socket.gethostbyname(socket.gethostname())
+                except Exception as e2:
+                    # Last resort fallback
+                    self.logger.error(f"(SERVICE MANAGER) Failed to get IP address: {e2}, using localhost")
+                    self.ip = "127.0.0.1"
+        
+        self.logger.info(f"(SERVICE MANAGER) Module IP address: {self.ip}")
         
         # Get service configuration from config manager if available
         self.service_port = 5353 # Default value
@@ -80,7 +110,29 @@ class ModuleServiceManager:
             if os.name == 'nt': # Windows
                 self.ip = socket.gethostbyname(socket.gethostname())
             else: # Linux/Unix
-                self.ip = os.popen('hostname -I').read().split()[0]
+                try:
+                    # Try hostname -I first (most reliable on Linux)
+                    hostname_output = os.popen('hostname -I').read().strip()
+                    if hostname_output:
+                        # Get the first non-loopback IP address
+                        ips = hostname_output.split()
+                        for ip in ips:
+                            if not ip.startswith('127.'):
+                                self.ip = ip
+                                break
+                        else:
+                            # If no non-loopback IP found, use the first one
+                            self.ip = ips[0] if ips else "127.0.0.1"
+                    else:
+                        # Fallback to socket method
+                        self.ip = socket.gethostbyname(socket.gethostname())
+                except (IndexError, Exception) as e:
+                    # Fallback to socket method if hostname -I fails
+                    try:
+                        self.ip = socket.gethostbyname(socket.gethostname())
+                    except Exception as e2:
+                        # Last resort fallback
+                        self.ip = "127.0.0.1"
             
             self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
             

@@ -1,23 +1,23 @@
 Habitat Setup Summary
-Generated: 2025-06-26 16:49:41
+Generated: 2025-06-27 10:17:14
 Device Role: module
-Module Type: camera
+Module Type: ttl
 
 Device Role: MODULE
-Module Type: CAMERA
+Module Type: TTL
 PTP Configuration: SLAVE mode
 This module will synchronize to the controller's PTP master.
 
 === Module Service Setup ===
-Habitat camera module service configured and enabled at boot.
-Service: habitat-camera-module
+Habitat ttl module service configured and enabled at boot.
+Service: habitat-ttl-module
 
 Module service control commands:
-  Start: sudo systemctl start habitat-camera-module
-  Stop:  sudo systemctl stop habitat-camera-module
-  Status: sudo systemctl status habitat-camera-module
-  Logs: sudo journalctl -u habitat-camera-module -f
-  Restart: sudo systemctl restart habitat-camera-module
+  Start: sudo systemctl start habitat-ttl-module
+  Stop:  sudo systemctl stop habitat-ttl-module
+  Status: sudo systemctl status habitat-ttl-module
+  Logs: sudo journalctl -u habitat-ttl-module -f
+  Restart: sudo systemctl restart habitat-ttl-module
 
 === PTP Services Status ===
 PTP services are configured and enabled at boot:

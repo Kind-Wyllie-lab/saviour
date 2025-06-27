@@ -453,6 +453,27 @@ class WebInterfaceManager:
                     'error': str(e)
                 })
 
+        @self.socketio.on('get_module_health')
+        def handle_get_module_health():
+            """Handle request for module health status"""
+            try:
+                if self.get_module_health_callback:
+                    health = self.get_module_health_callback()
+                    self.socketio.emit('module_health_update', {
+                        'module_health': health
+                    })
+                else:
+                    self.socketio.emit('module_health_update', {
+                        'module_health': {},
+                        'error': 'Module health callback not available'
+                    })
+            except Exception as e:
+                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting module health: {str(e)}")
+                self.socketio.emit('module_health_update', {
+                    'module_health': {},
+                    'error': str(e)
+                })
+
     def get_modules(self):
         """Get list of all discovered modules"""
         self.logger.info("(WEB INTERFACE MANAGER) Getting modules list")

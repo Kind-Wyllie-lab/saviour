@@ -393,9 +393,12 @@
         socket.on('connect', function() {
             console.log('Connected to server');
             // Load initial module recordings
+            console.log('Calling updateModuleRecordings() on connect');
             updateModuleRecordings();
             // Request current experiment name
             socket.emit('get_experiment_name');
+            // Request module health status
+            socket.emit('get_module_health');
         });
 
         socket.on('disconnect', function() {
@@ -538,10 +541,10 @@
                                     <div class="recording-actions">
                                         <!-- <button class="action-button export" title="Export Recording" data-filename="${recording.filename}">
                                             Export
-                                        </button>
+                                        </button> -->
                                         <button class="action-button delete" title="Delete Recording" data-filename="${recording.filename}">
                                             Delete
-                                        </button> -->
+                                        </button>
                                     </div>
                                 </div>
                             `).join('')}
@@ -648,6 +651,8 @@
                                 filename: filename
                             }
                         });
+                        // Refresh recordings list after a short delay
+                        setTimeout(refreshRecordings, 2000);
                     }
                 });
             });
@@ -749,6 +754,7 @@
 
         // Function to refresh recordings (contextual - refreshes the active tab)
         function refreshRecordings() {
+            console.log('refreshRecordings() called');
             const activeTab = document.querySelector('.tab-button.active').getAttribute('data-tab');
             console.log('Refreshing recordings for active tab:', activeTab);
             
@@ -774,8 +780,10 @@
             }
             
             if (activeTab === 'module-recordings') {
+                console.log('Calling updateModuleRecordings()');
                 updateModuleRecordings();
             } else if (activeTab === 'exported-recordings') {
+                console.log('Calling loadExportedRecordings()');
                 loadExportedRecordings();
             }
         }
@@ -1011,6 +1019,8 @@
                 return;
             }
             
+            console.log('Displaying module recordings:', recordings);
+            
             if (recordings.length === 0) {
                 moduleRecordingsList.innerHTML = '<p>No recordings found on any modules</p>';
                 return;
@@ -1021,6 +1031,8 @@
             
             // Generate HTML for grouped recordings
             const recordingsHTML = generateGroupedRecordingsHTML(recordingsByExperiment);
+            
+            // Completely replace the content
             moduleRecordingsList.innerHTML = recordingsHTML;
             
             // Add event listeners for dropdown toggles and action buttons
@@ -1065,7 +1077,12 @@
             // Clear any existing timeout
             if (moduleRecordingsTimeout) {
                 clearTimeout(moduleRecordingsTimeout);
+                moduleRecordingsTimeout = null;
             }
+            
+            // Clear the recordings array to prevent duplicates
+            allModuleRecordings = [];
+            pendingModuleResponses.clear();
             
             // Request list of modules
             socket.emit('get_modules');
@@ -1095,12 +1112,13 @@
             
             console.log(`Requesting recordings from ${pendingModuleResponses.size} modules:`, Array.from(pendingModuleResponses));
             
-            // Request recordings from each module
+            // Request recordings from each module using the correct command format
             modules.forEach(module => {
                 if (module.id) {
                     socket.emit('command', {
                         type: 'list_recordings',
-                        module_id: module.id
+                        module_id: module.id,
+                        params: {}
                     });
                 }
             });

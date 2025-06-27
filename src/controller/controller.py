@@ -93,6 +93,19 @@ class Controller:
 
         # Managers
         self.service_manager = service_manager.ControllerServiceManager(self.logger, self.config_manager)
+        
+        # Register module discovery callback immediately to catch early discoveries
+        def module_discovery_callback(module):
+            self.on_module_discovered(module)
+            if hasattr(self, 'web_interface_manager'):
+                self.web_interface_manager.notify_module_update()
+        
+        self.service_manager.on_module_discovered = module_discovery_callback
+        self.service_manager.on_module_removed = lambda module: (
+            self.web_interface_manager.notify_module_update() if hasattr(self, 'web_interface_manager') else None
+        )
+        self.logger.info(f"(CONTROLLER) Module discovery callback registered early")
+        
         self.session_manager = session_manager.SessionManager()
         self.communication_manager = communication_manager.ControllerCommunicationManager(
             self.logger,
@@ -132,6 +145,7 @@ class Controller:
         )
 
         # Start health monitoring
+        self.logger.info("(CONTROLLER) Starting health monitoring thread")
         self.health_monitor.start_monitoring()
 
         # Register callbacks
@@ -147,16 +161,11 @@ class Controller:
                 send_command=self.communication_manager.send_command,
                 get_module_health=self.health_monitor.get_module_health
             )
-            
-            # Register callback for module discovery
-            if hasattr(self, 'service_manager'):
-                self.logger.info(f"(CONTROLLER) Registering module discovery callback")
-                self.service_manager.on_module_discovered = lambda module: self.web_interface_manager.notify_module_update()
-                self.service_manager.on_module_removed = lambda module: self.web_interface_manager.notify_module_update()
-                self.logger.info(f"(CONTROLLER) Module discovery callback registered")
         
         # Register status change callback with health monitor
-        self.health_monitor.register_status_change_callback(self.on_module_status_change)
+        self.health_monitor.set_callbacks({
+            "on_status_change": self.on_module_status_change
+        })
         self.logger.info(f"(CONTROLLER) Status change callback registered with health monitor")
         
         # CLI 
@@ -193,9 +202,20 @@ class Controller:
             self.logger.error(f"(CONTROLLER) Error parsing status data for module {module_id}: {e}")
 
     def on_module_status_change(self, module_id: str, status: str):
-        """Callback for when module status changes (online/offline)"""
+        """Callback for when module status changes (online/offline)
+        
+        Args:
+            module_id: String representing the module
+            status: may be "online" or "offline"
+        """
         self.logger.info(f"(CONTROLLER) Module {module_id} status changed to: {status}")
         
+        # TODO: What should happen when a module goes offline?
+        if status=="offline":
+            # TODO: Deregister it?
+            self.logger.info(f"(CONTROLLER) TODO: Deregister {module_id}")
+
+
         # Send status change event to web interface
         self.web_interface_manager.socketio.emit('module_status_change', {
             'module_id': module_id,
@@ -351,3 +371,24 @@ class Controller:
     def get_zmq_commands(self):
         """Get the list of available ZMQ commands"""
         return self.config_manager.get("controller.zmq_commands", []) 
+
+    def on_module_discovered(self, module):
+        """Callback for when a new module is discovered"""
+        self.logger.info(f"(CONTROLLER) Module discovered: {module.id}")
+        
+        # Add module to health monitor with initial offline status
+        # This allows the health monitor to track the module even before it sends heartbeat
+        initial_health_data = {
+            'timestamp': time.time(),
+            'status': 'online', 
+            'cpu_temp': 0,
+            'cpu_usage': 0,
+            'memory_usage': 0,
+            'uptime': 0,
+            'disk_space': 0
+        }
+        self.health_monitor.update_module_health(module.id, initial_health_data)
+        
+        # Update web interface
+        if hasattr(self, 'web_interface_manager'):
+            self.web_interface_manager.update_modules(self.service_manager.modules)

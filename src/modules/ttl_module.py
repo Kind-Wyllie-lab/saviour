@@ -341,7 +341,12 @@ class TTLModule(Module):
     def stop_recording_all_input_pins(self):
         self.logger.info(f"Stopping to record all input pins")
         for pin in self.input_pins:
-            self.stop_recording_on_output_pin(pin)
+            self.stop_recording_on_input_pin(pin)
+    
+    def stop_recording_on_input_pin(self, pin):
+        pin.when_pressed = None
+        pin.when_released = None
+        self.logger.info(f"Stopped monitoring input pin {pin.pin}")
     
     def stop_recording_on_output_pin(self, pin):
         pin.when_pressed = None

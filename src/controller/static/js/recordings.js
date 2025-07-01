@@ -37,35 +37,14 @@ const recordingCommands = {
         followupQuestions: [
             {
                 id: 'confirmation',
-                label: 'Are you sure you want to delete ALL recordings on the module?',
+                label: 'Are you sure you want to delete the selected recordings?',
                 type: 'confirmation',
-                message: 'This action cannot be undone. All recordings on the selected modules will be permanently deleted.',
+                message: 'This action cannot be undone. The selected recordings will be permanently deleted.',
                 required: true
             }
         ]
     }
 };
-
-// Generate recording command buttons
-function generateRecordingCommandButtons() {
-    const container = document.getElementById('recording-commands-content');
-    container.innerHTML = ''; // Clear existing buttons
-
-    Object.entries(recordingCommands).forEach(([id, command]) => {
-        const button = document.createElement('button');
-        button.id = id;
-        button.className = 'command-button';
-        button.textContent = command.label;
-        button.title = command.description;
-        
-        button.addEventListener('click', () => {
-            currentCommand = command.type;
-            dialog.style.display = 'flex';
-        });
-        
-        container.appendChild(button);
-    });
-}
 
 // Module selection dialog
 const dialog = document.getElementById('module-selection-dialog');
@@ -115,6 +94,8 @@ if (closeButton) {
         selectedModuleId = null;
         window.currentExportFilename = null;
         window.currentExportExperimentName = null; // Clear stored experiment name
+        window.currentDeleteFilenames = null;
+        window.currentDeleteExperimentName = null; // Clear stored delete experiment name
     });
 }
 
@@ -126,6 +107,8 @@ if (followupCancel) {
         selectedModuleId = null;
         window.currentExportFilename = null;
         window.currentExportExperimentName = null; // Clear stored experiment name
+        window.currentDeleteFilenames = null;
+        window.currentDeleteExperimentName = null; // Clear stored delete experiment name
     });
 }
 
@@ -280,8 +263,28 @@ function sendCommandWithParams(moduleId, params) {
         window.currentExportFilename = null;
     }
 
+    // If we have stored delete filenames (from "Delete All" button), add them to params
+    if (window.currentDeleteFilenames && currentCommand === 'clear_recordings') {
+        command.params.filename = window.currentDeleteFilenames;
+        
+        // Use stored experiment name if available
+        if (window.currentDeleteExperimentName) {
+            command.params.experiment_name = window.currentDeleteExperimentName;
+            window.currentDeleteExperimentName = null; // Clear it
+        }
+        
+        // Clear the stored filenames
+        window.currentDeleteFilenames = null;
+    }
+
     console.log('Sending command with params:', command);
     socket.emit('command', command);
+    
+    // Refresh recordings list after sending delete command
+    if (command.type === 'clear_recordings') {
+        setTimeout(refreshRecordings, 2000);
+    }
+    
     currentCommand = null;
     selectedModuleId = null;
 }
@@ -327,9 +330,6 @@ if (allModulesButton) {
 } else {
     console.error('All modules button not found');
 }
-
-// Initialize recording command buttons
-generateRecordingCommandButtons();
 
 // When page loads, get initial data
 socket.on('connect', function() {
@@ -692,27 +692,23 @@ if (clearFilterButton) {
 function deleteAllRecordings(experimentName) {
     const recordingCount = document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).length;
     
-    if (confirm(`Are you sure you want to delete ALL ${recordingCount} recording${recordingCount !== 1 ? 's' : ''} for experiment "${experimentName}"?\n\nThis action cannot be undone.`)) {
-        // Get all filenames for this experiment
-        const filenames = [];
-        document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).forEach(item => {
-            const filename = item.querySelector('.recording-name').textContent;
-            filenames.push(filename);
-        });
-        
-        // Send single command with multiple filenames
-        const filenameParam = filenames.join(',');
-        socket.emit('command', {
-            type: 'clear_recordings',
-            module_id: 'all',
-            params: {
-                filename: filenameParam
-            }
-        });
-        
-        // Refresh recordings list after a short delay
-        setTimeout(refreshRecordings, 2000);
-    }
+    // Get all filenames for this experiment
+    const filenames = [];
+    document.querySelectorAll(`[data-experiment="${experimentName}"] .recording-item`).forEach(item => {
+        const filename = item.querySelector('.recording-name').textContent;
+        filenames.push(filename);
+    });
+    
+    // Store the filenames for later use
+    window.currentDeleteFilenames = filenames.join(',');
+    window.currentDeleteExperimentName = experimentName;
+    // Set the current command to clear_recordings
+    currentCommand = 'clear_recordings';
+    // Set module_id to 'all' since we're deleting from all modules that have this experiment
+    selectedModuleId = 'all';
+    // Show the follow-up dialog directly (skip module selection)
+    followupContent.innerHTML = generateFollowupForm(currentCommand);
+    followupDialog.style.display = 'flex';
 }
 
 // Export all recordings for a specific experiment
@@ -731,8 +727,11 @@ function exportAllRecordings(experimentName) {
     window.currentExportExperimentName = experimentName;
     // Set the current command to export_recordings
     currentCommand = 'export_recordings';
-    // Show the module selection dialog
-    dialog.style.display = 'flex';
+    // Set module_id to 'all' since we're exporting from all modules that have this experiment
+    selectedModuleId = 'all';
+    // Show the follow-up dialog directly (skip module selection)
+    followupContent.innerHTML = generateFollowupForm(currentCommand);
+    followupDialog.style.display = 'flex';
 }
 
 // Handle export complete response

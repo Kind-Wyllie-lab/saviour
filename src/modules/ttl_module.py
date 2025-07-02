@@ -283,6 +283,9 @@ class TTLModule(Module):
             
             # Stop all pin generators
             self._stop_pin_generators()
+
+            # Set all output pins to low to signal experiment stopped
+            self._set_all_output_pins_low()
             
             # Update recording state
             self.recording_stop_time = time.time()
@@ -570,7 +573,8 @@ class TTLModule(Module):
         except Exception as e:
             self.logger.error(f"Error in pulse generation worker: {e}")
         finally:
-            self.logger.info(f"Pulse generation worker stopped for pin {pin_obj.pin.number}")
+            pin_obj.off()
+            self.logger.info(f"Pulse generation worker stopped for pin {pin_obj.pin.number} and pin set to low")
     
     def get_pulse_generation_status(self):
         """
@@ -835,8 +839,8 @@ class TTLModule(Module):
             # Set recording flag to False to signal threads to stop
             self.recording = False
             
-            # Give threads a brief moment to exit naturally (non-blocking)
-            time.sleep(0.05)  # 50ms should be enough for daemon threads to check the flag
+            # Give threads a moment to exit naturally and execute finally blocks
+            time.sleep(0.1)  # 100ms should be enough for daemon threads to check the flag and cleanup
             
             # Clear thread references
             self.generator_threads.clear()
@@ -844,6 +848,19 @@ class TTLModule(Module):
             
         except Exception as e:
             self.logger.error(f"Error stopping pin generators: {e}")
+    
+    def _set_all_output_pins_low(self):
+        """Set all output pins to low state"""
+        try:
+            for pin in self.output_pins:
+                try:
+                    pin.off()
+                    self.logger.info(f"Set output pin {pin.pin.number} to low state")
+                except Exception as e:
+                    self.logger.error(f"Error setting pin {pin.pin.number} to low: {e}")
+            self.logger.info(f"Set all {len(self.output_pins)} output pins to low state")
+        except Exception as e:
+            self.logger.error(f"Error setting output pins to low: {e}")
     
     def _start_experiment_clock(self, pin_number):
         """Start experiment clock generator for a specific pin"""
@@ -914,7 +931,8 @@ class TTLModule(Module):
         except Exception as e:
             self.logger.error(f"Error in experiment clock worker for pin {pin_number}: {e}")
         finally:
-            self.logger.info(f"Experiment clock worker stopped for pin {pin_number}")
+            pin_obj.off()
+            self.logger.info(f"Experiment clock worker stopped for pin {pin_number} and pin set to low")
     
     def _start_pseudorandom_generator(self, pin_number):
         """Start pseudorandom generator for a specific pin"""

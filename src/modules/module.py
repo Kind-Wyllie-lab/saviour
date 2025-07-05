@@ -59,16 +59,16 @@ class Module:
         self.config_path = config_path
         self.recording_folder = "rec"  # Default recording folder
         
-        # Create recording folder if it doesn't exist
-        if not os.path.exists(self.recording_folder):
-            os.makedirs(self.recording_folder)
-            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
-        
         # Setup logging first
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
         self.logger.setLevel(logging.INFO)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
         
+        # Create recording folder if it doesn't exist
+        if not os.path.exists(self.recording_folder):
+            os.makedirs(self.recording_folder)
+            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
+
         # Add console handler if none exists
         if not self.logger.handlers:
             console_handler = logging.StreamHandler()

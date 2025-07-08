@@ -139,6 +139,7 @@ class Module:
             'list_recordings': self.list_recordings,
             'clear_recordings': self.clear_recordings,
             'export_recordings': self.export_recordings,
+            'list_commands': self.list_commands,
             'shutdown': self._shutdown,
         })
         self.export_manager.set_callbacks({
@@ -578,6 +579,15 @@ class Module:
                 "success": False
             })
             return False
+
+    def list_commands(self):
+        """
+        Return a dict of zmq commands that the module understands.
+        """
+        commands = {
+            
+        }
+
 
     # Start and stop functions
     def start(self) -> bool:

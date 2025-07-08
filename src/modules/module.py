@@ -140,6 +140,8 @@ class Module:
             'clear_recordings': self.clear_recordings,
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
+            'get_config': self.config_manager.get_all, # Gets the complete config from
+            'set_config': self.set_config, # Uses a dict to update the config manager
             'shutdown': self._shutdown,
         })
         self.export_manager.set_callbacks({
@@ -754,6 +756,31 @@ class Module:
                 self.logger.error("(MODULE) Failed to stop module, not shutting down system")
         except Exception as e:
             self.logger.error(f"(MODULE) Error during shutdown: {e}")
+
+    def set_config(self, new_config: dict, persist: bool = False) -> bool:
+        """
+        Set the entire configuration from a dictionary
+        
+        Args:
+            new_config: Dictionary containing the new configuration
+            persist: Whether to persist the changes to the config file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Use the config manager's merge method to update the config
+            self.config_manager._merge_configs(self.config_manager.config, new_config)
+            
+            # Persist to file if requested
+            if persist:
+                return self.config_manager.save_config()
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Error setting all config: {e}")
+            return False
+
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""

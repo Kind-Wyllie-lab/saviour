@@ -80,6 +80,7 @@ class Controller:
         self.logger.info(f"(CONTROLLER) Initializing managers")
         # Initialize config manager
         self.config_manager = config_manager.ControllerConfigManager(self.logger, config_file_path)
+        self.module_config = {}
 
         # Parameters from config
         self.max_buffer_size = self.config_manager.get("controller.max_buffer_size")
@@ -99,6 +100,7 @@ class Controller:
             self.on_module_discovered(module)
             if hasattr(self, 'web_interface_manager'):
                 self.web_interface_manager.notify_module_update()
+                self.module_config[module.id] = {}
         
         self.service_manager.on_module_discovered = module_discovery_callback
         self.service_manager.on_module_removed = lambda module: (
@@ -196,6 +198,9 @@ class Controller:
                     self.buffer_manager.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
                     self.logger.info(f"(CONTROLLER) Recordings list received from {module_id}")
+                case 'get_config':
+                    self.logger.info(f"(CONTROLLER) Config dict received from {module_id}")
+                    self.module_config[module_id] = status_data.get('config', 'none') 
                 case _:
                     self.logger.info(f"(CONTROLLER) Unknown status type from {module_id}: {status_type}")
         except Exception as e:

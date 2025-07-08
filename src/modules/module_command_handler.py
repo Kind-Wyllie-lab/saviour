@@ -75,7 +75,7 @@ class ModuleCommandHandler:
         if missing_callbacks:
             raise ValueError(f"Missing required callbacks: {missing_callbacks}")
             
-        self.callbacks = callbacks
+        self.callbacks.update(callbacks)
         if 'get_samplerate' in callbacks:
             self.samplerate = callbacks['get_samplerate']
     
@@ -115,6 +115,10 @@ class ModuleCommandHandler:
                     self._handle_ptp_status()
                 case "list_commands": 
                     self._handle_list_commands()
+                case "get_config":
+                    self._handle_get_config()
+                case "set_config":
+                    self._handle_set_config(params)
                 case "shutdown":
                     self._handle_shutdown()
                 case _:
@@ -372,10 +376,50 @@ class ModuleCommandHandler:
             self.logger.error("(COMMAND HANDLER) No shutdown callback given to command handler")
             self.callbacks["send_status"]({"error": "No shutdown callback given to command handler"})
 
+    def _handle_get_config(self):
+        """Get the config dict"""
+        self.logger.info("(COMMAND HANDLER) Command identified as get_config")
+        if "get_config" in self.callbacks:
+            config = self.callbacks["get_config"]()
+            status = {"type": "get_config", "config": config}
+            self.callbacks["send_status"](status)
+        else:
+            self.logger.error("(COMMAND HANDLER) No get_config callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No get_config callback was given to command handler"})
+    
+    def _handle_set_config(self, params: list):
+        """Update the config dict"""
+        self.logger.info(f"(COMMAND HANDLER) Command identified as set_config with params: {params}")
+        if "set_config" in self.callbacks:
+            # Parse parameters into a config dict
+            new_config = {}
+            for param in params:
+                if '=' in param:
+                    key, value = param.split('=', 1)
+                    # Try to convert value to appropriate type
+                    try:
+                        if value.lower() in ['true', 'false']:
+                            new_config[key] = value.lower() == 'true'
+                        elif '.' in value:
+                            new_config[key] = float(value)
+                        else:
+                            new_config[key] = int(value)
+                    except ValueError:
+                        new_config[key] = value
+            
+            self.logger.info(f"(COMMAND HANDLER) Parsed config: {new_config}")
+            status = self.callbacks["set_config"](new_config)
+            self.callbacks["send_status"](status)
+        else:
+            self.logger.error("(COMMAND HANDLER) No set_config callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No set_config callback was given to command handler"})
+
     def _handle_unknown_command(self, command: str):
         """Handle unrecognized command"""
         self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
         self.callbacks["send_status"]({"type": "error", "error": "Command not recognized"})
+    
+
 
     def cleanup(self):
         """Clean up resources used by the command handler"""

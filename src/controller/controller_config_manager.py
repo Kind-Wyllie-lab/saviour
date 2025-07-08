@@ -229,6 +229,12 @@ class ControllerConfigManager:
             Dictionary containing the entire configuration
         """
         return self.config.copy()
+
+    def reset_config(self):
+        """
+        Reset settings to default values
+        """
+        self.config = self._load_config()
     
     def validate(self) -> bool:
         """

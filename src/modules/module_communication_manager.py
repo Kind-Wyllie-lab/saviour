@@ -202,18 +202,33 @@ class ModuleCommunicationManager:
             # Step 3: Wait a bit for ZMQ to clean up internal resources
             time.sleep(0.1)
             
-            # Step 4: Terminate context
+            # Step 4: Terminate context with timeout
             if hasattr(self, 'context') and self.context:
                 self.logger.info("(COMMUNICATION MANAGER) Terminating ZeroMQ context")
-                # First try to terminate with timeout
-                try:
-                    self.context.term()
-                except Exception as e:
-                    self.logger.warning(f"(COMMUNICATION MANAGER) Normal context termination failed: {e}. Trying forced shutdown.")
-                    # If term() hangs or fails, try destroy with timeout
+                
+                # Use threading with timeout to prevent hanging
+                def terminate_context():
+                    try:
+                        self.context.term()
+                        return True
+                    except Exception as e:
+                        self.logger.warning(f"(COMMUNICATION MANAGER) Normal context termination failed: {e}")
+                        return False
+                
+                # Run context termination in a thread with timeout
+                import threading
+                term_thread = threading.Thread(target=terminate_context)
+                term_thread.daemon = True
+                term_thread.start()
+                term_thread.join(timeout=2.0)  # 2 second timeout
+                
+                if term_thread.is_alive():
+                    self.logger.warning("(COMMUNICATION MANAGER) Context termination timed out, trying forced shutdown")
+                    # Try destroy method if available
                     try:
                         if hasattr(self.context, 'destroy'):
                             self.context.destroy(linger=0)
+                            self.logger.info("(COMMUNICATION MANAGER) Forced context shutdown successful")
                     except Exception as e2:
                         self.logger.error(f"(COMMUNICATION MANAGER) Forced context shutdown failed: {e2}")
                 

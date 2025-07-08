@@ -113,6 +113,8 @@ class ModuleCommandHandler:
                     self._handle_export_recordings(params)
                 case "ptp_status":
                     self._handle_ptp_status()
+                case "list_commands": 
+                    self._handle_list_commands()
                 case "shutdown":
                     self._handle_shutdown()
                 case _:
@@ -342,6 +344,19 @@ class ModuleCommandHandler:
             self.logger.error("(COMMAND HANDLER) No get_ptp_status callback was given to command handler")
             self.callbacks["send_status"]({"error": "No get_ptp_status callback given to command handler"})
     
+    def _handle_list_commands(self):
+        """Send the list of module commands to the controller"""
+
+        self.logger.info("(COMMAND HANDLER) Command identified as list_commands")
+        if "list_commands" in self.callbacks:
+            commands = list(self.callbacks.keys())
+            commands["type"] = "list_commands"
+            self.callbacks["send_status"]()
+            # TODO: Consider use of decorators to define commands
+        else:
+            self.logger.error("(COMMAND HANDLER) No list_commands callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No list_commands callback was given to command handler"})
+
     def _handle_shutdown(self):
         """Shutdown the module"""
         self.logger.info("(COMMAND HANDLER) Command identified as shutdown")

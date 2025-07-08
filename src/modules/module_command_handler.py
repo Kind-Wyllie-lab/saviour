@@ -350,8 +350,8 @@ class ModuleCommandHandler:
         self.logger.info("(COMMAND HANDLER) Command identified as list_commands")
         if "list_commands" in self.callbacks:
             commands = list(self.callbacks.keys())
-            commands["type"] = "list_commands"
-            self.callbacks["send_status"]()
+            status = {"commands": commands, "type": "list_commands"}
+            self.callbacks["send_status"](status)
             # TODO: Consider use of decorators to define commands
         else:
             self.logger.error("(COMMAND HANDLER) No list_commands callback was given to command handler")

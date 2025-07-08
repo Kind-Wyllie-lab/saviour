@@ -155,12 +155,12 @@ class Controller:
         """Register callbacks for getting data from other managers"""
         # Web interface
         if self.web_interface:
-            self.web_interface_manager.register_callbacks(
-                get_modules=self.service_manager.get_modules,
-                get_ptp_history=self.buffer_manager.get_ptp_history,
-                send_command=self.communication_manager.send_command,
-                get_module_health=self.health_monitor.get_module_health
-            )
+            self.web_interface_manager.register_callbacks({
+                "get_modules": self.service_manager.get_modules,
+                "get_ptp_history": self.buffer_manager.get_ptp_history,
+                "send_command": self.communication_manager.send_command,
+                "get_module_health": self.health_monitor.get_module_health
+            })
         
         # Register status change callback with health monitor
         self.health_monitor.set_callbacks({

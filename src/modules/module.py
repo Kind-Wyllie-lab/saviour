@@ -141,7 +141,7 @@ class Module:
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
             'get_config': self.config_manager.get_all, # Gets the complete config from
-            'set_config': self.set_config, # Uses a dict to update the config manager
+            'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manager
             'shutdown': self._shutdown,
         })
         self.export_manager.set_callbacks({
@@ -769,6 +769,11 @@ class Module:
             True if successful, False otherwise
         """
         try:
+            # Validate that new_config is a dictionary
+            if not isinstance(new_config, dict):
+                self.logger.error(f"(MODULE) set_config called with non-dict argument: {type(new_config)}")
+                return False
+            
             # Use the config manager's merge method to update the config
             self.config_manager._merge_configs(self.config_manager.config, new_config)
             

@@ -194,10 +194,31 @@ class ModuleConfigManager:
         """
         path_parts = key_path.split('.')
         
-        # Navigate to the value
+        # First try the exact path
         current = self.config
         for part in path_parts:
             if part not in current:
+                # If not found, try looking in editable and non-editable sections
+                if "editable" in self.config:
+                    # Try editable section
+                    editable_current = self.config["editable"]
+                    for editable_part in path_parts:
+                        if editable_part not in editable_current:
+                            break
+                        editable_current = editable_current[editable_part]
+                    else:
+                        return editable_current
+                
+                if "non_editable" in self.config:
+                    # Try non-editable section
+                    non_editable_current = self.config["non_editable"]
+                    for non_editable_part in path_parts:
+                        if non_editable_part not in non_editable_current:
+                            break
+                        non_editable_current = non_editable_current[non_editable_part]
+                    else:
+                        return non_editable_current
+                
                 return default
             current = current[part]
         
@@ -218,15 +239,48 @@ class ModuleConfigManager:
         try:
             path_parts = key_path.split('.')
             
-            # Navigate to the proper nested dictionary
-            current = self.config
-            for part in path_parts[:-1]:
-                if part not in current:
-                    current[part] = {}
-                current = current[part]
+            # First try to find if the key exists in editable or non-editable sections
+            target_section = None
+            target_path = None
             
-            # Set the value
-            current[path_parts[-1]] = value
+            # Check if it exists in editable section
+            if "editable" in self.config:
+                editable_current = self.config["editable"]
+                for i, part in enumerate(path_parts):
+                    if part not in editable_current:
+                        break
+                    editable_current = editable_current[part]
+                else:
+                    target_section = "editable"
+                    target_path = path_parts
+            
+            # Check if it exists in non-editable section
+            if target_section is None and "non_editable" in self.config:
+                non_editable_current = self.config["non_editable"]
+                for i, part in enumerate(path_parts):
+                    if part not in non_editable_current:
+                        break
+                    non_editable_current = non_editable_current[part]
+                else:
+                    target_section = "non_editable"
+                    target_path = path_parts
+            
+            # If found in editable/non-editable, update there
+            if target_section is not None:
+                current = self.config[target_section]
+                for part in target_path[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                current[target_path[-1]] = value
+            else:
+                # Otherwise, set in the root config (backward compatibility)
+                current = self.config
+                for part in path_parts[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                current[path_parts[-1]] = value
             
             # Persist to file if requested
             if persist:

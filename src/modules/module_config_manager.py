@@ -299,17 +299,19 @@ class ModuleConfigManager:
             True if successful, False otherwise
         """
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.config_file_path), exist_ok=True)
+            # Create directory if it doesn't exist (handle case where config_file_path is just a filename)
+            config_dir = os.path.dirname(self.config_file_path)
+            if config_dir:  # Only create directory if there is a directory path
+                os.makedirs(config_dir, exist_ok=True)
             
             # Write config to file
             with open(self.config_file_path, 'w') as f:
                 json.dump(self.config, f, indent=4)
             
-            self.logger.info(f"Configuration saved to {self.config_file_path}")
+            self.logger.info(f"(MODULE CONFIG MANAGER) Configuration saved to {self.config_file_path}")
             return True
         except Exception as e:
-            self.logger.error(f"Error saving configuration: {e}")
+            self.logger.error(f"(MODULE CONFIG MANAGER) Error saving configuration: {e}")
             return False
     
     def get_all(self) -> Dict[str, Any]:

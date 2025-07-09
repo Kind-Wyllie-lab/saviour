@@ -212,20 +212,38 @@ class ModuleCommunicationManager:
             self.controller_ip = None
             self.controller_port = None
             
-            # Recreate sockets for future connections
-            self.context = zmq.Context()
-            self.command_socket = self.context.socket(zmq.SUB)
-            self.status_socket = self.context.socket(zmq.PUB)
+            # Add a small delay to ensure proper cleanup
+            time.sleep(0.1)
             
-            self.logger.info("(COMMUNICATION MANAGER) ZeroMQ resources cleaned up and recreated")
+            # Recreate sockets for future connections with error handling
+            try:
+                self.context = zmq.Context()
+                self.command_socket = self.context.socket(zmq.SUB)
+                self.status_socket = self.context.socket(zmq.PUB)
+                self.logger.info("(COMMUNICATION MANAGER) ZeroMQ resources cleaned up and recreated")
+            except Exception as e:
+                self.logger.error(f"(COMMUNICATION MANAGER) Error recreating ZeroMQ resources: {e}")
+                # Set to None to force recreation on next connection attempt
+                self.context = None
+                self.command_socket = None
+                self.status_socket = None
             
         except Exception as e:
             self.logger.error(f"(COMMUNICATION MANAGER) Error cleaning up ZeroMQ resources: {e}")
+            # Reset connection state
+            self.controller_ip = None
+            self.controller_port = None
+            
             # Try to recreate the sockets even if cleanup fails
             try:
+                time.sleep(0.1)  # Small delay before recreation
                 self.context = zmq.Context()
                 self.command_socket = self.context.socket(zmq.SUB)
                 self.status_socket = self.context.socket(zmq.PUB)
                 self.logger.info("(COMMUNICATION MANAGER) ZeroMQ resources recreated after error")
             except Exception as e2:
-                self.logger.error(f"(COMMUNICATION MANAGER) Failed to recreate ZeroMQ resources: {e2}") 
+                self.logger.error(f"(COMMUNICATION MANAGER) Failed to recreate ZeroMQ resources: {e2}")
+                # Set to None to force recreation on next connection attempt
+                self.context = None
+                self.command_socket = None
+                self.status_socket = None 

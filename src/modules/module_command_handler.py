@@ -9,8 +9,6 @@ providing a central place for command parsing and execution.
 Author: Andrew SG
 Created: 16/05/2025         
 License: GPLv3
-
-#TODO: This is really tightly coupled right now. Better to move it towards looser coupling.
 """
 
 import time
@@ -22,10 +20,9 @@ from typing import Dict, Any, Optional, Callable
 
 class ModuleCommandHandler:
     """
-    Manages commands for habitat modules.
-    
-    This class provides a centralized command handling interface, decoupling command processing from the module itself.
-    It routes receives commands to the necessary methods.
+    Routes commands and params recieved by the communication manager to functionality in the main module and managers.
+
+    It's crucial variable 
     """
     
     def __init__(self, 
@@ -49,13 +46,7 @@ class ModuleCommandHandler:
         self.module_type = module_type
         self.config_manager = config_manager
         self.start_time = start_time
-        
-        # Control flags and parameters
-        self.streaming = False
-        self.stream_thread = None
-        self.stream_session_id = None
-        self.samplerate = 200
-        
+    
         # Callback dictionary - will be set by set_callbacks method
         self.callbacks = {}
         
@@ -76,8 +67,6 @@ class ModuleCommandHandler:
             raise ValueError(f"Missing required callbacks: {missing_callbacks}")
             
         self.callbacks.update(callbacks)
-        if 'get_samplerate' in callbacks:
-            self.samplerate = callbacks['get_samplerate']
         
     def _parse_command(self, command: str):
         """
@@ -489,14 +478,6 @@ class ModuleCommandHandler:
         self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
         self.callbacks["send_status"]({"type": "error", "error": "Command not recognized"})
     
-
-
     def cleanup(self):
         """Clean up resources used by the command handler"""
-        if self.streaming:
-            self.streaming = False
-        
-        if self.stream_thread:
-            self.logger.info("Waiting for stream thread to stop...")
-            self.stream_thread.join(timeout=2.0)
-            self.stream_thread = None
+        pass # I don't think anything needs cleaned up?

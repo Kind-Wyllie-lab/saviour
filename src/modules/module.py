@@ -141,7 +141,7 @@ class Module:
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
             'get_config': self.config_manager.get_all, # Gets the complete config from
-            'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manager
+            'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manfager
             'shutdown': self._shutdown,
         })
         self.export_manager.set_callbacks({

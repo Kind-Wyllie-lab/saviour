@@ -78,6 +78,26 @@ class ModuleCommandHandler:
         self.callbacks.update(callbacks)
         if 'get_samplerate' in callbacks:
             self.samplerate = callbacks['get_samplerate']
+        
+    def _parse_command(self, command: str):
+        """
+        Parse a command received from the controller into command and params
+
+        Args:
+            command: The command string to process
+
+        Returns:
+            cmd: The actual command (e.g. start_recording)
+            params: a dict of params e.g. {"port":5000, "client_ip": 192.168.0.34}
+        """
+        self.logger.info(f"(COMMAND HANDLER) Parsing command {command}")
+        try:
+            parts = command.split()
+            cmd = parts[0]
+            params = parts[1:] if len(parts) > 1 else []
+            return cmd, params
+        except exception as e:
+            self.logger.error(f"Error parsing command {command}: {e}")
     
     def handle_command(self, command: str):
         """
@@ -90,9 +110,7 @@ class ModuleCommandHandler:
         
         try:
             # Parse command and parameters
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
+            cmd, params = self._parse_command(command)
             
             # Debug logging for command parsing
             self.logger.info(f"(COMMAND HANDLER) Parsed command: '{cmd}', parameters: {params}")

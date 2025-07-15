@@ -30,7 +30,7 @@ import src.controller.controller_service_manager as service_manager
 import src.controller.controller_communication_manager as communication_manager
 import src.controller.controller_session_manager as session_manager
 import src.controller.controller_file_transfer_manager as file_transfer_manager
-import src.controller.controller_database_manager as database_manager
+# import src.controller.controller_database_manager as database_manager
 import src.controller.controller_health_monitor as health_monitor
 import src.controller.controller_buffer_manager as buffer_manager
 import src.controller.controller_config_manager as config_manager
@@ -116,7 +116,7 @@ class Controller:
         )
         self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
         self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
-        self.database_manager = database_manager.ControllerDatabaseManager(self.logger, self.config_manager)
+        # self.database_manager = database_manager.ControllerDatabaseManager(self.logger, self.config_manager)
         self.ptp_manager = ptp_manager.PTPManager(logger=self.logger,role=ptp_manager.PTPRole.MASTER)
         
         # Check which interfaces are enabled
@@ -272,7 +272,7 @@ class Controller:
             
             # Clean up database manager
             self.logger.info("(CONTROLLER) Cleaning up database manager")
-            self.database_manager.cleanup()
+            # self.database_manager.cleanup()
 
             # Give modules time to detect the controller is gone
             time.sleep(1)

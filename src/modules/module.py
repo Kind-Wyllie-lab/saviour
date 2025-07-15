@@ -134,7 +134,7 @@ class Module:
             'clear_recordings': self.clear_recordings,
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
-            'handle_command': self.command_handler.handle_command 
+            'handle_command': self.command_handler.handle_command, 
             'get_config': self.config_manager.get_all, # Gets the complete config from
             'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manfager
             'shutdown': self._shutdown,
@@ -265,7 +265,6 @@ class Module:
             return None
         
         # Set up recording - filename and folder
-        # self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.recording_session_id = f"{timestamp}_{self.module_id}"
         
@@ -279,6 +278,8 @@ class Module:
             self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
         
         os.makedirs(self.recording_folder, exist_ok=True)
+
+        # TODO: Start generating health metadata to go with file
         
         return self.current_filename  # Just return filename, let child class handle status
 

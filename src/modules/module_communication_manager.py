@@ -19,20 +19,17 @@ from typing import Callable, Dict, Any, Optional
 
 class ModuleCommunicationManager:
     def __init__(self, logger: logging.Logger, 
-                 module_id: str,
-                 command_callback: Callable[[str], None] = None,
+                 module_id: str
                  config_manager = None):
         """Initialize the communication manager
         
         Args:
             logger: Logger instance
             module_id: The unique identifier for this module
-            command_callback: Callback function to handle received commands
             config_manager: Configuration manager for retrieving settings
         """
         self.logger = logger
         self.module_id = module_id
-        self.command_callback = command_callback
         self.config_manager = config_manager
         
         # Control flags
@@ -51,6 +48,9 @@ class ModuleCommunicationManager:
         
         # Command listener thread
         self.command_thread = None
+    
+    def set_callbacks(self, callbacks: Dict):
+        self.callbacks = callbacks
 
     def connect(self, controller_ip: str, controller_port: int) -> bool:
         """Connect to the controller's ZMQ sockets
@@ -131,9 +131,9 @@ class ModuleCommunicationManager:
                 self.logger.info(f"(COMMUNICATION MANAGER) Stored command: {self.last_command}")
                 
                 # Call the command handler if available
-                if self.command_callback:
+                if self.callbacks['handle_command']:
                     try:
-                        self.command_callback(command)
+                        self.callbacks['handle_command'](command)
                     except Exception as e:
                         self.logger.error(f"(COMMUNICATION MANAGER) Error handling command: {e}")
                         # Don't re-raise the exception, just log it and continue

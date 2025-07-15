@@ -653,3 +653,20 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping module: {e}")
             return False
+
+
+def main():
+    camera = CameraModule()
+    camera.start()
+
+    # Keep running until interrupted
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        camera.stop()
+
+if __name__ == '__main__':
+    main()
+

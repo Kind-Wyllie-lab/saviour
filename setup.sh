@@ -434,8 +434,8 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/habitat/src/modules/examples
-ExecStart=/home/pi/Desktop/habitat/env/bin/python ${MODULE_TYPE}_example.py
+WorkingDirectory=/home/pi/Desktop/habitat/src/modules
+ExecStart=/home/pi/Desktop/habitat/env/bin/python ${MODULE_TYPE}_module.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

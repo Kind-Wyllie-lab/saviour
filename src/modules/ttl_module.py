@@ -1036,3 +1036,17 @@ class TTLModule(Module):
             self.cleanup()
         except:
             pass
+
+def main():
+    ttl = TTLModule()
+    ttl.start()
+    # Keep running until interrupted
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        ttl.stop()
+
+if __name__ == 'main':
+    main()

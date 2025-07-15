@@ -19,7 +19,7 @@ from typing import Callable, Dict, Any, Optional
 
 class ModuleCommunicationManager:
     def __init__(self, logger: logging.Logger, 
-                 module_id: str
+                 module_id: str,
                  config_manager = None):
         """Initialize the communication manager
         

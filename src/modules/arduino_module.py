@@ -44,10 +44,6 @@ class ArduinoCommandHandler(ModuleCommandHandler):
             match cmd:
                 case "update_arduino_settings":
                     self._handle_update_arduino_settings(params)
-                case "start_streaming":
-                    self._handle_start_streaming(params)
-                case "stop_streaming":
-                    self._handle_stop_streaming()
                 case _:
                     # If not a arduino-specific command, pass to parent class
                     super().handle_command(command)
@@ -93,50 +89,6 @@ class ArduinoCommandHandler(ModuleCommandHandler):
             self.callbacks["send_status"]({
                 "type": "arduino_settings_update_failed",
                 "error": str(e)
-            })
-
-    def _handle_start_streaming(self, params: list):
-        """Handle start_streaming command"""
-        self.logger.info("(ARDUINO COMMAND HANDLER) Command identified as start_streaming")
-        try:
-            # Default to localhost if no IP provided
-            receiver_ip = params[0] if params else None # TODO: No longer required
-            port = params[1] if len(params) > 1 else "10001" # TODO: No longer required with flask approach?
-            
-            if 'start_streaming' in self.callbacks:
-                self.callbacks['start_streaming'](receiver_ip, port)
-            else:
-                self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
-                self.callbacks["send_status"]({
-                    "type": "streaming_start_failed",
-                    "error": "Module not configured for streaming"
-                })
-        except Exception as e:
-            self.logger.error(f"(COMMAND HANDLER) Error starting stream: {str(e)}")
-            self.callbacks["send_status"]({
-                "type": "streaming_start_failed",
-                "error": str(e)
-            })
-
-    def _handle_stop_streaming(self):
-        """Handle stop_streaming command"""
-        self.logger.info("(ARDUINO COMMAND HANDLER) Command identified as stop_streaming")
-        if 'stop_streaming' in self.callbacks:
-            success = self.callbacks['stop_streaming']()
-            if success:
-                self.callbacks["send_status"]({
-                    "type": "streaming_stopped"
-                })
-            else:
-                self.callbacks["send_status"]({
-                    "type": "streaming_stop_failed",
-                    "error": "Failed to stop streaming"
-                })
-        else:
-            self.logger.error("(COMMAND HANDLER) No stop_streaming callback provided")
-            self.callbacks["send_status"]({
-                "type": "streaming_stop_failed",
-                "error": "Module not configured for streaming"
             })
 
 class ArduinoModule(Module):
@@ -191,8 +143,6 @@ class ArduinoModule(Module):
             'export_recordings': self.export_recordings,
             'handle_update_arduino_settings': self.handle_update_arduino_settings,  # Camera specific
             'get_latest_recording': self.get_latest_recording,  # Camera specific
-            'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming,
             'get_controller_ip': self.service_manager.controller_ip,
             'shutdown': self._shutdown,
         })
@@ -371,5 +321,5 @@ def main():
         print("\nShutting down...")
         ttl.stop()
 
-if __name__ == 'main':
+if __name__ == '__main__':
     main()

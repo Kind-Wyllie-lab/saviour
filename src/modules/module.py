@@ -119,15 +119,9 @@ class Module:
         self.session_manager = controller_session_manager.SessionManager()
 
         # Register Callbacks
-        # TODO: Use a single dict of universal callbacks and pass them as needed? Lots of repetition right now
-        self.health_manager.set_callbacks({
-            "get_ptp_status": self.ptp_manager.get_status,
-            "get_recording_status": lambda: self.is_recording,
-            "get_streaming_status": lambda: self.is_streaming,
-        })
-        self.communication_manager.command_callback = self.command_handler.handle_command # Set the callback in the communication manager to use the command handler
-        self.command_handler.set_callbacks({ # Define callbacks for the command handler
+        self.callbacks = { # Define a universal set of callbacks
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id), # 
+            'get_controller_ip': lambda: self.service_manager.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
             'get_ptp_status': self.ptp_manager.get_status, # Use a lambda function to get status fresh from ptp manager everytime
             'get_streaming_status': lambda: self.is_streaming,
@@ -140,13 +134,15 @@ class Module:
             'clear_recordings': self.clear_recordings,
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
+            'handle_command': self.command_handler.handle_command 
             'get_config': self.config_manager.get_all, # Gets the complete config from
             'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manfager
             'shutdown': self._shutdown,
-        })
-        self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service_manager.controller_ip  # or whatever the callback function is
-        })
+        }
+        self.health_manager.set_callbacks(self.callbacks)
+        self.communication_manager.set_callbacks(self.callbacks)
+        self.command_handler.set_callbacks(self.callbacks)
+        self.export_manager.set_callbacks(self.callbacks)
         
         # Recording management
         self.recording_session_id = None

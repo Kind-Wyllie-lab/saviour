@@ -29,6 +29,7 @@ from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
+from src.modules.module_service_manager import ModuleServiceManager # Lazy import and initialization of ServiceManager to avoid circular imports
 from src.modules.ptp import PTP, PTPRole
 from src.modules.module_export_manager import ExportManager
 
@@ -105,9 +106,9 @@ class Module:
                 config_manager=self.config_manager,
                 start_time=None # Will be set during start()
             )
-        from src.modules.module_service_manager import ModuleServiceManager # Lazy import and initialization of ServiceManager to avoid circular imports
+
         self.logger.info(f"(MODULE) Initialising service manager")
-        self.service_manager = ModuleServiceManager(self.logger, self)
+        self.service_manager = ModuleServiceManager(self.logger, self.config_manager, module_id=self.module_id, module_type=self.module_type)
         self.logger.info(f"(MODULE) Initialising service manager")
 
         # Register Callbacks
@@ -130,7 +131,10 @@ class Module:
             'get_config': self.config_manager.get_all, # Gets the complete config from
             'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manfager
             'shutdown': self._shutdown,
+            'when_controller_discovered': self.when_controller_discovered,
+            'controller_disconnected': self.controller_disconnected
         }
+        self.service_manager.set_callbacks(self.callbacks)
         self.health_manager.set_callbacks(self.callbacks)
         self.communication_manager.set_callbacks(self.callbacks)
         self.command_handler.set_callbacks(self.callbacks)
@@ -197,9 +201,9 @@ class Module:
                 self.health_manager.start_heartbeats()
                 self.logger.info("(MODULE) Heartbeats started")
             
-            # 5. Start PTP
+            # 5. Start 
             self.logger.info("(MODULE) Starting PTP manager")
-            self.ptp_manager.start()
+            self.ptp.start()
             
             self.logger.info("(MODULE) Controller connection and initialization complete")
             
@@ -221,7 +225,7 @@ class Module:
             self.stop_recording()
         
         # Stop PTP services
-        self.ptp_manager.stop()
+        self.ptp.stop()
         
         # Stop heartbeats before cleaning up communication
         self.health_manager.stop_heartbeats()
@@ -623,9 +627,9 @@ class Module:
             self.communication_manager.start_command_listener()
 
             # Start PTP only if it's not already running
-            if not self.ptp_manager.running:
+            if not self.ptp.running:
                 time.sleep(0.1)
-                self.ptp_manager.start()
+                self.ptp.start()
 
             # Start sending heartbeats
             time.sleep(0.1)
@@ -711,7 +715,7 @@ class Module:
 
             # Third: Stop PTP manager
             self.logger.info("(MODULE) Stopping PTP manager...")
-            self.ptp_manager.stop()
+            self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("(MODULE) Cleaning up service manager...")

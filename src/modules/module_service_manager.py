@@ -8,8 +8,6 @@ This class is used to manage zeroconf service discovery and registration for mod
 Author: Andrew SG
 Created: 15/05/2025
 License: GPLv3
-
-#TODO: Use callbacks instead of passing through module
 """
 
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery
@@ -20,10 +18,11 @@ import logging
 import os
 
 from src.modules.module_config_manager import ModuleConfigManager
-from src.modules.module import Module
+
+from typing import Dict
 
 class ModuleServiceManager:
-    def __init__(self, logger: logging.Logger, module: Module):
+    def __init__(self, logger: logging.Logger, config_manager: ModuleConfigManager, module_id: str, module_type: str):
         """
         Initialize the module service manager
 
@@ -36,10 +35,10 @@ class ModuleServiceManager:
 
         # Basic params
         self.logger = logger
-        self.module = module
-        self.config_manager = module.config_manager
-        self.module_id = module.module_id
-        self.module_type = module.module_type
+        self.config_manager = config_manager
+        self.module_id = module_id
+        self.module_type = module_type
+        self.callbacks = {}
 
         # Controller connection params
         self.controller_ip = None
@@ -248,12 +247,12 @@ class ModuleServiceManager:
             self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
-            self.module.when_controller_discovered(self.controller_ip, self.controller_port)
+            self.callbacks["when_controller_discovered"](self.controller_ip, self.controller_port)
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("(SERVICE MANAGER) Lost connection to controller")
-        self.module.controller_disconnected()
+        self.callbacks["controller_disconnected"]()
             
             # Reset controller connection state
         self.controller_ip = None
@@ -264,6 +263,8 @@ class ModuleServiceManager:
         """Called when a service is updated"""
         self.logger.info(f"(SERVICE MANAGER) Service updated: {name}")
     
+    def set_callbacks(self, callbacks: Dict):
+        self.callbacks = callbacks
 
     def cleanup(self):
         """Clean up the zeroconf service"""

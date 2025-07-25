@@ -21,7 +21,7 @@ from src.modules.module_config_manager import ModuleConfigManager
 
 from typing import Dict
 
-class ModuleServiceManager:
+class Service:
     def __init__(self, logger: logging.Logger, config_manager: ModuleConfigManager, module_id: str, module_type: str):
         """
         Initialize the module service manager

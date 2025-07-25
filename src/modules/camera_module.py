@@ -172,7 +172,7 @@ class CameraModule(Module):
         
         # Set up export manager callbacks
         self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service_manager.controller_ip
+            'get_controller_ip': lambda: self.service.controller_ip
         })
     
         # Initialize camera
@@ -499,7 +499,7 @@ class CameraModule(Module):
                 'type': 'streaming_started',
                 'port': port,
                 'status': 'success',
-                'message': f'Streaming started from {self.service_manager.ip}:{port}'
+                'message': f'Streaming started from {self.service.ip}:{port}'
             })
             
             return True

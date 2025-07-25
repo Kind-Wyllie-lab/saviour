@@ -29,7 +29,7 @@ from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
-from src.modules.module_ptp_manager import PTPManager, PTPRole
+from src.modules.ptp import PTP, PTPRole
 from src.modules.module_export_manager import ExportManager
 
 class Module:
@@ -93,7 +93,7 @@ class Module:
             communication_manager=self.communication_manager
         )
         self.logger.info(f"(MODULE) Initialising PTP manager")
-        self.ptp_manager = PTPManager(
+        self.ptp = PTP(
             logger=self.logger,
             role=PTPRole.SLAVE)
         if not hasattr(self, 'command_handler'): # Initialize command handler if not already set - extensions of module class might set their own command handler
@@ -115,7 +115,7 @@ class Module:
             'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
             'get_controller_ip': lambda: self.service_manager.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
-            'get_ptp_status': self.ptp_manager.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+            'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication_manager.send_status(status),

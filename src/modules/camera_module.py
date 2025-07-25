@@ -218,7 +218,7 @@ class CameraModule(Module):
         self.command_handler.set_callbacks({
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp_manager.get_status,
+            'get_ptp_status': self.ptp.get_status,
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication_manager.send_status(status),

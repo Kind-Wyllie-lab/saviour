@@ -25,7 +25,7 @@ class PTPRole(Enum):
 class PTPError(Exception): # We define a custom error class
     pass
 
-class PTPManager:
+class PTP:
     def __init__(self,
                  role=PTPRole.SLAVE,
                  interface='eth0',

@@ -1,0 +1,46 @@
+classDiagram
+    class Module {
+        - module_id: str
+        - module_type: str
+        - config_path: str
+        - recording_folder: str
+        - logger: logging.Logger
+        - config_manager: ModuleConfigManager
+        - export_manager: ExportManager
+        - communication_manager: ModuleCommunicationManager
+        - health_manager: ModuleHealthManager
+        - ptp_manager: PTPManager
+        - command_handler: ModuleCommandHandler
+        - service_manager: ModuleServiceManager
+        - session_manager: SessionManager
+        - callbacks: dict
+        - recording_session_id: str
+        - current_filename: str
+        - samplerate: Any
+        - recording_filetype: Any
+        - is_running: bool
+        - is_recording: bool
+        - is_streaming: bool
+        - start_time: Any
+        + __init__(module_type: str, config: dict = None, config_path: str = None)
+        + when_controller_discovered(controller_ip: str, controller_port: int)
+        + controller_disconnected()
+        + start_recording(experiment_name: str = None, duration: str = None) -> Optional[str]
+        + stop_recording() -> bool
+        + list_recordings()
+        + clear_recordings(filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0)
+        + export_recordings(filename: str, length: int = 0, destination, experiment_name: str = None)
+        + list_commands()
+        + start() -> bool
+        + stop() -> bool
+        + set_config(new_config: dict, persist: bool = False) -> bool
+        + generate_module_id(module_type: str) -> str
+    }
+    Module *-- ModuleConfigManager
+    Module *-- ExportManager
+    Module *-- ModuleCommunicationManager
+    Module *-- ModuleHealthManager
+    Module *-- PTPManager
+    Module *-- ModuleCommandHandler
+    Module *-- ModuleServiceManager
+    Module *-- SessionManager

@@ -17,23 +17,16 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import subprocess
 import time
-import socket
 import logging
 import uuid
 import threading
-import random
-import psutil
-import asyncio
 from typing import Dict, Any, Optional, Union
-import numpy as np
-from enum import Enum, auto
 import datetime
 
 # Import managers
 from src.modules.module_file_transfer_manager import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
-import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
 from src.modules.module_ptp_manager import PTPManager, PTPRole
@@ -116,11 +109,10 @@ class Module:
         self.logger.info(f"(MODULE) Initialising service manager")
         self.service_manager = ModuleServiceManager(self.logger, self)
         self.logger.info(f"(MODULE) Initialising service manager")
-        self.session_manager = controller_session_manager.SessionManager()
 
         # Register Callbacks
         self.callbacks = { # Define a universal set of callbacks
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id), # 
+            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
             'get_controller_ip': lambda: self.service_manager.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
             'get_ptp_status': self.ptp_manager.get_status, # Use a lambda function to get status fresh from ptp manager everytime
@@ -741,6 +733,11 @@ class Module:
         self.is_running = False
         self.logger.info(f"(MODULE) Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
+    
+    def generate_session_id(self, module_id="unknown"):
+        """Start a new session for a module"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"REC_{timestamp}_{module_id}" # Generate a new session ID
 
     def _shutdown(self): 
         """Shut down the module"""

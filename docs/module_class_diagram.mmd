@@ -36,6 +36,68 @@ classDiagram
         + set_config(new_config: dict, persist: bool = False) -> bool
         + generate_module_id(module_type: str) -> str
     }
+    class ModuleConfigManager {
+        - config: dict
+        - logger: logging.Logger
+        + get(key: str, default=None)
+        + get_all() -> dict
+        + save_config() -> bool
+        + _merge_configs(base: dict, new: dict)
+    }
+    class ExportManager {
+        - module_id: str
+        - recording_folder: str
+        - config: dict
+        - logger: logging.Logger
+        + export_file(filename: str, destination, experiment_name: str = None) -> bool
+        + export_all_files(destination, experiment_name: str = None) -> bool
+        + unmount()
+    }
+    class ModuleCommunicationManager {
+        - logger: logging.Logger
+        - module_id: str
+        - config_manager: ModuleConfigManager
+        + connect(controller_ip: str, controller_port: int) -> bool
+        + start_command_listener() -> bool
+        + send_status(status: dict)
+        + cleanup()
+        + set_callbacks(callbacks: dict)
+    }
+    class ModuleHealthManager {
+        - logger: logging.Logger
+        - config_manager: ModuleConfigManager
+        - communication_manager: ModuleCommunicationManager
+        + get_health() -> dict
+        + start_heartbeats()
+        + stop_heartbeats()
+        + set_callbacks(callbacks: dict)
+    }
+    class PTPManager {
+        - logger: logging.Logger
+        - role: PTPRole
+        - running: bool
+        + start()
+        + stop()
+        + get_status() -> dict
+    }
+    class ModuleCommandHandler {
+        - logger: logging.Logger
+        - module_id: str
+        - module_type: str
+        - config_manager: ModuleConfigManager
+        - start_time: Any
+        + handle_command(command: dict)
+        + set_callbacks(callbacks: dict)
+        + cleanup()
+    }
+    class ModuleServiceManager {
+        - logger: logging.Logger
+        - module: Module
+        - controller_ip: str
+        - controller_port: int
+        + register_service() -> bool
+        + cleanup()
+    }
     Module *-- ModuleConfigManager
     Module *-- ExportManager
     Module *-- ModuleCommunicationManager
@@ -43,4 +105,3 @@ classDiagram
     Module *-- PTPManager
     Module *-- ModuleCommandHandler
     Module *-- ModuleServiceManager
-    Module *-- SessionManager

@@ -29,7 +29,7 @@ from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
-from src.modules.module_service_manager import ModuleServiceManager # Lazy import and initialization of ServiceManager to avoid circular imports
+from src.modules.service import Service # Lazy import and initialization of ServiceManager to avoid circular imports
 from src.modules.ptp import PTP, PTPRole
 from src.modules.module_export_manager import ExportManager
 
@@ -108,13 +108,13 @@ class Module:
             )
 
         self.logger.info(f"(MODULE) Initialising service manager")
-        self.service_manager = ModuleServiceManager(self.logger, self.config_manager, module_id=self.module_id, module_type=self.module_type)
+        self.service = Service(self.logger, self.config_manager, module_id=self.module_id, module_type=self.module_type)
         self.logger.info(f"(MODULE) Initialising service manager")
 
         # Register Callbacks
         self.callbacks = { # Define a universal set of callbacks
             'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
-            'get_controller_ip': lambda: self.service_manager.controller_ip,  # or whatever the callback function is
+            'get_controller_ip': lambda: self.service.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
             'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
             'get_streaming_status': lambda: self.is_streaming,
@@ -134,7 +134,7 @@ class Module:
             'when_controller_discovered': self.when_controller_discovered,
             'controller_disconnected': self.controller_disconnected
         }
-        self.service_manager.set_callbacks(self.callbacks)
+        self.service.set_callbacks(self.callbacks)
         self.health_manager.set_callbacks(self.callbacks)
         self.communication_manager.set_callbacks(self.callbacks)
         self.command_handler.set_callbacks(self.callbacks)
@@ -605,7 +605,7 @@ class Module:
             return False
         
         # Register service with proper IP address
-        if not self.service_manager.register_service():
+        if not self.service.register_service():
             self.logger.error("(MODULE) Failed to register service")
             return False
         
@@ -617,12 +617,12 @@ class Module:
         self.command_handler.start_time = self.start_time
         
         # Start command listener thread if controller is discovered
-        if self.service_manager.controller_ip:
-            self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service_manager.controller_ip}")
+        if self.service.controller_ip:
+            self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service.controller_ip}")
             # Connect to the controller
             self.communication_manager.connect(
-                self.service_manager.controller_ip,
-                self.service_manager.controller_port
+                self.service.controller_ip,
+                self.service.controller_port
             )
             self.communication_manager.start_command_listener()
 
@@ -719,7 +719,7 @@ class Module:
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("(MODULE) Cleaning up service manager...")
-            self.service_manager.cleanup()
+            self.service.cleanup()
             
             # Fifth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("(MODULE) Cleaning up communication manager...")

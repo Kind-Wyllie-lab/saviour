@@ -601,7 +601,7 @@ class Module:
         
         # Wait for proper network connectivity (DHCP-assigned IP)
         if not self._wait_for_network_ready():
-            self.logger.error("(MODULE) Failed to get proper network connectivity within timeout")
+            self.logger.error("(MODULE) Failed to get proper network connectivity")
             return False
         
         # Register service with proper IP address
@@ -637,23 +637,22 @@ class Module:
         
         return True
 
-    def _wait_for_network_ready(self, timeout: int = 60, check_interval: float = 2.0) -> bool:
+    def _wait_for_network_ready(self, check_interval: float = 2.0) -> bool:
         """
         Wait for proper network connectivity with DHCP-assigned IP address.
+        Will keep trying indefinitely until a proper IP is obtained.
         
         Args:
-            timeout: Maximum time to wait in seconds (default: 60)
             check_interval: Time between checks in seconds (default: 2.0)
             
         Returns:
-            bool: True if proper IP is obtained, False if timeout
+            bool: True if proper IP is obtained (will always return True eventually)
         """
-        self.logger.info(f"(MODULE) Waiting for proper network connectivity (timeout: {timeout}s)")
+        self.logger.info(f"(MODULE) Waiting for proper network connectivity (will keep trying until IP is obtained)")
         
-        start_time = time.time()
         attempts = 0
         
-        while time.time() - start_time < timeout:
+        while True:
             attempts += 1
             
             try:
@@ -686,9 +685,6 @@ class Module:
             
             # Wait before next check
             time.sleep(check_interval)
-        
-        self.logger.error(f"(MODULE) Network readiness timeout after {attempts} attempts")
-        return False
 
     def stop(self) -> bool:
         """

@@ -43,6 +43,18 @@ class Service:
         # Controller connection params
         self.controller_ip = None
         self.controller_port = None
+        
+        # Reconnection tracking
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = self.config_manager.get("network.reconnect_attempts", 5) if config_manager else 5
+        self.reconnect_delay = self.config_manager.get("network.reconnect_delay", 5) if config_manager else 5
+        self.last_discovery_time = None
+        
+        # Service registration state
+        self.service_registered = False
+        self.zeroconf = None
+        self.service_browser = None
+        self.service_info = None
     
         # Get the ip address of the module
         if os.name == 'nt': # Windows
@@ -106,106 +118,31 @@ class Service:
                                     potential_ip = parts[src_index + 1]
                                     if not potential_ip.startswith('127.'):
                                         self.ip = potential_ip
-                                        self.logger.info(f"(SERVICE MANAGER) Selected IP from ip route: {self.ip}")
                                         break
                 except Exception as e:
-                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from ip route: {e}")
-            
-            # Final fallback
-            if not self.ip or self.ip.startswith('127.'):
-                self.logger.error(f"(SERVICE MANAGER) All IP detection methods failed, using localhost")
-                self.ip = "127.0.0.1"
-        
-        self.logger.info(f"(SERVICE MANAGER) Module IP address: {self.ip}")
-        
-        # Get service configuration from config manager if available
-        self.service_port = 5353 # Default value
-        self.service_type = "_module._tcp.local."  # Use standard service type format
-        self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
-        
-        if self.config_manager:
-            self.service_port = self.config_manager.get("service.port", self.service_port)
-            self.service_type = self.config_manager.get("service.service_type", self.service_type)
-            self.service_name = self.config_manager.get("service.service_name", self.service_name)
-
-        # Initialize zeroconf but don't register service yet
-        self.zeroconf = Zeroconf()
-        self.service_info = None
-        self.service_browser = None
-        self.service_registered = False
-
-        self.logger.info(f"(SERVICE MANAGER) Module service manager initialized (service not yet registered)")
-
-    def register_service(self):
-        """Register the service with current IP address"""
-        if self.service_registered:
-            self.logger.info("(SERVICE MANAGER) Service already registered")
-            return True
-            
-        try:
-            # Update IP address to current value using the same robust method
-            if os.name == 'nt': # Windows
-                self.ip = socket.gethostbyname(socket.gethostname())
-            else: # Linux/Unix
-                # Try multiple methods to get the actual network IP address
-                self.ip = None
-                
-                # Method 1: Try hostname -I (most reliable on Linux)
-                try:
-                    hostname_output = os.popen('hostname -I').read().strip()
-                    if hostname_output:
-                        ips = hostname_output.split()
-                        for ip in ips:
-                            if not ip.startswith('127.') and not ip.startswith('::1'):
-                                self.ip = ip
-                                break
-                except Exception as e:
                     pass
-                
-                # Method 2: Try socket connection
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        s.connect(("8.8.8.8", 80))
-                        self.ip = s.getsockname()[0]
-                        s.close()
-                    except Exception as e:
-                        pass
-                
-                # Method 3: Try hostname resolution
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        hostname_ip = socket.gethostbyname(socket.gethostname())
-                        if not hostname_ip.startswith('127.'):
-                            self.ip = hostname_ip
-                    except Exception as e:
-                        pass
-                
-                # Method 4: Try ip route
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        import subprocess
-                        result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
-                                              capture_output=True, text=True, timeout=5)
-                        if result.returncode == 0:
-                            lines = result.stdout.strip().split('\n')
-                            for line in lines:
-                                if 'src' in line:
-                                    parts = line.split()
-                                    src_index = parts.index('src')
-                                    if src_index + 1 < len(parts):
-                                        potential_ip = parts[src_index + 1]
-                                        if not potential_ip.startswith('127.'):
-                                            self.ip = potential_ip
-                                            break
-                    except Exception as e:
-                        pass
                 
                 # Final fallback
                 if not self.ip or self.ip.startswith('127.'):
                     self.ip = "127.0.0.1"
             
             self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
+            
+            # Service registration parameters
+            self.service_type = "_module._tcp.local."
+            self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
+            self.service_port = self.config_manager.get("service.port", 5353) if config_manager else 5353
+            
+            # Initialize zeroconf
+            self.zeroconf = Zeroconf()
+
+    def register_service(self):
+        """Register the service with current IP address"""
+        try:
+            # Clean up any existing service registration
+            if self.service_registered:
+                self.logger.info("(SERVICE MANAGER) Cleaning up existing service registration")
+                self.cleanup()
             
             # Create service info with current IP
             self.service_info = ServiceInfo(
@@ -226,6 +163,7 @@ class Service:
             self.service_browser = ServiceBrowser(self.zeroconf, "_controller._tcp.local.", self)
             
             self.service_registered = True
+            self.reconnect_attempts = 0  # Reset reconnection attempts on successful registration
             self.logger.info(f"(SERVICE MANAGER) Module service registered with service info: {self.service_info}")
             return True
             
@@ -242,22 +180,76 @@ class Service:
         info = zeroconf.get_service_info(service_type, name)
         if info:
             self.logger.info(f"(SERVICE MANAGER) Controller discovered. info={info}")
-            self.controller_ip = socket.inet_ntoa(info.addresses[0])
-            self.controller_port = info.port
+            controller_ip = socket.inet_ntoa(info.addresses[0])
+            controller_port = info.port
+            
+            # Check if this is a new controller or the same one
+            if (self.controller_ip == controller_ip and 
+                self.controller_port == controller_port):
+                self.logger.info("(SERVICE MANAGER) Same controller re-discovered, ignoring")
+                return
+            
+            # Update controller connection info
+            self.controller_ip = controller_ip
+            self.controller_port = controller_port
+            self.last_discovery_time = time.time()
+            self.reconnect_attempts = 0  # Reset reconnection attempts on successful discovery
+            
             self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
-            self.callbacks["when_controller_discovered"](self.controller_ip, self.controller_port)
+            if "when_controller_discovered" in self.callbacks:
+                self.callbacks["when_controller_discovered"](self.controller_ip, self.controller_port)
+            else:
+                self.logger.warning("(SERVICE MANAGER) No when_controller_discovered callback registered")
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
         self.logger.warning("(SERVICE MANAGER) Lost connection to controller")
-        self.callbacks["controller_disconnected"]()
+        
+        # Only trigger disconnect if we were actually connected
+        if self.controller_ip and self.controller_port:
+            if "controller_disconnected" in self.callbacks:
+                self.callbacks["controller_disconnected"]()
+            else:
+                self.logger.warning("(SERVICE MANAGER) No controller_disconnected callback registered")
             
             # Reset controller connection state
-        self.controller_ip = None
-        self.controller_port = None
-        self.logger.info("(SERVICE MANAGER) Controller connection state reset")
+            self.controller_ip = None
+            self.controller_port = None
+            self.logger.info("(SERVICE MANAGER) Controller connection state reset")
+            
+            # Start reconnection attempts if configured
+            if self.max_reconnect_attempts > 0:
+                self._schedule_reconnection()
+
+    def _schedule_reconnection(self):
+        """Schedule a reconnection attempt"""
+        if self.reconnect_attempts < self.max_reconnect_attempts:
+            self.reconnect_attempts += 1
+            self.logger.info(f"(SERVICE MANAGER) Scheduling reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {self.reconnect_delay} seconds")
+            
+            # Schedule reconnection in a separate thread
+            def delayed_reconnect():
+                time.sleep(self.reconnect_delay)
+                if not self.controller_ip:  # Only reconnect if still disconnected
+                    self.logger.info(f"(SERVICE MANAGER) Attempting reconnection {self.reconnect_attempts}/{self.max_reconnect_attempts}")
+                    self._attempt_reconnection()
+            
+            threading.Thread(target=delayed_reconnect, daemon=True).start()
+        else:
+            self.logger.warning(f"(SERVICE MANAGER) Max reconnection attempts ({self.max_reconnect_attempts}) reached")
+
+    def _attempt_reconnection(self):
+        """Attempt to reconnect to the controller"""
+        try:
+            # Re-register service to refresh discovery
+            if self.register_service():
+                self.logger.info("(SERVICE MANAGER) Service re-registered for reconnection attempt")
+            else:
+                self.logger.error("(SERVICE MANAGER) Failed to re-register service for reconnection")
+        except Exception as e:
+            self.logger.error(f"(SERVICE MANAGER) Error during reconnection attempt: {e}")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
@@ -287,3 +279,6 @@ class Service:
             except Exception as e:
                 self.logger.error(f"(SERVICE MANAGER) Error unregistering service: {e}")
             self.zeroconf = None
+        
+        self.service_registered = False
+        self.logger.info("(SERVICE MANAGER) Service cleanup complete")

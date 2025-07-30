@@ -15,6 +15,7 @@ import threading
 import logging
 import time
 from typing import Callable, Dict, Any
+import json
 
 class ControllerCommunicationManager:
     def __init__(self, logger: logging.Logger, 
@@ -52,9 +53,16 @@ class ControllerCommunicationManager:
         self.data_callback = data_callback
 
     # ZeroMQ methods
-    def send_command(self, module_id: str, command: str):
+    def send_command(self, module_id: str, command: str, params: Dict):
         """Send a command to a specific module"""
-        message = f"cmd/{module_id} {command}"
+        # Handle params
+        if not params:
+            self.logger.info(f"(COMMUNICATION MANAGER) No params provided - was this a mistake?")
+            params = {}
+        json_params = json.dumps(params)
+
+        # Send message
+        message = f"cmd/{module_id} {command} {json_params}"
         self.command_socket.send_string(message)
         self.logger.info(f"(COMMUNICATION MANAGER) Command sent: {message}")
 

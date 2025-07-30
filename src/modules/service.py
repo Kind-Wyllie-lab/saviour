@@ -61,78 +61,78 @@ class Service:
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
             # Try multiple methods to get the actual network IP address
+            import time
+            max_wait = 60  # seconds
+            wait_time = 0
             self.ip = None
-            
-            # Method 1: Try hostname -I (most reliable on Linux)
-            try:
-                hostname_output = os.popen('hostname -I').read().strip()
-                if hostname_output:
-                    ips = hostname_output.split()
-                    self.logger.info(f"(SERVICE MANAGER) Available IPs from hostname -I: {ips}")
-                    for ip in ips:
-                        if not ip.startswith('127.') and not ip.startswith('::1'):
-                            self.ip = ip
-                            self.logger.info(f"(SERVICE MANAGER) Selected non-loopback IP from hostname -I: {self.ip}")
-                            break
-            except Exception as e:
-                self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname -I: {e}")
-            
-            # Method 2: Try socket.getaddrinfo with a connection to get local IP
-            if not self.ip or self.ip.startswith('127.'):
+            while wait_time < max_wait:
+                # Method 1: Try hostname -I (most reliable on Linux)
                 try:
-                    # Create a socket and connect to a remote address to get local IP
-                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.connect(("8.8.8.8", 80))
-                    self.ip = s.getsockname()[0]
-                    s.close()
-                    self.logger.info(f"(SERVICE MANAGER) Selected IP from socket connection: {self.ip}")
+                    hostname_output = os.popen('hostname -I').read().strip()
+                    if hostname_output:
+                        ips = hostname_output.split()
+                        self.logger.info(f"(SERVICE MANAGER) Available IPs from hostname -I: {ips}")
+                        for ip in ips:
+                            if not ip.startswith('127.') and not ip.startswith('::1'):
+                                self.ip = ip
+                                self.logger.info(f"(SERVICE MANAGER) Selected non-loopback IP from hostname -I: {self.ip}")
+                                break
                 except Exception as e:
-                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from socket connection: {e}")
-            
-            # Method 3: Try socket.gethostbyname but filter out loopback
-            if not self.ip or self.ip.startswith('127.'):
-                try:
-                    hostname_ip = socket.gethostbyname(socket.gethostname())
-                    if not hostname_ip.startswith('127.'):
-                        self.ip = hostname_ip
-                        self.logger.info(f"(SERVICE MANAGER) Selected IP from hostname resolution: {self.ip}")
-                    else:
-                        self.logger.warning(f"(SERVICE MANAGER) Hostname resolves to loopback: {hostname_ip}")
-                except Exception as e:
-                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname resolution: {e}")
-            
-            # Method 4: Try to get IP from network interfaces
-            if not self.ip or self.ip.startswith('127.'):
-                try:
-                    import subprocess
-                    result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
-                                          capture_output=True, text=True, timeout=5)
-                    if result.returncode == 0:
-                        # Parse the output to get the source IP
-                        lines = result.stdout.strip().split('\n')
-                        for line in lines:
-                            if 'src' in line:
-                                parts = line.split()
-                                src_index = parts.index('src')
-                                if src_index + 1 < len(parts):
-                                    potential_ip = parts[src_index + 1]
-                                    if not potential_ip.startswith('127.'):
-                                        self.ip = potential_ip
-                                        break
-                except Exception as e:
-                    pass
-                
-                # Final fallback
+                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname -I: {e}")
+                # Method 2: Try socket.getaddrinfo with a connection to get local IP
                 if not self.ip or self.ip.startswith('127.'):
-                    self.ip = "127.0.0.1"
-            
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        s.connect(("8.8.8.8", 80))
+                        self.ip = s.getsockname()[0]
+                        s.close()
+                        self.logger.info(f"(SERVICE MANAGER) Selected IP from socket connection: {self.ip}")
+                    except Exception as e:
+                        self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from socket connection: {e}")
+                # Method 3: Try socket.gethostbyname but filter out loopback
+                if not self.ip or self.ip.startswith('127.'):
+                    try:
+                        hostname_ip = socket.gethostbyname(socket.gethostname())
+                        if not hostname_ip.startswith('127.'):
+                            self.ip = hostname_ip
+                            self.logger.info(f"(SERVICE MANAGER) Selected IP from hostname resolution: {self.ip}")
+                        else:
+                            self.logger.warning(f"(SERVICE MANAGER) Hostname resolves to loopback: {hostname_ip}")
+                    except Exception as e:
+                        self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname resolution: {e}")
+                # Method 4: Try to get IP from network interfaces
+                if not self.ip or self.ip.startswith('127.'):
+                    try:
+                        import subprocess
+                        result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
+                                              capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            lines = result.stdout.strip().split('\n')
+                            for line in lines:
+                                if 'src' in line:
+                                    parts = line.split()
+                                    src_index = parts.index('src')
+                                    if src_index + 1 < len(parts):
+                                        potential_ip = parts[src_index + 1]
+                                        if not potential_ip.startswith('127.'):
+                                            self.ip = potential_ip
+                                            break
+                    except Exception as e:
+                        pass
+                # If still no valid IP, wait and retry
+                if not self.ip or self.ip.startswith('127.'):
+                    self.logger.warning(f"(SERVICE MANAGER) No valid network IP found yet (current: {self.ip}). Retrying in 2s...")
+                    time.sleep(2)
+                    wait_time += 2
+                else:
+                    break
+            if not self.ip or self.ip.startswith('127.'):
+                raise RuntimeError("(SERVICE MANAGER) Could not obtain a valid network IP address after waiting. Aborting service registration.")
             self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
-            
             # Service registration parameters
             self.service_type = "_module._tcp.local."
             self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
             self.service_port = self.config_manager.get("service.port", 5353) if config_manager else 5353
-            
             # Initialize zeroconf
             self.zeroconf = Zeroconf()
 

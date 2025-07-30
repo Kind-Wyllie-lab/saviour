@@ -81,12 +81,39 @@ class ModuleCommandHandler:
         """
         self.logger.info(f"(COMMAND HANDLER) Parsing command {command}")
         try:
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
-            return cmd, params
-        except exception as e:
+            # Check if the command contains a JSON object
+            if '{' in command and '}' in command:
+                self.logger.info(f"(COMMAND HANDLER) Found JSON in command")
+                # Find the first '{' and last '}' to extract the JSON part
+                start_idx = command.find('{')
+                end_idx = command.rfind('}') + 1
+                
+                self.logger.info(f"(COMMAND HANDLER) JSON start: {start_idx}, end: {end_idx}")
+                
+                # Extract the command part (before the JSON)
+                cmd_part = command[:start_idx].strip()
+                json_part = command[start_idx:end_idx]
+                
+                self.logger.info(f"(COMMAND HANDLER) Command part: '{cmd_part}'")
+                self.logger.info(f"(COMMAND HANDLER) JSON part: '{json_part}'")
+                
+                # Parse the command part
+                cmd_parts = cmd_part.split()
+                cmd = cmd_parts[0] if cmd_parts else ""
+                
+                self.logger.info(f"(COMMAND HANDLER) Extracted command: '{cmd}', JSON param: '{json_part}'")
+                
+                # Return the command and the JSON as a single parameter
+                return cmd, [json_part]
+            else:
+                # Original parsing for non-JSON commands
+                parts = command.split()
+                cmd = parts[0]
+                params = parts[1:] if len(parts) > 1 else []
+                return cmd, params
+        except Exception as e:
             self.logger.error(f"Error parsing command {command}: {e}")
+            return "", []
     
     def handle_command(self, command: str):
         """

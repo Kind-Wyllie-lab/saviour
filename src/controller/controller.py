@@ -299,6 +299,13 @@ class Controller:
         """
         self.logger.info("(CONTROLLER) Starting controller")
 
+        # Register controller service for module discovery
+        self.logger.info("(CONTROLLER) Registering controller service...")
+        if not self.service_manager.register_service():
+            self.logger.error("(CONTROLLER) Failed to register controller service")
+            return False
+        self.logger.info("(CONTROLLER) Controller service registered successfully")
+
         # Start PTP
         self.logger.info("(CONTROLLER) Starting PTP manager...")
         self.ptp_manager.start() # This will start a thread to run ptp4l and phc2sys

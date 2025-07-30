@@ -398,27 +398,59 @@ class ModuleCommandHandler:
         """Update the config dict"""
         self.logger.info(f"(COMMAND HANDLER) Command identified as set_config with params: {params}")
         if "set_config" in self.callbacks:
-            # Try to reconstruct the original command string and parse it as a dictionary
             try:
-                # Join the parameters back together to reconstruct the original string
-                command_string = ' '.join(params)
-                self.logger.info(f"(COMMAND HANDLER) Reconstructed command string: {command_string}")
-                
-                # Look for the first '=' to find the key
-                if '=' in command_string:
-                    first_equal = command_string.find('=')
-                    key = command_string[:first_equal].strip()
-                    value_string = command_string[first_equal + 1:].strip()
-                    
-                    # Try to evaluate the value as a Python literal (safe for dicts, lists, etc.)
-                    import ast
+                # If params is a list with a single JSON string, parse it directly
+                if len(params) == 1 and params[0].startswith('{'):
+                    import json
                     try:
-                        value = ast.literal_eval(value_string)
-                        new_config = {key: value}
-                        self.logger.info(f"(COMMAND HANDLER) Successfully parsed config: {new_config}")
-                    except (ValueError, SyntaxError) as e:
-                        self.logger.error(f"(COMMAND HANDLER) Failed to parse value '{value_string}': {e}")
-                        # Fallback to simple key=value parsing
+                        new_config = json.loads(params[0])
+                        self.logger.info(f"(COMMAND HANDLER) Successfully parsed JSON config: {new_config}")
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"(COMMAND HANDLER) Failed to parse JSON config: {e}")
+                        self.callbacks["send_status"]({
+                            "type": "error", 
+                            "timestamp": time.time(),
+                            "error": f"Failed to parse JSON config: {e}"
+                        })
+                        return
+                else:
+                    # Fallback to the original key=value parsing for backward compatibility
+                    command_string = ' '.join(params)
+                    self.logger.info(f"(COMMAND HANDLER) Reconstructed command string: {command_string}")
+                    
+                    # Look for the first '=' to find the key
+                    if '=' in command_string:
+                        first_equal = command_string.find('=')
+                        key = command_string[:first_equal].strip()
+                        value_string = command_string[first_equal + 1:].strip()
+                        
+                        # Try to evaluate the value as a Python literal (safe for dicts, lists, etc.)
+                        import ast
+                        try:
+                            value = ast.literal_eval(value_string)
+                            new_config = {key: value}
+                            self.logger.info(f"(COMMAND HANDLER) Successfully parsed config: {new_config}")
+                        except (ValueError, SyntaxError) as e:
+                            self.logger.error(f"(COMMAND HANDLER) Failed to parse value '{value_string}': {e}")
+                            # Fallback to simple key=value parsing
+                            new_config = {}
+                            for param in params:
+                                if '=' in param:
+                                    key, value = param.split('=', 1)
+                                    # Try to convert value to appropriate type
+                                    try:
+                                        if value.lower() in ['true', 'false']:
+                                            new_config[key] = value.lower() == 'true'
+                                        elif '.' in value and value.replace('.', '').replace('-', '').isdigit():
+                                            new_config[key] = float(value)
+                                        elif value.replace('-', '').isdigit():
+                                            new_config[key] = int(value)
+                                        else:
+                                            new_config[key] = value
+                                    except ValueError:
+                                        new_config[key] = value
+                    else:
+                        # No '=' found, treat as simple parameters
                         new_config = {}
                         for param in params:
                             if '=' in param:
@@ -435,24 +467,6 @@ class ModuleCommandHandler:
                                         new_config[key] = value
                                 except ValueError:
                                     new_config[key] = value
-                else:
-                    # No '=' found, treat as simple parameters
-                    new_config = {}
-                    for param in params:
-                        if '=' in param:
-                            key, value = param.split('=', 1)
-                            # Try to convert value to appropriate type
-                            try:
-                                if value.lower() in ['true', 'false']:
-                                    new_config[key] = value.lower() == 'true'
-                                elif '.' in value and value.replace('.', '').replace('-', '').isdigit():
-                                    new_config[key] = float(value)
-                                elif value.replace('-', '').isdigit():
-                                    new_config[key] = int(value)
-                                else:
-                                    new_config[key] = value
-                            except ValueError:
-                                new_config[key] = value
                 
                 self.logger.info(f"(COMMAND HANDLER) Final parsed config: {new_config}")
                 success = self.callbacks["set_config"](new_config)

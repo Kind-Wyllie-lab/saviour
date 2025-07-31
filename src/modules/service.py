@@ -254,6 +254,12 @@ class Service:
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"(SERVICE MANAGER) Service updated: {name}")
+        
+        # Treat service updates the same as new discoveries for controller services
+        # This ensures we reconnect when the controller restarts
+        if name.endswith('._controller._tcp.local.'):
+            self.logger.info(f"(SERVICE MANAGER) Controller service updated, treating as new discovery")
+            self.add_service(zeroconf, service_type, name)
     
     def set_callbacks(self, callbacks: Dict):
         self.callbacks = callbacks

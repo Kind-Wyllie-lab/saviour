@@ -227,11 +227,23 @@ class ModuleCommandHandler:
         duration = None
         
         if params:
-            for param in params:
-                if param.startswith('experiment_name='):
-                    experiment_name = param.split('=', 1)[1]
-                elif param.startswith('duration='):
-                    duration = param.split('=', 1)[1]
+            # Check if we have JSON parameters
+            if len(params) == 1 and params[0].startswith('{') and params[0].endswith('}'):
+                try:
+                    import json
+                    json_params = json.loads(params[0])
+                    experiment_name = json_params.get('experiment_name')
+                    duration = json_params.get('duration')
+                    self.logger.info(f"(COMMAND HANDLER) Parsed JSON parameters: {json_params}")
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"(COMMAND HANDLER) Failed to parse JSON parameters: {e}")
+            else:
+                # Fallback to old key=value format
+                for param in params:
+                    if param.startswith('experiment_name='):
+                        experiment_name = param.split('=', 1)[1]
+                    elif param.startswith('duration='):
+                        duration = param.split('=', 1)[1]
         
         self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}'")
         

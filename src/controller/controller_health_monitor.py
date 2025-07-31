@@ -58,20 +58,45 @@ class ControllerHealthMonitor:
         """
         try:
             was_new_module = module_id not in self.module_health
-            self.module_health[module_id] = {
-                'timestamp': status_data['timestamp'],
-                'last_heartbeat': status_data['timestamp'],
-                'status': 'online',
-                'cpu_temp': status_data.get('cpu_temp', 0),
-                'cpu_usage': status_data.get('cpu_usage', 0),
-                'memory_usage': status_data.get('memory_usage', 0),
-                'uptime': status_data.get('uptime', 0),
-                'disk_space': status_data.get('disk_space', 0),
-                'ptp4l_offset': status_data.get('ptp4l_offset'),
-                'ptp4l_freq': status_data.get('ptp4l_freq'),
-                'phc2sys_offset': status_data.get('phc2sys_offset'),
-                'phc2sys_freq': status_data.get('phc2sys_freq')
-            }
+            if was_new_module:
+                # New module - create full health record
+                self.module_health[module_id] = {
+                    'timestamp': status_data['timestamp'],
+                    'last_heartbeat': status_data['timestamp'],
+                    'status': 'online',
+                    'cpu_temp': status_data.get('cpu_temp', 0),
+                    'cpu_usage': status_data.get('cpu_usage', 0),
+                    'memory_usage': status_data.get('memory_usage', 0),
+                    'uptime': status_data.get('uptime', 0),
+                    'disk_space': status_data.get('disk_space', 0),
+                    'ptp4l_offset': status_data.get('ptp4l_offset'),
+                    'ptp4l_freq': status_data.get('ptp4l_freq'),
+                    'phc2sys_offset': status_data.get('phc2sys_offset'),
+                    'phc2sys_freq': status_data.get('phc2sys_freq')
+                }
+            else:
+                # Existing module - update heartbeat and status, preserve other fields
+                self.module_health[module_id]['last_heartbeat'] = status_data['timestamp']
+                self.module_health[module_id]['status'] = 'online'
+                # Update other metrics if provided
+                if 'cpu_temp' in status_data:
+                    self.module_health[module_id]['cpu_temp'] = status_data['cpu_temp']
+                if 'cpu_usage' in status_data:
+                    self.module_health[module_id]['cpu_usage'] = status_data['cpu_usage']
+                if 'memory_usage' in status_data:
+                    self.module_health[module_id]['memory_usage'] = status_data['memory_usage']
+                if 'uptime' in status_data:
+                    self.module_health[module_id]['uptime'] = status_data['uptime']
+                if 'disk_space' in status_data:
+                    self.module_health[module_id]['disk_space'] = status_data['disk_space']
+                if 'ptp4l_offset' in status_data:
+                    self.module_health[module_id]['ptp4l_offset'] = status_data['ptp4l_offset']
+                if 'ptp4l_freq' in status_data:
+                    self.module_health[module_id]['ptp4l_freq'] = status_data['ptp4l_freq']
+                if 'phc2sys_offset' in status_data:
+                    self.module_health[module_id]['phc2sys_offset'] = status_data['phc2sys_offset']
+                if 'phc2sys_freq' in status_data:
+                    self.module_health[module_id]['phc2sys_freq'] = status_data['phc2sys_freq']
             
             if was_new_module:
                 self.logger.info(f"(HEALTH MONITOR) New module {module_id} added to health tracking")
@@ -177,7 +202,7 @@ class ControllerHealthMonitor:
         current_time = time.time()
         
         for module_id, health in self.module_health.items():
-            if (current_time - health['timestamp']) <= self.heartbeat_timeout: # If a heartbeat was received within 1 timeout period of now
+            if (current_time - health['last_heartbeat']) <= self.heartbeat_timeout: # If a heartbeat was received within 1 timeout period of now
                 online_modules.append(module_id) # It's online
         
         return online_modules
@@ -195,7 +220,7 @@ class ControllerHealthMonitor:
                 self.logger.info(f"(HEALTH MONITOR) Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
             
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
-                last_heartbeat = self.module_health[module_id]['timestamp'] # Get the time of the last heartbeat
+                last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
                 
                 # Find offline modules
                 if (current_time - last_heartbeat) > self.heartbeat_timeout: # If heartbeat not received within timeout period

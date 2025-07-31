@@ -38,7 +38,7 @@ class ControllerCommunicationManager:
         self.status_socket = self.context.socket(zmq.SUB) # subscriber socket for receiving status updates
         self.status_socket.subscribe("status/") # subscribe to status updates
         self.status_socket.subscribe("data/") # subscribe to data updates - is this necessary?
-        self.status_socket.bind("tcp://*:5556") # bind the socket to a port
+        self.status_socket.bind("tcp://*:5556") # bind the socket to a port - modules will connect to this
 
         # Start the zmq listener thread
         self.listener_thread = threading.Thread(target=self.listen_for_updates, daemon=True)

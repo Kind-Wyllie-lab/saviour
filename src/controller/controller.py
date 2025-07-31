@@ -186,7 +186,8 @@ class Controller:
         print() # New line  
         module_id = topic.split('/')[1] # get module id from topic
         try:
-            status_data = eval(data)
+            import json
+            status_data = json.loads(data)
             status_type = status_data.get('type', 'unknown')
             self.web_interface_manager.handle_module_status(module_id, status_data)
             match status_type:
@@ -200,7 +201,22 @@ class Controller:
                     self.logger.info(f"(CONTROLLER) Recordings list received from {module_id}")
                 case 'get_config':
                     self.logger.info(f"(CONTROLLER) Config dict received from {module_id}")
-                    self.module_config[module_id] = status_data.get('config', 'none') 
+                    config_data = status_data.get('config', {})
+                    # Extract the editable section if it exists, otherwise store the entire config
+                    if isinstance(config_data, dict) and 'editable' in config_data:
+                        self.module_config[module_id] = config_data['editable']
+                        self.logger.info(f"(CONTROLLER) Stored editable config for {module_id}")
+                    else:
+                        self.module_config[module_id] = config_data
+                        self.logger.info(f"(CONTROLLER) Stored full config for {module_id}")
+                case 'set_config':
+                    self.logger.info(f"(CONTROLLER) Set config response received from {module_id}: {status_data}")
+                    # If the set_config was successful, we should refresh the config
+                    if status_data.get('status') == 'success':
+                        # Request updated config from this module
+                        self.communication_manager.send_command(module_id, "get_config", {})
+                    else:
+                        self.logger.error(f"(CONTROLLER) Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
                 case _:
                     self.logger.info(f"(CONTROLLER) Unknown status type from {module_id}: {status_type}")
         except Exception as e:

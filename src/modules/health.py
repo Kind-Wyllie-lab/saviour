@@ -22,19 +22,19 @@ class Health:
     This class is responsible for monitoring module system resources and reporting status to the controller.
     """
     def __init__(self, logger: logging.Logger, 
-                 config_manager=None,
+                 config=None,
                  start_time=None):
         
         # Imported managers from module.py
         self.logger = logger
-        self.config_manager = config_manager
+        self.config = config
         if start_time is None:
             self.start_time = time.time()
         else:
             self.start_time = start_time
 
         # Heartbeat parameters
-        self.heartbeat_interval = self.config_manager.get("module.heartbeat_interval", 30)
+        self.heartbeat_interval = self.config.get("module.heartbeat_interval", 30)
         self.heartbeats_active = False
     
     def start_heartbeats(self) -> bool:

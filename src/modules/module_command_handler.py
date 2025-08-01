@@ -147,8 +147,10 @@ class ModuleCommandHandler:
                     self._handle_export_recordings(params)
                 case "ptp_status":
                     self._handle_ptp_status()
-                case "list_commands": 
+                case "list_commands":
                     self._handle_list_commands()
+                case "test_communication":
+                    self._handle_test_communication()
                 case "get_config":
                     self._handle_get_config()
                 case "set_config":
@@ -432,6 +434,28 @@ class ModuleCommandHandler:
         else:
             self.logger.error("(COMMAND HANDLER) No get_config callback was given to command handler")
             self.callbacks["send_status"]({"error": "No get_config callback was given to command handler"})
+    
+    def _handle_test_communication(self):
+        """Handle test_communication command"""
+        self.logger.info("(COMMAND HANDLER) Command identified as test_communication")
+        try:
+            # Send a simple response to confirm communication is working
+            self.callbacks["send_status"]({
+                "type": "test_communication",
+                "status": "success",
+                "message": "Communication test successful",
+                "module_id": self.module_id,
+                "timestamp": time.time()
+            })
+        except Exception as e:
+            self.logger.error(f"(COMMAND HANDLER) Error in test_communication: {e}")
+            self.callbacks["send_status"]({
+                "type": "test_communication",
+                "status": "error",
+                "error": str(e),
+                "module_id": self.module_id,
+                "timestamp": time.time()
+            })
     
     def _handle_set_config(self, params: list):
         """Update the config dict"""

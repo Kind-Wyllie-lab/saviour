@@ -316,3 +316,53 @@ class ControllerHealthMonitor:
                 - 'on_status_change' : Callback to inform the controller program that a module has gone offline 
         """
         self.callbacks = callbacks
+    
+    def mark_module_offline(self, module_id: str, reason: str = "Communication test failed"):
+        """Mark a module as offline due to communication failure
+        
+        Args:
+            module_id: ID of the module to mark offline
+            reason: Reason for marking the module offline
+        """
+        if module_id in self.module_health:
+            if self.module_health[module_id]['status'] == 'online':
+                self.logger.warning(f"Module {module_id} marked offline: {reason}")
+                self.module_health[module_id]['status'] = 'offline'
+                
+                # Trigger callback for offline status
+                if "on_status_change" in self.callbacks:
+                    try:
+                        self.callbacks["on_status_change"](module_id, 'offline')
+                    except Exception as e:
+                        self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+            else:
+                self.logger.info(f"Module {module_id} already offline: {reason}")
+        else:
+            self.logger.warning(f"Attempted to mark unknown module {module_id} as offline: {reason}")
+    
+    def handle_communication_test_response(self, module_id: str, success: bool):
+        """Handle communication test response from a module
+        
+        Args:
+            module_id: ID of the module that responded
+            success: Whether the communication test was successful
+        """
+        if module_id in self.module_health:
+            if success:
+                # Communication test successful - ensure module is marked online
+                if self.module_health[module_id]['status'] == 'offline':
+                    self.logger.info(f"Module {module_id} communication test successful - marking online")
+                    self.module_health[module_id]['status'] = 'online'
+                    # Trigger callback for online status
+                    if "on_status_change" in self.callbacks:
+                        try:
+                            self.callbacks["on_status_change"](module_id, 'online')
+                        except Exception as e:
+                            self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+                else:
+                    self.logger.info(f"Module {module_id} communication test successful - already online")
+            else:
+                # Communication test failed - mark module as offline
+                self.mark_module_offline(module_id, "Communication test failed")
+        else:
+            self.logger.warning(f"Communication test response from unknown module {module_id}")

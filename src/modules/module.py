@@ -458,13 +458,13 @@ class Module:
             self.logger.error(f"(MODULE) Error clearing recordings: {e}")
             raise
 
-    def export_recordings(self, filename: str, length: int = 0, destination: Union[str, ExportManager.ExportDestination] = ExportManager.ExportDestination.CONTROLLER, experiment_name: str = None):
+    def export_recordings(self, filename: str, length: int = 0, destination: Union[str, Export.ExportDestination] = Export.ExportDestination.CONTROLLER, experiment_name: str = None):
         """Export a video to the specified destination
         
         Args:
             filename: Name of the file to export (can be comma-separated list)
             length: Optional length of the video
-            destination: Where to export to - string or ExportManager.ExportDestination enum
+            destination: Where to export to - string or Export.ExportDestination enum
             experiment_name: Optional experiment name to include in export directory
             
         Returns:
@@ -474,7 +474,7 @@ class Module:
             # Convert string destination to enum if needed
             if isinstance(destination, str):
                 try:
-                    destination = ExportManager.ExportDestination.from_string(destination)
+                    destination = Export.ExportDestination.from_string(destination)
                 except ValueError as e:
                     self.logger.error(f"(MODULE) Invalid destination '{destination}': {e}")
                     self.communication.send_status({

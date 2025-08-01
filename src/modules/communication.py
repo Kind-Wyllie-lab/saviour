@@ -20,17 +20,17 @@ from typing import Callable, Dict, Any, Optional
 class Communication:
     def __init__(self, logger: logging.Logger, 
                  module_id: str,
-                 config_manager = None):
+                 config = None):
         """Initialize the communication manager
         
         Args:
             logger: Logger instance
             module_id: The unique identifier for this module
-            config_manager: Configuration manager for retrieving settings
+            config: Configuration manager for retrieving settings
         """
         self.logger = logger
         self.module_id = module_id
-        self.config_manager = config_manager
+        self.config = config
         
         # Control flags
         self.command_listener_running = False
@@ -43,8 +43,8 @@ class Communication:
         
         # Connection state tracking
         self.connection_attempts = 0
-        self.max_connection_attempts = self.config_manager.get("network.reconnect_attempts", 5) if config_manager else 5
-        self.connection_delay = self.config_manager.get("network.reconnect_delay", 5) if config_manager else 5
+        self.max_connection_attempts = self.config.get("network.reconnect_attempts", 5) if config else 5
+        self.connection_delay = self.config.get("network.reconnect_delay", 5) if config else 5
         self.last_connection_time = None
         
         # ZeroMQ setup - initialized but not connected
@@ -89,9 +89,9 @@ class Communication:
             self.controller_port = controller_port
             
             # Get ports from config if available
-            if self.config_manager:
-                command_port = self.config_manager.get("communication.command_socket_port", 5555)
-                status_port = self.config_manager.get("communication.status_socket_port", 5556)
+            if self.config:
+                command_port = self.config.get("communication.command_socket_port", 5555)
+                status_port = self.config.get("communication.status_socket_port", 5556)
             else:
                 command_port = 5555
                 status_port = 5556

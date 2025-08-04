@@ -17,17 +17,17 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 from src.modules.module import Module
-from src.modules.module_command_handler import ModuleCommandHandler
+from habitat.src.modules.command import Command
 import logging
 import numpy as np
 import threading
 import json
 
 
-class ArduinoCommandHandler(ModuleCommandHandler):
+class ArduinoCommand(Command):
     """Command handler specific to Arduino functionality"""
-    def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
-        super().__init__(logger, module_id, module_type, config_manager, start_time)
+    def __init__(self, logger, module_id, module_type, config=None, start_time=None):
+        super().__init__(logger, module_id, module_type, config, start_time)
         self.logger.info("(ARDUINO COMMAND HANDLER) Initialised")
 
     def handle_command(self, command: str):
@@ -94,11 +94,11 @@ class ArduinoCommandHandler(ModuleCommandHandler):
 class ArduinoModule(Module):
     def __init__(self, module_type="arduino", config=None, config_file_path=None):
         # Initialize command handler before parent class
-        self.command_handler = ArduinoCommandHandler(
+        self.command_handler = ArduinoCommand(
             logger=logging.getLogger(f"{module_type}.{self.generate_module_id(module_type)}"),
             module_id=self.generate_module_id(module_type),
             module_type=module_type,
-            config_manager=None,  # Will be set by parent class
+            config=None,  # Will be set by parent class
             start_time=None  # Will be set during start()
         )
         
@@ -109,13 +109,13 @@ class ArduinoModule(Module):
         self.callbacks = {}
         
         # Set up export manager callbacks
-        self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service_manager.controller_ip
+        self.export.set_callbacks({
+            'get_controller_ip': lambda: self.service.controller_ip
         })
 
         # Default arduino config if not in config manager
-        if not self.config_manager.get("arduino"):
-            self.config_manager.set("arduino", {
+        if not self.config.get("arduino"):
+            self.config.set("arduino", {
                 "fps": 100,
                 "width": 1280,
                 "height": 720,
@@ -129,13 +129,13 @@ class ArduinoModule(Module):
 
         # Set up arduino-specific callbacks for the command handler
         self.command_handler.set_callbacks({
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp_manager.get_status,
+            'generate_session_id': lambda module_id: self.session.generate_session_id(module_id),
+            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
+            'get_ptp_status': self.ptp.get_status,
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication_manager.send_status(status),
-            'get_health': self.health_manager.get_health,
+            'send_status': lambda status: self.communication.send_status(status),
+            'get_health': self.health.get_health,
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
@@ -143,7 +143,7 @@ class ArduinoModule(Module):
             'export_recordings': self.export_recordings,
             'handle_update_arduino_settings': self.handle_update_arduino_settings,  # Camera specific
             'get_latest_recording': self.get_latest_recording,  # Camera specific
-            'get_controller_ip': self.service_manager.controller_ip,
+            'get_controller_ip': self.service.controller_ip,
             'shutdown': self._shutdown,
         })
 
@@ -163,7 +163,7 @@ class ArduinoModule(Module):
             # TODO: Start recording here
 
             # Send status response after successful recording start
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "recording_started",
                 "filename": filename,
                 "recording": True,
@@ -173,8 +173,8 @@ class ArduinoModule(Module):
             
         except Exception as e:
             self.logger.error(f"(ARDUINO MODULE) Error starting recording: {e}")
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_start_failed",
                     "error": str(e)
                 })
@@ -197,8 +197,8 @@ class ArduinoModule(Module):
                 duration = time.time() - self.recording_start_time
                 
                 # Send status response after successful recording stop
-                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                    self.communication_manager.send_status({
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
                         "type": "recording_stopped",
                         "filename": self.current_filename,
                         "session_id": self.recording_session_id,
@@ -211,8 +211,8 @@ class ArduinoModule(Module):
                 return True
             else:
                 self.logger.error("(ARDUINO MODULE) Error: recording_start_time was None")
-                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                    self.communication_manager.send_status({
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
                         "type": "recording_stopped",
                         "status": "error",
                         "error": "Recording start time was not set"
@@ -221,8 +221,8 @@ class ArduinoModule(Module):
             
         except Exception as e:
             self.logger.error(f"(ARDUINO MODULE) Error stopping recording: {e}")
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_stopped",
                     "status": "error",
                     "error": str(e)
@@ -242,7 +242,7 @@ class ArduinoModule(Module):
         try:
             for key, value in params.items():
                 config_key = f"arduino.{key}"
-                self.config_manager.set(config_key, value)
+                self.config.set(config_key, value)
                 
             # Update file format if it's in the params
             if 'file_format' in params:
@@ -261,7 +261,7 @@ class ArduinoModule(Module):
             success = self.set_arduino_parameters(params)
             
             # Send status update
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "arduino_settings_updated",
                 "settings": params,
                 "success": success
@@ -270,7 +270,7 @@ class ArduinoModule(Module):
             return success
         except Exception as e:
             self.logger.error(f"(ARDUINO MODULE) Error updating arduino settings: {e}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "arduino_settings_update_failed",
                 "error": str(e)
             })

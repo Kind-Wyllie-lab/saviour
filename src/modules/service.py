@@ -17,25 +17,25 @@ import time
 import logging
 import os
 
-from src.modules.module_config_manager import ModuleConfigManager
+from habitat.src.modules.config import Config
 
 from typing import Dict
 
 class Service:
-    def __init__(self, logger: logging.Logger, config_manager: ModuleConfigManager, module_id: str, module_type: str):
+    def __init__(self, logger: logging.Logger, config: Config, module_id: str, module_type: str):
         """
         Initialize the module service manager
 
         Args:
             logger: The logger to use for logging
-            config_manager: The config manager to use for configuration
+            config: The config manager to use for configuration
             module_id: The id of the module
             module: The module itself.
         """
 
         # Basic params
         self.logger = logger
-        self.config_manager = config_manager
+        self.config = config
         self.module_id = module_id
         self.module_type = module_type
         self.callbacks = {}
@@ -46,8 +46,8 @@ class Service:
         
         # Reconnection tracking
         self.reconnect_attempts = 0
-        self.max_reconnect_attempts = self.config_manager.get("network.reconnect_attempts", 5) if config_manager else 5
-        self.reconnect_delay = self.config_manager.get("network.reconnect_delay", 5) if config_manager else 5
+        self.max_reconnect_attempts = self.config.get("network.reconnect_attempts", 5) if config else 5
+        self.reconnect_delay = self.config.get("network.reconnect_delay", 5) if config else 5
         self.last_discovery_time = None
         
         # Service registration state
@@ -132,7 +132,7 @@ class Service:
             # Service registration parameters
             self.service_type = "_module._tcp.local."
             self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
-            self.service_port = self.config_manager.get("service.port", 5353) if config_manager else 5353
+            self.service_port = self.config.get("service.port", 5353) if config else 5353
             # Initialize zeroconf
             self.zeroconf = Zeroconf()
 

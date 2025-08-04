@@ -3,7 +3,7 @@
 """
 Module Health Manager
 
-This manager is responsible for monitoring module system resources and reporting status to the controller.
+This class is responsible for monitoring module system resources and reporting status to the controller.
 
 Author: Andrew SG
 Created: 16/05/2025         
@@ -17,19 +17,17 @@ from typing import Callable, Dict, Any, Optional
 import threading
 import os
 
-class ModuleHealthManager:
+class Health:
     """
     This class is responsible for monitoring module system resources and reporting status to the controller.
     """
     def __init__(self, logger: logging.Logger, 
                  config_manager=None,
-                 communication_manager=None,
                  start_time=None):
         
         # Imported managers from module.py
         self.logger = logger
         self.config_manager = config_manager
-        self.communication_manager = communication_manager
         if start_time is None:
             self.start_time = time.time()
         else:
@@ -53,7 +51,7 @@ class ModuleHealthManager:
             self.logger.info("(HEALTH MANAGER) Heartbeats already active")
             return False
             
-        if not self.communication_manager.controller_ip:
+        if not self.callbacks["get_controller_ip"]:
             self.logger.error("(HEALTH MANAGER) Cannot start heartbeats: not connected to controller")
             return False
             
@@ -77,15 +75,15 @@ class ModuleHealthManager:
             if current_time - last_heartbeat_time >= self.heartbeat_interval:
                 try:
                     # Check if communication manager is still valid
-                    if not self.communication_manager or not self.communication_manager.controller_ip:
-                        self.logger.warning("(HEALTH MANAGER) Communication manager not available, stopping heartbeats")
+                    if not self.callbacks["get_controller_ip"]:
+                        self.logger.warning("(HEALTH MANAGER) Controller IP not available, stopping heartbeats")
                         self.heartbeats_active = False
                         break
                         
                     self.logger.info("(HEALTH MANAGER) Sending heartbeat")
                     status = self.get_health()
                     status['type'] = 'heartbeat' # Add type field to identify heartbeat status
-                    self.communication_manager.send_status(status)
+                    self.callbacks["send_status"](status)
                     last_heartbeat_time = current_time
                 except Exception as e:
                     self.logger.error(f"(HEALTH MANAGER) Error sending heartbeat: {e}")
@@ -142,13 +140,7 @@ class ModuleHealthManager:
 
     def set_callbacks(self, callbacks: Dict[str, Callable]):
         """
-        Set callbacks for data operations that can't be directly handled by the command handler
-        
-        Args:
-            callbacks: Dictionary of callback functions
-                - 'get_ptp_status': Callback to get ptp4l and phc2sys offsets
-                - 'get_streaming_status': Callback to get module streaming status
-                - 'get_recording_status': Callback to get module recording status
+        Receive a universal set of callbacks from the module
         """
         self.callbacks = callbacks
         

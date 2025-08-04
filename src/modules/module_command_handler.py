@@ -9,8 +9,6 @@ providing a central place for command parsing and execution.
 Author: Andrew SG
 Created: 16/05/2025         
 License: GPLv3
-
-#TODO: This is really tightly coupled right now. Better to move it towards looser coupling.
 """
 
 import time
@@ -22,10 +20,9 @@ from typing import Dict, Any, Optional, Callable
 
 class ModuleCommandHandler:
     """
-    Manages commands for habitat modules.
-    
-    This class provides a centralized command handling interface, decoupling command processing from the module itself.
-    It routes receives commands to the necessary methods.
+    Routes commands and params recieved by the communication manager to functionality in the main module and managers.
+
+    It's crucial variable 
     """
     
     def __init__(self, 
@@ -49,13 +46,7 @@ class ModuleCommandHandler:
         self.module_type = module_type
         self.config_manager = config_manager
         self.start_time = start_time
-        
-        # Control flags and parameters
-        self.streaming = False
-        self.stream_thread = None
-        self.stream_session_id = None
-        self.samplerate = 200
-        
+    
         # Callback dictionary - will be set by set_callbacks method
         self.callbacks = {}
         
@@ -75,9 +66,54 @@ class ModuleCommandHandler:
         if missing_callbacks:
             raise ValueError(f"Missing required callbacks: {missing_callbacks}")
             
-        self.callbacks = callbacks
-        if 'get_samplerate' in callbacks:
-            self.samplerate = callbacks['get_samplerate']
+        self.callbacks.update(callbacks)
+        
+    def _parse_command(self, command: str):
+        """
+        Parse a command received from the controller into command and params
+
+        Args:
+            command: The command string to process
+
+        Returns:
+            cmd: The actual command (e.g. start_recording)
+            params: a dict of params e.g. {"port":5000, "client_ip": 192.168.0.34}
+        """
+        self.logger.info(f"(COMMAND HANDLER) Parsing command {command}")
+        try:
+            # Check if the command contains a JSON object
+            if '{' in command and '}' in command:
+                self.logger.info(f"(COMMAND HANDLER) Found JSON in command")
+                # Find the first '{' and last '}' to extract the JSON part
+                start_idx = command.find('{')
+                end_idx = command.rfind('}') + 1
+                
+                self.logger.info(f"(COMMAND HANDLER) JSON start: {start_idx}, end: {end_idx}")
+                
+                # Extract the command part (before the JSON)
+                cmd_part = command[:start_idx].strip()
+                json_part = command[start_idx:end_idx]
+                
+                self.logger.info(f"(COMMAND HANDLER) Command part: '{cmd_part}'")
+                self.logger.info(f"(COMMAND HANDLER) JSON part: '{json_part}'")
+                
+                # Parse the command part
+                cmd_parts = cmd_part.split()
+                cmd = cmd_parts[0] if cmd_parts else ""
+                
+                self.logger.info(f"(COMMAND HANDLER) Extracted command: '{cmd}', JSON param: '{json_part}'")
+                
+                # Return the command and the JSON as a single parameter
+                return cmd, [json_part]
+            else:
+                # Original parsing for non-JSON commands
+                parts = command.split()
+                cmd = parts[0]
+                params = parts[1:] if len(parts) > 1 else []
+                return cmd, params
+        except Exception as e:
+            self.logger.error(f"Error parsing command {command}: {e}")
+            return "", []
     
     def handle_command(self, command: str):
         """
@@ -90,9 +126,7 @@ class ModuleCommandHandler:
         
         try:
             # Parse command and parameters
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
+            cmd, params = self._parse_command(command)
             
             # Debug logging for command parsing
             self.logger.info(f"(COMMAND HANDLER) Parsed command: '{cmd}', parameters: {params}")
@@ -113,6 +147,16 @@ class ModuleCommandHandler:
                     self._handle_export_recordings(params)
                 case "ptp_status":
                     self._handle_ptp_status()
+                case "list_commands":
+                    self._handle_list_commands()
+                case "test_communication":
+                    self._handle_test_communication()
+                case "get_config":
+                    self._handle_get_config()
+                case "set_config":
+                    self._handle_set_config(params)
+                case "shutdown":
+                    self._handle_shutdown()
                 case _:
                     self._handle_unknown_command(command)
                 
@@ -185,11 +229,23 @@ class ModuleCommandHandler:
         duration = None
         
         if params:
-            for param in params:
-                if param.startswith('experiment_name='):
-                    experiment_name = param.split('=', 1)[1]
-                elif param.startswith('duration='):
-                    duration = param.split('=', 1)[1]
+            # Check if we have JSON parameters
+            if len(params) == 1 and params[0].startswith('{') and params[0].endswith('}'):
+                try:
+                    import json
+                    json_params = json.loads(params[0])
+                    experiment_name = json_params.get('experiment_name')
+                    duration = json_params.get('duration')
+                    self.logger.info(f"(COMMAND HANDLER) Parsed JSON parameters: {json_params}")
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"(COMMAND HANDLER) Failed to parse JSON parameters: {e}")
+            else:
+                # Fallback to old key=value format
+                for param in params:
+                    if param.startswith('experiment_name='):
+                        experiment_name = param.split('=', 1)[1]
+                    elif param.startswith('duration='):
+                        duration = param.split('=', 1)[1]
         
         self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}'")
         
@@ -324,14 +380,9 @@ class ModuleCommandHandler:
         
         result = self.callbacks["export_recordings"](filename, length, destination, experiment_name)
         
-        # Send status response
-        self.callbacks["send_status"]({
-            "type": "export_complete",
-            "timestamp": time.time(),
-            "filename": filename,
-            "experiment_name": experiment_name,
-            "success": bool(result)
-        })
+        # The module already sends the export_complete status, so we don't need to send another one
+        # Just log the result for debugging
+        self.logger.info(f"(COMMAND HANDLER) Export recordings result: {result}")
 
     def _handle_ptp_status(self):
         """Return PTP information to the controller"""
@@ -345,19 +396,165 @@ class ModuleCommandHandler:
             self.logger.error("(COMMAND HANDLER) No get_ptp_status callback was given to command handler")
             self.callbacks["send_status"]({"error": "No get_ptp_status callback given to command handler"})
     
+    def _handle_list_commands(self):
+        """Send the list of module commands to the controller"""
+
+        self.logger.info("(COMMAND HANDLER) Command identified as list_commands")
+        if "list_commands" in self.callbacks:
+            commands = list(self.callbacks.keys())
+            status = {"commands": commands, "type": "list_commands"}
+            self.callbacks["send_status"](status)
+            # TODO: Consider use of decorators to define commands
+        else:
+            self.logger.error("(COMMAND HANDLER) No list_commands callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No list_commands callback was given to command handler"})
+
+    def _handle_shutdown(self):
+        """Shutdown the module"""
+        self.logger.info("(COMMAND HANDLER) Command identified as shutdown")
+        if "shutdown" in self.callbacks:
+            # Respond before shutting down
+            self.callbacks["send_status"]({
+                "type": "shutdown_initiated",
+                "timestamp": time.time(),
+                "status": 200
+            })
+            self.callbacks["shutdown"]()
+        else:
+            self.logger.error("(COMMAND HANDLER) No shutdown callback given to command handler")
+            self.callbacks["send_status"]({"error": "No shutdown callback given to command handler"})
+
+    def _handle_get_config(self):
+        """Get the config dict"""
+        self.logger.info("(COMMAND HANDLER) Command identified as get_config")
+        if "get_config" in self.callbacks:
+            config = self.callbacks["get_config"]()
+            status = {"type": "get_config", "config": config}
+            self.callbacks["send_status"](status)
+        else:
+            self.logger.error("(COMMAND HANDLER) No get_config callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No get_config callback was given to command handler"})
+    
+    def _handle_test_communication(self):
+        """Handle test_communication command"""
+        self.logger.info("(COMMAND HANDLER) Command identified as test_communication")
+        try:
+            # Send a simple response to confirm communication is working
+            self.callbacks["send_status"]({
+                "type": "test_communication",
+                "status": "success",
+                "message": "Communication test successful",
+                "module_id": self.module_id,
+                "timestamp": time.time()
+            })
+        except Exception as e:
+            self.logger.error(f"(COMMAND HANDLER) Error in test_communication: {e}")
+            self.callbacks["send_status"]({
+                "type": "test_communication",
+                "status": "error",
+                "error": str(e),
+                "module_id": self.module_id,
+                "timestamp": time.time()
+            })
+    
+    def _handle_set_config(self, params: list):
+        """Update the config dict"""
+        self.logger.info(f"(COMMAND HANDLER) Command identified as set_config with params: {params}")
+        if "set_config" in self.callbacks:
+            try:
+                # If params is a list with a single JSON string, parse it directly
+                if len(params) == 1 and params[0].startswith('{'):
+                    import json
+                    try:
+                        new_config = json.loads(params[0])
+                        self.logger.info(f"(COMMAND HANDLER) Successfully parsed JSON config: {new_config}")
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"(COMMAND HANDLER) Failed to parse JSON config: {e}")
+                        self.callbacks["send_status"]({
+                            "type": "error", 
+                            "timestamp": time.time(),
+                            "error": f"Failed to parse JSON config: {e}"
+                        })
+                        return
+                else:
+                    # Fallback to the original key=value parsing for backward compatibility
+                    command_string = ' '.join(params)
+                    self.logger.info(f"(COMMAND HANDLER) Reconstructed command string: {command_string}")
+                    
+                    # Look for the first '=' to find the key
+                    if '=' in command_string:
+                        first_equal = command_string.find('=')
+                        key = command_string[:first_equal].strip()
+                        value_string = command_string[first_equal + 1:].strip()
+                        
+                        # Try to evaluate the value as a Python literal (safe for dicts, lists, etc.)
+                        import ast
+                        try:
+                            value = ast.literal_eval(value_string)
+                            new_config = {key: value}
+                            self.logger.info(f"(COMMAND HANDLER) Successfully parsed config: {new_config}")
+                        except (ValueError, SyntaxError) as e:
+                            self.logger.error(f"(COMMAND HANDLER) Failed to parse value '{value_string}': {e}")
+                            # Fallback to simple key=value parsing
+                            new_config = {}
+                            for param in params:
+                                if '=' in param:
+                                    key, value = param.split('=', 1)
+                                    # Try to convert value to appropriate type
+                                    try:
+                                        if value.lower() in ['true', 'false']:
+                                            new_config[key] = value.lower() == 'true'
+                                        elif '.' in value and value.replace('.', '').replace('-', '').isdigit():
+                                            new_config[key] = float(value)
+                                        elif value.replace('-', '').isdigit():
+                                            new_config[key] = int(value)
+                                        else:
+                                            new_config[key] = value
+                                    except ValueError:
+                                        new_config[key] = value
+                    else:
+                        # No '=' found, treat as simple parameters
+                        new_config = {}
+                        for param in params:
+                            if '=' in param:
+                                key, value = param.split('=', 1)
+                                # Try to convert value to appropriate type
+                                try:
+                                    if value.lower() in ['true', 'false']:
+                                        new_config[key] = value.lower() == 'true'
+                                    elif '.' in value and value.replace('.', '').replace('-', '').isdigit():
+                                        new_config[key] = float(value)
+                                    elif value.replace('-', '').isdigit():
+                                        new_config[key] = int(value)
+                                    else:
+                                        new_config[key] = value
+                                except ValueError:
+                                    new_config[key] = value
+                
+                self.logger.info(f"(COMMAND HANDLER) Final parsed config: {new_config}")
+                success = self.callbacks["set_config"](new_config)
+                if success:
+                    status = {"type": "set_config", "status": "success", "message": "Configuration updated successfully"}
+                else:
+                    status = {"type": "set_config", "status": "error", "message": "Failed to update configuration"}
+                self.callbacks["send_status"](status)
+                
+            except Exception as e:
+                self.logger.error(f"(COMMAND HANDLER) Error parsing set_config parameters: {e}")
+                self.callbacks["send_status"]({
+                    "type": "error", 
+                    "timestamp": time.time(),
+                    "error": f"Failed to parse config parameters: {e}"
+                })
+        else:
+            self.logger.error("(COMMAND HANDLER) No set_config callback was given to command handler")
+            self.callbacks["send_status"]({"error": "No set_config callback was given to command handler"})
+
     def _handle_unknown_command(self, command: str):
         """Handle unrecognized command"""
         self.logger.info(f"(COMMAND HANDLER) Command {command} not recognized")
         self.callbacks["send_status"]({"type": "error", "error": "Command not recognized"})
-
-
     
     def cleanup(self):
         """Clean up resources used by the command handler"""
-        if self.streaming:
-            self.streaming = False
-        
-        if self.stream_thread:
-            self.logger.info("Waiting for stream thread to stop...")
-            self.stream_thread.join(timeout=2.0)
-            self.stream_thread = None
+        pass # I don't think anything needs cleaned up?

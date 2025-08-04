@@ -2,7 +2,7 @@
     "camera": {
         "width": 1280,
         "height": 720,
-        "fps": 60,
+        "fps": 30,
         "codec": "h264",
         "profile": "high",
         "level": 4.2,

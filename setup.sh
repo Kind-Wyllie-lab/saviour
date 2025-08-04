@@ -3,7 +3,7 @@
 # Install system dependencies and set up virtual environment for the habitat project
 # Usage: bash setup.sh
 
-set -e
+set -e # If any function throws an error (doesn't return 0), exit immediately.
 
 # Setup logging
 LOG_FILE="system_setup.log"
@@ -39,16 +39,6 @@ $1
 
 EOF
     log_message "Summary saved to: $SUMMARY_FILE"
-}
-
-# Function to check if this is a controller Pi
-is_controller() {
-    # Check if controller-specific packages are installed
-    if dpkg -s python3-picamera2 &> /dev/null; then
-        return 0  # This is a controller Pi
-    else
-        return 1  # This is not a controller Pi
-    fi
 }
 
 # Function to ask user about their role
@@ -132,6 +122,61 @@ ask_module_type() {
             esac
         done
     fi
+}
+
+# Function to configure NTP for PTP coexistence
+configure_ntp_for_ptp() {
+    log_section "Configuring NTP for PTP Coexistence"
+    
+    # Backup original timesyncd config
+    if [ -f /etc/systemd/timesyncd.conf ]; then
+        sudo cp /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.backup
+        log_message "Backed up original timesyncd.conf"
+    fi
+    
+    # Create optimized timesyncd configuration for PTP coexistence
+    log_message "Creating timesyncd configuration for PTP coexistence..."
+    sudo tee /etc/systemd/timesyncd.conf > /dev/null <<EOF
+# timesyncd configuration optimized for PTP coexistence
+[Time]
+# Use multiple time servers for redundancy
+NTP=time.nist.gov time.google.com pool.ntp.org
+
+# Reduce NTP adjustment frequency to minimize interference with PTP
+PollIntervalMinSec=300   # 5 minutes minimum (default is 32s)
+PollIntervalMaxSec=3600  # 1 hour maximum (default is 34min)
+
+# Reduce maximum adjustment per sync to prevent large jumps
+MaxNTPSyncSec=0.1        # Max 100ms adjustment per sync (default is 0.5s)
+
+# Increase root distance to be more tolerant
+RootDistanceMaxSec=5     # 5 second tolerance (default is 5s)
+
+# Use hardware timestamping if available
+# Hardware timestamping reduces interference with PTP
+EOF
+
+    # Enable NTP but with reduced frequency
+    log_message "Enabling NTP with reduced frequency..."
+    sudo timedatectl set-ntp true
+    
+    # Restart timesyncd to apply new configuration
+    sudo systemctl restart systemd-timesyncd
+    
+    log_message "NTP configured for PTP coexistence"
+    echo "NTP configured for PTP coexistence"
+    echo ""
+    echo "NTP Configuration:"
+    echo "  - Poll interval: 5 minutes to 1 hour (reduced frequency)"
+    echo "  - Max adjustment: 100ms per sync (reduced from 500ms)"
+    echo "  - Multiple time servers for redundancy"
+    echo ""
+    echo "NTP control commands:"
+    echo "  Status: timedatectl status"
+    echo "  Logs: sudo journalctl -u systemd-timesyncd -f"
+    echo "  Restart: sudo systemctl restart systemd-timesyncd"
+    echo "  Disable: sudo timedatectl set-ntp false"
+    echo "  Enable: sudo timedatectl set-ntp true"
 }
 
 # Function to configure PTP services
@@ -389,8 +434,8 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/habitat/src/modules/examples
-ExecStart=/home/pi/Desktop/habitat/env/bin/python ${MODULE_TYPE}_example.py
+WorkingDirectory=/home/pi/Desktop/habitat/src/modules
+ExecStart=/home/pi/Desktop/habitat/env/bin/python ${MODULE_TYPE}_module.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -475,6 +520,12 @@ log_message "Setup script version: $(date '+%Y-%m-%d %H:%M:%S')"
 log_message "System: $(uname -a)"
 log_message "User: $(whoami)"
 
+# Ask user about their device role first
+ask_user_role
+
+# Ask user about module type if this is a module
+ask_module_type
+
 # Synchronize system time before proceeding
 log_section "Synchronizing System Time"
 sudo timedatectl set-ntp true
@@ -537,11 +588,13 @@ if ! grep -q "camera_auto_detect=1" /boot/config.txt; then
     echo "Camera interface enabled. A reboot may be required."
 fi
 
-# Ask user about their device role
-ask_user_role
-
-# Ask user about module type
-ask_module_type
+# Configure NTP for PTP coexistence (controllers only)
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    log_message "Controller Pi detected. Configuring NTP for PTP coexistence..."
+    configure_ntp_for_ptp
+else
+    log_message "Module Pi detected. Skipping NTP configuration (modules should not use NTP)."
+fi
 
 # Configure PTP services based on device role
 configure_ptp_services
@@ -563,10 +616,18 @@ else
 fi
 
 # Configure module systemd service
-configure_module_service
+if [ "$DEVICE_ROLE" = "module" ]; then
+    configure_module_service
+else
+    log_message "Controller Pi detected. Skipping module service configuration."
+fi
 
 # Configure controller systemd service
-configure_controller_service
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    configure_controller_service
+else
+    log_message "Module Pi detected. Skipping controller service configuration."
+fi
 
 log_section "Setting up Virtual Environment"
 # Remove existing environment if it exists
@@ -600,6 +661,20 @@ SUMMARY_CONTENT=""
 if [ "$DEVICE_ROLE" = "controller" ]; then
     SUMMARY_CONTENT="Device Role: CONTROLLER
 PTP Configuration: MASTER mode
+
+=== NTP Configuration for PTP Coexistence ===
+NTP configured for PTP coexistence with reduced frequency:
+  - Poll interval: 5 minutes to 1 hour (reduced frequency)
+  - Max adjustment: 100ms per sync (reduced from 500ms)
+  - Multiple time servers for redundancy
+  - Optimized to minimize interference with PTP
+
+NTP control commands:
+  Status: timedatectl status
+  Logs: sudo journalctl -u systemd-timesyncd -f
+  Restart: sudo systemctl restart systemd-timesyncd
+  Disable: sudo timedatectl set-ntp false
+  Enable: sudo timedatectl set-ntp true
 
 === Samba Share Setup ===
 Samba share configured successfully!
@@ -666,13 +741,22 @@ SUMMARY_CONTENT="$SUMMARY_CONTENT
 === PTP Services Status ===
 PTP services are configured and enabled at boot:
   - ptp4l: PTP daemon (${DEVICE_ROLE} mode)
-  - phc2sys: Hardware clock synchronization
+  - phc2sys: Hardware clock synchronization"
+
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    SUMMARY_CONTENT="$SUMMARY_CONTENT
+  - NTP: Configured for coexistence with PTP (reduced frequency)"
+fi
+
+SUMMARY_CONTENT="$SUMMARY_CONTENT
 
 PTP Control Commands:
   Start: sudo systemctl start ptp4l && sudo systemctl start phc2sys
   Stop:  sudo systemctl stop phc2sys && sudo systemctl stop ptp4l
   Status: sudo systemctl status ptp4l && sudo systemctl status phc2sys
-  Logs: sudo journalctl -u ptp4l -f && sudo journalctl -u phc2sys -f
+  Logs: sudo journalctl -u ptp4l -f && sudo journalctl -u phc2sys -f"
+
+SUMMARY_CONTENT="$SUMMARY_CONTENT
 
 === General Information ===
 Virtual Environment: source env/bin/activate
@@ -697,6 +781,20 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "=== Controller Configuration Summary ==="
     echo "Device Role: CONTROLLER"
     echo "PTP Configuration: MASTER mode"
+    echo ""
+    echo "=== NTP Configuration for PTP Coexistence ==="
+    echo "NTP configured for PTP coexistence with reduced frequency:"
+    echo "  - Poll interval: 5 minutes to 1 hour (reduced frequency)"
+    echo "  - Max adjustment: 100ms per sync (reduced from 500ms)"
+    echo "  - Multiple time servers for redundancy"
+    echo "  - Optimized to minimize interference with PTP"
+    echo ""
+    echo "NTP control commands:"
+    echo "  Status: timedatectl status"
+    echo "  Logs: sudo journalctl -u systemd-timesyncd -f"
+    echo "  Restart: sudo systemctl restart systemd-timesyncd"
+    echo "  Disable: sudo timedatectl set-ntp false"
+    echo "  Enable: sudo timedatectl set-ntp true"
     echo ""
     echo "=== Samba Share Setup ==="
     echo "Samba share configured successfully!"
@@ -764,6 +862,11 @@ echo "=== PTP Services Status ==="
 echo "PTP services are configured and enabled at boot:"
 echo "  - ptp4l: PTP daemon (${DEVICE_ROLE} mode)"
 echo "  - phc2sys: Hardware clock synchronization"
+
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    echo "  - NTP: Configured for coexistence with PTP (reduced frequency)"
+fi
+
 echo ""
 echo "PTP Control Commands:"
 echo "  Start: sudo systemctl start ptp4l && sudo systemctl start phc2sys"

@@ -17,27 +17,20 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import subprocess
 import time
-import socket
 import logging
 import uuid
 import threading
-import random
-import psutil
-import asyncio
 from typing import Dict, Any, Optional, Union
-import numpy as np
-from enum import Enum, auto
 import datetime
-
 
 # Import managers
 from src.modules.module_file_transfer_manager import ModuleFileTransfer
 from src.modules.module_config_manager import ModuleConfigManager
 from src.modules.module_communication_manager import ModuleCommunicationManager
-import src.controller.controller_session_manager as controller_session_manager # TODO: Change this to a module manager
 from src.modules.module_health_manager import ModuleHealthManager
 from src.modules.module_command_handler import ModuleCommandHandler
-from src.modules.module_ptp_manager import PTPManager, PTPRole
+from src.modules.service import Service # Lazy import and initialization of ServiceManager to avoid circular imports
+from src.modules.ptp import PTP, PTPRole
 from src.modules.module_export_manager import ExportManager
 
 class Module:
@@ -60,16 +53,16 @@ class Module:
         self.config_path = config_path
         self.recording_folder = "rec"  # Default recording folder
         
-        # Create recording folder if it doesn't exist
-        if not os.path.exists(self.recording_folder):
-            os.makedirs(self.recording_folder)
-            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
-        
         # Setup logging first
         self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
         self.logger.setLevel(logging.INFO)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
         
+        # Create recording folder if it doesn't exist
+        if not os.path.exists(self.recording_folder):
+            os.makedirs(self.recording_folder)
+            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
+
         # Add console handler if none exists
         if not self.logger.handlers:
             console_handler = logging.StreamHandler()
@@ -101,7 +94,7 @@ class Module:
             communication_manager=self.communication_manager
         )
         self.logger.info(f"(MODULE) Initialising PTP manager")
-        self.ptp_manager = PTPManager(
+        self.ptp = PTP(
             logger=self.logger,
             role=PTPRole.SLAVE)
         if not hasattr(self, 'command_handler'): # Initialize command handler if not already set - extensions of module class might set their own command handler
@@ -113,24 +106,17 @@ class Module:
                 config_manager=self.config_manager,
                 start_time=None # Will be set during start()
             )
-        from src.modules.module_service_manager import ModuleServiceManager # Lazy import and initialization of ServiceManager to avoid circular imports
+
         self.logger.info(f"(MODULE) Initialising service manager")
-        self.service_manager = ModuleServiceManager(self.logger, self)
+        self.service = Service(self.logger, self.config_manager, module_id=self.module_id, module_type=self.module_type)
         self.logger.info(f"(MODULE) Initialising service manager")
-        self.session_manager = controller_session_manager.SessionManager()
 
         # Register Callbacks
-        # TODO: Use a single dict of universal callbacks and pass them as needed? Lots of repetition right now
-        self.health_manager.set_callbacks({
-            "get_ptp_status": self.ptp_manager.get_status,
-            "get_recording_status": lambda: self.is_recording,
-            "get_streaming_status": lambda: self.is_streaming,
-        })
-        self.communication_manager.command_callback = self.command_handler.handle_command # Set the callback in the communication manager to use the command handler
-        self.command_handler.set_callbacks({ # Define callbacks for the command handler
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id), # 
+        self.callbacks = { # Define a universal set of callbacks
+            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
+            'get_controller_ip': lambda: self.service.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
-            'get_ptp_status': self.ptp_manager.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+            'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication_manager.send_status(status),
@@ -139,11 +125,20 @@ class Module:
             'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
             'clear_recordings': self.clear_recordings,
-            'export_recordings': self.export_recordings
-        })
-        self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service_manager.controller_ip  # or whatever the callback function is
-        })
+            'export_recordings': self.export_recordings,
+            'list_commands': self.list_commands,
+            'handle_command': self.command_handler.handle_command, 
+            'get_config': self.config_manager.get_all, # Gets the complete config from
+            'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manfager
+            'shutdown': self._shutdown,
+            'when_controller_discovered': self.when_controller_discovered,
+            'controller_disconnected': self.controller_disconnected
+        }
+        self.service.set_callbacks(self.callbacks)
+        self.health_manager.set_callbacks(self.callbacks)
+        self.communication_manager.set_callbacks(self.callbacks)
+        self.command_handler.set_callbacks(self.callbacks)
+        self.export_manager.set_callbacks(self.callbacks)
         
         # Recording management
         self.recording_session_id = None
@@ -166,10 +161,17 @@ class Module:
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"(MODULE) Module will now initialize the necessary managers")
-        # Only proceed if we're not already connected
-        if self.communication_manager.controller_ip:
-            self.logger.info("(MODULE) Already connected to controller")
+        
+        # Check if we're already connected to this controller
+        if (self.communication_manager.controller_ip == controller_ip and 
+            self.communication_manager.controller_port == controller_port):
+            self.logger.info("(MODULE) Already connected to this controller")
             return
+            
+        # If we're connected to a different controller, disconnect first
+        if self.communication_manager.controller_ip:
+            self.logger.info("(MODULE) Connected to different controller, disconnecting first")
+            self.controller_disconnected()
             
         try:
             # 1. Initialize file transfer
@@ -183,12 +185,14 @@ class Module:
             
             # 2. Connect communication manager
             self.logger.info("(MODULE) Connecting communication manager to controller")
-            self.communication_manager.connect(controller_ip, controller_port)
+            if not self.communication_manager.connect(controller_ip, controller_port):
+                raise Exception("Failed to connect communication manager")
             self.logger.info("(MODULE) Communication manager connected to controller")
             
             # 3. Start command listener
             self.logger.info("(MODULE) Requesting communication manager to start command listener")
-            self.communication_manager.start_command_listener()
+            if not self.communication_manager.start_command_listener():
+                raise Exception("Failed to start command listener")
             self.logger.info("(MODULE) Command listener started")
             
             # 4. Start heartbeats if module is running
@@ -197,9 +201,9 @@ class Module:
                 self.health_manager.start_heartbeats()
                 self.logger.info("(MODULE) Heartbeats started")
             
-            # 5. Start PTP
+            # 5. Start 
             self.logger.info("(MODULE) Starting PTP manager")
-            self.ptp_manager.start()
+            self.ptp.start()
             
             self.logger.info("(MODULE) Controller connection and initialization complete")
             
@@ -214,12 +218,26 @@ class Module:
         """Callback when controller is disconnected"""
         # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
         self.logger.info("(MODULE) Controller disconnected")
-        self.ptp_manager.stop()
+        
+        # Stop recording if active
+        if self.is_recording:
+            self.logger.info("(MODULE) Stopping recording due to controller disconnect")
+            self.stop_recording()
+        
+        # Stop PTP services
+        self.ptp.stop()
+        
+        # Stop heartbeats before cleaning up communication
+        self.health_manager.stop_heartbeats()
+        
+        # Clean up communication manager (this will recreate ZMQ context and sockets)
         self.communication_manager.cleanup()
+        
+        # Clean up file transfer
         self.file_transfer = None
-        self.is_running = False
         self.is_streaming = False
-
+        
+        self.logger.info("(MODULE) Controller disconnection cleanup complete, ready for reconnection")
 
     # Recording functions
     def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
@@ -243,7 +261,8 @@ class Module:
             return None
         
         # Set up recording - filename and folder
-        self.recording_session_id = self.session_manager.generate_session_id(self.module_id)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.recording_session_id = f"{timestamp}_{self.module_id}"
         
         # Use experiment name in filename if provided
         if experiment_name:
@@ -255,6 +274,8 @@ class Module:
             self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
         
         os.makedirs(self.recording_folder, exist_ok=True)
+
+        # TODO: Start generating health metadata to go with file
         
         return self.current_filename  # Just return filename, let child class handle status
 
@@ -446,7 +467,7 @@ class Module:
         """Export a video to the specified destination
         
         Args:
-            filename: Name of the file to export
+            filename: Name of the file to export (can be comma-separated list)
             length: Optional length of the video
             destination: Where to export to - string or ExportManager.ExportDestination enum
             experiment_name: Optional experiment name to include in export directory
@@ -474,7 +495,8 @@ class Module:
                     self.communication_manager.send_status({
                         "type": "export_failed",
                         "filename": "all",
-                        "error": "Failed to export files"
+                        "error": "Failed to export files",
+                        "success": False
                     })
                     return False
                 return True
@@ -486,29 +508,60 @@ class Module:
                     self.communication_manager.send_status({
                         "type": "export_failed",
                         "filename": latest_recording["filename"],
-                        "error": "Failed to export file"
+                        "error": "Failed to export file",
+                        "success": False
                     })
                     return False
                 return True
+            
+            # Handle comma-separated filenames
+            if ',' in filename:
+                filenames = [f.strip() for f in filename.split(',')]
+                self.logger.info(f"(MODULE) Exporting multiple files: {filenames}")
                 
-            # Export specific file
+                # Export each file individually
+                for single_filename in filenames:
+                    if not self.export_manager.export_file(single_filename, destination, experiment_name):
+                        self.communication_manager.send_status({
+                            "type": "export_failed",
+                            "filename": single_filename,
+                            "error": "Failed to export file",
+                            "success": False
+                        })
+                        return False
+                
+                # Send success status for all files
+                self.communication_manager.send_status({
+                    "type": "export_complete",
+                    "filename": filename,  # Original comma-separated string
+                    "session_id": self.stream_session_id,
+                    "length": length,
+                    "destination": destination.value,
+                    "experiment_name": experiment_name,
+                    "success": True
+                })
+                return True
+                
+            # Export specific single file
             if not self.export_manager.export_file(filename, destination, experiment_name):
                 self.communication_manager.send_status({
                     "type": "export_failed",
                     "filename": filename,
-                    "error": "Failed to export file"
+                    "error": "Failed to export file",
+                    "success": False
                 })
                 return False
                 
             # Send success status
             self.communication_manager.send_status({
-                "type": "video_export_complete",
+                "type": "export_complete",
                 "filename": filename,
                 "session_id": self.stream_session_id,
                 "length": length,
                 "destination": destination.value,
                 "experiment_name": experiment_name,
-                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt")
+                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt"),
+                "success": True
             })
             return True
             
@@ -517,9 +570,19 @@ class Module:
             self.communication_manager.send_status({
                 "type": "export_failed",
                 "filename": filename,
-                "error": str(e)
+                "error": str(e),
+                "success": False
             })
             return False
+
+    def list_commands(self):
+        """
+        Return a dict of zmq commands that the module understands.
+        """
+        commands = {
+            
+        }
+
 
     # Start and stop functions
     def start(self) -> bool:
@@ -535,34 +598,93 @@ class Module:
         if self.is_running:
             self.logger.info("(MODULE) Module already running")
             return False
-        else:
-            self.is_running = True
-            self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.logger.info(f"(MODULE) Module started at {self.start_time}")
-            
-            # Update start time in command handler
-            self.command_handler.start_time = self.start_time
-            
-            # Start command listener thread if controller is discovered
-            if self.service_manager.controller_ip:
-                self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service_manager.controller_ip}")
-                # Connect to the controller
-                self.communication_manager.connect(
-                    self.service_manager.controller_ip,
-                    self.service_manager.controller_port
-                )
-                self.communication_manager.start_command_listener()
+        
+        # Wait for proper network connectivity (DHCP-assigned IP)
+        if not self._wait_for_network_ready():
+            self.logger.error("(MODULE) Failed to get proper network connectivity")
+            return False
+        
+        # Register service with proper IP address
+        if not self.service.register_service():
+            self.logger.error("(MODULE) Failed to register service")
+            return False
+        
+        self.is_running = True
+        self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.logger.info(f"(MODULE) Module started at {self.start_time}")
+        
+        # Update start time in command handler
+        self.command_handler.start_time = self.start_time
+        
+        # Start command listener thread if controller is discovered
+        if self.service.controller_ip:
+            self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service.controller_ip}")
+            # Connect to the controller
+            self.communication_manager.connect(
+                self.service.controller_ip,
+                self.service.controller_port
+            )
+            self.communication_manager.start_command_listener()
 
-                # Start PTP only if it's not already running
-                if not self.ptp_manager.running:
-                    time.sleep(0.1)
-                    self.ptp_manager.start()
-
-                # Start sending heartbeats
+            # Start PTP only if it's not already running
+            if not self.ptp.running:
                 time.sleep(0.1)
-                self.health_manager.start_heartbeats()
-            
+                self.ptp.start()
+
+            # Start sending heartbeats
+            time.sleep(0.1)
+            self.health_manager.start_heartbeats()
+        
         return True
+
+    def _wait_for_network_ready(self, check_interval: float = 2.0) -> bool:
+        """
+        Wait for proper network connectivity with DHCP-assigned IP address.
+        Will keep trying indefinitely until a proper IP is obtained.
+        
+        Args:
+            check_interval: Time between checks in seconds (default: 2.0)
+            
+        Returns:
+            bool: True if proper IP is obtained (will always return True eventually)
+        """
+        self.logger.info(f"(MODULE) Waiting for proper network connectivity (will keep trying until IP is obtained)")
+        
+        attempts = 0
+        
+        while True:
+            attempts += 1
+            
+            try:
+                # Get all IP addresses
+                result = subprocess.run(['hostname', '-I'], 
+                                      capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    ip_addresses = result.stdout.strip().split()
+                    
+                    # Check for proper DHCP-assigned IP (192.168.x.x)
+                    for ip in ip_addresses:
+                        if ip.startswith('192.168.'):
+                            self.logger.info(f"(MODULE) Network ready! Got IP: {ip} (attempt {attempts})")
+                            return True
+                    
+                    # Log current IPs for debugging
+                    if ip_addresses:
+                        self.logger.info(f"(MODULE) Attempt {attempts}: Current IPs: {ip_addresses}")
+                    else:
+                        self.logger.info(f"(MODULE) Attempt {attempts}: No IP addresses found")
+                        
+                else:
+                    self.logger.warning(f"(MODULE) Attempt {attempts}: hostname -I failed: {result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                self.logger.warning(f"(MODULE) Attempt {attempts}: hostname -I timed out")
+            except Exception as e:
+                self.logger.warning(f"(MODULE) Attempt {attempts}: Error checking network: {e}")
+            
+            # Wait before next check
+            time.sleep(check_interval)
 
     def stop(self) -> bool:
         """
@@ -589,11 +711,11 @@ class Module:
 
             # Third: Stop PTP manager
             self.logger.info("(MODULE) Stopping PTP manager...")
-            self.ptp_manager.stop()
+            self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("(MODULE) Cleaning up service manager...")
-            self.service_manager.cleanup()
+            self.service.cleanup()
             
             # Fifth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("(MODULE) Cleaning up communication manager...")
@@ -611,6 +733,53 @@ class Module:
         self.is_running = False
         self.logger.info(f"(MODULE) Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
+    
+    def generate_session_id(self, module_id="unknown"):
+        """Start a new session for a module"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"REC_{timestamp}_{module_id}" # Generate a new session ID
+
+    def _shutdown(self): 
+        """Shut down the module"""
+        try:
+            # Stop the module gracefully
+            if self.stop():
+                # Only shutdown system if module stopped successfully
+                subprocess.run(["sudo", "shutdown", "now"])
+            else:
+                self.logger.error("(MODULE) Failed to stop module, not shutting down system")
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error during shutdown: {e}")
+
+    def set_config(self, new_config: dict, persist: bool = False) -> bool:
+        """
+        Set the entire configuration from a dictionary
+        
+        Args:
+            new_config: Dictionary containing the new configuration
+            persist: Whether to persist the changes to the config file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Validate that new_config is a dictionary
+            if not isinstance(new_config, dict):
+                self.logger.error(f"(MODULE) set_config called with non-dict argument: {type(new_config)}")
+                return False
+            
+            # Use the config manager's merge method to update the config
+            self.config_manager._merge_configs(self.config_manager.config, new_config)
+            
+            # Persist to file if requested
+            if persist:
+                return self.config_manager.save_config()
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Error setting all config: {e}")
+            return False
+
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""

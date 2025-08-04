@@ -87,6 +87,10 @@ class Options(TypedDict):
     captcha_token: NotRequired[str]
 
 
+class UpdateUserOptions(TypedDict):
+    email_redirect_to: NotRequired[str]
+
+
 class InviteUserByEmailOptions(TypedDict):
     redirect_to: NotRequired[str]
     data: NotRequired[Any]
@@ -229,6 +233,7 @@ class UserAttributes(TypedDict):
     phone: NotRequired[str]
     password: NotRequired[str]
     data: NotRequired[Any]
+    nonce: NotRequired[str]
 
 
 class AdminUserAttributes(UserAttributes, TypedDict):

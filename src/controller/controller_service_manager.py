@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional
 import logging
 import threading
+import time
 
 @dataclass
 class Module:
@@ -37,35 +38,151 @@ class ControllerServiceManager():
         self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
         self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.
         
+        # Module tracking with timestamps for reconnection detection
+        self.module_discovery_times = {}
+        self.module_last_seen = {}
+        
         # Get the ip address of the controller
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
-            self.ip = os.popen('hostname -I').read().split()[0]
-
+            # For controller, wait for proper network IP (192.168.1.1)
+            self.ip = self._wait_for_proper_ip()
+        
+        self.logger.info(f"(SERVICE MANAGER) Controller IP address: {self.ip}")
+        
         # Get service configuration from config manager if available
-        service_port = 5353 # Default value #TODO: Read this from config_manager    
-        service_type = "_controller._tcp.local."
-        service_name = "controller._controller._tcp.local."
+        self.service_port = 5353 # Default value
+        self.service_type = "_controller._tcp.local."  # Use standard service type format
+        self.service_name = f"controller_{socket.gethostname()}._controller._tcp.local."
         
         if self.config_manager:
-            service_port = self.config_manager.get("zeroconf.port", service_port)
-            service_type = self.config_manager.get("zeroconf.service_type", service_type)
-            service_name = self.config_manager.get("zeroconf.service_name", service_name)
+            self.service_port = self.config_manager.get("service.port", self.service_port)
+            self.service_type = self.config_manager.get("service.service_type", self.service_type)
+            self.service_name = self.config_manager.get("service.service_name", self.service_name)
 
-        # Initialize zeroconf
+        # Initialize zeroconf but don't register service yet
         self.zeroconf = Zeroconf()
-        self.service_info = ServiceInfo(
-            service_type, # the service type - tcp protocol, local domain
-            service_name, # a unique name for the service to advertise itself
-            addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
-            port=service_port, # the port number of the controller
-            properties={'type': 'controller'} # the properties of the service
-        )
-        self.zeroconf.register_service(self.service_info) # register the service with the above info
-        self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services"
+        self.service_info = None
+        self.browser = None
+        self.service_registered = False
 
-        self.logger.info(f"(SERVICE MANAGER) Controller service registered with service info: {self.service_info}")
+        self.logger.info(f"(SERVICE MANAGER) Controller service manager initialized (service not yet registered)")
+
+    def _wait_for_proper_ip(self):
+        """Wait for the proper network IP (192.168.1.1) to be available"""
+        self.logger.info("(SERVICE MANAGER) Waiting for proper network IP (192.168.1.1)...")
+        
+        max_attempts = 60  # Wait up to 5 minutes (60 * 5 seconds)
+        attempt = 0
+        
+        while attempt < max_attempts:
+            attempt += 1
+            self.logger.info(f"(SERVICE MANAGER) IP detection attempt {attempt}/{max_attempts}")
+            
+            # Try multiple methods to get the actual network IP address
+            ip = None
+            
+            # Method 1: Try hostname -I (most reliable on Linux)
+            try:
+                hostname_output = os.popen('hostname -I').read().strip()
+                if hostname_output:
+                    ips = hostname_output.split()
+                    self.logger.info(f"(SERVICE MANAGER) Available IPs from hostname -I: {ips}")
+                    for potential_ip in ips:
+                        if not potential_ip.startswith('127.') and not potential_ip.startswith('::1'):
+                            ip = potential_ip
+                            self.logger.info(f"(SERVICE MANAGER) Selected non-loopback IP from hostname -I: {ip}")
+                            break
+            except Exception as e:
+                self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname -I: {e}")
+            
+            # Method 2: Try socket.getaddrinfo with a connection to get local IP
+            if not ip or ip.startswith('127.'):
+                try:
+                    # Create a socket and connect to a remote address to get local IP
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    ip = s.getsockname()[0]
+                    s.close()
+                    self.logger.info(f"(SERVICE MANAGER) Selected IP from socket connection: {ip}")
+                except Exception as e:
+                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from socket connection: {e}")
+            
+            # Method 3: Try socket.gethostbyname but filter out loopback
+            if not ip or ip.startswith('127.'):
+                try:
+                    hostname_ip = socket.gethostbyname(socket.gethostname())
+                    if not hostname_ip.startswith('127.'):
+                        ip = hostname_ip
+                        self.logger.info(f"(SERVICE MANAGER) Selected IP from hostname resolution: {ip}")
+                    else:
+                        self.logger.warning(f"(SERVICE MANAGER) Hostname resolves to loopback: {hostname_ip}")
+                except Exception as e:
+                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname resolution: {e}")
+            
+            # Method 4: Try to get IP from network interfaces
+            if not ip or ip.startswith('127.'):
+                try:
+                    import subprocess
+                    result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        # Parse the output to get the source IP
+                        lines = result.stdout.strip().split('\n')
+                        for line in lines:
+                            if 'src' in line:
+                                parts = line.split()
+                                src_index = parts.index('src')
+                                if src_index + 1 < len(parts):
+                                    potential_ip = parts[src_index + 1]
+                                    if not potential_ip.startswith('127.'):
+                                        ip = potential_ip
+                                        self.logger.info(f"(SERVICE MANAGER) Selected IP from ip route: {ip}")
+                                        break
+                except Exception as e:
+                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from ip route: {e}")
+            
+            # Check if we got a proper IP (not loopback)
+            if ip and not ip.startswith('127.'):
+                self.logger.info(f"(SERVICE MANAGER) Found proper network IP: {ip}")
+                return ip
+            else:
+                self.logger.warning(f"(SERVICE MANAGER) No proper network IP found yet (attempt {attempt}/{max_attempts})")
+                if attempt < max_attempts:
+                    time.sleep(5)  # Wait 5 seconds before next attempt
+        
+        # If we get here, we couldn't find a proper IP
+        self.logger.error(f"(SERVICE MANAGER) Failed to get proper network IP after {max_attempts} attempts, using localhost")
+        return "127.0.0.1"
+
+    def register_service(self):
+        """Register the controller service"""
+        if self.service_registered:
+            self.logger.info("(SERVICE MANAGER) Service already registered")
+            return True
+            
+        try:
+            # Create service info with current IP
+            self.service_info = ServiceInfo(
+                self.service_type, # the service type - tcp protocol, local domain
+                self.service_name, # a unique name for the service to advertise itself
+                addresses=[socket.inet_aton(self.ip)], # the ip address of the controller
+                port=self.service_port, # the port number of the controller
+                properties={
+                    'type': 'controller',
+                    'id': socket.gethostname()
+                } # the properties of the service
+            )
+            self.zeroconf.register_service(self.service_info) # register the service with the above info
+            self.browser = ServiceBrowser(self.zeroconf, "_module._tcp.local.", self) # Browse for habitat_module services"
+
+            self.service_registered = True
+            self.logger.info(f"(SERVICE MANAGER) Controller service registered with service info: {self.service_info}")
+            return True
+        except Exception as e:
+            self.logger.error(f"(SERVICE MANAGER) Error registering service: {e}")
+            return False
 
     def cleanup(self):
         """Cleanup zeroconf resources"""
@@ -88,6 +205,8 @@ class ControllerServiceManager():
                 # Clear module list
                 self.modules.clear()
                 self.module_health.clear()
+                self.module_discovery_times.clear()
+                self.module_last_seen.clear()
                 self.logger.info("(SERVICE MANAGER) Cleared module tracking")
         except Exception as e:
             self.logger.error(f"(SERVICE MANAGER) Error during cleanup: {e}")
@@ -108,8 +227,25 @@ class ControllerServiceManager():
                 port=info.port,
                 properties=info.properties
             )
-            self.modules.append(module)
-            self.logger.info(f"(SERVICE MANAGER) Discovered module: {module}")
+            
+            # Check if this module already exists
+            existing_module = next((m for m in self.modules if m.id == module.id), None)
+            if existing_module:
+                # Update existing module with new information
+                self.logger.info(f"(SERVICE MANAGER) Updating existing module: {module.id}")
+                existing_module.ip = module.ip
+                existing_module.port = module.port
+                existing_module.properties = module.properties
+                module = existing_module
+            else:
+                # Add new module
+                self.modules.append(module)
+                self.logger.info(f"(SERVICE MANAGER) Added new module: {module}")
+            
+            # Update tracking information
+            current_time = time.time()
+            self.module_discovery_times[module.id] = current_time
+            self.module_last_seen[module.id] = current_time
             
             # Call the callback if it exists
             if self.on_module_discovered:
@@ -119,6 +255,12 @@ class ControllerServiceManager():
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"(SERVICE MANAGER) Service updated: {name}")
+        # Update the last seen time for this module
+        info = zeroconf.get_service_info(service_type, name)
+        if info:
+            module_id = str(info.properties.get(b'id', b'unknown').decode())
+            self.module_last_seen[module_id] = time.time()
+            self.logger.info(f"(SERVICE MANAGER) Updated last seen time for module: {module_id}")
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules"""
@@ -131,6 +273,12 @@ class ControllerServiceManager():
                 if module_to_remove.id in self.module_health:
                     self.logger.info(f"(SERVICE MANAGER) Removing health tracking for module {module_to_remove.id}")
                     del self.module_health[module_to_remove.id]
+                
+                # Clean up tracking information
+                if module_to_remove.id in self.module_discovery_times:
+                    del self.module_discovery_times[module_to_remove.id]
+                if module_to_remove.id in self.module_last_seen:
+                    del self.module_last_seen[module_to_remove.id]
                 
                 # Remove from modules list
                 self.modules = [module for module in self.modules if module.name != name]
@@ -161,3 +309,23 @@ class ControllerServiceManager():
             }
             modules.append(module_dict)
         return modules
+    
+    def get_module_status(self, module_id: str) -> Optional[Dict]:
+        """Get detailed status for a specific module"""
+        module = next((m for m in self.modules if m.id == module_id), None)
+        if module:
+            current_time = time.time()
+            last_seen = self.module_last_seen.get(module_id, 0)
+            discovery_time = self.module_discovery_times.get(module_id, 0)
+            
+            return {
+                'id': module.id,
+                'type': module.type,
+                'ip': module.ip,
+                'port': module.port,
+                'last_seen': last_seen,
+                'discovery_time': discovery_time,
+                'uptime': current_time - discovery_time if discovery_time > 0 else 0,
+                'health': self.module_health.get(module_id, {})
+            }
+        return None

@@ -27,6 +27,7 @@ class ControllerHealthMonitor:
             heartbeat_timeout: Time in seconds before marking a module as offline
             history_size: Number of historical health records to keep per module
         """
+
         self.logger = logger
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
@@ -41,7 +42,8 @@ class ControllerHealthMonitor:
         self.monitor_thread = None
         
         # Callback for status changes
-        self.status_change_callback = None
+        self.callbacks = None
+        self.logger.info(f"(HEALTH MONITOR) Initialised health monitor with heartbeat interval {self.heartbeat_interval}s, timeout {self.heartbeat_timeout}s.")
     
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
         """
@@ -55,22 +57,51 @@ class ControllerHealthMonitor:
             bool: True if update was successful
         """
         try:
-            self.module_health[module_id] = {
-                'timestamp': status_data['timestamp'],
-                'last_heartbeat': status_data['timestamp'],
-                'status': 'online',
-                'cpu_temp': status_data.get('cpu_temp', 0),
-                'cpu_usage': status_data.get('cpu_usage', 0),
-                'memory_usage': status_data.get('memory_usage', 0),
-                'uptime': status_data.get('uptime', 0),
-                'disk_space': status_data.get('disk_space', 0),
-                'ptp4l_offset': status_data.get('ptp4l_offset'),
-                'ptp4l_freq': status_data.get('ptp4l_freq'),
-                'phc2sys_offset': status_data.get('phc2sys_offset'),
-                'phc2sys_freq': status_data.get('phc2sys_freq')
-            }
+            was_new_module = module_id not in self.module_health
+            if was_new_module:
+                # New module - create full health record
+                self.module_health[module_id] = {
+                    'timestamp': status_data['timestamp'],
+                    'last_heartbeat': status_data['timestamp'],
+                    'status': 'online',
+                    'cpu_temp': status_data.get('cpu_temp', 0),
+                    'cpu_usage': status_data.get('cpu_usage', 0),
+                    'memory_usage': status_data.get('memory_usage', 0),
+                    'uptime': status_data.get('uptime', 0),
+                    'disk_space': status_data.get('disk_space', 0),
+                    'ptp4l_offset': status_data.get('ptp4l_offset'),
+                    'ptp4l_freq': status_data.get('ptp4l_freq'),
+                    'phc2sys_offset': status_data.get('phc2sys_offset'),
+                    'phc2sys_freq': status_data.get('phc2sys_freq')
+                }
+            else:
+                # Existing module - update heartbeat and status, preserve other fields
+                self.module_health[module_id]['last_heartbeat'] = status_data['timestamp']
+                self.module_health[module_id]['status'] = 'online'
+                # Update other metrics if provided
+                if 'cpu_temp' in status_data:
+                    self.module_health[module_id]['cpu_temp'] = status_data['cpu_temp']
+                if 'cpu_usage' in status_data:
+                    self.module_health[module_id]['cpu_usage'] = status_data['cpu_usage']
+                if 'memory_usage' in status_data:
+                    self.module_health[module_id]['memory_usage'] = status_data['memory_usage']
+                if 'uptime' in status_data:
+                    self.module_health[module_id]['uptime'] = status_data['uptime']
+                if 'disk_space' in status_data:
+                    self.module_health[module_id]['disk_space'] = status_data['disk_space']
+                if 'ptp4l_offset' in status_data:
+                    self.module_health[module_id]['ptp4l_offset'] = status_data['ptp4l_offset']
+                if 'ptp4l_freq' in status_data:
+                    self.module_health[module_id]['ptp4l_freq'] = status_data['ptp4l_freq']
+                if 'phc2sys_offset' in status_data:
+                    self.module_health[module_id]['phc2sys_offset'] = status_data['phc2sys_offset']
+                if 'phc2sys_freq' in status_data:
+                    self.module_health[module_id]['phc2sys_freq'] = status_data['phc2sys_freq']
             
-            self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")
+            if was_new_module:
+                self.logger.info(f"(HEALTH MONITOR) New module {module_id} added to health tracking")
+            else:
+                self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")
             return True
             
         except Exception as e:
@@ -143,22 +174,6 @@ class ControllerHealthMonitor:
             return self.module_health.get(module_id, {})
         return self.module_health.copy()
     
-    def is_module_online(self, module_id: str) -> bool:
-        """
-        Check if a specific module is online
-        
-        Args:
-            module_id: ID of the module to check
-            
-        Returns:
-            bool: True if module is online
-        """
-        if module_id not in self.module_health:
-            return False
-        
-        current_time = time.time()
-        last_heartbeat = self.module_health[module_id]['timestamp']
-        return (current_time - last_heartbeat) <= self.heartbeat_timeout
     
     def get_offline_modules(self) -> list:
         """
@@ -187,41 +202,49 @@ class ControllerHealthMonitor:
         current_time = time.time()
         
         for module_id, health in self.module_health.items():
-            if (current_time - health['timestamp']) <= self.heartbeat_timeout:
-                online_modules.append(module_id)
+            if (current_time - health['last_heartbeat']) <= self.heartbeat_timeout: # If a heartbeat was received within 1 timeout period of now
+                online_modules.append(module_id) # It's online
         
         return online_modules
     
     def monitor_health(self):
         """Monitor the health of all modules (runs in separate thread)"""
+        self.logger.info("(HEALTH MONITOR) Checking for offline modules via monitor_health()")
+        cycle_count = 0
         while self.is_monitoring:
-            current_time = time.time()
+            current_time = time.time() # Get current time
+            cycle_count += 1
             
-            for module_id in list(self.module_health.keys()):
-                last_heartbeat = self.module_health[module_id]['timestamp']
+            # Log every 10 cycles (50 seconds with 5s interval) to show the thread is alive
+            if cycle_count % 10 == 0:
+                self.logger.info(f"(HEALTH MONITOR) Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
+            
+            for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
+                last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
                 
-                if (current_time - last_heartbeat) > self.heartbeat_timeout:
-                    if self.module_health[module_id]['status'] == 'online':
+                # Find offline modules
+                if (current_time - last_heartbeat) > self.heartbeat_timeout: # If heartbeat not received within timeout period
+                    if self.module_health[module_id]['status'] == 'online': # If module is currently marked as online
                         self.logger.warning(
                             f"Module {module_id} has not sent a heartbeat in the last "
                             f"{self.heartbeat_timeout} seconds. Marking as offline."
                         )
                         self.module_health[module_id]['status'] = 'offline'
                         # Trigger callback for offline status
-                        if self.status_change_callback:
+                        if "on_status_change" in self.callbacks:
                             try:
-                                self.status_change_callback(module_id, 'offline')
+                                self.callbacks["on_status_change"](module_id, 'offline')
                             except Exception as e:
                                 self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
                 else:
                     # Module is responsive, ensure it's marked as online
                     if self.module_health[module_id]['status'] == 'offline':
-                        self.logger.info(f"Module {module_id} is back online")
+                        self.logger.info(f"(HEALTH MONITOR) Module {module_id} is back online")
                         self.module_health[module_id]['status'] = 'online'
                         # Trigger callback for online status
-                        if self.status_change_callback:
+                        if "on_status_change" in self.callbacks:
                             try:
-                                self.status_change_callback(module_id, 'online')
+                                self.callbacks["on_status_change"](module_id, 'online')
                             except Exception as e:
                                 self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
             
@@ -230,13 +253,13 @@ class ControllerHealthMonitor:
     def start_monitoring(self):
         """Start the health monitoring thread"""
         if self.is_monitoring:
-            self.logger.warning("Health monitoring is already running")
+            self.logger.warning("(HEALTH MONITOR) Health monitoring is already running")
             return
         
         self.is_monitoring = True
         self.monitor_thread = threading.Thread(target=self.monitor_health, daemon=True)
         self.monitor_thread.start()
-        self.logger.info(f"Started health monitoring with {self.heartbeat_interval}s interval")
+        self.logger.info(f"(HEALTH MONITOR) Started health monitoring with {self.heartbeat_interval}s interval")
     
     def stop_monitoring(self):
         """Stop the health monitoring thread"""
@@ -282,11 +305,64 @@ class ControllerHealthMonitor:
             'average_metrics': avg_metrics
         }
 
-    def register_status_change_callback(self, callback):
-        """Register a callback to be called when module status changes (online/offline)
+
+     
+    def set_callbacks(self, callbacks):
+        """
+        Register callbacks the dict way
+
+        Args:
+            callbacks: Dictionary of callback functions
+                - 'on_status_change' : Callback to inform the controller program that a module has gone offline 
+        """
+        self.callbacks = callbacks
+    
+    def mark_module_offline(self, module_id: str, reason: str = "Communication test failed"):
+        """Mark a module as offline due to communication failure
         
         Args:
-            callback: Function to call with (module_id, status) where status is 'online' or 'offline'
+            module_id: ID of the module to mark offline
+            reason: Reason for marking the module offline
         """
-        self.status_change_callback = callback
-        self.logger.info("(HEALTH MONITOR) Status change callback registered")
+        if module_id in self.module_health:
+            if self.module_health[module_id]['status'] == 'online':
+                self.logger.warning(f"Module {module_id} marked offline: {reason}")
+                self.module_health[module_id]['status'] = 'offline'
+                
+                # Trigger callback for offline status
+                if "on_status_change" in self.callbacks:
+                    try:
+                        self.callbacks["on_status_change"](module_id, 'offline')
+                    except Exception as e:
+                        self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+            else:
+                self.logger.info(f"Module {module_id} already offline: {reason}")
+        else:
+            self.logger.warning(f"Attempted to mark unknown module {module_id} as offline: {reason}")
+    
+    def handle_communication_test_response(self, module_id: str, success: bool):
+        """Handle communication test response from a module
+        
+        Args:
+            module_id: ID of the module that responded
+            success: Whether the communication test was successful
+        """
+        if module_id in self.module_health:
+            if success:
+                # Communication test successful - ensure module is marked online
+                if self.module_health[module_id]['status'] == 'offline':
+                    self.logger.info(f"Module {module_id} communication test successful - marking online")
+                    self.module_health[module_id]['status'] = 'online'
+                    # Trigger callback for online status
+                    if "on_status_change" in self.callbacks:
+                        try:
+                            self.callbacks["on_status_change"](module_id, 'online')
+                        except Exception as e:
+                            self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+                else:
+                    self.logger.info(f"Module {module_id} communication test successful - already online")
+            else:
+                # Communication test failed - mark module as offline
+                self.mark_module_offline(module_id, "Communication test failed")
+        else:
+            self.logger.warning(f"Communication test response from unknown module {module_id}")

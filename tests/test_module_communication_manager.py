@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Tests for ModuleCommunicationManager
+Tests for Communication
 
 Tests the ZMQ communication functionality between module and controller.
 """
@@ -16,19 +16,19 @@ import logging
 from unittest.mock import MagicMock, patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.modules.module_communication_manager import ModuleCommunicationManager
+from src.modules.communication import Communication
 
 # Setup logging for tests
 logging.basicConfig(level=logging.INFO)
 
 def test_module_communication_manager_import():
     """Test that the module communication manager can be imported"""
-    assert ModuleCommunicationManager is not None
+    assert Communication is not None
 
 def test_init():
     """Test initialization of communication manager"""
     logger = logging.getLogger("test")
-    manager = ModuleCommunicationManager(logger, "test_module")
+    manager = Communication(logger, "test_module")
     
     assert manager.module_id == "test_module"
     assert manager.logger == logger
@@ -47,7 +47,7 @@ def test_init():
 def test_connect():
     """Test connecting to controller"""
     logger = logging.getLogger("test")
-    manager = ModuleCommunicationManager(logger, "test_module")
+    manager = Communication(logger, "test_module")
     
     # Connect to a fictional controller
     result = manager.connect("127.0.0.1", 5000)
@@ -83,7 +83,7 @@ def test_communication():
     
     # Create manager
     logger = logging.getLogger("test")
-    manager = ModuleCommunicationManager(
+    manager = Communication(
         logger, 
         "test_module",
         command_callback=command_callback
@@ -168,7 +168,7 @@ def test_heartbeats():
     
     # Create manager with mock send_status
     logger = logging.getLogger("test")
-    manager = ModuleCommunicationManager(logger, "test_module")
+    manager = Communication(logger, "test_module")
     manager.send_status = MagicMock()
     
     # Set controller IP to allow heartbeats
@@ -205,7 +205,7 @@ def test_heartbeats():
 def test_cleanup():
     """Test cleanup of resources"""
     logger = logging.getLogger("test")
-    manager = ModuleCommunicationManager(logger, "test_module")
+    manager = Communication(logger, "test_module")
     
     # Connect to controller
     manager.connect("127.0.0.1", 5000)

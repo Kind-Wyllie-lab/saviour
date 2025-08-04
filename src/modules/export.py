@@ -18,7 +18,7 @@ import subprocess
 import datetime
 from typing import Union
 
-class ExportManager:
+class Export:
     """Manages file exports to different destinations (NAS or Controller)"""
     
     class ExportDestination(Enum):
@@ -27,7 +27,7 @@ class ExportManager:
         NAS = "nas"
 
         @classmethod
-        def from_string(cls, value: str) -> 'ExportManager.ExportDestination':
+        def from_string(cls, value: str) -> 'Export.ExportDestination':
             """Convert string to ExportDestination enum"""
             try:
                 return cls(value.lower())
@@ -65,7 +65,7 @@ class ExportManager:
             
         self.callbacks = callbacks
         
-    def _create_export_manifest(self, files_to_export: list, destination: Union[str, 'ExportManager.ExportDestination'], export_folder: str, experiment_name: str = None) -> str:
+    def _create_export_manifest(self, files_to_export: list, destination: Union[str, 'Export.ExportDestination'], export_folder: str, experiment_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
         
         Args:
@@ -111,7 +111,7 @@ class ExportManager:
             self.logger.error(f"(EXPORT MANAGER) Failed to create export manifest: {e}")
             return None
 
-    def export_file(self, filename: str, destination: 'ExportManager.ExportDestination', experiment_name: str = None) -> bool:
+    def export_file(self, filename: str, destination: 'Export.ExportDestination', experiment_name: str = None) -> bool:
         """Export a single file to the specified destination
         
         Args:
@@ -167,7 +167,7 @@ class ExportManager:
             self.logger.error(f"(EXPORT MANAGER) Export failed: {e}")
             return False
 
-    def export_all_files(self, destination: 'ExportManager.ExportDestination', experiment_name: str = None) -> bool:
+    def export_all_files(self, destination: 'Export.ExportDestination', experiment_name: str = None) -> bool:
         """Export all files in the recording folder to the specified destination
         
         Args:
@@ -234,7 +234,7 @@ class ExportManager:
             self.logger.error(f"(EXPORT MANAGER) Export failed: {e}")
             return False
             
-    def _mount_destination(self, destination: 'ExportManager.ExportDestination') -> bool:
+    def _mount_destination(self, destination: 'Export.ExportDestination') -> bool:
         """Mount the specified destination
         
         Args:
@@ -244,7 +244,7 @@ class ExportManager:
             bool: True if mount successful
         """
         try:
-            if destination == ExportManager.ExportDestination.NAS:
+            if destination == Export.ExportDestination.NAS:
                 return self._mount_nas()
             else:
                 return self._mount_controller()
@@ -293,7 +293,7 @@ class ExportManager:
                     
                     if result.returncode == 0:
                         self.logger.info(f"(EXPORT MANAGER) Successfully mounted controller share at {self.mount_point} using SMB {version}")
-                        self.current_mount = ExportManager.ExportDestination.CONTROLLER
+                        self.current_mount = Export.ExportDestination.CONTROLLER
                         return True
                     else:
                         self.logger.warning(f"(EXPORT MANAGER) Failed to mount with SMB {version}: {result.stderr}")
@@ -359,7 +359,7 @@ class ExportManager:
                 # Don't return False here as the mount was successful
             
             self.logger.info(f"(EXPORT MANAGER) Successfully mounted NAS share at {self.mount_point}")
-            self.current_mount = ExportManager.ExportDestination.NAS
+            self.current_mount = Export.ExportDestination.NAS
             return True
             
         except subprocess.CalledProcessError as e:

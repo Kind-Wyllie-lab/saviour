@@ -3,7 +3,7 @@
 """
 Simple Module Config Example
 
-This example demonstrates how to use the ModuleConfigManager directly without
+This example demonstrates how to use the Config directly without
 requiring other module imports. This makes it easier to understand the core functionality
 and avoids potential import issues.
 """
@@ -21,7 +21,7 @@ modules_dir = os.path.dirname(current_dir)  # /habitat/src/modules
 sys.path.append(modules_dir)
 
 # Direct import from the modules directory
-from module_config_manager import ModuleConfigManager
+from habitat.src.modules.config import Config
 
 def setup_logger():
     """Set up and return a logger"""
@@ -84,7 +84,7 @@ def create_sample_config(module_type='camera'):
     return temp_file_path
 
 def main():
-    """Example of using the ModuleConfigManager"""
+    """Example of using the Config"""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Module Config Manager Example')
     parser.add_argument('--config', type=str, help='Path to config file')
@@ -110,40 +110,40 @@ def main():
     
     # Initialize config manager
     module_type = args.module_type
-    config_manager = ModuleConfigManager(logger, module_type, args.config)
+    config = Config(logger, module_type, args.config)
     
     # Print loaded configuration
     logger.info("\nCurrent configuration values:")
-    logger.info(f"  Module type: {config_manager.get('module.type')}")
-    logger.info(f"  Heartbeat interval: {config_manager.get('module.heartbeat_interval')}s")
-    logger.info(f"  Sample rate: {config_manager.get('module.samplerate')} Hz")
-    logger.info(f"  Service port: {config_manager.get('service.port')}")
+    logger.info(f"  Module type: {config.get('module.type')}")
+    logger.info(f"  Heartbeat interval: {config.get('module.heartbeat_interval')}s")
+    logger.info(f"  Sample rate: {config.get('module.samplerate')} Hz")
+    logger.info(f"  Service port: {config.get('service.port')}")
     
     # Print module-specific settings based on module type
-    if args.module_type == 'camera' and config_manager.get('camera'):
+    if args.module_type == 'camera' and config.get('camera'):
         logger.info("\nCamera settings:")
-        logger.info(f"  Resolution: {config_manager.get('camera.width')}x{config_manager.get('camera.height')}")
-        logger.info(f"  Framerate: {config_manager.get('camera.fps')} fps")
-        logger.info(f"  Codec: {config_manager.get('camera.codec')}")
-        logger.info(f"  File format: {config_manager.get('camera.file_format')}")
-    elif args.module_type == 'rfid' and config_manager.get('rfid'):
+        logger.info(f"  Resolution: {config.get('camera.width')}x{config.get('camera.height')}")
+        logger.info(f"  Framerate: {config.get('camera.fps')} fps")
+        logger.info(f"  Codec: {config.get('camera.codec')}")
+        logger.info(f"  File format: {config.get('camera.file_format')}")
+    elif args.module_type == 'rfid' and config.get('rfid'):
         logger.info("\nRFID settings:")
-        logger.info(f"  Reader type: {config_manager.get('rfid.reader_type')}")
-        logger.info(f"  GPIO reset pin: {config_manager.get('rfid.gpio_rst')}")
-        logger.info(f"  GPIO interrupt pin: {config_manager.get('rfid.gpio_irq')}")
-    elif args.module_type == 'microphone' and config_manager.get('microphone'):
+        logger.info(f"  Reader type: {config.get('rfid.reader_type')}")
+        logger.info(f"  GPIO reset pin: {config.get('rfid.gpio_rst')}")
+        logger.info(f"  GPIO interrupt pin: {config.get('rfid.gpio_irq')}")
+    elif args.module_type == 'microphone' and config.get('microphone'):
         logger.info("\nMicrophone settings:")
-        logger.info(f"  Device index: {config_manager.get('microphone.device_index')}")
-        logger.info(f"  Type: {config_manager.get('microphone.type')}")
-        logger.info(f"  Sample rate: {config_manager.get('microphone.sample_rate')} Hz")
-        logger.info(f"  Channels: {config_manager.get('microphone.channels')}")
-    elif args.module_type == 'ttl_io' and config_manager.get('ttl_io'):
+        logger.info(f"  Device index: {config.get('microphone.device_index')}")
+        logger.info(f"  Type: {config.get('microphone.type')}")
+        logger.info(f"  Sample rate: {config.get('microphone.sample_rate')} Hz")
+        logger.info(f"  Channels: {config.get('microphone.channels')}")
+    elif args.module_type == 'ttl_io' and config.get('ttl_io'):
         logger.info("\nTTL I/O settings:")
-        logger.info(f"  Interface type: {config_manager.get('ttl_io.interface_type')}")
-        if config_manager.get('digital_inputs.pins'):
-            logger.info(f"  Digital input pins: {config_manager.get('digital_inputs.pins')}")
-        if config_manager.get('digital_outputs.pins'):
-            logger.info(f"  Digital output pins: {config_manager.get('digital_outputs.pins')}")
+        logger.info(f"  Interface type: {config.get('ttl_io.interface_type')}")
+        if config.get('digital_inputs.pins'):
+            logger.info(f"  Digital input pins: {config.get('digital_inputs.pins')}")
+        if config.get('digital_outputs.pins'):
+            logger.info(f"  Digital output pins: {config.get('digital_outputs.pins')}")
     
     # Show from which sources config values came from
     logger.info("\nConfiguration hierarchy example:")
@@ -154,23 +154,23 @@ def main():
     
     # Modify some values
     logger.info("\nUpdating configuration...")
-    config_manager.set('module.heartbeat_interval', 60)
-    config_manager.set(f'{args.module_type}.new_setting', "This is a new value")
+    config.set('module.heartbeat_interval', 60)
+    config.set(f'{args.module_type}.new_setting', "This is a new value")
     
     # Print updated values
     logger.info("\nUpdated configuration values:")
-    logger.info(f"  Heartbeat interval: {config_manager.get('module.heartbeat_interval')}s")
-    logger.info(f"  New setting: {config_manager.get(f'{args.module_type}.new_setting')}")
+    logger.info(f"  Heartbeat interval: {config.get('module.heartbeat_interval')}s")
+    logger.info(f"  New setting: {config.get(f'{args.module_type}.new_setting')}")
     
     # Save the config
     logger.info("\nSaving configuration to a new file...")
     new_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{args.module_type}_example_config.json")
-    config_manager.config_file_path = new_config_path
-    config_manager.save_config()
+    config.config_file_path = new_config_path
+    config.save_config()
     logger.info(f"Configuration saved to: {new_config_path}")
     
     # Validate the config
-    is_valid = config_manager.validate()
+    is_valid = config.validate()
     logger.info(f"\nConfiguration is valid: {is_valid}")
 
 if __name__ == "__main__":

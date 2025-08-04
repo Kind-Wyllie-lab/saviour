@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Tests for the ModuleConfigManager
+Tests for the Config
 
-Run with: python -m pytest tests/test_module_config_manager.py
+Run with: python -m pytest tests/test_module_config.py
 """
 
 import os
@@ -14,7 +14,7 @@ import tempfile
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.modules.module_config_manager import ModuleConfigManager
+from habitat.src.modules.config import Config
 
 # Setup logging for tests
 logger = logging.getLogger("test")
@@ -29,19 +29,19 @@ if not logger.handlers:
 # Test default configuration values
 def test_default_config():
     """Test that default configuration is loaded correctly"""
-    config_manager = ModuleConfigManager(logger, "test")
+    config = Config(logger, "test")
     
     # Check some default values
-    assert config_manager.get("module.heartbeat_interval") == 30
-    assert config_manager.get("module.samplerate") == 200
-    assert config_manager.get("service.port") == 5000
-    assert config_manager.get("module.type") == "test"
+    assert config.get("module.heartbeat_interval") == 30
+    assert config.get("module.samplerate") == 200
+    assert config.get("service.port") == 5000
+    assert config.get("module.type") == "test"
     
     # Check that non-existent keys return None
-    assert config_manager.get("non.existent.key") is None
+    assert config.get("non.existent.key") is None
     
     # Check that default values are provided for non-existent keys
-    assert config_manager.get("non.existent.key", "default") == "default"
+    assert config.get("non.existent.key", "default") == "default"
 
 # Test config file loading
 def test_config_file_loading():
@@ -62,17 +62,17 @@ def test_config_file_loading():
     
     try:
         # Create config manager with this file
-        config_manager = ModuleConfigManager(logger, "test", temp_file_path)
+        config = Config(logger, "test", temp_file_path)
         
         # Check values from the file override defaults
-        assert config_manager.get("module.heartbeat_interval") == 60
-        assert config_manager.get("service.port") == 6000
+        assert config.get("module.heartbeat_interval") == 60
+        assert config.get("service.port") == 6000
         
         # Check new values are added
-        assert config_manager.get("module.custom_setting") == "test_value"
+        assert config.get("module.custom_setting") == "test_value"
         
         # Check other defaults are still available
-        assert config_manager.get("service.service_type") == "_module._tcp.local."
+        assert config.get("service.service_type") == "_module._tcp.local."
     finally:
         # Clean up the temporary file
         os.unlink(temp_file_path)
@@ -80,19 +80,19 @@ def test_config_file_loading():
 # Test setting and getting values
 def test_set_get_values():
     """Test setting and getting configuration values"""
-    config_manager = ModuleConfigManager(logger, "test")
+    config = Config(logger, "test")
     
     # Test setting a simple value
-    config_manager.set("test.value", 42)
-    assert config_manager.get("test.value") == 42
+    config.set("test.value", 42)
+    assert config.get("test.value") == 42
     
     # Test setting a nested value
-    config_manager.set("test.nested.value", "nested")
-    assert config_manager.get("test.nested.value") == "nested"
+    config.set("test.nested.value", "nested")
+    assert config.get("test.nested.value") == "nested"
     
     # Test updating an existing value
-    config_manager.set("module.heartbeat_interval", 15)
-    assert config_manager.get("module.heartbeat_interval") == 15
+    config.set("module.heartbeat_interval", 15)
+    assert config.get("module.heartbeat_interval") == 15
 
 # Test saving configuration
 def test_save_config():
@@ -102,14 +102,14 @@ def test_save_config():
         config_file_path = os.path.join(temp_dir, "test_config.json")
         
         # Create config manager with this file path
-        config_manager = ModuleConfigManager(logger, "test", config_file_path)
+        config = Config(logger, "test", config_file_path)
         
         # Set some values
-        config_manager.set("module.custom_setting", "test_value")
-        config_manager.set("test.nested.value", 42)
+        config.set("module.custom_setting", "test_value")
+        config.set("test.nested.value", 42)
         
         # Save the config
-        assert config_manager.save_config() == True
+        assert config.save_config() == True
         
         # Check that the file exists
         assert os.path.exists(config_file_path)
@@ -129,24 +129,24 @@ def test_env_variables(monkeypatch):
     monkeypatch.setenv("MODULE_PORT", "7000")
     
     # Create config manager
-    config_manager = ModuleConfigManager(logger, "test")
+    config = Config(logger, "test")
     
     # Check that env vars override defaults
-    assert config_manager.get("module.heartbeat_interval") == 45  # Should be converted to int
-    assert config_manager.get("service.port") == 7000
+    assert config.get("module.heartbeat_interval") == 45  # Should be converted to int
+    assert config.get("service.port") == 7000
 
 # Test validation
 def test_validation():
     """Test configuration validation"""
-    config_manager = ModuleConfigManager(logger, "test")
+    config = Config(logger, "test")
     
     # Should be valid with defaults
-    assert config_manager.validate() == True
+    assert config.validate() == True
     
     # Make it invalid by setting negative heartbeat interval
-    config_manager.set("module.heartbeat_interval", -1)
-    assert config_manager.validate() == False
+    config.set("module.heartbeat_interval", -1)
+    assert config.validate() == False
     
     # Fix it and check again
-    config_manager.set("module.heartbeat_interval", 30)
-    assert config_manager.validate() == True 
+    config.set("module.heartbeat_interval", 30)
+    assert config.validate() == True 

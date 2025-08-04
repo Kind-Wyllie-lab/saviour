@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Dict, Any, Optional, Union
 
-class ModuleConfigManager:
+class Config:
     """Manages configuration for habitat modules"""
     
     # Default configuration values

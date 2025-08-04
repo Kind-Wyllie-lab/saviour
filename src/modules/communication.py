@@ -3,7 +3,7 @@
 """
 Module Communication Manager
 
-The communication manager is responsible for handling all ZMQ-based messaging between
+This class is responsible for handling all ZMQ-based messaging between
 a module and the controller, including:
 - Command subscription from the controller
 - Status/data publishing to the controller
@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Callable, Dict, Any, Optional
 
-class ModuleCommunicationManager:
+class Communication:
     def __init__(self, logger: logging.Logger, 
                  module_id: str,
                  config_manager = None):

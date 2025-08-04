@@ -3,7 +3,7 @@
 """
 Module Command Handler
 
-This manager is responsible for handling and processing commands sent to modules,
+This class is responsible for handling and processing commands sent to modules,
 providing a central place for command parsing and execution.
 
 Author: Andrew SG
@@ -18,7 +18,7 @@ import threading
 from typing import Dict, Any, Optional, Callable
 
 
-class ModuleCommandHandler:
+class Command:
     """
     Routes commands and params recieved by the communication manager to functionality in the main module and managers.
 
@@ -29,7 +29,7 @@ class ModuleCommandHandler:
                  logger: logging.Logger,
                  module_id: str,
                  module_type: str,
-                 config_manager=None,
+                 config=None,
                  start_time=None):
         """
         Initialize the command handler
@@ -38,13 +38,13 @@ class ModuleCommandHandler:
             logger: Logger instance
             module_id: The unique identifier for the module
             module_type: The type of module (camera, microphone, etc.)
-            config_manager: Manager for configuration
+            config: Manager for configuration
             start_time: When the module was started
         """
         self.logger = logger
         self.module_id = module_id
         self.module_type = module_type
-        self.config_manager = config_manager
+        self.config = config
         self.start_time = start_time
     
         # Callback dictionary - will be set by set_callbacks method

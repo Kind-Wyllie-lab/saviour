@@ -25,7 +25,7 @@ class PTPRole(Enum):
 class PTPError(Exception): # We define a custom error class
     pass
 
-class PTPManager:
+class PTP:
     def __init__(self,
                  role=PTPRole.SLAVE,
                  interface='eth0',
@@ -338,7 +338,7 @@ class PTPManager:
             try:
                 # Extract freq correction from line using regex
                 import re
-                freq_match = re.search(r's2 freq\s+(-?\d+)', line)
+                freq_match = re.search(r's2 freq\s+([+-]?\d+)', line)
                 if freq_match:
                     self.latest_ptp4l_freq = int(freq_match.group(1))
                     self.last_freq = self.latest_ptp4l_freq
@@ -404,7 +404,7 @@ class PTPManager:
             try:
                 # Extract freq correction from line using regex
                 import re
-                freq_match = re.search(r's2 freq\s+(-?\d+)', line)
+                freq_match = re.search(r's2 freq\s+([+-]?\d+)', line)
                 if freq_match:
                     self.latest_phc2sys_freq = int(freq_match.group(1))
                     

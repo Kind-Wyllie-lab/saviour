@@ -40,7 +40,6 @@ import cv2
 
 class CameraCommandHandler(ModuleCommandHandler):
     """Command handler specific to camera functionality"""
-    
     def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
         super().__init__(logger, module_id, module_type, config_manager, start_time)
         self.logger.info("(CAMERA COMMAND HANDLER) Initialised")
@@ -173,7 +172,7 @@ class CameraModule(Module):
         
         # Set up export manager callbacks
         self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service_manager.controller_ip
+            'get_controller_ip': lambda: self.service.controller_ip
         })
     
         # Initialize camera
@@ -219,7 +218,7 @@ class CameraModule(Module):
         self.command_handler.set_callbacks({
             'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
             'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp_manager.get_status,
+            'get_ptp_status': self.ptp.get_status,
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication_manager.send_status(status),
@@ -233,7 +232,8 @@ class CameraModule(Module):
             'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.service_manager.controller_ip
+            'get_controller_ip': self.service.controller_ip,
+            'shutdown': self._shutdown,
         })
 
         self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command_handler.callbacks}")
@@ -476,7 +476,7 @@ class CameraModule(Module):
             # Always use port 8080 for Flask server
             port = 8080
             
-            self.logger.info(f"(MODULE) Starting streaming from {self.service_manager.ip}:{port}")
+            self.logger.info(f"(MODULE) Starting streaming from {self.service.ip}:{port}")
 
             # Start the camera if not already running
             if not self.picam2.started:
@@ -499,7 +499,7 @@ class CameraModule(Module):
                 'type': 'streaming_started',
                 'port': port,
                 'status': 'success',
-                'message': f'Streaming started from {self.service_manager.ip}:{port}'
+                'message': f'Streaming started from {self.service.ip}:{port}'
             })
             
             return True
@@ -653,3 +653,20 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping module: {e}")
             return False
+
+
+def main():
+    camera = CameraModule()
+    camera.start()
+
+    # Keep running until interrupted
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        camera.stop()
+
+if __name__ == '__main__':
+    main()
+

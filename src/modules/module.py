@@ -127,7 +127,7 @@ class Module:
             'list_commands': self.list_commands,
             'handle_command': self.command.handle_command, 
             'get_config': self.config.get_all, # Gets the complete config from
-            'set_config': lambda new_config: self.set_config(new_config, persist=False), # Uses a dict to update the config manfager
+            'set_config': lambda new_config: self.set_config(new_config, persist=True), # Uses a dict to update the config manager
             'shutdown': self._shutdown,
             'when_controller_discovered': self.when_controller_discovered,
             'controller_disconnected': self.controller_disconnected

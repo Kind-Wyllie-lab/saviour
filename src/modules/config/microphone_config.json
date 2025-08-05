@@ -45,5 +45,6 @@
         "cooldown_ms": 1000,
         "notification_enabled": true
     },
-    "recording_folder": "rec"
+    "recording_folder": "rec",
+    "auto_export": true
 } 

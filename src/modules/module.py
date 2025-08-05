@@ -128,6 +128,7 @@ class Module:
             'handle_command': self.command.handle_command, 
             'get_config': self.config.get_all, # Gets the complete config from
             'set_config': lambda new_config: self.set_config(new_config, persist=True), # Uses a dict to update the config manager
+            'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
             'when_controller_discovered': self.when_controller_discovered,
             'controller_disconnected': self.controller_disconnected
@@ -151,7 +152,9 @@ class Module:
         self.is_running = False  # Start as False
         self.is_recording = False # Flag to indicate if the module is recording e.g. video, TTL, audio, etc.
         self.is_streaming = False # Flag to indicate if the module is streaming on a network port e.g. video, TTL, audio, etc.
-        self.is_connected_to_controller = False 
+        self.is_connected_to_controller = False
+        self.is_ready = False  # Flag to indicate if module is ready for recording
+        self.last_readiness_check = None  # Timestamp of last readiness check 
 
         # Track when module started for uptime calculation
         self.start_time = None
@@ -786,6 +789,121 @@ class Module:
             self.logger.error(f"Error setting all config: {e}")
             return False
 
+
+    def validate_readiness(self) -> dict:
+        """
+        Validate that the module is ready for recording.
+        
+        This base implementation performs common checks that all modules should pass.
+        Subclasses should override this method to add module-specific validation.
+        
+        Returns:
+            dict: {
+                'ready': bool,
+                'timestamp': float,
+                'checks': dict,  # Detailed results of each check
+                'error': str     # Error message if not ready (optional)
+            }
+        """
+        self.logger.info(f"(MODULE) Performing readiness validation for {self.module_type} module")
+        
+        checks = {}
+        ready = True
+        error_msg = None
+        
+        try:
+            # Check 1: Module is running
+            checks['module_running'] = self.is_running
+            if not self.is_running:
+                ready = False
+                error_msg = "Module is not running"
+            
+            # Check 2: Recording folder exists and is writable
+            if ready:
+                try:
+                    if not os.path.exists(self.recording_folder):
+                        os.makedirs(self.recording_folder, exist_ok=True)
+                    # Test write access
+                    test_file = os.path.join(self.recording_folder, '.test_write')
+                    with open(test_file, 'w') as f:
+                        f.write('test')
+                    os.remove(test_file)
+                    checks['recording_folder_writable'] = True
+                except Exception as e:
+                    checks['recording_folder_writable'] = False
+                    ready = False
+                    error_msg = f"Recording folder not writable: {str(e)}"
+            
+            # Check 3: Sufficient disk space (at least 100MB free)
+            if ready:
+                try:
+                    statvfs = os.statvfs(self.recording_folder)
+                    free_bytes = statvfs.f_frsize * statvfs.f_bavail
+                    free_mb = free_bytes / (1024 * 1024)
+                    checks['disk_space_mb'] = free_mb
+                    checks['sufficient_disk_space'] = free_mb >= 100
+                    if free_mb < 100:
+                        ready = False
+                        error_msg = f"Insufficient disk space: {free_mb:.1f}MB free (need at least 100MB)"
+                except Exception as e:
+                    checks['sufficient_disk_space'] = False
+                    ready = False
+                    error_msg = f"Cannot check disk space: {str(e)}"
+            
+            # Check 4: PTP time synchronization is working
+            if ready:
+                try:
+                    ptp_status = self.ptp.get_status()
+                    checks['ptp_status'] = ptp_status
+                    # Check if PTP offset is reasonable (less than 1ms)
+                    if 'offset' in ptp_status and abs(ptp_status['offset']) > 1000:  # 1000 microseconds = 1ms
+                        checks['ptp_synchronized'] = False
+                        ready = False
+                        error_msg = f"PTP not synchronized: offset {ptp_status['offset']}μs"
+                    else:
+                        checks['ptp_synchronized'] = True
+                except Exception as e:
+                    checks['ptp_synchronized'] = False
+                    ready = False
+                    error_msg = f"PTP check failed: {str(e)}"
+            
+            # Check 5: Not currently recording
+            checks['not_recording'] = not self.is_recording
+            if self.is_recording:
+                ready = False
+                error_msg = "Module is currently recording"
+            
+            # Update module state
+            self.is_ready = ready
+            self.last_readiness_check = time.time()
+            
+            result = {
+                'ready': ready,
+                'timestamp': self.last_readiness_check,
+                'checks': checks
+            }
+            
+            if error_msg:
+                result['error'] = error_msg
+            
+            # Log the result
+            if ready:
+                self.logger.info(f"(MODULE) Readiness validation PASSED for {self.module_type} module")
+            else:
+                self.logger.warning(f"(MODULE) Readiness validation FAILED for {self.module_type} module: {error_msg}")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"(MODULE) Error during readiness validation: {e}")
+            self.is_ready = False
+            self.last_readiness_check = time.time()
+            return {
+                'ready': False,
+                'timestamp': self.last_readiness_check,
+                'checks': checks,
+                'error': f"Validation exception: {str(e)}"
+            }
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""

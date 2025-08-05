@@ -288,6 +288,17 @@ class Module:
             })
             return False
         
+        # Auto-export if enabled (for modules that don't override stop_recording)
+        auto_export = self.config.get("auto_export", True)
+        if auto_export and hasattr(self, 'current_filename') and self.current_filename:
+            self.logger.info("(MODULE) Auto-export enabled, exporting recording")
+            try:
+                # Extract just the filename from the full path
+                filename = os.path.basename(self.current_filename)
+                self.export_recordings(filename, destination="controller")
+            except Exception as e:
+                self.logger.error(f"(MODULE) Auto-export failed: {e}")
+        
         return True  # Just return True, let child class handle status
 
     def _get_recordings_list(self):
@@ -529,7 +540,7 @@ class Module:
                 self.communication.send_status({
                     "type": "export_complete",
                     "filename": filename,  # Original comma-separated string
-                    "session_id": self.stream_session_id,
+                    "session_id": self.recording_session_id,
                     "length": length,
                     "destination": destination.value,
                     "experiment_name": experiment_name,
@@ -551,7 +562,7 @@ class Module:
             self.communication.send_status({
                 "type": "export_complete",
                 "filename": filename,
-                "session_id": self.stream_session_id,
+                "session_id": self.recording_session_id,
                 "length": length,
                 "destination": destination.value,
                 "experiment_name": experiment_name,

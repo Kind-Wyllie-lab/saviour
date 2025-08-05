@@ -32,5 +32,6 @@
             "send_to_controller": true
         }
     },
-    "recording_folder": "rec"
+    "recording_folder": "rec",
+    "auto_export": true
 } 

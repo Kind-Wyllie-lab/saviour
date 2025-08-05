@@ -147,6 +147,8 @@ class Command:
                     self._handle_export_recordings(params)
                 case "ptp_status":
                     self._handle_ptp_status()
+                case "validate_readiness":
+                    self._handle_validate_readiness()
                 case "list_commands":
                     self._handle_list_commands()
                 case "test_communication":
@@ -395,6 +397,32 @@ class Command:
         else:
             self.logger.error("(COMMAND HANDLER) No get_ptp_status callback was given to command handler")
             self.callbacks["send_status"]({"error": "No get_ptp_status callback given to command handler"})
+    
+    def _handle_validate_readiness(self):
+        """Validate module readiness for recording"""
+        self.logger.info("(COMMAND HANDLER) Command identified as validate_readiness")
+        if "validate_readiness" in self.callbacks:
+            try:
+                readiness_result = self.callbacks["validate_readiness"]()
+                # Add type to the status
+                readiness_result['type'] = 'readiness_validation'
+                self.callbacks["send_status"](readiness_result)
+            except Exception as e:
+                self.logger.error(f"(COMMAND HANDLER) Error in validate_readiness: {e}")
+                self.callbacks["send_status"]({
+                    "type": "readiness_validation",
+                    "ready": False,
+                    "error": f"Validation exception: {str(e)}",
+                    "timestamp": time.time()
+                })
+        else:
+            self.logger.error("(COMMAND HANDLER) No validate_readiness callback was given to command handler")
+            self.callbacks["send_status"]({
+                "type": "readiness_validation",
+                "ready": False,
+                "error": "No validate_readiness callback given to command handler",
+                "timestamp": time.time()
+            })
     
     def _handle_list_commands(self):
         """Send the list of module commands to the controller"""

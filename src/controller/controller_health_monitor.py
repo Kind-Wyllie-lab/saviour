@@ -221,13 +221,17 @@ class ControllerHealthMonitor:
             
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
                 last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
+                time_diff = current_time - last_heartbeat
+                
+                # Debug logging for time calculations
+                self.logger.debug(f"(HEALTH MONITOR) Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
                 
                 # Find offline modules
-                if (current_time - last_heartbeat) > self.heartbeat_timeout: # If heartbeat not received within timeout period
+                if time_diff > self.heartbeat_timeout: # If heartbeat not received within timeout period
                     if self.module_health[module_id]['status'] == 'online': # If module is currently marked as online
                         self.logger.warning(
                             f"Module {module_id} has not sent a heartbeat in the last "
-                            f"{self.heartbeat_timeout} seconds. Marking as offline."
+                            f"{time_diff:.2f} seconds (timeout: {self.heartbeat_timeout}s). Marking as offline."
                         )
                         self.module_health[module_id]['status'] = 'offline'
                         # Trigger callback for offline status

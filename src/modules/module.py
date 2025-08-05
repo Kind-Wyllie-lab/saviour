@@ -790,12 +790,46 @@ class Module:
             return False
 
 
+    def _get_required_disk_space_mb(self) -> float:
+        """
+        Get the required disk space in MB for this module.
+        Reads from config with fallback to default.
+        
+        Returns:
+            float: Required disk space in MB (default: 100MB)
+        """
+        return self.config.get("module.required_disk_space_mb", 100.0)
+    
+    def _get_ptp_offset_threshold_us(self) -> float:
+        """
+        Get the maximum acceptable PTP offset in microseconds.
+        Reads from config with fallback to default.
+        
+        Returns:
+            float: Maximum acceptable PTP offset in microseconds (default: 1000μs = 1ms)
+        """
+        return self.config.get("module.ptp_offset_threshold_us", 1000.0)
+    
+    def _perform_module_specific_checks(self, checks: dict) -> tuple[bool, str]:
+        """
+        Perform module-specific readiness checks.
+        Subclasses should override this method to add their own validation.
+        
+        Args:
+            checks: Dictionary to store check results
+            
+        Returns:
+            tuple: (ready: bool, error_msg: str or None)
+        """
+        # Base implementation - no module-specific checks
+        return True, None
+    
     def validate_readiness(self) -> dict:
         """
         Validate that the module is ready for recording.
         
         This base implementation performs common checks that all modules should pass.
-        Subclasses should override this method to add module-specific validation.
+        Subclasses should override _perform_module_specific_checks() to add module-specific validation.
         
         Returns:
             dict: {
@@ -834,32 +868,38 @@ class Module:
                     ready = False
                     error_msg = f"Recording folder not writable: {str(e)}"
             
-            # Check 3: Sufficient disk space (at least 100MB free)
+            # Check 3: Sufficient disk space (configurable requirement)
             if ready:
                 try:
                     statvfs = os.statvfs(self.recording_folder)
                     free_bytes = statvfs.f_frsize * statvfs.f_bavail
                     free_mb = free_bytes / (1024 * 1024)
+                    required_mb = self._get_required_disk_space_mb()
+                    
                     checks['disk_space_mb'] = free_mb
-                    checks['sufficient_disk_space'] = free_mb >= 100
-                    if free_mb < 100:
+                    checks['required_disk_space_mb'] = required_mb
+                    checks['sufficient_disk_space'] = free_mb >= required_mb
+                    
+                    if free_mb < required_mb:
                         ready = False
-                        error_msg = f"Insufficient disk space: {free_mb:.1f}MB free (need at least 100MB)"
+                        error_msg = f"Insufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
                 except Exception as e:
                     checks['sufficient_disk_space'] = False
                     ready = False
                     error_msg = f"Cannot check disk space: {str(e)}"
             
-            # Check 4: PTP time synchronization is working
+            # Check 4: PTP time synchronization is working (configurable threshold)
             if ready:
                 try:
                     ptp_status = self.ptp.get_status()
                     checks['ptp_status'] = ptp_status
-                    # Check if PTP offset is reasonable (less than 1ms)
-                    if 'offset' in ptp_status and abs(ptp_status['offset']) > 1000:  # 1000 microseconds = 1ms
+                    
+                    # Check if PTP offset is reasonable (configurable threshold)
+                    max_offset_us = self._get_ptp_offset_threshold_us()
+                    if 'offset' in ptp_status and abs(ptp_status['offset']) > max_offset_us:
                         checks['ptp_synchronized'] = False
                         ready = False
-                        error_msg = f"PTP not synchronized: offset {ptp_status['offset']}μs"
+                        error_msg = f"PTP not synchronized: offset {ptp_status['offset']}μs (max: {max_offset_us}μs)"
                     else:
                         checks['ptp_synchronized'] = True
                 except Exception as e:
@@ -872,6 +912,13 @@ class Module:
             if self.is_recording:
                 ready = False
                 error_msg = "Module is currently recording"
+            
+            # Check 6: Module-specific checks
+            if ready:
+                module_ready, module_error = self._perform_module_specific_checks(checks)
+                if not module_ready:
+                    ready = False
+                    error_msg = module_error
             
             # Update module state
             self.is_ready = ready

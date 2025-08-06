@@ -149,13 +149,13 @@ class ArduinoModule(Module):
 
         self.logger.info(f"(ARDUINO MODULE) Command handler callbacks: {self.command_handler.callbacks}")
 
-    def start_recording(self, experiment_name: str = None, duration: str = None) -> bool:
+    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start continuous video recording"""
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
         
         # First call parent class to handle common recording setup
-        filename = super().start_recording(experiment_name=experiment_name, duration=duration)
+        filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
         if not filename:
             return False
         

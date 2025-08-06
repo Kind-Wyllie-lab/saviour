@@ -79,7 +79,6 @@ class Module:
             recording_folder=self.recording_folder,
             config=self.config.get_all(),
             logger=self.logger,
-            module=self  # Pass reference to this module
         )
         self.logger.info(f"(MODULE) Initialising communication manager")
         self.communication = Communication(         # Communication manager - handles ZMQ messaging

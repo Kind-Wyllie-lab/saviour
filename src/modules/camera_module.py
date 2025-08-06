@@ -24,7 +24,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 from src.modules.module import Module
-from habitat.src.modules.command import Command
+from src.modules.command import Command
 import logging
 import numpy as np
 import base64

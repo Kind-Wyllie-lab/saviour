@@ -9,7 +9,7 @@ class Header extends HTMLElement {
                 <div class="header-content">
                     <div class="logo-container">
                         <img src="/static/uofe_logo_alpha.png" alt="UoE Logo" class="logo">
-                        <img src="/static/sidb_logo.gif" alt="SIDB Logo" class="logo">
+                        <img src="/static/sidb_logo_alpha.png" alt="SIDB Logo" class="logo">
                         <h1>Habitat Controller</h1>
                     </div>
                     <nav class="main-nav">

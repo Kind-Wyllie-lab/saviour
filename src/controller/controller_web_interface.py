@@ -196,7 +196,7 @@ class WebInterfaceManager:
                     # Send list_recordings to all modules
                     for m in modules:
                         if 'id' in m and self.callbacks["send_command"]:
-                            self.callbacks["send_command"](m['id'], 'list_recordings')
+                            self.callbacks["send_command"](m['id'], 'list_recordings', {})
                     # Start a timer to emit after timeout
                     def emit_aggregated():
                         with self._pending_recordings_lock:
@@ -232,7 +232,7 @@ class WebInterfaceManager:
                 
                 # Send command to module
                 if self.callbacks["send_command"]:
-                    self.callbacks["send_command"](module_id, command)
+                    self.callbacks["send_command"](module_id, command, params)
                     self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command} to module {module_id}")
                     
                     # If this was a clear_recordings command, request updated list
@@ -241,7 +241,7 @@ class WebInterfaceManager:
                         self.socketio.sleep(0.5)
                         # Request updated recordings list
                         if self.callbacks["send_command"]:
-                            self.callbacks["send_command"](module_id, 'list_recordings')
+                            self.callbacks["send_command"](module_id, 'list_recordings', {})
                             self.logger.info(f"(WEB INTERFACE MANAGER) Requested updated recordings list after clear")
                 else:
                     self.logger.error("(WEB INTERFACE MANAGER) No command handler registered")
@@ -390,7 +390,7 @@ class WebInterfaceManager:
                 self.logger.info(f"(WEB INTERFACE MANAGER) Processing command: {command} for module: {module_id}")
                 
                 if self.callbacks["send_command"]:
-                    result = self.callbacks["send_command"](module_id, command)
+                    result = self.callbacks["send_command"](module_id, command, params)
                     return jsonify({
                         "status": "success",
                         "message": "Command sent successfully",

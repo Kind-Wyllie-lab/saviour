@@ -124,27 +124,35 @@ class Export:
             bool: True if export successful
         """
         try:
-            # Mount the destination if not already mounted
-            if self.current_mount != destination:
-                if not self._mount_destination(destination):
-                    return False
-            
             # Check if we have a specific experiment folder path from the module
             experiment_folder_path = None
             if hasattr(self, 'module') and hasattr(self.module, 'current_experiment_folder') and self.module.current_experiment_folder:
                 if hasattr(self.module, 'controller_share_path') and self.module.controller_share_path:
+                    # Use the controller's local path directly (no mounting needed)
                     experiment_folder_path = os.path.join(self.module.controller_share_path, self.module.current_experiment_folder)
-                    self.logger.info(f"(EXPORT MANAGER) Using specific experiment folder path: {experiment_folder_path}")
+                    self.logger.info(f"(EXPORT MANAGER) Using controller local path: {experiment_folder_path}")
+            
+            # Only mount if we don't have a controller local path
+            if not experiment_folder_path:
+                # Mount the destination if not already mounted
+                if self.current_mount != destination:
+                    if not self._mount_destination(destination):
+                        return False
             
             # Create export folder
-            if experiment_folder_path and os.path.exists(experiment_folder_path):
+            if experiment_folder_path:
                 # Use the specific experiment folder created by the controller
                 export_folder = experiment_folder_path
+                # Create the folder if it doesn't exist
+                os.makedirs(export_folder, exist_ok=True)
                 self.logger.info(f"(EXPORT MANAGER) Using controller experiment folder: {export_folder}")
             else:
-                # Create timestamped export folder with optional experiment name
+                # Fallback: Create timestamped export folder with optional experiment name
                 export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                if experiment_name:
+                if hasattr(self, 'module') and hasattr(self.module, 'current_experiment_folder') and self.module.current_experiment_folder:
+                    # Use the experiment folder name directly (already has export_ prefix)
+                    export_folder = os.path.join(self.mount_point, f"{self.module.current_experiment_folder}_{export_timestamp}")
+                elif experiment_name:
                     # Sanitize experiment name for filesystem safety
                     safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                     safe_experiment_name = safe_experiment_name.replace(' ', '_')

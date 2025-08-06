@@ -229,6 +229,8 @@ class Command:
         # Parse parameters
         experiment_name = None
         duration = None
+        experiment_folder = None
+        controller_share_path = None
         
         if params:
             # Check if we have JSON parameters
@@ -238,6 +240,8 @@ class Command:
                     json_params = json.loads(params[0])
                     experiment_name = json_params.get('experiment_name')
                     duration = json_params.get('duration')
+                    experiment_folder = json_params.get('experiment_folder')
+                    controller_share_path = json_params.get('controller_share_path')
                     self.logger.info(f"(COMMAND HANDLER) Parsed JSON parameters: {json_params}")
                 except json.JSONDecodeError as e:
                     self.logger.error(f"(COMMAND HANDLER) Failed to parse JSON parameters: {e}")
@@ -248,11 +252,15 @@ class Command:
                         experiment_name = param.split('=', 1)[1]
                     elif param.startswith('duration='):
                         duration = param.split('=', 1)[1]
+                    elif param.startswith('experiment_folder='):
+                        experiment_folder = param.split('=', 1)[1]
+                    elif param.startswith('controller_share_path='):
+                        controller_share_path = param.split('=', 1)[1]
         
-        self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}'")
+        self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}', experiment_folder: '{experiment_folder}'")
         
         # Call the start_recording method with parsed parameters
-        self.callbacks["start_recording"](experiment_name=experiment_name, duration=duration)
+        self.callbacks["start_recording"](experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
 
     def _handle_stop_recording(self):
         """Handle stop_recordings command"""

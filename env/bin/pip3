@@ -1,4 +1,4 @@
-#!/home/pi/Desktop/apa/src/habitat/env/bin/python3.11
+#!/home/pi/Desktop/apa/src/habitat/env/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

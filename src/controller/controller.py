@@ -420,3 +420,15 @@ class Controller:
         # Update web interface
         if hasattr(self, 'web_interface_manager'):
             self.web_interface_manager.update_modules(self.service_manager.modules)
+
+if __name__ == "__main__":
+    controller = Controller(config_file_path="config.json")
+    try:
+        # Start the main loop
+        controller.start()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        controller.stop()
+    except Exception as e:
+        print(f"\nError: {e}")
+        controller.stop()

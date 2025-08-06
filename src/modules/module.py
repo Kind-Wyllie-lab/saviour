@@ -78,7 +78,8 @@ class Module:
             module_id=self.module_id,
             recording_folder=self.recording_folder,
             config=self.config.get_all(),
-            logger=self.logger
+            logger=self.logger,
+            module=self  # Pass reference to this module
         )
         self.logger.info(f"(MODULE) Initialising communication manager")
         self.communication = Communication(         # Communication manager - handles ZMQ messaging
@@ -238,13 +239,15 @@ class Module:
         self.logger.info("(MODULE) Controller disconnection cleanup complete, ready for reconnection")
 
     # Recording functions
-    def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
+    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
         """
         Start recording. Should be extended with module-specific implementation.
         
         Args:
             experiment_name: Optional experiment name to prefix the filename
             duration: Optional duration parameter (not currently used)
+            experiment_folder: Optional experiment folder name for export
+            controller_share_path: Optional controller share path for export
             
         Returns the filename if setup was successful, None otherwise.
         """
@@ -257,6 +260,10 @@ class Module:
                     "error": "Already recording"
                 })
             return None
+        
+        # Store experiment folder information for export
+        self.current_experiment_folder = experiment_folder
+        self.controller_share_path = controller_share_path
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -485,6 +492,11 @@ class Module:
             bool: True if export successful
         """
         try:
+            # Use experiment folder if available from recording session
+            if hasattr(self, 'current_experiment_folder') and self.current_experiment_folder:
+                experiment_name = self.current_experiment_folder
+                self.logger.info(f"(MODULE) Using experiment folder for export: {experiment_name}")
+            
             # Convert string destination to enum if needed
             if isinstance(destination, str):
                 try:

@@ -34,11 +34,12 @@ class Export:
             except ValueError:
                 raise ValueError(f"Invalid destination: {value}. Must be one of: {[d.value for d in cls]}")
     
-    def __init__(self, module_id: str, recording_folder: str, config: dict, logger: logging.Logger):
+    def __init__(self, module_id: str, recording_folder: str, config: dict, logger: logging.Logger, module=None):
         self.module_id = module_id
         self.recording_folder = recording_folder
         self.config = config
         self.logger = logger
+        self.module = module  # Store reference to the module
         self.current_mount = None
         self.mount_point = "/mnt/export"  # Could be configurable
         self.callbacks = {}
@@ -127,17 +128,30 @@ class Export:
             if self.current_mount != destination:
                 if not self._mount_destination(destination):
                     return False
-                    
-            # Create timestamped export folder with optional experiment name
-            export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            if experiment_name:
-                # Sanitize experiment name for filesystem safety
-                safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                export_folder = os.path.join(self.mount_point, f"export_{safe_experiment_name}_{export_timestamp}")
+            
+            # Check if we have a specific experiment folder path from the module
+            experiment_folder_path = None
+            if hasattr(self, 'module') and hasattr(self.module, 'current_experiment_folder') and self.module.current_experiment_folder:
+                if hasattr(self.module, 'controller_share_path') and self.module.controller_share_path:
+                    experiment_folder_path = os.path.join(self.module.controller_share_path, self.module.current_experiment_folder)
+                    self.logger.info(f"(EXPORT MANAGER) Using specific experiment folder path: {experiment_folder_path}")
+            
+            # Create export folder
+            if experiment_folder_path and os.path.exists(experiment_folder_path):
+                # Use the specific experiment folder created by the controller
+                export_folder = experiment_folder_path
+                self.logger.info(f"(EXPORT MANAGER) Using controller experiment folder: {export_folder}")
             else:
-                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}")
-            os.makedirs(export_folder, exist_ok=True)
+                # Create timestamped export folder with optional experiment name
+                export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                if experiment_name:
+                    # Sanitize experiment name for filesystem safety
+                    safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    safe_experiment_name = safe_experiment_name.replace(' ', '_')
+                    export_folder = os.path.join(self.mount_point, f"export_{safe_experiment_name}_{export_timestamp}")
+                else:
+                    export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}")
+                os.makedirs(export_folder, exist_ok=True)
             
             # Copy the file
             source_path = os.path.join(self.recording_folder, filename)

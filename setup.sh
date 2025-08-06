@@ -350,6 +350,21 @@ configure_dhcp_server() {
     else
         log_message "[OK] dnsmasq is already installed."
     fi
+
+    # Modify DNSMasq service description to start after interfaces are up
+    log_message "Modifying DNSMasq service description..."
+    if [ -f /lib/systemd/system/dnsmasq.service ]; then
+        # Backup original service file
+        sudo cp /lib/systemd/system/dnsmasq.service /lib/systemd/system/dnsmasq.service.backup
+        log_message "Backed up original dnsmasq.service"
+        
+        # Modify the service file to start after network interfaces are up
+        sudo sed -i 's/Requires=network.target/Requires=network-online.target/g' /lib/systemd/system/dnsmasq.service
+        sudo sed -i 's/After=network.target/After=network-online.target/g' /lib/systemd/system/dnsmasq.service
+        log_message "Modified DNSMasq service to start after network interfaces are up"
+    else
+        log_message "Warning: dnsmasq.service not found at /lib/systemd/system/dnsmasq.service"
+    fi
     
     # Backup original config
     if [ -f /etc/dnsmasq.conf ]; then
@@ -484,8 +499,8 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/habitat/src/controller/examples
-ExecStart=/home/pi/Desktop/habitat/env/bin/python controller_example.py
+WorkingDirectory=/home/pi/Desktop/habitat/src/controller/
+ExecStart=/home/pi/Desktop/habitat/env/bin/python controller.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

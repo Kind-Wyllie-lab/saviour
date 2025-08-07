@@ -159,6 +159,8 @@ class Command:
                     self._handle_set_config(params)
                 case "shutdown":
                     self._handle_shutdown()
+                case "restart_ptp":
+                    self._handle_restart_ptp()
                 case _:
                     self._handle_unknown_command(command)
                 
@@ -459,6 +461,35 @@ class Command:
         else:
             self.logger.error("(COMMAND HANDLER) No shutdown callback given to command handler")
             self.callbacks["send_status"]({"error": "No shutdown callback given to command handler"})
+
+    def _handle_restart_ptp(self):
+        """Restart PTP services"""
+        self.logger.info("(COMMAND HANDLER) Command identified as restart_ptp")
+        if "restart_ptp" in self.callbacks:
+            try:
+                result = self.callbacks["restart_ptp"]()
+                self.callbacks["send_status"]({
+                    "type": "ptp_restart_complete",
+                    "timestamp": time.time(),
+                    "status": "success",
+                    "result": result
+                })
+            except Exception as e:
+                self.logger.error(f"(COMMAND HANDLER) Error restarting PTP: {e}")
+                self.callbacks["send_status"]({
+                    "type": "ptp_restart_failed",
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "error": str(e)
+                })
+        else:
+            self.logger.error("(COMMAND HANDLER) No restart_ptp callback given to command handler")
+            self.callbacks["send_status"]({
+                "type": "ptp_restart_failed",
+                "timestamp": time.time(),
+                "status": "error",
+                "error": "No restart_ptp callback given to command handler"
+            })
 
     def _handle_get_config(self):
         """Get the config dict"""

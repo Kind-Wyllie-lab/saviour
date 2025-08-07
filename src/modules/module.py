@@ -900,6 +900,7 @@ class Module:
                     error_msg = f"Cannot check disk space: {str(e)}"
             
             # Check 4: PTP time synchronization is working (configurable threshold)
+            # TODO: Improve this check - don't think it's currently working
             if ready:
                 try:
                     ptp_status = self.ptp.get_status()

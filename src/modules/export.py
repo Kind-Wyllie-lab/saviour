@@ -122,6 +122,7 @@ class Export:
         Returns:
             bool: True if export successful
         """
+        self.logger.info(f"(EXPORT MANAGER) Attempting to export recordings for {experiment_name}")
         try:
             # Mount the destination if not already mounted
             if self.current_mount != destination:

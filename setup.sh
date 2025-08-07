@@ -143,14 +143,14 @@ configure_ntp_for_ptp() {
 NTP=time.nist.gov time.google.com pool.ntp.org
 
 # Reduce NTP adjustment frequency to minimize interference with PTP
-PollIntervalMinSec=300   # 5 minutes minimum (default is 32s)
-PollIntervalMaxSec=3600  # 1 hour maximum (default is 34min)
-
-# Reduce maximum adjustment per sync to prevent large jumps
-MaxNTPSyncSec=0.1        # Max 100ms adjustment per sync (default is 0.5s)
+# 5 minutes minimum (default is 32s)
+PollIntervalMinSec=300
+# 1 hour maximum (default is 34min)
+PollIntervalMaxSec=3600
 
 # Increase root distance to be more tolerant
-RootDistanceMaxSec=5     # 5 second tolerance (default is 5s)
+# 5 second tolerance (default is 5s)
+RootDistanceMaxSec=5
 
 # Use hardware timestamping if available
 # Hardware timestamping reduces interference with PTP

@@ -17,7 +17,7 @@ import time
 import logging
 import os
 
-from habitat.src.modules.config import Config
+from src.modules.config import Config
 
 from typing import Dict
 

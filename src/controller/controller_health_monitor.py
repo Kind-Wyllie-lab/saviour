@@ -61,8 +61,8 @@ class ControllerHealthMonitor:
             if was_new_module:
                 # New module - create full health record
                 self.module_health[module_id] = {
-                    'timestamp': status_data['timestamp'],
-                    'last_heartbeat': status_data['timestamp'],
+                    'timestamp': time.time(),  # Use controller's timestamp
+                    'last_heartbeat': time.time(),  # Use controller's timestamp
                     'status': 'online',
                     'cpu_temp': status_data.get('cpu_temp', 0),
                     'cpu_usage': status_data.get('cpu_usage', 0),
@@ -76,7 +76,7 @@ class ControllerHealthMonitor:
                 }
             else:
                 # Existing module - update heartbeat and status, preserve other fields
-                self.module_health[module_id]['last_heartbeat'] = status_data['timestamp']
+                self.module_health[module_id]['last_heartbeat'] = time.time()  # Use controller's timestamp
                 self.module_health[module_id]['status'] = 'online'
                 # Update other metrics if provided
                 if 'cpu_temp' in status_data:

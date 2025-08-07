@@ -115,6 +115,7 @@ class Module:
             'get_controller_ip': lambda: self.service.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
             'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+            'restart_ptp': self.ptp.restart, # Restart PTP services
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication.send_status(status),

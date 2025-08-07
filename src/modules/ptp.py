@@ -488,6 +488,26 @@ class PTP:
         self.status = 'stopped'
         self.logger.info("(PTP MANAGER) Stopped PTP services.")
 
+    def restart(self):
+        """Restart PTP services"""
+        self.logger.info("(PTP MANAGER) Restarting PTP services...")
+        try:
+            # Stop services
+            self.stop()
+            
+            # Wait a moment
+            time.sleep(2)
+            
+            # Start services
+            self.start()
+            
+            self.logger.info("(PTP MANAGER) PTP services restarted successfully")
+            return {"status": "success", "message": "PTP services restarted"}
+            
+        except Exception as e:
+            self.logger.error(f"(PTP MANAGER) Error restarting PTP services: {e}")
+            return {"status": "error", "message": str(e)}
+
     def get_status(self):
         """Get current PTP status."""
         ptp4l_status = self._get_service_status(self.ptp4l_service)

@@ -62,10 +62,11 @@ class Service:
         else: # Linux/Unix
             # Try multiple methods to get the actual network IP address
             import time
-            max_wait = 60  # seconds
-            wait_time = 0
             self.ip = None
-            while wait_time < max_wait:
+            attempt = 0
+            while True:
+                attempt += 1
+                self.logger.info(f"(SERVICE MANAGER) Attempting to get eth0 IP (attempt {attempt})...")
                 # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
                 try:
                     import subprocess
@@ -141,15 +142,12 @@ class Service:
                                             self.logger.warning(f"(SERVICE MANAGER) ip route returned non-eth0 IP: {potential_ip}")
                     except Exception as e:
                         pass
-                # If still no valid IP, wait and retry
+                # If still no valid IP, wait and retry indefinitely
                 if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
-                    self.logger.warning(f"(SERVICE MANAGER) No valid eth0 IP found yet (current: {self.ip}). Retrying in 2s...")
+                    self.logger.warning(f"(SERVICE MANAGER) No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
                     time.sleep(2)
-                    wait_time += 2
                 else:
                     break
-            if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
-                raise RuntimeError("(SERVICE MANAGER) Could not obtain a valid eth0 IP address (192.168.1.x) after waiting. Aborting service registration.")
             self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
             # Service registration parameters
             self.service_type = "_module._tcp.local."

@@ -73,12 +73,11 @@ class ControllerServiceManager():
         """Wait for the proper network IP (192.168.1.1) to be available"""
         self.logger.info("(SERVICE MANAGER) Waiting for proper network IP (192.168.1.1)...")
         
-        max_attempts = 60  # Wait up to 5 minutes (60 * 5 seconds)
         attempt = 0
         
-        while attempt < max_attempts:
+        while True:
             attempt += 1
-            self.logger.info(f"(SERVICE MANAGER) IP detection attempt {attempt}/{max_attempts}")
+            self.logger.info(f"(SERVICE MANAGER) IP detection attempt {attempt} (waiting for DHCP)...")
             
             # Try multiple methods to get the actual network IP address
             ip = None
@@ -169,13 +168,8 @@ class ControllerServiceManager():
                 self.logger.info(f"(SERVICE MANAGER) Found proper eth0 IP: {ip}")
                 return ip
             else:
-                self.logger.warning(f"(SERVICE MANAGER) No proper eth0 IP found yet (attempt {attempt}/{max_attempts})")
-                if attempt < max_attempts:
-                    time.sleep(5)  # Wait 5 seconds before next attempt
-        
-        # If we get here, we couldn't find a proper IP
-        self.logger.error(f"(SERVICE MANAGER) Failed to get proper network IP after {max_attempts} attempts, using localhost")
-        return "127.0.0.1"
+                self.logger.warning(f"(SERVICE MANAGER) No proper eth0 IP found yet (attempt {attempt}). Waiting for DHCP...")
+                time.sleep(5)  # Wait 5 seconds before next attempt
 
     def register_service(self):
         """Register the controller service"""

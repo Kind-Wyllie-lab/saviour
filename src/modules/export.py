@@ -129,15 +129,27 @@ class Export:
                 if not self._mount_destination(destination):
                     return False
                     
-            # Create timestamped export folder with optional experiment name
+            # Create hierarchical export folder structure
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             if experiment_name:
                 # Sanitize experiment name for filesystem safety
                 safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                export_folder = os.path.join(self.mount_point, f"export_{safe_experiment_name}_{export_timestamp}")
+                
+                # Create top-level experiment folder
+                experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
+                os.makedirs(experiment_folder, exist_ok=True)
+                
+                # Create module-specific subfolder within experiment folder
+                module_subfolder = f"{safe_experiment_name}_{export_timestamp}_{self.module_id}"
+                export_folder = os.path.join(experiment_folder, module_subfolder)
+                
+                self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")
+                self.logger.info(f"(EXPORT MANAGER) Created module subfolder: {module_subfolder}")
             else:
-                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}")
+                # Fallback for experiments without names
+                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}_{self.module_id}")
+            
             os.makedirs(export_folder, exist_ok=True)
             
             # Copy the file
@@ -184,15 +196,27 @@ class Export:
                 if not self._mount_destination(destination):
                     return False
                     
-            # Create timestamped export folder with optional experiment name
+            # Create hierarchical export folder structure
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             if experiment_name:
                 # Sanitize experiment name for filesystem safety
                 safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                export_folder = os.path.join(self.mount_point, f"export_{safe_experiment_name}_{export_timestamp}")
+                
+                # Create top-level experiment folder
+                experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
+                os.makedirs(experiment_folder, exist_ok=True)
+                
+                # Create module-specific subfolder within experiment folder
+                module_subfolder = f"{safe_experiment_name}_{export_timestamp}_{self.module_id}"
+                export_folder = os.path.join(experiment_folder, module_subfolder)
+                
+                self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")
+                self.logger.info(f"(EXPORT MANAGER) Created module subfolder: {module_subfolder}")
             else:
-                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}")
+                # Fallback for experiments without names
+                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}_{self.module_id}")
+            
             os.makedirs(export_folder, exist_ok=True)
             
             # Export all files in the recording folder

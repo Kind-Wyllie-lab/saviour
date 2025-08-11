@@ -51,8 +51,8 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 class TTLCommandHandler(Command):
     """Command handler specific to TTL functionality"""
-    def __init__(self, logger, module_id, module_type, config=None, start_time=None):
-        super().__init__(logger, module_id, module_type, config, start_time)
+    def __init__(self,module_id, module_type, config=None, start_time=None):
+        super().__init__(module_id, module_type, config, start_time)
         self.logger.info("(TTL COMMAND HANDLER) Initialised")
 
     def handle_command(self, command: str):
@@ -138,7 +138,6 @@ class TTLModule(Module):
         
         # Initialize command handler after parent class
         self.command = TTLCommandHandler(
-            logger=self.logger,
             module_id=self.module_id,
             module_type=module_type,
             config=self.config,

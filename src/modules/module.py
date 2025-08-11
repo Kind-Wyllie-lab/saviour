@@ -23,6 +23,23 @@ import threading
 from typing import Dict, Any, Optional, Union
 import datetime
 
+# Check if running under systemd
+is_systemd = os.environ.get('INVOCATION_ID') is not None
+
+# Setup logging ONCE for all modules
+if is_systemd:
+    # Under systemd, let it handle timestamps
+    format_string = '%(levelname)s - %(name)s - %(message)s'
+else:
+    # When running directly, include timestamps
+    format_string = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+
+# Setup logging ONCE for all additional classes that log
+logging.basicConfig(
+    level=logging.INFO,
+    format=format_string
+)
+
 # Import managers
 from src.modules.config import Config
 from src.modules.communication import Communication
@@ -53,8 +70,7 @@ class Module:
         self.recording_folder = "rec"  # Default recording folder
         
         # Setup logging first
-        self.logger = logging.getLogger(f"{self.module_type}.{self.module_id}")
-        self.logger.setLevel(logging.INFO)
+        self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
         
         # Create recording folder if it doesn't exist
@@ -62,43 +78,30 @@ class Module:
             os.makedirs(self.recording_folder)
             self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
 
-        # Add console handler if none exists
-        if not self.logger.handlers:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
-
         # Managers
         self.logger.info(f"(MODULE) Initialising managers")
         self.logger.info(f"(MODULE) Initialising config manager")
-        self.config = Config(self.logger, self.module_type, self.config_path)
+        self.config = Config(self.module_type, self.config_path)
         self.export = Export(
             module_id=self.module_id,
             recording_folder=self.recording_folder,
             config=self.config.get_all(),
-            logger=self.logger,
         )
         self.logger.info(f"(MODULE) Initialising communication manager")
         self.communication = Communication(         # Communication manager - handles ZMQ messaging
-            self.logger, # Pass in the logger
             self.module_id, # Pass in the module ID for use in messages
             config=self.config # Pass in the config manager for getting properties
         )
         self.logger.info(f"(MODULE) Initialising health manager")
         self.health = Health(
-            self.logger, 
             config=self.config
         )
         self.logger.info(f"(MODULE) Initialising PTP manager")
         self.ptp = PTP(
-            logger=self.logger,
             role=PTPRole.SLAVE)
         if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
             self.logger.info(f"(MODULE) Initialising command handler")
             self.command = Command(
-                self.logger,
                 self.module_id,
                 self.module_type,
                 config=self.config,
@@ -106,7 +109,9 @@ class Module:
             )
 
         self.logger.info(f"(MODULE) Initialising service manager")
-        self.service = Service(self.logger, self.config, module_id=self.module_id, module_type=self.module_type)
+        self.service = Service(self.config, 
+            module_id=self.module_id, 
+            module_type=self.module_type)
         self.logger.info(f"(MODULE) Initialising service manager")
 
         # Register Callbacks

@@ -387,17 +387,8 @@ class CameraModule(Module):
                         "message": f"Recording completed successfully with {len(self.frame_times)} frames"
                     })
                 
-                # Auto-export if enabled
-                auto_export = self.config.get("auto_export", True)
-                if auto_export and self.current_filename:
-                    self.logger.info("(CAMERA MODULE) Auto-export enabled, exporting recording")
-                    try:
-                        # Extract just the filename from the full path
-                        filename = os.path.basename(self.current_filename)
-                        self.export_recordings(filename, destination="controller")
-                    except Exception as e:
-                        self.logger.error(f"(CAMERA MODULE) Auto-export failed: {e}")
-                
+                # Auto-export is now handled by child classes (e.g., APACamera)
+                # to use the new export manager methods
                 return True
             else:
                 self.logger.error("(MODULE) Error: recording_start_time was None")

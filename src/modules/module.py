@@ -76,7 +76,7 @@ class Module:
         # Create recording folder if it doesn't exist
         if not os.path.exists(self.recording_folder):
             os.makedirs(self.recording_folder, exist_ok=True)
-            self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
+            self.logger.info(f"Created recording folder: {self.recording_folder}")
 
 
         # Add console handler if none exists
@@ -107,39 +107,39 @@ class Module:
                     file_handler.setLevel(logging.INFO)
                     self.logger.addHandler(file_handler)
                     
-                    self.logger.info(f"(MODULE) File logging enabled: {log_filepath}")
-                    self.logger.info(f"(MODULE) Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+                    self.logger.info(f"File logging enabled: {log_filepath}")
+                    self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
                 else:
-                    self.logger.info("(MODULE) File logging disabled in config")
+                    self.logger.info("File logging disabled in config")
                     
             except Exception as e:
                 # If file logging fails, log the error but don't crash
-                self.logger.warning(f"(MODULE) Failed to setup file logging: {e}")
-                self.logger.info("(MODULE) Continuing with console logging only")
+                self.logger.warning(f"Failed to setup file logging: {e}")
+                self.logger.info("Continuing with console logging only")
 
         # Managers
-        self.logger.info(f"(MODULE) Initialising managers")
-        self.logger.info(f"(MODULE) Initialising config manager")
+        self.logger.info(f"Initialising managers")
+        self.logger.info(f"Initialising config manager")
         self.config = Config(self.module_type, self.config_path)
         self.export = Export(
             module_id=self.module_id,
             recording_folder=self.recording_folder,
             config=self.config.get_all(),
         )
-        self.logger.info(f"(MODULE) Initialising communication manager")
+        self.logger.info(f"Initialising communication manager")
         self.communication = Communication(         # Communication manager - handles ZMQ messaging
             self.module_id, # Pass in the module ID for use in messages
             config=self.config # Pass in the config manager for getting properties
         )
-        self.logger.info(f"(MODULE) Initialising health manager")
+        self.logger.info(f"Initialising health manager")
         self.health = Health(
             config=self.config
         )
-        self.logger.info(f"(MODULE) Initialising PTP manager")
+        self.logger.info(f"Initialising PTP manager")
         self.ptp = PTP(
             role=PTPRole.SLAVE)
         if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
-            self.logger.info(f"(MODULE) Initialising command handler")
+            self.logger.info(f"Initialising command handler")
             self.command = Command(
                 self.module_id,
                 self.module_type,
@@ -147,9 +147,9 @@ class Module:
                 start_time=None # Will be set during start()
             )
 
-        self.logger.info(f"(MODULE) Initialising service manager")
+        self.logger.info(f"Initialising service manager")
 
-        self.service = Service(self.logger, self.config, module_id=self.module_id, module_type=self.module_type)
+        self.service = Service(self.config, module_id=self.module_id, module_type=self.module_type)
 
         # Register Callbacks
         self.callbacks = { # Define a universal set of callbacks
@@ -205,50 +205,50 @@ class Module:
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
-        self.logger.info(f"(MODULE) Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
-        self.logger.info(f"(MODULE) Module will now initialize the necessary managers")
+        self.logger.info(f"Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
+        self.logger.info(f"Module will now initialize the necessary managers")
         
         # Check if we're already connected to this controller
         if (self.communication.controller_ip == controller_ip and 
             self.communication.controller_port == controller_port):
-            self.logger.info("(MODULE) Already connected to this controller")
+            self.logger.info("Already connected to this controller")
             return
             
         # If we're connected to a different controller, disconnect first
         if self.communication.controller_ip:
-            self.logger.info("(MODULE) Connected to different controller, disconnecting first")
+            self.logger.info("Connected to different controller, disconnecting first")
             self.controller_disconnected()
             
         try:
             
             # 2. Connect communication manager
-            self.logger.info("(MODULE) Connecting communication manager to controller")
+            self.logger.info("Connecting communication manager to controller")
             if not self.communication.connect(controller_ip, controller_port):
                 raise Exception("Failed to connect communication manager")
-            self.logger.info("(MODULE) Communication manager connected to controller")
+            self.logger.info("Communication manager connected to controller")
             
             # 3. Start command listener
-            self.logger.info("(MODULE) Requesting communication manager to start command listener")
+            self.logger.info("Requesting communication manager to start command listener")
             if not self.communication.start_command_listener():
                 raise Exception("Failed to start command listener")
-            self.logger.info("(MODULE) Command listener started")
+            self.logger.info("Command listener started")
             
             # 4. Start heartbeats if module is running
             if self.is_running:
-                self.logger.info("(MODULE) Requesting health manager to start heartbeats")
+                self.logger.info("Requesting health manager to start heartbeats")
                 self.health.start_heartbeats()
-                self.logger.info("(MODULE) Heartbeats started")
+                self.logger.info("Heartbeats started")
             
             # 5. Start 
-            self.logger.info("(MODULE) Starting PTP manager")
+            self.logger.info("Starting PTP manager")
             self.ptp.start()
             
-            self.logger.info("(MODULE) Controller connection and initialization complete")
+            self.logger.info("Controller connection and initialization complete")
 
             self.is_connected_to_controller = True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error during controller initialization: {e}")
+            self.logger.error(f"Error during controller initialization: {e}")
             # Clean up any partial initialization
             self.communication.cleanup()
             self.file_transfer = None
@@ -257,13 +257,13 @@ class Module:
     def controller_disconnected(self):
         """Callback when controller is disconnected"""
         # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
-        self.logger.info("(MODULE) Controller disconnected")
+        self.logger.info("Controller disconnected")
         
         self.is_connected_to_controller = False
 
         # Stop recording if active
         if self.is_recording:
-            self.logger.info("(MODULE) Stopping recording due to controller disconnect")
+            self.logger.info("Stopping recording due to controller disconnect")
             self.stop_recording()
         
         # Stop PTP services
@@ -279,7 +279,7 @@ class Module:
         self.file_transfer = None
         self.is_streaming = False
         
-        self.logger.info("(MODULE) Controller disconnection cleanup complete, ready for reconnection")
+        self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
     # Recording functions
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
@@ -296,7 +296,7 @@ class Module:
         """
         # Check not already recording
         if self.is_recording:
-            self.logger.info("(MODULE) Already recording")
+            self.logger.info("Already recording")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_start_failed",
@@ -334,7 +334,7 @@ class Module:
         """
         # Check if recording
         if not self.is_recording:
-            self.logger.info("(MODULE) Already stopped recording")
+            self.logger.info("Already stopped recording")
             self.communication.send_status({
                 "type": "recording_stop_failed",
                 "error": "Not recording"
@@ -352,16 +352,16 @@ class Module:
             
             # Ensure recording folder exists
             if not os.path.exists(self.recording_folder):
-                self.logger.info(f"(MODULE) Recording folder does not exist, creating: {self.recording_folder}")
+                self.logger.info(f"Recording folder does not exist, creating: {self.recording_folder}")
                 try:
                     os.makedirs(self.recording_folder, exist_ok=True)
                 except Exception as e:
-                    self.logger.error(f"(MODULE) Error creating recording folder {self.recording_folder}: {e}")
+                    self.logger.error(f"Error creating recording folder {self.recording_folder}: {e}")
                     return []
             
             # Check if we can access the folder
             if not os.access(self.recording_folder, os.R_OK):
-                self.logger.error(f"(MODULE) No read permission for recording folder: {self.recording_folder}")
+                self.logger.error(f"No read permission for recording folder: {self.recording_folder}")
                 return []
                 
             try:
@@ -377,24 +377,24 @@ class Module:
                             })
                     except (OSError, IOError) as e:
                         # Skip files that can't be accessed
-                        self.logger.warning(f"(MODULE) Skipping file {filename} due to access error: {e}")
+                        self.logger.warning(f"Skipping file {filename} due to access error: {e}")
                         continue
                     except Exception as e:
                         # Skip files that cause other errors
-                        self.logger.warning(f"(MODULE) Skipping file {filename} due to error: {e}")
+                        self.logger.warning(f"Skipping file {filename} due to error: {e}")
                         continue
                 
                 # Sort by creation time, newest first
                 recordings.sort(key=lambda x: x["created"], reverse=True)
-                self.logger.info(f"(MODULE) Found {len(recordings)} recordings in {self.recording_folder}")
+                self.logger.info(f"Found {len(recordings)} recordings in {self.recording_folder}")
                 return recordings
                 
             except (OSError, IOError) as e:
-                self.logger.error(f"(MODULE) Error accessing recording folder {self.recording_folder}: {e}")
+                self.logger.error(f"Error accessing recording folder {self.recording_folder}: {e}")
                 return []
                 
         except Exception as e:
-            self.logger.error(f"(MODULE) Unexpected error getting recordings list: {e}")
+            self.logger.error(f"Unexpected error getting recordings list: {e}")
             # Don't re-raise the exception - return empty list instead
             return []
 
@@ -412,7 +412,7 @@ class Module:
             return recordings
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error listing recordings: {e}")
+            self.logger.error(f"Error listing recordings: {e}")
             # Send error status but don't re-raise the exception
             try:
                 self.communication.send_status({
@@ -420,7 +420,7 @@ class Module:
                     "error": str(e)
                 })
             except Exception as send_error:
-                self.logger.error(f"(MODULE) Error sending failure status: {send_error}")
+                self.logger.error(f"Error sending failure status: {send_error}")
             # Return empty list instead of re-raising
             return []
 
@@ -449,11 +449,11 @@ class Module:
                         if os.path.exists(filepath):
                             os.remove(filepath)
                             deleted_count += 1
-                            self.logger.info(f"(MODULE) Deleted file: {single_filename}")
+                            self.logger.info(f"Deleted file: {single_filename}")
                         else:
-                            self.logger.warning(f"(MODULE) File not found: {single_filename}")
+                            self.logger.warning(f"File not found: {single_filename}")
                     except Exception as e:
-                        self.logger.error(f"(MODULE) Error deleting recording {single_filename}: {e}")
+                        self.logger.error(f"Error deleting recording {single_filename}: {e}")
                 return {"deleted_count": deleted_count, "kept_count": 0}
             
             # If specific filename is provided, delete just that file
@@ -464,10 +464,10 @@ class Module:
                         os.remove(filepath)
                         return {"deleted_count": 1, "kept_count": 0}
                     else:
-                        self.logger.warning(f"(MODULE) File not found: {filename}")
+                        self.logger.warning(f"File not found: {filename}")
                         return {"deleted_count": 0, "kept_count": 0}
                 except Exception as e:
-                    self.logger.error(f"(MODULE) Error deleting recording {filename}: {e}")
+                    self.logger.error(f"Error deleting recording {filename}: {e}")
                     return {"deleted_count": 0, "kept_count": 0}
                 
             # Get list of recordings using internal method
@@ -502,7 +502,7 @@ class Module:
                         os.remove(timestamp_file)
                     deleted_count += 1
                 except Exception as e:
-                    self.logger.error(f"(MODULE) Error deleting recording {recording['filename']}: {e}")
+                    self.logger.error(f"Error deleting recording {recording['filename']}: {e}")
             
             return {
                 "deleted_count": deleted_count,
@@ -510,7 +510,7 @@ class Module:
             }
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error clearing recordings: {e}")
+            self.logger.error(f"Error clearing recordings: {e}")
             raise
 
     def export_recordings(self, filename: str, length: int = 0, destination: Union[str, Export.ExportDestination] = Export.ExportDestination.CONTROLLER, experiment_name: str = None):
@@ -529,14 +529,14 @@ class Module:
             # Use experiment folder if available from recording session
             if hasattr(self, 'current_experiment_folder') and self.current_experiment_folder:
                 experiment_name = self.current_experiment_folder
-                self.logger.info(f"(MODULE) Using experiment folder for export: {experiment_name}")
+                self.logger.info(f"Using experiment folder for export: {experiment_name}")
             
             # Convert string destination to enum if needed
             if isinstance(destination, str):
                 try:
                     destination = Export.ExportDestination.from_string(destination)
                 except ValueError as e:
-                    self.logger.error(f"(MODULE) Invalid destination '{destination}': {e}")
+                    self.logger.error(f"Invalid destination '{destination}': {e}")
                     self.communication.send_status({
                         "type": "export_failed",
                         "filename": filename,
@@ -572,7 +572,7 @@ class Module:
             # Handle comma-separated filenames
             if ',' in filename:
                 filenames = [f.strip() for f in filename.split(',')]
-                self.logger.info(f"(MODULE) Exporting multiple files: {filenames}")
+                self.logger.info(f"Exporting multiple files: {filenames}")
                 
                 # Export each file individually
                 for single_filename in filenames:
@@ -621,7 +621,7 @@ class Module:
             return True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error exporting recordings: {e}")
+            self.logger.error(f"Error exporting recordings: {e}")
             self.communication.send_status({
                 "type": "export_failed",
                 "filename": filename,
@@ -649,31 +649,31 @@ class Module:
         Returns:
             bool: True if the module started successfully, False otherwise.
         """
-        self.logger.info(f"(MODULE) Starting {self.module_type} module {self.module_id}")
+        self.logger.info(f"Starting {self.module_type} module {self.module_id}")
         if self.is_running:
-            self.logger.info("(MODULE) Module already running")
+            self.logger.info("Module already running")
             return False
         
         # Wait for proper network connectivity (DHCP-assigned IP)
         if not self._wait_for_network_ready():
-            self.logger.error("(MODULE) Failed to get proper network connectivity")
+            self.logger.error("Failed to get proper network connectivity")
             return False
         
         # Register service with proper IP address
         if not self.service.register_service():
-            self.logger.error("(MODULE) Failed to register service")
+            self.logger.error("Failed to register service")
             return False
         
         self.is_running = True
         self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.logger.info(f"(MODULE) Module started at {self.start_time}")
+        self.logger.info(f"Module started at {self.start_time}")
         
         # Update start time in command handler
         self.command.start_time = self.start_time
         
         # Start command listener thread if controller is discovered
         if self.service.controller_ip:
-            self.logger.info(f"(MODULE) Attempting to connect to controller at {self.service.controller_ip}")
+            self.logger.info(f"Attempting to connect to controller at {self.service.controller_ip}")
             # Connect to the controller
             self.communication.connect(
                 self.service.controller_ip,
@@ -703,7 +703,7 @@ class Module:
         Returns:
             bool: True if proper IP is obtained (will always return True eventually)
         """
-        self.logger.info(f"(MODULE) Waiting for proper network connectivity (will keep trying until IP is obtained)")
+        self.logger.info(f"Waiting for proper network connectivity (will keep trying until IP is obtained)")
         
         attempts = 0
         
@@ -721,22 +721,22 @@ class Module:
                     # Check for proper DHCP-assigned IP (192.168.x.x)
                     for ip in ip_addresses:
                         if ip.startswith('192.168.'):
-                            self.logger.info(f"(MODULE) Network ready! Got IP: {ip} (attempt {attempts})")
+                            self.logger.info(f"Network ready! Got IP: {ip} (attempt {attempts})")
                             return True
                     
                     # Log current IPs for debugging
                     if ip_addresses:
-                        self.logger.info(f"(MODULE) Attempt {attempts}: Current IPs: {ip_addresses}")
+                        self.logger.info(f"Attempt {attempts}: Current IPs: {ip_addresses}")
                     else:
-                        self.logger.info(f"(MODULE) Attempt {attempts}: No IP addresses found")
+                        self.logger.info(f"Attempt {attempts}: No IP addresses found")
                         
                 else:
-                    self.logger.warning(f"(MODULE) Attempt {attempts}: hostname -I failed: {result.stderr}")
+                    self.logger.warning(f"Attempt {attempts}: hostname -I failed: {result.stderr}")
                     
             except subprocess.TimeoutExpired:
-                self.logger.warning(f"(MODULE) Attempt {attempts}: hostname -I timed out")
+                self.logger.warning(f"Attempt {attempts}: hostname -I timed out")
             except Exception as e:
-                self.logger.warning(f"(MODULE) Attempt {attempts}: Error checking network: {e}")
+                self.logger.warning(f"Attempt {attempts}: Error checking network: {e}")
             
             # Wait before next check
             time.sleep(check_interval)
@@ -750,30 +750,30 @@ class Module:
         Returns:
             bool: True if the module stopped successfully, False otherwise.
         """
-        self.logger.info(f"(MODULE) Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"Stopping {self.module_type} module {self.module_id} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         if not self.is_running:
-            self.logger.info("(MODULE) Module already stopped")
+            self.logger.info("Module already stopped")
             return False
 
         try:
             # First: Clean up command handler (stops streaming and thread)
-            self.logger.info("(MODULE) Cleaning up command handler...")
+            self.logger.info("Cleaning up command handler...")
             self.command.cleanup()
             
             # Second: Stop the health manager (and its heartbeat thread)
-            self.logger.info("(MODULE) Stopping health manager...")
+            self.logger.info("Stopping health manager...")
             self.health.stop_heartbeats()
 
             # Third: Stop PTP manager
-            self.logger.info("(MODULE) Stopping PTP manager...")
+            self.logger.info("Stopping PTP manager...")
             self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
-            self.logger.info("(MODULE) Cleaning up service manager...")
+            self.logger.info("Cleaning up service manager...")
             self.service.cleanup()
             
             # Fifth: Stop the communication manager (ZMQ cleanup)
-            self.logger.info("(MODULE) Cleaning up communication manager...")
+            self.logger.info("Cleaning up communication manager...")
             self.communication.cleanup()
 
             # Unmount any mounted destination
@@ -781,12 +781,12 @@ class Module:
                 self.export.unmount()
 
         except Exception as e:
-            self.logger.error(f"(MODULE) Error stopping module: {e}")
+            self.logger.error(f"Error stopping module: {e}")
             return False
 
         # Confirm the module is stopped
         self.is_running = False
-        self.logger.info(f"(MODULE) Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
     
     def generate_session_id(self, module_id="unknown"):
@@ -802,9 +802,9 @@ class Module:
                 # Only shutdown system if module stopped successfully
                 subprocess.run(["sudo", "shutdown", "now"])
             else:
-                self.logger.error("(MODULE) Failed to stop module, not shutting down system")
+                self.logger.error("Failed to stop module, not shutting down system")
         except Exception as e:
-            self.logger.error(f"(MODULE) Error during shutdown: {e}")
+            self.logger.error(f"Error during shutdown: {e}")
 
     def set_config(self, new_config: dict, persist: bool = False) -> bool:
         """
@@ -820,7 +820,7 @@ class Module:
         try:
             # Validate that new_config is a dictionary
             if not isinstance(new_config, dict):
-                self.logger.error(f"(MODULE) set_config called with non-dict argument: {type(new_config)}")
+                self.logger.error(f"set_config called with non-dict argument: {type(new_config)}")
                 return False
             
             # Use the config manager's merge method to update the config
@@ -885,7 +885,7 @@ class Module:
                 'error': str     # Error message if not ready (optional)
             }
         """
-        self.logger.info(f"(MODULE) Performing readiness validation for {self.module_type} module")
+        self.logger.info(f"Performing readiness validation for {self.module_type} module")
         
         checks = {}
         ready = True
@@ -982,14 +982,14 @@ class Module:
             
             # Log the result
             if ready:
-                self.logger.info(f"(MODULE) Readiness validation PASSED for {self.module_type} module")
+                self.logger.info(f"Readiness validation PASSED for {self.module_type} module")
             else:
-                self.logger.warning(f"(MODULE) Readiness validation FAILED for {self.module_type} module: {error_msg}")
+                self.logger.warning(f"Readiness validation FAILED for {self.module_type} module: {error_msg}")
             
             return result
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error during readiness validation: {e}")
+            self.logger.error(f"Error during readiness validation: {e}")
             self.is_ready = False
             self.last_readiness_check = time.time()
             return {

@@ -146,7 +146,7 @@ class ArduinoModule(Module):
             'shutdown': self._shutdown,
         })
 
-        self.logger.info(f"(ARDUINO MODULE) Command handler callbacks: {self.command_handler.callbacks}")
+        self.logger.info(f"Command handler callbacks: {self.command_handler.callbacks}")
 
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start continuous video recording"""
@@ -171,7 +171,7 @@ class ArduinoModule(Module):
             return True
             
         except Exception as e:
-            self.logger.error(f"(ARDUINO MODULE) Error starting recording: {e}")
+            self.logger.error(f"Error starting recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_start_failed",
@@ -209,7 +209,7 @@ class ArduinoModule(Module):
                 
                 return True
             else:
-                self.logger.error("(ARDUINO MODULE) Error: recording_start_time was None")
+                self.logger.error("Error: recording_start_time was None")
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
@@ -219,7 +219,7 @@ class ArduinoModule(Module):
                 return False
             
         except Exception as e:
-            self.logger.error(f"(ARDUINO MODULE) Error stopping recording: {e}")
+            self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_stopped",
@@ -247,10 +247,10 @@ class ArduinoModule(Module):
             if 'file_format' in params:
                 self.recording_filetype = params['file_format']
                 
-            self.logger.info(f"(ARDUINO MODULE) Camera parameters updated: {params}")
+            self.logger.info(f"Camera parameters updated: {params}")
             return True
         except Exception as e:
-            self.logger.error(f"(ARDUINO MODULE) Error setting arduino parameters: {e}")
+            self.logger.error(f"Error setting arduino parameters: {e}")
             return False
         
     def handle_update_arduino_settings(self, params: dict) -> bool:
@@ -268,7 +268,7 @@ class ArduinoModule(Module):
             
             return success
         except Exception as e:
-            self.logger.error(f"(ARDUINO MODULE) Error updating arduino settings: {e}")
+            self.logger.error(f"Error updating arduino settings: {e}")
             self.communication.send_status({
                 "type": "arduino_settings_update_failed",
                 "error": str(e)
@@ -292,7 +292,7 @@ class ArduinoModule(Module):
             return True
 
         except Exception as e:
-            self.logger.error(f"(ARDUINO MODULE) Error starting module: {e}")
+            self.logger.error(f"Error starting module: {e}")
             return False
 
     def stop(self) -> bool:
@@ -306,7 +306,7 @@ class ArduinoModule(Module):
             return super().stop()
             
         except Exception as e:
-            self.logger.error(f"(ARDUINO MODULE) Error stopping module: {e}")
+            self.logger.error(f"Error stopping module: {e}")
             return False
 
 def main():

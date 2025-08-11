@@ -229,7 +229,7 @@ class CameraModule(Module):
             'shutdown': self._shutdown,
         })
 
-        self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command.callbacks}")
+        self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
     def configure_camera(self):
         """Configure the camera with current settings"""
@@ -247,7 +247,7 @@ class CameraModule(Module):
             lores = {"size": (320, 240), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
             controls = {"FrameRate": fps} # target framerate, in reality it might be lower.
             
-            self.logger.info(f"(CAMERA MODULE) Sensor stream set to size {width},{height} and bit depth {mode['bit_depth']} to target {fps}fps.")
+            self.logger.info(f"Sensor stream set to size {width},{height} and bit depth {mode['bit_depth']} to target {fps}fps.")
 
             # Create video configuration with explicit framerate
             config = self.picam2.create_video_configuration(main=main,
@@ -267,11 +267,11 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
-            self.logger.info(f"(CAMERA MODULE) Camera configured successfully at {fps}fps")
+            self.logger.info(f"Camera configured successfully at {fps}fps")
             return True
             
         except Exception as e:
-            self.logger.error(f"(CAMERA MODULE) Error configuring camera: {e}")
+            self.logger.error(f"Error configuring camera: {e}")
             # Initialize encoders even if configuration fails
             bitrate = self.config.get("camera.bitrate", 10000000)
             self.main_encoder = H264Encoder(bitrate=bitrate)
@@ -500,7 +500,7 @@ class CameraModule(Module):
             return True
             
         except Exception as e:
-            self.logger.error(f"(CAMERA MODULE) Error starting streaming: {str(e)}")
+            self.logger.error(f"Error starting streaming: {str(e)}")
             self.communication.send_status({
                 'type': 'streaming_start_failed',
                 'status': 'error',
@@ -632,7 +632,7 @@ class CameraModule(Module):
             return True
 
         except Exception as e:
-            self.logger.error(f"(CAMERA MODULE) Error starting module: {e}")
+            self.logger.error(f"Error starting module: {e}")
             return False
 
     def stop(self) -> bool:

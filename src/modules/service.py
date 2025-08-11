@@ -66,7 +66,7 @@ class Service:
             attempt = 0
             while True:
                 attempt += 1
-                self.logger.info(f"(SERVICE MANAGER) Attempting to get eth0 IP (attempt {attempt})...")
+                self.logger.info(f"Attempting to get eth0 IP (attempt {attempt})...")
                 # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
                 try:
                     import subprocess
@@ -82,17 +82,17 @@ class Service:
                                         potential_ip = parts[i + 1]
                                         if potential_ip.startswith('192.168.1.'):
                                             self.ip = potential_ip
-                                            self.logger.info(f"(SERVICE MANAGER) Found eth0 IP from ifconfig: {self.ip}")
+                                            self.logger.info(f"Found eth0 IP from ifconfig: {self.ip}")
                                             break
                                 if self.ip:
                                     break
                         
                         if not self.ip:
-                            self.logger.warning(f"(SERVICE MANAGER) No eth0 IP found in ifconfig output")
+                            self.logger.warning(f"No eth0 IP found in ifconfig output")
                     else:
-                        self.logger.warning(f"(SERVICE MANAGER) ifconfig eth0 failed: {result.stderr}")
+                        self.logger.warning(f"ifconfig eth0 failed: {result.stderr}")
                 except Exception as e:
-                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from ifconfig eth0: {e}")
+                    self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
                 # Method 2: Try socket.getaddrinfo with a connection to get local IP
                 if not self.ip or self.ip.startswith('127.'):
                     try:
@@ -104,22 +104,22 @@ class Service:
                         # Only use eth0 IP
                         if potential_ip.startswith('192.168.1.'):
                             self.ip = potential_ip
-                            self.logger.info(f"(SERVICE MANAGER) Selected eth0 IP from socket connection: {self.ip}")
+                            self.logger.info(f"Selected eth0 IP from socket connection: {self.ip}")
                         else:
-                            self.logger.warning(f"(SERVICE MANAGER) Socket connection returned non-eth0 IP: {potential_ip}")
+                            self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
                     except Exception as e:
-                        self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from socket connection: {e}")
+                        self.logger.warning(f"Failed to get IP from socket connection: {e}")
                 # Method 3: Try socket.gethostbyname but filter out loopback
                 if not self.ip or self.ip.startswith('127.'):
                     try:
                         hostname_ip = socket.gethostbyname(socket.gethostname())
                         if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
                             self.ip = hostname_ip
-                            self.logger.info(f"(SERVICE MANAGER) Selected eth0 IP from hostname resolution: {self.ip}")
+                            self.logger.info(f"Selected eth0 IP from hostname resolution: {self.ip}")
                         else:
-                            self.logger.warning(f"(SERVICE MANAGER) Hostname resolves to non-eth0 IP: {hostname_ip}")
+                            self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
                     except Exception as e:
-                        self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname resolution: {e}")
+                        self.logger.warning(f"Failed to get IP from hostname resolution: {e}")
                 # Method 4: Try to get IP from network interfaces
                 if not self.ip or self.ip.startswith('127.'):
                     try:
@@ -136,19 +136,19 @@ class Service:
                                         potential_ip = parts[src_index + 1]
                                         if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
                                             self.ip = potential_ip
-                                            self.logger.info(f"(SERVICE MANAGER) Selected eth0 IP from ip route: {self.ip}")
+                                            self.logger.info(f"Selected eth0 IP from ip route: {self.ip}")
                                             break
                                         else:
-                                            self.logger.warning(f"(SERVICE MANAGER) ip route returned non-eth0 IP: {potential_ip}")
+                                            self.logger.warning(f"ip route returned non-eth0 IP: {potential_ip}")
                     except Exception as e:
                         pass
                 # If still no valid IP, wait and retry indefinitely
                 if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
-                    self.logger.warning(f"(SERVICE MANAGER) No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
+                    self.logger.warning(f"No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
                     time.sleep(2)
                 else:
                     break
-            self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
+            self.logger.info(f"Registering service with IP: {self.ip}")
             # Service registration parameters
             self.service_type = "_module._tcp.local."
             self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
@@ -161,7 +161,7 @@ class Service:
         try:
             # Clean up any existing service registration
             if self.service_registered:
-                self.logger.info("(SERVICE MANAGER) Cleaning up existing service registration")
+                self.logger.info("Cleaning up existing service registration")
                 self.cleanup()
             
             # Create service info with current IP
@@ -184,11 +184,11 @@ class Service:
             
             self.service_registered = True
             self.reconnect_attempts = 0  # Reset reconnection attempts on successful registration
-            self.logger.info(f"(SERVICE MANAGER) Module service registered with service info: {self.service_info}")
+            self.logger.info(f"Module service registered with service info: {self.service_info}")
             return True
             
         except Exception as e:
-            self.logger.error(f"(SERVICE MANAGER) Error registering service: {e}")
+            self.logger.error(f"Error registering service: {e}")
             return False
 
     def add_service(self, zeroconf, service_type, name):
@@ -199,14 +199,14 @@ class Service:
             
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            self.logger.info(f"(SERVICE MANAGER) Controller discovered. info={info}")
+            self.logger.info(f"Controller discovered. info={info}")
             controller_ip = socket.inet_ntoa(info.addresses[0])
             controller_port = info.port
             
             # Check if this is a new controller or the same one
             if (self.controller_ip == controller_ip and 
                 self.controller_port == controller_port):
-                self.logger.info("(SERVICE MANAGER) Same controller re-discovered, ignoring")
+                self.logger.info("Same controller re-discovered, ignoring")
                 return
             
             # Update controller connection info
@@ -215,29 +215,29 @@ class Service:
             self.last_discovery_time = time.time()
             self.reconnect_attempts = 0  # Reset reconnection attempts on successful discovery
             
-            self.logger.info(f"(SERVICE MANAGER) Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
+            self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
             if "when_controller_discovered" in self.callbacks:
                 self.callbacks["when_controller_discovered"](self.controller_ip, self.controller_port)
             else:
-                self.logger.warning("(SERVICE MANAGER) No when_controller_discovered callback registered")
+                self.logger.warning("No when_controller_discovered callback registered")
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
-        self.logger.warning("(SERVICE MANAGER) Lost connection to controller")
+        self.logger.warning("Lost connection to controller")
         
         # Only trigger disconnect if we were actually connected
         if self.controller_ip and self.controller_port:
             if "controller_disconnected" in self.callbacks:
                 self.callbacks["controller_disconnected"]()
             else:
-                self.logger.warning("(SERVICE MANAGER) No controller_disconnected callback registered")
+                self.logger.warning("No controller_disconnected callback registered")
             
             # Reset controller connection state
             self.controller_ip = None
             self.controller_port = None
-            self.logger.info("(SERVICE MANAGER) Controller connection state reset")
+            self.logger.info("Controller connection state reset")
             
             # Start reconnection attempts if configured
             if self.max_reconnect_attempts > 0:
@@ -247,38 +247,38 @@ class Service:
         """Schedule a reconnection attempt"""
         if self.reconnect_attempts < self.max_reconnect_attempts:
             self.reconnect_attempts += 1
-            self.logger.info(f"(SERVICE MANAGER) Scheduling reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {self.reconnect_delay} seconds")
+            self.logger.info(f"Scheduling reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {self.reconnect_delay} seconds")
             
             # Schedule reconnection in a separate thread
             def delayed_reconnect():
                 time.sleep(self.reconnect_delay)
                 if not self.controller_ip:  # Only reconnect if still disconnected
-                    self.logger.info(f"(SERVICE MANAGER) Attempting reconnection {self.reconnect_attempts}/{self.max_reconnect_attempts}")
+                    self.logger.info(f"Attempting reconnection {self.reconnect_attempts}/{self.max_reconnect_attempts}")
                     self._attempt_reconnection()
             
             threading.Thread(target=delayed_reconnect, daemon=True).start()
         else:
-            self.logger.warning(f"(SERVICE MANAGER) Max reconnection attempts ({self.max_reconnect_attempts}) reached")
+            self.logger.warning(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
 
     def _attempt_reconnection(self):
         """Attempt to reconnect to the controller"""
         try:
             # Re-register service to refresh discovery
             if self.register_service():
-                self.logger.info("(SERVICE MANAGER) Service re-registered for reconnection attempt")
+                self.logger.info("Service re-registered for reconnection attempt")
             else:
-                self.logger.error("(SERVICE MANAGER) Failed to re-register service for reconnection")
+                self.logger.error("Failed to re-register service for reconnection")
         except Exception as e:
-            self.logger.error(f"(SERVICE MANAGER) Error during reconnection attempt: {e}")
+            self.logger.error(f"Error during reconnection attempt: {e}")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
-        self.logger.info(f"(SERVICE MANAGER) Service updated: {name}")
+        self.logger.info(f"Service updated: {name}")
         
         # Treat service updates the same as new discoveries for controller services
         # This ensures we reconnect when the controller restarts
         if name.endswith('._controller._tcp.local.'):
-            self.logger.info(f"(SERVICE MANAGER) Controller service updated, treating as new discovery")
+            self.logger.info(f"Controller service updated, treating as new discovery")
             self.add_service(zeroconf, service_type, name)
     
     def set_callbacks(self, callbacks: Dict):
@@ -291,9 +291,9 @@ class Service:
         if self.service_browser:
             try:
                 self.service_browser.cancel()
-                self.logger.info("(SERVICE MANAGER) Service browser cancelled")
+                self.logger.info("Service browser cancelled")
             except Exception as e:
-                self.logger.error(f"(SERVICE MANAGER) Error canceling service browser: {e}")
+                self.logger.error(f"Error canceling service browser: {e}")
             self.service_browser = None
         # unregister the service
         if self.zeroconf:
@@ -301,10 +301,10 @@ class Service:
                 self.zeroconf.unregister_service(self.service_info) # unregister the service
                 time.sleep(1)
                 self.zeroconf.close()
-                self.logger.info("(SERVICE MANAGER) Zeroconf service unregistered and closed")
+                self.logger.info("Zeroconf service unregistered and closed")
             except Exception as e:
-                self.logger.error(f"(SERVICE MANAGER) Error unregistering service: {e}")
+                self.logger.error(f"Error unregistering service: {e}")
             self.zeroconf = None
         
         self.service_registered = False
-        self.logger.info("(SERVICE MANAGER) Service cleanup complete")
+        self.logger.info("Service cleanup complete")

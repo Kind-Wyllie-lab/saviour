@@ -90,7 +90,7 @@ class Config:
         if not config_file_path:
             config_file_path = os.path.join(os.path.dirname(__file__), f"config/{module_type}_config.json")
         
-        self.logger.info(f"(CONFIG MANAGER) Module of type {module_type} set to use config file path: {config_file_path}")
+        self.logger.info(f"Module of type {module_type} set to use config file path: {config_file_path}")
         
         self.config_file_path = config_file_path
         
@@ -99,7 +99,7 @@ class Config:
         
         self.config = self._load_config()
 
-        self.logger.info(f"(CONFIG MANAGER) Module config loaded: {self.config}")
+        self.logger.info(f"Module config loaded: {self.config}")
         
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -122,9 +122,9 @@ class Config:
                 
                 # Merge base config into config
                 self._merge_configs(config, base_config)
-                self.logger.info(f"(CONFIG MANAGER) Loaded base configuration from {self.base_config_file_path}")
+                self.logger.info(f"Loaded base configuration from {self.base_config_file_path}")
             except Exception as e:
-                self.logger.error(f"(CONFIG MANAGER) Error loading base config file: {e}")
+                self.logger.error(f"Error loading base config file: {e}")
         
         # Override with environment variables
         for env_var, config_path in self.ENV_CONFIG_MAPPING.items():
@@ -162,9 +162,9 @@ class Config:
                 
                 # Recursively merge file config into config
                 self._merge_configs(config, file_config)
-                self.logger.info(f"(CONFIG MANAGER) Loaded module-specific configuration from {self.config_file_path}")
+                self.logger.info(f"Loaded module-specific configuration from {self.config_file_path}")
             except Exception as e:
-                self.logger.error(f"(CONFIG MANAGER) Error loading module-specific config file: {e}")
+                self.logger.error(f"Error loading module-specific config file: {e}")
         
         return config
     

@@ -42,7 +42,7 @@ class PTP:
 
         # Check for root privileges first
         if os.geteuid() != 0:
-            raise PTPError("(PTP MANAGER) This program must be run as root (use sudo). PTP requires root privileges to adjust system time.")
+            raise PTPError("This program must be run as root (use sudo). PTP requires root privileges to adjust system time.")
 
         # Assign basic params
         self.role = role
@@ -100,31 +100,31 @@ class PTP:
                 missing_packages.append(package)
         
         if missing_packages:
-            raise PTPError(f"(PTP MANAGER) Missing required packages: {', '.join(missing_packages)}. "
+            raise PTPError(f"Missing required packages: {', '.join(missing_packages)}. "
                           f"Please install them using: sudo apt-get install linuxptp")
 
     def _validate_interface(self):
         """Check if the interface exists and supports PTP."""
         # Check if interface exists
         if not os.path.exists(f'/sys/class/net/{self.interface}'):
-            raise PTPError(f"(PTP MANAGER) Interface {self.interface} does not exist")
+            raise PTPError(f"Interface {self.interface} does not exist")
         
         # Check if interface is up
         try:
             with open(f'/sys/class/net/{self.interface}/operstate', 'r') as f:
                 if f.read().strip() != 'up':
-                    self.logger.warning(f"(PTP MANAGER) Interface {self.interface} is not up")
+                    self.logger.warning(f"Interface {self.interface} is not up")
         except IOError:
-            self.logger.warning(f"(PTP MANAGER) Could not check interface {self.interface} state")
+            self.logger.warning(f"Could not check interface {self.interface} state")
         
         # Check if interface supports PTP
         try:
             result = subprocess.run(['ethtool', '-T', self.interface], 
                                   capture_output=True, text=True)
             if 'PTP Hardware Clock' not in result.stdout:
-                self.logger.warning(f"(PTP MANAGER) Interface {self.interface} may not support PTP hardware timestamping")
+                self.logger.warning(f"Interface {self.interface} may not support PTP hardware timestamping")
         except subprocess.CalledProcessError:
-            self.logger.warning(f"(PTP MANAGER) Could not check PTP support for {self.interface}")
+            self.logger.warning(f"Could not check PTP support for {self.interface}")
 
     def _check_systemd_services(self):
         """Check if the required systemd services exist."""
@@ -135,14 +135,14 @@ class PTP:
                 result = subprocess.run(['systemctl', 'status', service], 
                                        capture_output=True, text=True)
                 if result.returncode == 4:  # Unit not found
-                    raise PTPError(f"(PTP MANAGER) Systemd service {service} not found. "
+                    raise PTPError(f"Systemd service {service} not found. "
                                    f"Please run the setup script to configure PTP services.")
             except subprocess.CalledProcessError as e:
                 if e.returncode == 4:  # Unit not found
-                    raise PTPError(f"(PTP MANAGER) Systemd service {service} not found. "
+                    raise PTPError(f"Systemd service {service} not found. "
                                    f"Please run the setup script to configure PTP services.")
                 else:
-                    self.logger.warning(f"(PTP MANAGER) Could not check {service} service status: {e}")
+                    self.logger.warning(f"Could not check {service} service status: {e}")
 
     def _stop_timesyncd(self):
         """
@@ -151,39 +151,39 @@ class PTP:
         It's also necessary to stop ntp. This is achieved with timedatectl set-ntp false. Make sure to run it as sudo.
         This should be made to happen during setup, but we might as well do it here as well.
         """
-        self.logger.info("(PTP MANAGER) Attempting to stop systemd-timesyncd")
+        self.logger.info("Attempting to stop systemd-timesyncd")
         try:
             # Stop the service
             result = subprocess.run(["sudo", "systemctl", "stop", "systemd-timesyncd"], 
                                    capture_output=True, text=True, check=True)
-            self.logger.info("(PTP MANAGER) systemd-timesyncd stopped successfully")
+            self.logger.info("systemd-timesyncd stopped successfully")
             
             # Disable the service to prevent auto-restart
             result = subprocess.run(["sudo", "systemctl", "disable", "systemd-timesyncd"], 
                                    capture_output=True, text=True, check=True)
-            self.logger.info("(PTP MANAGER) systemd-timesyncd disabled successfully")
+            self.logger.info("systemd-timesyncd disabled successfully")
             
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"(PTP MANAGER) Failed to stop/disable timesyncd: {e}")
-            self.logger.error(f"(PTP MANAGER) stdout: {e.stdout}")
-            self.logger.error(f"(PTP MANAGER) stderr: {e.stderr}")
+            self.logger.error(f"Failed to stop/disable timesyncd: {e}")
+            self.logger.error(f"stdout: {e.stdout}")
+            self.logger.error(f"stderr: {e.stderr}")
             raise
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to stop timesyncd: {str(e)}")
+            self.logger.error(f"Failed to stop timesyncd: {str(e)}")
             raise
             
-        self.logger.info("(PTP MANAGER) Attempting to disable NTP via timedatectl")
+        self.logger.info("Attempting to disable NTP via timedatectl")
         try:
             result = subprocess.run(["sudo", "timedatectl", "set-ntp", "false"], 
                                    capture_output=True, text=True, check=True)
-            self.logger.info("(PTP MANAGER) NTP disabled via timedatectl successfully")
+            self.logger.info("NTP disabled via timedatectl successfully")
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"(PTP MANAGER) Failed to disable NTP: {e}")
-            self.logger.error(f"(PTP MANAGER) stdout: {e.stdout}")
-            self.logger.error(f"(PTP MANAGER) stderr: {e.stderr}")
+            self.logger.error(f"Failed to disable NTP: {e}")
+            self.logger.error(f"stdout: {e.stdout}")
+            self.logger.error(f"stderr: {e.stderr}")
             raise
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to stop timedatectl ntp: {str(e)}")
+            self.logger.error(f"Failed to stop timedatectl ntp: {str(e)}")
             raise
             
         # Verify the service is actually stopped
@@ -192,49 +192,49 @@ class PTP:
                                    capture_output=True, text=True)
             status = result.stdout.strip()
             if status == "active":
-                self.logger.warning("(PTP MANAGER) systemd-timesyncd is still active after stop attempt")
+                self.logger.warning("systemd-timesyncd is still active after stop attempt")
             else:
-                self.logger.info(f"(PTP MANAGER) systemd-timesyncd status: {status}")
+                self.logger.info(f"systemd-timesyncd status: {status}")
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Could not verify timesyncd status: {str(e)}")
+            self.logger.error(f"Could not verify timesyncd status: {str(e)}")
     
     def _start_timesyncd(self):
         """
         Resume timesyncd and ntp on cleanup - clock will drift otherwise.
         """
         try:
-            self.logger.info("(PTP MANAGER) Attempting to enable systemd-timesyncd")
+            self.logger.info("Attempting to enable systemd-timesyncd")
             # Enable the service first
             result = subprocess.run(["sudo", "systemctl", "enable", "systemd-timesyncd"], 
                                    capture_output=True, text=True, check=True)
-            self.logger.info("(PTP MANAGER) systemd-timesyncd enabled successfully")
+            self.logger.info("systemd-timesyncd enabled successfully")
             
             # Start the service
             result = subprocess.run(["sudo", "systemctl", "start", "systemd-timesyncd"], 
                                    capture_output=True, text=True, check=True)
-            self.logger.info("(PTP MANAGER) systemd-timesyncd started successfully")
+            self.logger.info("systemd-timesyncd started successfully")
             
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"(PTP MANAGER) Failed to start systemd-timesyncd: {e}")
-            self.logger.error(f"(PTP MANAGER) stdout: {e.stdout}")
-            self.logger.error(f"(PTP MANAGER) stderr: {e.stderr}")
+            self.logger.error(f"Failed to start systemd-timesyncd: {e}")
+            self.logger.error(f"stdout: {e.stdout}")
+            self.logger.error(f"stderr: {e.stderr}")
             raise
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to start systemd-timesyncd: {str(e)}")
+            self.logger.error(f"Failed to start systemd-timesyncd: {str(e)}")
             raise
             
         try:
-            self.logger.info("(PTP MANAGER) Attempting to enable NTP via timedatectl")
+            self.logger.info("Attempting to enable NTP via timedatectl")
             result = subprocess.run(["sudo", "timedatectl", "set-ntp", "true"], 
                                    capture_output=True, text=True, check=True)
-            self.logger.info("(PTP MANAGER) NTP enabled via timedatectl successfully")
+            self.logger.info("NTP enabled via timedatectl successfully")
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"(PTP MANAGER) Failed to enable NTP: {e}")
-            self.logger.error(f"(PTP MANAGER) stdout: {e.stdout}")
-            self.logger.error(f"(PTP MANAGER) stderr: {e.stderr}")
+            self.logger.error(f"Failed to enable NTP: {e}")
+            self.logger.error(f"stdout: {e.stdout}")
+            self.logger.error(f"stderr: {e.stderr}")
             raise
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Failed to start timedatectl ntp: {str(e)}")
+            self.logger.error(f"Failed to start timedatectl ntp: {str(e)}")
             raise
 
     def _get_service_status(self, service_name):
@@ -256,7 +256,7 @@ class PTP:
             return ""
 
     def start(self):
-        self.logger.info(f"(PTP MANAGER) Starting PTP in {self.role.value} mode on {self.interface}")
+        self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")
 
         # Ensure timesyncd is disabled, or else phc2sys won't work!
         self._stop_timesyncd()
@@ -266,7 +266,7 @@ class PTP:
 
         try: 
             # Start ptp4l service
-            self.logger.info("(PTP MANAGER) Starting ptp4l service")
+            self.logger.info("Starting ptp4l service")
             subprocess.run(["systemctl", "start", self.ptp4l_service], check=True)
 
             # Give it a moment to start
@@ -276,12 +276,12 @@ class PTP:
             ptp4l_status = self._get_service_status(self.ptp4l_service)
             if ptp4l_status != "active":
                 logs = self._get_service_logs(self.ptp4l_service)
-                raise PTPError(f"(PTP MANAGER) ptp4l service failed to start. Status: {ptp4l_status}\nLogs: {logs}")
+                raise PTPError(f"ptp4l service failed to start. Status: {ptp4l_status}\nLogs: {logs}")
             
-            self.logger.info("(PTP MANAGER) ptp4l started successfully")
+            self.logger.info("ptp4l started successfully")
             
             # Start phc2sys service
-            self.logger.info("(PTP MANAGER) Starting phc2sys service")
+            self.logger.info("Starting phc2sys service")
             subprocess.run(["systemctl", "start", self.phc2sys_service], check=True)
                 
             # Give it a moment to start
@@ -291,12 +291,12 @@ class PTP:
             phc2sys_status = self._get_service_status(self.phc2sys_service)
             if phc2sys_status != 'active':
                 logs = self._get_service_logs(self.phc2sys_service)
-                raise PTPError(f"(PTP MANAGER) phc2sys service failed to start. Status: {phc2sys_status}\nLogs: {logs}")
+                raise PTPError(f"phc2sys service failed to start. Status: {phc2sys_status}\nLogs: {logs}")
             
-            self.logger.info("(PTP MANAGER) phc2sys started successfully")
+            self.logger.info("phc2sys started successfully")
             
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"(PTP MANAGER) Failed to start PTP services: {e}")
+            self.logger.error(f"Failed to start PTP services: {e}")
             self.stop()
             raise
         
@@ -316,7 +316,7 @@ class PTP:
 
                 if ptp4l_status != 'active' or phc2sys_status != 'active':
                     self.status = f'ptp4l:{ptp4l_status}, phc2sys:{phc2sys_status}'
-                    self.logger.error(f"(PTP MANAGER) PTP services not active: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
+                    self.logger.error(f"PTP services not active: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
                     self.running = False
                     return
 
@@ -335,7 +335,7 @@ class PTP:
                         self._parse_phc2sys_line(line)
 
             except Exception as e:
-                self.logger.error(f"(PTP MANAGER) Error in monitor thread: {e}")
+                self.logger.error(f"Error in monitor thread: {e}")
 
             time.sleep(1)  # Check every second
 
@@ -380,7 +380,7 @@ class PTP:
                     self._add_buffer_entry(time.time())
                     
             except (IndexError, ValueError) as e:
-                self.logger.warning(f"(PTP MANAGER) Could not parse ptp4l offset from line: {line}, error: {e}")
+                self.logger.warning(f"Could not parse ptp4l offset from line: {line}, error: {e}")
 
         # Parse freq correction information - format: "s2 freq <number>"
         if 's2 freq' in line:
@@ -397,16 +397,16 @@ class PTP:
                         self._add_buffer_entry(time.time())
                     
             except (IndexError, ValueError) as e:
-                self.logger.warning(f"(PTP MANAGER) Could not parse ptp4l freq from line: {line}, error: {e}")
+                self.logger.warning(f"Could not parse ptp4l freq from line: {line}, error: {e}")
 
         # Check for successful sync
         if 'synchronized' in line.lower():
             self.status = 'synchronized'
-            self.logger.info("(PTP MANAGER) PTP synchronized successfully")
+            self.logger.info("PTP synchronized successfully")
 
         # Check for port state changes
         if 'port state' in line.lower():
-            self.logger.info(f"(PTP MANAGER) PTP port state change: {line}")
+            self.logger.info(f"PTP port state change: {line}")
             if 'LISTENING' in line:
                 self.status = 'listening'
             elif 'UNCALIBRATED' in line:
@@ -419,7 +419,7 @@ class PTP:
         # Check for errors
         if 'FAULT' in line or 'error' in line.lower():
             self.status = 'error'
-            self.logger.error(f"(PTP MANAGER) PTP error detected: {line}")
+            self.logger.error(f"PTP error detected: {line}")
 
     def _parse_phc2sys_line(self, line):
         """Parse a line from phc2sys logs."""
@@ -446,7 +446,7 @@ class PTP:
                     self._add_buffer_entry(time.time())
                     
             except (IndexError, ValueError) as e:
-                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys offset from line: {line}, error: {e}")
+                self.logger.warning(f"Could not parse phc2sys offset from line: {line}, error: {e}")
 
         # Parse freq correction information from phc2sys - format: "s2 freq <number>"
         if 's2 freq' in line:
@@ -462,12 +462,12 @@ class PTP:
                         self._add_buffer_entry(time.time())
                     
             except (IndexError, ValueError) as e:
-                self.logger.warning(f"(PTP MANAGER) Could not parse phc2sys freq from line: {line}, error: {e}")
+                self.logger.warning(f"Could not parse phc2sys freq from line: {line}, error: {e}")
 
         # Check for errors
         if 'error' in line.lower():
             self.status = 'error'
-            self.logger.error(f"(PTP MANAGER) PHC2SYS error detected: {line}")
+            self.logger.error(f"PHC2SYS error detected: {line}")
 
 
     def stop(self):
@@ -482,14 +482,14 @@ class PTP:
             subprocess.run(['systemctl', 'stop', self.ptp4l_service], check=False)
             
         except subprocess.CalledProcessError as e:
-            self.logger.warning(f"(PTP MANAGER) Error stopping services: {e}")
+            self.logger.warning(f"Error stopping services: {e}")
 
         self.status = 'stopped'
-        self.logger.info("(PTP MANAGER) Stopped PTP services.")
+        self.logger.info("Stopped PTP services.")
 
     def restart(self):
         """Restart PTP services"""
-        self.logger.info("(PTP MANAGER) Restarting PTP services...")
+        self.logger.info("Restarting PTP services...")
         try:
             # Stop services
             self.stop()
@@ -500,11 +500,11 @@ class PTP:
             # Start services
             self.start()
             
-            self.logger.info("(PTP MANAGER) PTP services restarted successfully")
+            self.logger.info("PTP services restarted successfully")
             return {"status": "success", "message": "PTP services restarted"}
             
         except Exception as e:
-            self.logger.error(f"(PTP MANAGER) Error restarting PTP services: {e}")
+            self.logger.error(f"Error restarting PTP services: {e}")
             return {"status": "error", "message": str(e)}
 
     def get_status(self):

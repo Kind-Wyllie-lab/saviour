@@ -107,7 +107,6 @@ class Module:
 
         self.logger.info(f"(MODULE) Initialising service manager")
         self.service = Service(self.logger, self.config, module_id=self.module_id, module_type=self.module_type)
-        self.logger.info(f"(MODULE) Initialising service manager")
 
         # Register Callbacks
         self.callbacks = { # Define a universal set of callbacks

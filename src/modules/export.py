@@ -65,6 +65,60 @@ class Export:
             
         self.callbacks = callbacks
         
+    def _export_config_file(self, export_folder: str) -> bool:
+        """Export the module's config file for traceability
+        
+        Args:
+            export_folder: Destination export folder
+            
+        Returns:
+            bool: True if config file was exported successfully
+        """
+        try:
+            # Look for config files in common locations
+            config_locations = [
+                f"{self.module_id}_config.json",  # Module-specific config
+                "config.json",  # Generic config
+                "apa_arduino_config.json",  # APA Arduino config
+                "apa_camera_config.json",   # APA Camera config
+                os.path.join(os.path.dirname(self.recording_folder), "config.json"),  # Parent directory
+                os.path.join(os.path.dirname(self.recording_folder), f"{self.module_id}_config.json")  # Parent with module ID
+            ]
+            
+            config_source = None
+            for config_path in config_locations:
+                if os.path.exists(config_path):
+                    config_source = config_path
+                    break
+            
+            if not config_source:
+                # Try to find config in the module's directory
+                module_dir = os.path.dirname(os.path.abspath(__file__))
+                for root, dirs, files in os.walk(module_dir):
+                    for file in files:
+                        if file.endswith('_config.json') and self.module_id.split('_')[0] in file:
+                            config_source = os.path.join(root, file)
+                            break
+                    if config_source:
+                        break
+            
+            if config_source and os.path.exists(config_source):
+                # Copy config file to export folder with timestamp for this export session
+                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamped_config = f"config_export_{timestamp}.json"
+                dest_path = os.path.join(export_folder, timestamped_config)
+                shutil.copy2(config_source, dest_path)
+                
+                self.logger.info(f"(EXPORT MANAGER) Exported config file: {timestamped_config}")
+                return True
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) No config file found for module {self.module_id}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"(EXPORT MANAGER) Error exporting config file: {e}")
+            return False
+
     def _create_export_manifest(self, files_to_export: list, destination: Union[str, 'Export.ExportDestination'], export_folder: str, experiment_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
         
@@ -175,6 +229,14 @@ class Export:
                 shutil.copy2(timestamp_source, timestamp_dest)
                 exported_files.append(timestamp_file)
             
+            # Export the module's config file for traceability
+            config_exported = self._export_config_file(export_folder)
+            if config_exported:
+                exported_files.append("config_file")  # Add to manifest
+                self.logger.info(f"(EXPORT MANAGER) Exported config file")
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) Could not export config file")
+            
             # Create export manifest
             manifest_filename = self._create_export_manifest(exported_files, destination, export_folder, experiment_name)
             if not manifest_filename:
@@ -255,8 +317,18 @@ class Export:
                 self.logger.error("(EXPORT MANAGER) Failed to create export manifest")
                 return False
             
+            # Export the module's config file for traceability
+            config_exported = self._export_config_file(export_folder)
+            if config_exported:
+                files_to_export.append("config_file")  # Add to manifest
+                self.logger.info(f"(EXPORT MANAGER) Exported config file")
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) Could not export config file")
+            
             # Now export all files
             for filename in files_to_export:
+                if filename == "config_file":  # Skip the config file entry we just added
+                    continue
                 source_path = os.path.join(self.recording_folder, filename)
                 dest_path = os.path.join(export_folder, filename)
                 try:
@@ -266,7 +338,7 @@ class Export:
                     self.logger.error(f"(EXPORT MANAGER) Failed to export file {filename}: {e}")
                     return False
             
-            self.logger.info(f"(EXPORT MANAGER) Successfully exported {len(files_to_export)} files to {export_folder}")
+            self.logger.info(f"(EXPORT MANAGER) Successfully exported {len(files_to_export)-1} files + config to {export_folder}")
             return True
             
         except Exception as e:
@@ -479,7 +551,23 @@ class Export:
                     self.logger.error(f"(EXPORT MANAGER) Failed to export {filename}: {e}")
                     return False
             
+            # Export the module's config file for traceability
+            config_exported = self._export_config_file(export_folder)
+            if config_exported:
+                exported_count += 1
+                session_files.append("config_file")  # Add to manifest
+                self.logger.info(f"(EXPORT MANAGER) Exported config file")
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) Could not export config file")
+            
+            # Create export manifest
+            manifest_filename = self._create_export_manifest(session_files, self.ExportDestination.CONTROLLER, export_folder, experiment_name)
+            if not manifest_filename:
+                self.logger.error("(EXPORT MANAGER) Failed to create export manifest")
+                return False
+            
             self.logger.info(f"(EXPORT MANAGER) Successfully exported {exported_count} session files to {export_folder}")
+            self.logger.info(f"(EXPORT MANAGER) Created export manifest: {manifest_filename}")
             return True
             
         except Exception as e:

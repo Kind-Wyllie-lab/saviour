@@ -21,12 +21,12 @@ class Health:
     """
     This class is responsible for monitoring module system resources and reporting status to the controller.
     """
-    def __init__(self, logger: logging.Logger, 
+    def __init__(self,
                  config=None,
                  start_time=None):
         
         # Imported managers from module.py
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.config = config
         if start_time is None:
             self.start_time = time.time()

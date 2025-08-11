@@ -29,7 +29,6 @@ class PTP:
     def __init__(self,
                  role=PTPRole.SLAVE,
                  interface='eth0',
-                 logger: logging.Logger = None,
                  history_size=1000):  # Store last 1000 values by default
 
         """Initialize the PTP manager
@@ -48,7 +47,7 @@ class PTP:
         # Assign basic params
         self.role = role
         self.interface = interface
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         
         # Check for required packages
         self._check_required_packages()

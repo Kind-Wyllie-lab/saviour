@@ -18,7 +18,7 @@ import time
 from typing import Callable, Dict, Any, Optional
 
 class Communication:
-    def __init__(self, logger: logging.Logger, 
+    def __init__(self,
                  module_id: str,
                  config = None):
         """Initialize the communication manager
@@ -28,7 +28,7 @@ class Communication:
             module_id: The unique identifier for this module
             config: Configuration manager for retrieving settings
         """
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.module_id = module_id
         self.config = config
         

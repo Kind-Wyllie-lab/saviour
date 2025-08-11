@@ -136,12 +136,12 @@ class Export:
                 safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
                 
-                # Create top-level experiment folder
+                # Create top-level experiment folder (without timestamp)
                 experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
                 os.makedirs(experiment_folder, exist_ok=True)
                 
-                # Create module-specific subfolder within experiment folder
-                module_subfolder = f"{safe_experiment_name}_{export_timestamp}_{self.module_id}"
+                # Create module-specific subfolder with timestamp
+                module_subfolder = f"{self.module_id}_{export_timestamp}"
                 export_folder = os.path.join(experiment_folder, module_subfolder)
                 
                 self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")
@@ -203,12 +203,12 @@ class Export:
                 safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
                 
-                # Create top-level experiment folder
+                # Create top-level experiment folder (without timestamp)
                 experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
                 os.makedirs(experiment_folder, exist_ok=True)
                 
-                # Create module-specific subfolder within experiment folder
-                module_subfolder = f"{safe_experiment_name}_{export_timestamp}_{self.module_id}"
+                # Create module-specific subfolder with timestamp
+                module_subfolder = f"{self.module_id}_{export_timestamp}"
                 export_folder = os.path.join(experiment_folder, module_subfolder)
                 
                 self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")

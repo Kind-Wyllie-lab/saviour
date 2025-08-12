@@ -59,7 +59,7 @@ class Module:
         
         # Create recording folder if it doesn't exist
         if not os.path.exists(self.recording_folder):
-            os.makedirs(self.recording_folder)
+            os.makedirs(self.recording_folder, exist_ok=True)
             self.logger.info(f"(MODULE) Created recording folder: {self.recording_folder}")
 
         # Add console handler if none exists
@@ -69,6 +69,43 @@ class Module:
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
+            
+            # Add file handler for persistent logging (useful when running as systemd service)
+            try:
+                # Check if file logging is enabled in config
+                if self.config.get("logging.to_file", True):
+                    # Create logs directory if it doesn't exist
+                    log_dir = self.config.get("logging.directory", "/var/log/habitat")
+                    os.makedirs(log_dir, exist_ok=True)
+                    
+                    # Generate log filename with module info
+                    log_filename = f"{self.module_type}_{self.module_id}.log"
+                    log_filepath = os.path.join(log_dir, log_filename)
+                    
+                    # Get config values for rotation
+                    max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
+                    backup_count = self.config.get("logging.backup_count", 5)
+                    
+                    # Add file handler with rotation
+                    from logging.handlers import RotatingFileHandler
+                    file_handler = RotatingFileHandler(
+                        log_filepath,
+                        maxBytes=max_bytes,
+                        backupCount=backup_count
+                    )
+                    file_handler.setLevel(logging.INFO)
+                    file_handler.setFormatter(formatter)
+                    self.logger.addHandler(file_handler)
+                    
+                    self.logger.info(f"(MODULE) File logging enabled: {log_filepath}")
+                    self.logger.info(f"(MODULE) Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+                else:
+                    self.logger.info("(MODULE) File logging disabled in config")
+                    
+            except Exception as e:
+                # If file logging fails, log the error but don't crash
+                self.logger.warning(f"(MODULE) Failed to setup file logging: {e}")
+                self.logger.info("(MODULE) Continuing with console logging only")
 
         # Managers
         self.logger.info(f"(MODULE) Initialising managers")
@@ -129,6 +166,7 @@ class Module:
             'get_config': self.config.get_all, # Gets the complete config from
             'set_config': lambda new_config: self.set_config(new_config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
+            'get_log_file_path': self.get_log_file_path, # Get current log file path
             'shutdown': self._shutdown,
             'when_controller_discovered': self.when_controller_discovered,
             'controller_disconnected': self.controller_disconnected
@@ -960,3 +998,15 @@ class Module:
         mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
+
+    def get_log_file_path(self) -> str:
+        """Get the current log file path if file logging is enabled"""
+        try:
+            if self.config.get("logging.to_file", True):
+                log_dir = self.config.get("logging.directory", "/var/log/habitat")
+                log_filename = f"{self.module_type}_{self.module_id}.log"
+                return os.path.join(log_dir, log_filename)
+            else:
+                return "File logging disabled"
+        except Exception as e:
+            return f"Error getting log path: {e}"

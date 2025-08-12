@@ -33,9 +33,10 @@
     "logging": {
         "level": "INFO",
         "format": "%(asctime)s - %(levelname)s - %(message)s",
-        "to_file": false,
+        "to_file": true,
+        "directory": "/var/log/habitat",
         "max_file_size_mb": 10,
-        "backup_count": 3
+        "backup_count": 5
     },
     "network": {
         "reconnect_attempts": 5,

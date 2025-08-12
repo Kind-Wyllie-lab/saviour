@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 import random
 from src.modules.module import Module
-from src.modules.module_command_handler import ModuleCommandHandler
+from habitat.src.modules.command import Command
 import logging
 import threading
 import gpiozero
@@ -49,10 +49,10 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-class TTLCommandHandler(ModuleCommandHandler):
+class TTLCommandHandler(Command):
     """Command handler specific to TTL functionality"""
-    def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
-        super().__init__(logger, module_id, module_type, config_manager, start_time)
+    def __init__(self, logger, module_id, module_type, config=None, start_time=None):
+        super().__init__(logger, module_id, module_type, config, start_time)
         self.logger.info("(TTL COMMAND HANDLER) Initialised")
 
     def handle_command(self, command: str):
@@ -137,11 +137,11 @@ class TTLModule(Module):
         super().__init__(module_type, config, config_file_path)
         
         # Initialize command handler after parent class
-        self.command_handler = TTLCommandHandler(
+        self.command = TTLCommandHandler(
             logger=self.logger,
             module_id=self.module_id,
             module_type=module_type,
-            config_manager=self.config_manager,
+            config=self.config,
             start_time=self.start_time
         )
         
@@ -149,13 +149,13 @@ class TTLModule(Module):
         self.callbacks = {}
         
         # Set up export manager callbacks
-        self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service_manager.controller_ip
+        self.export.set_callbacks({
+            'get_controller_ip': lambda: self.service.controller_ip
         })
 
         # TTL specific variables
-        self.ttl_input_pins = self.config_manager.get("digital_inputs.pins")
-        self.ttl_output_pins = self.config_manager.get("digital_outputs.pins")
+        self.ttl_input_pins = self.config.get("digital_inputs.pins")
+        self.ttl_output_pins = self.config.get("digital_outputs.pins")
 
         # Initialize GPIO
         self.output_pins = []
@@ -171,7 +171,7 @@ class TTLModule(Module):
         self.assign_pins()
 
         # Recording variables
-        self.recording_folder = self.config_manager.get("recording_folder")
+        self.recording_folder = self.config.get("recording_folder")
         self.ttl_event_buffer = [] # Buffer to record TTL eventss - List of tuples (timestamp, pin, state)
         self.recording_start_time = None
         self.recording_stop_time = None
@@ -192,14 +192,14 @@ class TTLModule(Module):
         self.is_streaming = False  # TTL doesn't stream, but keep for consistency
 
         # Set up TTL-specific callbacks for the command handler
-        self.command_handler.set_callbacks({
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp_manager.get_status,
+        self.command.set_callbacks({
+            'generate_session_id': lambda module_id: self.generate_session_id(module_id),
+            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
+            'get_ptp_status': self.ptp.get_status,
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication_manager.send_status(status),
-            'get_health': self.health_manager.get_health,
+            'send_status': lambda status: self.communication.send_status(status),
+            'get_health': self.health.get_health,
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'list_recordings': super().list_recordings,
@@ -207,23 +207,23 @@ class TTLModule(Module):
             'export_recordings': self.export_recordings,
             'update_pins': self.update_pins,
             'get_pin_config': self.get_pin_config,
-            'get_controller_ip': lambda: self.service_manager.controller_ip,
+            'get_controller_ip': lambda: self.service.controller_ip,
             'shutdown': self._shutdown,
         })
 
-        self.logger.info(f"(TTL MODULE) Command handler callbacks: {self.command_handler.callbacks}")
+        self.logger.info(f"(TTL MODULE) Command handler callbacks: {self.command.callbacks}")
         self.logger.info(f"Initialized TTL module with {len(self.input_pins)} input pins and {len(self.output_pins)} output pins")
 
     def handle_command(self, command: str, **kwargs):
-        return self.command_handler.handle_command(command, **kwargs)
+        return self.command.handle_command(command, **kwargs)
 
-    def start_recording(self, experiment_name: str = None, duration: str = None) -> bool:
+    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start TTL event recording"""
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
         
         # First call parent class to handle common recording setup
-        filename = super().start_recording(experiment_name=experiment_name, duration=duration)
+        filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
         if not filename:
             return False
         
@@ -242,8 +242,8 @@ class TTLModule(Module):
             self._start_recording_all_input_pins()
 
             # Send status response after successful recording start
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_started",
                     "filename": filename,
                     "recording": True,
@@ -254,8 +254,8 @@ class TTLModule(Module):
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error starting recording: {e}")
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_start_failed",
                     "error": str(e)
                 })
@@ -308,8 +308,8 @@ class TTLModule(Module):
                 duration = time.time() - self.recording_start_time
                 
                 # Send status response after successful recording stop
-                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                    self.communication_manager.send_status({
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
                         "type": "recording_stopped",
                         "filename": self.current_filename,
                         "session_id": self.recording_session_id,
@@ -323,8 +323,8 @@ class TTLModule(Module):
                 return True
             else:
                 self.logger.error("(MODULE) Error: recording_start_time was None")
-                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                    self.communication_manager.send_status({
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
                         "type": "recording_stopped",
                         "status": "error",
                         "error": "Recording start time was not set."
@@ -333,8 +333,8 @@ class TTLModule(Module):
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping recording: {e}")
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_stopped",
                     "status": "error",
                     "error": str(e)
@@ -616,7 +616,7 @@ class TTLModule(Module):
                 return False
             
             # Update the config manager with new pin configuration
-            self.config_manager.set("pins", pins_config)
+            self.config.set("pins", pins_config)
             
             # Reassign pins with new configuration
             self.assign_pins()
@@ -624,7 +624,7 @@ class TTLModule(Module):
             self.logger.info(f"(TTL MODULE) Successfully updated pin configuration: {pins_config}")
             
             # Send status response
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "pins_updated",
                 "pins_config": pins_config,
                 "input_pins": self.ttl_input_pins,
@@ -635,7 +635,7 @@ class TTLModule(Module):
             
         except Exception as e:
             self.logger.error(f"Error updating pins: {e}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "pins_update_failed",
                 "error": str(e)
             })
@@ -644,7 +644,7 @@ class TTLModule(Module):
     def get_pin_config(self):
         """Get current pin configuration"""
         try:
-            pins_config = self.config_manager.get("pins", {})
+            pins_config = self.config.get("pins", {})
             return {
                 "pins_config": pins_config,
                 "input_pins": self.ttl_input_pins,
@@ -670,7 +670,7 @@ class TTLModule(Module):
             self._cleanup_gpio()
             
             # Get pin configuration from config
-            pins_config = self.config_manager.get("pins", {})
+            pins_config = self.config.get("pins", {})
             
             if not pins_config:
                 self.logger.warning("(TTL MODULE) No pin configuration found in config file")

@@ -17,25 +17,25 @@ import time
 import logging
 import os
 
-from src.modules.module_config_manager import ModuleConfigManager
+from src.modules.config import Config
 
 from typing import Dict
 
 class Service:
-    def __init__(self, logger: logging.Logger, config_manager: ModuleConfigManager, module_id: str, module_type: str):
+    def __init__(self, logger: logging.Logger, config: Config, module_id: str, module_type: str):
         """
         Initialize the module service manager
 
         Args:
             logger: The logger to use for logging
-            config_manager: The config manager to use for configuration
+            config: The config manager to use for configuration
             module_id: The id of the module
             module: The module itself.
         """
 
         # Basic params
         self.logger = logger
-        self.config_manager = config_manager
+        self.config = config
         self.module_id = module_id
         self.module_type = module_type
         self.callbacks = {}
@@ -46,8 +46,8 @@ class Service:
         
         # Reconnection tracking
         self.reconnect_attempts = 0
-        self.max_reconnect_attempts = self.config_manager.get("network.reconnect_attempts", 5) if config_manager else 5
-        self.reconnect_delay = self.config_manager.get("network.reconnect_delay", 5) if config_manager else 5
+        self.max_reconnect_attempts = self.config.get("network.reconnect_attempts", 5) if config else 5
+        self.reconnect_delay = self.config.get("network.reconnect_delay", 5) if config else 5
         self.last_discovery_time = None
         
         # Service registration state
@@ -62,42 +62,62 @@ class Service:
         else: # Linux/Unix
             # Try multiple methods to get the actual network IP address
             import time
-            max_wait = 60  # seconds
-            wait_time = 0
             self.ip = None
-            while wait_time < max_wait:
-                # Method 1: Try hostname -I (most reliable on Linux)
+            attempt = 0
+            while True:
+                attempt += 1
+                self.logger.info(f"(SERVICE MANAGER) Attempting to get eth0 IP (attempt {attempt})...")
+                # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
                 try:
-                    hostname_output = os.popen('hostname -I').read().strip()
-                    if hostname_output:
-                        ips = hostname_output.split()
-                        self.logger.info(f"(SERVICE MANAGER) Available IPs from hostname -I: {ips}")
-                        for ip in ips:
-                            if not ip.startswith('127.') and not ip.startswith('::1'):
-                                self.ip = ip
-                                self.logger.info(f"(SERVICE MANAGER) Selected non-loopback IP from hostname -I: {self.ip}")
-                                break
+                    import subprocess
+                    result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        # Parse ifconfig output to find eth0 IP
+                        for line in result.stdout.split('\n'):
+                            if 'inet ' in line:
+                                # Extract IP from "inet 192.168.1.197" format
+                                parts = line.strip().split()
+                                for i, part in enumerate(parts):
+                                    if part == 'inet' and i + 1 < len(parts):
+                                        potential_ip = parts[i + 1]
+                                        if potential_ip.startswith('192.168.1.'):
+                                            self.ip = potential_ip
+                                            self.logger.info(f"(SERVICE MANAGER) Found eth0 IP from ifconfig: {self.ip}")
+                                            break
+                                if self.ip:
+                                    break
+                        
+                        if not self.ip:
+                            self.logger.warning(f"(SERVICE MANAGER) No eth0 IP found in ifconfig output")
+                    else:
+                        self.logger.warning(f"(SERVICE MANAGER) ifconfig eth0 failed: {result.stderr}")
                 except Exception as e:
-                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname -I: {e}")
+                    self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from ifconfig eth0: {e}")
                 # Method 2: Try socket.getaddrinfo with a connection to get local IP
                 if not self.ip or self.ip.startswith('127.'):
                     try:
                         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                         s.connect(("8.8.8.8", 80))
-                        self.ip = s.getsockname()[0]
+                        potential_ip = s.getsockname()[0]
                         s.close()
-                        self.logger.info(f"(SERVICE MANAGER) Selected IP from socket connection: {self.ip}")
+                        
+                        # Only use eth0 IP
+                        if potential_ip.startswith('192.168.1.'):
+                            self.ip = potential_ip
+                            self.logger.info(f"(SERVICE MANAGER) Selected eth0 IP from socket connection: {self.ip}")
+                        else:
+                            self.logger.warning(f"(SERVICE MANAGER) Socket connection returned non-eth0 IP: {potential_ip}")
                     except Exception as e:
                         self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from socket connection: {e}")
                 # Method 3: Try socket.gethostbyname but filter out loopback
                 if not self.ip or self.ip.startswith('127.'):
                     try:
                         hostname_ip = socket.gethostbyname(socket.gethostname())
-                        if not hostname_ip.startswith('127.'):
+                        if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
                             self.ip = hostname_ip
-                            self.logger.info(f"(SERVICE MANAGER) Selected IP from hostname resolution: {self.ip}")
+                            self.logger.info(f"(SERVICE MANAGER) Selected eth0 IP from hostname resolution: {self.ip}")
                         else:
-                            self.logger.warning(f"(SERVICE MANAGER) Hostname resolves to loopback: {hostname_ip}")
+                            self.logger.warning(f"(SERVICE MANAGER) Hostname resolves to non-eth0 IP: {hostname_ip}")
                     except Exception as e:
                         self.logger.warning(f"(SERVICE MANAGER) Failed to get IP from hostname resolution: {e}")
                 # Method 4: Try to get IP from network interfaces
@@ -114,25 +134,25 @@ class Service:
                                     src_index = parts.index('src')
                                     if src_index + 1 < len(parts):
                                         potential_ip = parts[src_index + 1]
-                                        if not potential_ip.startswith('127.'):
+                                        if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
                                             self.ip = potential_ip
+                                            self.logger.info(f"(SERVICE MANAGER) Selected eth0 IP from ip route: {self.ip}")
                                             break
+                                        else:
+                                            self.logger.warning(f"(SERVICE MANAGER) ip route returned non-eth0 IP: {potential_ip}")
                     except Exception as e:
                         pass
-                # If still no valid IP, wait and retry
-                if not self.ip or self.ip.startswith('127.'):
-                    self.logger.warning(f"(SERVICE MANAGER) No valid network IP found yet (current: {self.ip}). Retrying in 2s...")
+                # If still no valid IP, wait and retry indefinitely
+                if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
+                    self.logger.warning(f"(SERVICE MANAGER) No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
                     time.sleep(2)
-                    wait_time += 2
                 else:
                     break
-            if not self.ip or self.ip.startswith('127.'):
-                raise RuntimeError("(SERVICE MANAGER) Could not obtain a valid network IP address after waiting. Aborting service registration.")
             self.logger.info(f"(SERVICE MANAGER) Registering service with IP: {self.ip}")
             # Service registration parameters
             self.service_type = "_module._tcp.local."
             self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
-            self.service_port = self.config_manager.get("service.port", 5353) if config_manager else 5353
+            self.service_port = self.config.get("service.port", 5353) if config else 5353
             # Initialize zeroconf
             self.zeroconf = Zeroconf()
 

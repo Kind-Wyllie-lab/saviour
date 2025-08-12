@@ -31,6 +31,7 @@
     },
     "recording_folder": "rec",
     "recording_filetype": "h264",
+    "auto_export": true,
     "controller_share_path": "controller_share",
     "controller_username": "pi",
     "controller_password": "habitat",

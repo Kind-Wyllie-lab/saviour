@@ -3,7 +3,7 @@
 """
 Module Command Handler
 
-This manager is responsible for handling and processing commands sent to modules,
+This class is responsible for handling and processing commands sent to modules,
 providing a central place for command parsing and execution.
 
 Author: Andrew SG
@@ -18,7 +18,7 @@ import threading
 from typing import Dict, Any, Optional, Callable
 
 
-class ModuleCommandHandler:
+class Command:
     """
     Routes commands and params recieved by the communication manager to functionality in the main module and managers.
 
@@ -29,7 +29,7 @@ class ModuleCommandHandler:
                  logger: logging.Logger,
                  module_id: str,
                  module_type: str,
-                 config_manager=None,
+                 config=None,
                  start_time=None):
         """
         Initialize the command handler
@@ -38,13 +38,13 @@ class ModuleCommandHandler:
             logger: Logger instance
             module_id: The unique identifier for the module
             module_type: The type of module (camera, microphone, etc.)
-            config_manager: Manager for configuration
+            config: Manager for configuration
             start_time: When the module was started
         """
         self.logger = logger
         self.module_id = module_id
         self.module_type = module_type
-        self.config_manager = config_manager
+        self.config = config
         self.start_time = start_time
     
         # Callback dictionary - will be set by set_callbacks method
@@ -147,6 +147,8 @@ class ModuleCommandHandler:
                     self._handle_export_recordings(params)
                 case "ptp_status":
                     self._handle_ptp_status()
+                case "validate_readiness":
+                    self._handle_validate_readiness()
                 case "list_commands":
                     self._handle_list_commands()
                 case "test_communication":
@@ -157,6 +159,8 @@ class ModuleCommandHandler:
                     self._handle_set_config(params)
                 case "shutdown":
                     self._handle_shutdown()
+                case "restart_ptp":
+                    self._handle_restart_ptp()
                 case _:
                     self._handle_unknown_command(command)
                 
@@ -227,6 +231,8 @@ class ModuleCommandHandler:
         # Parse parameters
         experiment_name = None
         duration = None
+        experiment_folder = None
+        controller_share_path = None
         
         if params:
             # Check if we have JSON parameters
@@ -236,6 +242,8 @@ class ModuleCommandHandler:
                     json_params = json.loads(params[0])
                     experiment_name = json_params.get('experiment_name')
                     duration = json_params.get('duration')
+                    experiment_folder = json_params.get('experiment_folder')
+                    controller_share_path = json_params.get('controller_share_path')
                     self.logger.info(f"(COMMAND HANDLER) Parsed JSON parameters: {json_params}")
                 except json.JSONDecodeError as e:
                     self.logger.error(f"(COMMAND HANDLER) Failed to parse JSON parameters: {e}")
@@ -246,11 +254,15 @@ class ModuleCommandHandler:
                         experiment_name = param.split('=', 1)[1]
                     elif param.startswith('duration='):
                         duration = param.split('=', 1)[1]
+                    elif param.startswith('experiment_folder='):
+                        experiment_folder = param.split('=', 1)[1]
+                    elif param.startswith('controller_share_path='):
+                        controller_share_path = param.split('=', 1)[1]
         
-        self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}'")
+        self.logger.info(f"(COMMAND HANDLER) Start recording - experiment_name: '{experiment_name}', duration: '{duration}', experiment_folder: '{experiment_folder}'")
         
         # Call the start_recording method with parsed parameters
-        self.callbacks["start_recording"](experiment_name=experiment_name, duration=duration)
+        self.callbacks["start_recording"](experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
 
     def _handle_stop_recording(self):
         """Handle stop_recordings command"""
@@ -396,6 +408,32 @@ class ModuleCommandHandler:
             self.logger.error("(COMMAND HANDLER) No get_ptp_status callback was given to command handler")
             self.callbacks["send_status"]({"error": "No get_ptp_status callback given to command handler"})
     
+    def _handle_validate_readiness(self):
+        """Validate module readiness for recording"""
+        self.logger.info("(COMMAND HANDLER) Command identified as validate_readiness")
+        if "validate_readiness" in self.callbacks:
+            try:
+                readiness_result = self.callbacks["validate_readiness"]()
+                # Add type to the status
+                readiness_result['type'] = 'readiness_validation'
+                self.callbacks["send_status"](readiness_result)
+            except Exception as e:
+                self.logger.error(f"(COMMAND HANDLER) Error in validate_readiness: {e}")
+                self.callbacks["send_status"]({
+                    "type": "readiness_validation",
+                    "ready": False,
+                    "error": f"Validation exception: {str(e)}",
+                    "timestamp": time.time()
+                })
+        else:
+            self.logger.error("(COMMAND HANDLER) No validate_readiness callback was given to command handler")
+            self.callbacks["send_status"]({
+                "type": "readiness_validation",
+                "ready": False,
+                "error": "No validate_readiness callback given to command handler",
+                "timestamp": time.time()
+            })
+    
     def _handle_list_commands(self):
         """Send the list of module commands to the controller"""
 
@@ -423,6 +461,35 @@ class ModuleCommandHandler:
         else:
             self.logger.error("(COMMAND HANDLER) No shutdown callback given to command handler")
             self.callbacks["send_status"]({"error": "No shutdown callback given to command handler"})
+
+    def _handle_restart_ptp(self):
+        """Restart PTP services"""
+        self.logger.info("(COMMAND HANDLER) Command identified as restart_ptp")
+        if "restart_ptp" in self.callbacks:
+            try:
+                result = self.callbacks["restart_ptp"]()
+                self.callbacks["send_status"]({
+                    "type": "ptp_restart_complete",
+                    "timestamp": time.time(),
+                    "status": "success",
+                    "result": result
+                })
+            except Exception as e:
+                self.logger.error(f"(COMMAND HANDLER) Error restarting PTP: {e}")
+                self.callbacks["send_status"]({
+                    "type": "ptp_restart_failed",
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "error": str(e)
+                })
+        else:
+            self.logger.error("(COMMAND HANDLER) No restart_ptp callback given to command handler")
+            self.callbacks["send_status"]({
+                "type": "ptp_restart_failed",
+                "timestamp": time.time(),
+                "status": "error",
+                "error": "No restart_ptp callback given to command handler"
+            })
 
     def _handle_get_config(self):
         """Get the config dict"""

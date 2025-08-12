@@ -24,7 +24,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 from src.modules.module import Module
-from src.modules.module_command_handler import ModuleCommandHandler
+from src.modules.command import Command
 import logging
 import numpy as np
 import base64
@@ -38,10 +38,10 @@ import json
 from flask import Flask, Response, request
 import cv2
 
-class CameraCommandHandler(ModuleCommandHandler):
+class CameraCommand(Command):
     """Command handler specific to camera functionality"""
-    def __init__(self, logger, module_id, module_type, config_manager=None, start_time=None):
-        super().__init__(logger, module_id, module_type, config_manager, start_time)
+    def __init__(self, logger, module_id, module_type, config=None, start_time=None):
+        super().__init__(logger, module_id, module_type, config, start_time)
         self.logger.info("(CAMERA COMMAND HANDLER) Initialised")
 
     def handle_command(self, command: str):
@@ -70,6 +70,7 @@ class CameraCommandHandler(ModuleCommandHandler):
             self._handle_error(e)
 
     def _handle_update_camera_settings(self, params: list):
+        # TODO: Delete this, as this will be achieved by set_config command? Generic method for all modules.
         """Handle update_camera_settings command"""
         self.logger.info("(CAMERA COMMAND HANDLER) Command identified as update_camera_settings")
         try:
@@ -156,24 +157,16 @@ class CameraCommandHandler(ModuleCommandHandler):
 class CameraModule(Module):
     def __init__(self, module_type="camera", config=None, config_file_path=None):
         # Initialize command handler before parent class
-        self.command_handler = CameraCommandHandler(
+        self.command = CameraCommand(
             logger=logging.getLogger(f"{module_type}.{self.generate_module_id(module_type)}"),
             module_id=self.generate_module_id(module_type),
             module_type=module_type,
-            config_manager=None,  # Will be set by parent class
+            config=None,  # Will be set by parent class
             start_time=None  # Will be set during start()
         )
         
         # Call the parent class constructor
         super().__init__(module_type, config, config_file_path)
-        
-        # Set up callbacks
-        self.callbacks = {}
-        
-        # Set up export manager callbacks
-        self.export_manager.set_callbacks({
-            'get_controller_ip': lambda: self.service.controller_ip
-        })
     
         # Initialize camera
         self.picam2 = Picamera2()
@@ -191,8 +184,8 @@ class CameraModule(Module):
         self.register_routes()
 
         # Default camera config if not in config manager
-        if not self.config_manager.get("camera"):
-            self.config_manager.set("camera", {
+        if not self.config.get("camera"):
+            self.config.set("camera", {
                 "fps": 100,
                 "width": 1280,
                 "height": 720,
@@ -215,14 +208,15 @@ class CameraModule(Module):
         self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
-        self.command_handler.set_callbacks({
-            'generate_session_id': lambda module_id: self.session_manager.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config_manager.get("module.samplerate", 200),
+        # TODO: is this necessary? Already done in base class? We just want to append new camera-specific callbacks
+        self.command.set_callbacks({
+            'generate_session_id': lambda module_id: self.generate_session_id(module_id),
+            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
             'get_ptp_status': self.ptp.get_status,
             'get_streaming_status': lambda: self.is_streaming,
             'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication_manager.send_status(status),
-            'get_health': self.health_manager.get_health,
+            'send_status': lambda status: self.communication.send_status(status),
+            'get_health': self.health.get_health,
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
@@ -236,15 +230,15 @@ class CameraModule(Module):
             'shutdown': self._shutdown,
         })
 
-        self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command_handler.callbacks}")
+        self.logger.info(f"(CAMERA MODULE) Command handler callbacks: {self.command.callbacks}")
 
     def configure_camera(self):
         """Configure the camera with current settings"""
         try:
             # Get camera settings from config
-            fps = self.config_manager.get("camera.fps", 25)  # Default to 25fps
-            width = self.config_manager.get("camera.width", 1280)
-            height = self.config_manager.get("camera.height", 720)
+            fps = self.config.get("camera.fps", 25)  # Default to 25fps
+            width = self.config.get("camera.width", 1280)
+            height = self.config.get("camera.height", 720)
             
             # Pick appropriate sensor mode - we will use mode 0 by default
             mode = self.camera_modes[0]
@@ -270,7 +264,7 @@ class CameraModule(Module):
             self.picam2.pre_callback = self._get_and_apply_frame_timestamp
             
             # Create encoders with current settings
-            bitrate = self.config_manager.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate", 10000000)
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
@@ -280,18 +274,18 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"(CAMERA MODULE) Error configuring camera: {e}")
             # Initialize encoders even if configuration fails
-            bitrate = self.config_manager.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate", 10000000)
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
 
-    def start_recording(self, experiment_name: str = None, duration: str = None) -> bool:
+    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start continuous video recording"""
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
         
         # First call parent class to handle common recording setup
-        filename = super().start_recording(experiment_name=experiment_name, duration=duration)
+        filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
         if not filename:
             return False
         
@@ -312,8 +306,8 @@ class CameraModule(Module):
             self.frame_times = []  # Reset frame times
 
             # Send status response after successful recording start
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_started",
                     "filename": filename,
                     "recording": True,
@@ -324,8 +318,8 @@ class CameraModule(Module):
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error starting recording: {e}")
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_start_failed",
                     "error": str(e)
                 })
@@ -381,8 +375,8 @@ class CameraModule(Module):
                 np.savetxt(timestamps_file, self.frame_times)
                 
                 # Send status response after successful recording stop
-                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                    self.communication_manager.send_status({
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
                         "type": "recording_stopped",
                         "filename": self.current_filename,
                         "session_id": self.recording_session_id,
@@ -393,11 +387,13 @@ class CameraModule(Module):
                         "message": f"Recording completed successfully with {len(self.frame_times)} frames"
                     })
                 
+                # Auto-export is now handled by child classes (e.g., APACamera)
+                # to use the new export manager methods
                 return True
             else:
                 self.logger.error("(MODULE) Error: recording_start_time was None")
-                if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                    self.communication_manager.send_status({
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
                         "type": "recording_stopped",
                         "status": "error",
                         "error": "Recording start time was not set, so could not create timestamps."
@@ -406,8 +402,8 @@ class CameraModule(Module):
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping recording: {e}")
-            if hasattr(self, 'communication_manager') and self.communication_manager and self.communication_manager.controller_ip:
-                self.communication_manager.send_status({
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
                     "type": "recording_stopped",
                     "status": "error",
                     "error": str(e)
@@ -427,7 +423,7 @@ class CameraModule(Module):
         try:
             for key, value in params.items():
                 config_key = f"camera.{key}"
-                self.config_manager.set(config_key, value)
+                self.config.set(config_key, value)
                 
             # Update file format if it's in the params
             if 'file_format' in params:
@@ -446,7 +442,7 @@ class CameraModule(Module):
             success = self.set_camera_parameters(params)
             
             # Send status update
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "camera_settings_updated",
                 "settings": params,
                 "success": success
@@ -455,7 +451,7 @@ class CameraModule(Module):
             return success
         except Exception as e:
             self.logger.error(f"(MODULE) Error updating camera settings: {e}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "camera_settings_update_failed",
                 "error": str(e)
             })
@@ -495,7 +491,7 @@ class CameraModule(Module):
             self.is_streaming = True
             
             # Send streaming status
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 'type': 'streaming_started',
                 'port': port,
                 'status': 'success',
@@ -506,7 +502,7 @@ class CameraModule(Module):
             
         except Exception as e:
             self.logger.error(f"(CAMERA MODULE) Error starting streaming: {str(e)}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 'type': 'streaming_start_failed',
                 'status': 'error',
                 'error': f"Failed to start streaming: {str(e)}"
@@ -603,7 +599,7 @@ class CameraModule(Module):
             
             self.is_streaming = False
             
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "streaming_stopped",
                 "status": "success",
                 "message": "Streaming stopped successfully"
@@ -613,7 +609,7 @@ class CameraModule(Module):
             
         except Exception as e:
             self.logger.error(f"(MODULE) Error stopping stream: {e}")
-            self.communication_manager.send_status({
+            self.communication.send_status({
                 "type": "streaming_stopped",
                 "status": "error",
                 "error": f"Failed to stop streaming: {str(e)}"

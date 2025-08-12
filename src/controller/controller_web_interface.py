@@ -78,7 +78,7 @@ class WebInterfaceManager:
     def notify_ptp_update(self):
         """Notify all registered handlers of a PTP update"""
         if self.callbacks["get_ptp_history"]:
-            history = self.callbacks["get_ptp_history"]
+            history = self.callbacks["get_ptp_history"]()
             for handler in self.ptp_update_handlers:
                 try:
                     handler(history)
@@ -112,13 +112,16 @@ class WebInterfaceManager:
 
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
-        def handle_connect():
+        def handle_connect(auth=None):
+            self.logger.info(f"(WEB INTERFACE MANAGER) handle_connect called with auth: {auth}")
             client_ip = request.remote_addr
             self.socketio.emit('client_ip', client_ip)
             self.logger.info(f"(WEB INTERFACE MANAGER) Client connected")
             
             # Send initial module list
+            self.logger.info(f"(WEB INTERFACE MANAGER) About to call get_modules()")
             modules = self.get_modules()
+            self.logger.info(f"(WEB INTERFACE MANAGER) get_modules() returned: {type(modules)}")
             self.logger.info(f"(WEB INTERFACE MANAGER) Sending initial module list to new client: {len(modules)} modules")
             self.socketio.emit('module_update', {"modules": modules})
             
@@ -193,7 +196,7 @@ class WebInterfaceManager:
                     # Send list_recordings to all modules
                     for m in modules:
                         if 'id' in m and self.callbacks["send_command"]:
-                            self.callbacks["send_command"](m['id'], 'list_recordings')
+                            self.callbacks["send_command"](m['id'], 'list_recordings', {})
                     # Start a timer to emit after timeout
                     def emit_aggregated():
                         with self._pending_recordings_lock:
@@ -229,7 +232,7 @@ class WebInterfaceManager:
                 
                 # Send command to module
                 if self.callbacks["send_command"]:
-                    self.callbacks["send_command"](module_id, command)
+                    self.callbacks["send_command"](module_id, command, params)
                     self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command} to module {module_id}")
                     
                     # If this was a clear_recordings command, request updated list
@@ -238,7 +241,7 @@ class WebInterfaceManager:
                         self.socketio.sleep(0.5)
                         # Request updated recordings list
                         if self.callbacks["send_command"]:
-                            self.callbacks["send_command"](module_id, 'list_recordings')
+                            self.callbacks["send_command"](module_id, 'list_recordings', {})
                             self.logger.info(f"(WEB INTERFACE MANAGER) Requested updated recordings list after clear")
                 else:
                     self.logger.error("(WEB INTERFACE MANAGER) No command handler registered")
@@ -253,7 +256,7 @@ class WebInterfaceManager:
             self.logger.info(f"(WEB INTERFACE MANAGER) Client requested module data")
             
             # Get current modules from callback
-            modules = self.callbacks["get_modules"]
+            modules = self.get_modules()
             self.logger.info(f"(WEB INTERFACE MANAGER) Got {len(modules)} modules from callback")
             
             # Send module update to all clients
@@ -334,7 +337,7 @@ class WebInterfaceManager:
             """Get PTP history for all modules"""
             self.logger.info(f"(WEB INTERFACE MANAGER) /api/ptp_history endpoint called. Getting PTP history")
             if self.callbacks["get_ptp_history"]:
-                history = self.callbacks["get_ptp_history"]
+                history = self.callbacks["get_ptp_history"]()
                 self.logger.info(f"(WEB INTERFACE MANAGER) Got PTP history for {len(history)} modules")
                 return jsonify(history)
             return jsonify({})
@@ -387,7 +390,7 @@ class WebInterfaceManager:
                 self.logger.info(f"(WEB INTERFACE MANAGER) Processing command: {command} for module: {module_id}")
                 
                 if self.callbacks["send_command"]:
-                    result = self.callbacks["send_command"](module_id, command)
+                    result = self.callbacks["send_command"](module_id, command, params)
                     return jsonify({
                         "status": "success",
                         "message": "Command sent successfully",
@@ -480,8 +483,16 @@ class WebInterfaceManager:
         """Get list of all discovered modules"""
         self.logger.info("(WEB INTERFACE MANAGER) Getting modules list")
         if self.callbacks["get_modules"]:
-            return self.callbacks["get_modules"]
-        return []
+            self.logger.info(f"(WEB INTERFACE MANAGER) Callback type: {type(self.callbacks['get_modules'])}")
+            self.logger.info(f"(WEB INTERFACE MANAGER) Callback: {self.callbacks['get_modules']}")
+            # Call the callback function to get the actual modules list
+            modules = self.callbacks["get_modules"]()
+            self.logger.info(f"(WEB INTERFACE MANAGER) Modules type: {type(modules)}")
+            self.logger.info(f"(WEB INTERFACE MANAGER) Modules: {modules}")
+            return modules
+        else:
+            self.logger.warning("(WEB INTERFACE MANAGER) No get_modules callback registered")
+            return []
     
     def update_modules(self, modules: list):
         """Update the list of modules from the controller service manager"""
@@ -512,19 +523,7 @@ class WebInterfaceManager:
     def list_modules(self):
         """List all discovered modules"""
         self.logger.info("(WEB INTERFACE MANAGER) Listing modules")
-        modules = []
-        for module in self.controller.service_manager.modules:
-            # Convert module to dict and ensure all keys are strings
-            module_dict = {
-                'id': module.id,
-                'type': module.type,
-                'ip': module.ip,
-                'port': module.port,
-                'properties': {k.decode() if isinstance(k, bytes) else k: 
-                             v.decode() if isinstance(v, bytes) else v 
-                             for k, v in module.properties.items()}
-            }
-            modules.append(module_dict)
+        modules = self.get_modules()
         return jsonify({"modules": modules})
 
     def get_exported_recordings(self):

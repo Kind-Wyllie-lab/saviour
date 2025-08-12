@@ -18,7 +18,7 @@ import subprocess
 import datetime
 from typing import Union
 
-class ExportManager:
+class Export:
     """Manages file exports to different destinations (NAS or Controller)"""
     
     class ExportDestination(Enum):
@@ -27,7 +27,7 @@ class ExportManager:
         NAS = "nas"
 
         @classmethod
-        def from_string(cls, value: str) -> 'ExportManager.ExportDestination':
+        def from_string(cls, value: str) -> 'Export.ExportDestination':
             """Convert string to ExportDestination enum"""
             try:
                 return cls(value.lower())
@@ -65,7 +65,61 @@ class ExportManager:
             
         self.callbacks = callbacks
         
-    def _create_export_manifest(self, files_to_export: list, destination: Union[str, 'ExportManager.ExportDestination'], export_folder: str, experiment_name: str = None) -> str:
+    def _export_config_file(self, export_folder: str) -> bool:
+        """Export the module's config file for traceability
+        
+        Args:
+            export_folder: Destination export folder
+            
+        Returns:
+            bool: True if config file was exported successfully
+        """
+        try:
+            # Look for config files in common locations
+            config_locations = [
+                f"{self.module_id}_config.json",  # Module-specific config
+                "config.json",  # Generic config
+                "apa_arduino_config.json",  # APA Arduino config
+                "apa_camera_config.json",   # APA Camera config
+                os.path.join(os.path.dirname(self.recording_folder), "config.json"),  # Parent directory
+                os.path.join(os.path.dirname(self.recording_folder), f"{self.module_id}_config.json")  # Parent with module ID
+            ]
+            
+            config_source = None
+            for config_path in config_locations:
+                if os.path.exists(config_path):
+                    config_source = config_path
+                    break
+            
+            if not config_source:
+                # Try to find config in the module's directory
+                module_dir = os.path.dirname(os.path.abspath(__file__))
+                for root, dirs, files in os.walk(module_dir):
+                    for file in files:
+                        if file.endswith('_config.json') and self.module_id.split('_')[0] in file:
+                            config_source = os.path.join(root, file)
+                            break
+                    if config_source:
+                        break
+            
+            if config_source and os.path.exists(config_source):
+                # Copy config file to export folder with timestamp for this export session
+                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamped_config = f"config_export_{timestamp}.json"
+                dest_path = os.path.join(export_folder, timestamped_config)
+                shutil.copy2(config_source, dest_path)
+                
+                self.logger.info(f"(EXPORT MANAGER) Exported config file: {timestamped_config}")
+                return True
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) No config file found for module {self.module_id}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"(EXPORT MANAGER) Error exporting config file: {e}")
+            return False
+
+    def _create_export_manifest(self, files_to_export: list, destination: Union[str, 'Export.ExportDestination'], export_folder: str, experiment_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
         
         Args:
@@ -111,7 +165,7 @@ class ExportManager:
             self.logger.error(f"(EXPORT MANAGER) Failed to create export manifest: {e}")
             return None
 
-    def export_file(self, filename: str, destination: 'ExportManager.ExportDestination', experiment_name: str = None) -> bool:
+    def export_file(self, filename: str, destination: 'Export.ExportDestination', experiment_name: str = None) -> bool:
         """Export a single file to the specified destination
         
         Args:
@@ -122,21 +176,41 @@ class ExportManager:
         Returns:
             bool: True if export successful
         """
+        self.logger.info(f"(EXPORT MANAGER) Attempting to export recordings for {experiment_name}")
         try:
             # Mount the destination if not already mounted
             if self.current_mount != destination:
                 if not self._mount_destination(destination):
                     return False
                     
-            # Create timestamped export folder with optional experiment name
+            # Create hierarchical export folder structure
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             if experiment_name:
                 # Sanitize experiment name for filesystem safety
                 safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                export_folder = os.path.join(self.mount_point, f"export_{safe_experiment_name}_{export_timestamp}")
+                
+                # Create top-level experiment folder (without timestamp)
+                experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
+                os.makedirs(experiment_folder, exist_ok=True)
+                
+                # Ensure the experiment folder has write permissions for all modules
+                try:
+                    os.chmod(experiment_folder, 0o777)  # rwxrwxrwx - full permissions
+                    self.logger.info(f"(EXPORT MANAGER) Set permissions on experiment folder: {experiment_folder}")
+                except Exception as e:
+                    self.logger.warning(f"(EXPORT MANAGER) Could not set permissions on experiment folder: {e}")
+                
+                # Create module-specific subfolder with timestamp
+                module_subfolder = f"{self.module_id}_{export_timestamp}"
+                export_folder = os.path.join(experiment_folder, module_subfolder)
+                
+                self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")
+                self.logger.info(f"(EXPORT MANAGER) Created module subfolder: {module_subfolder}")
             else:
-                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}")
+                # Fallback for experiments without names
+                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}_{self.module_id}")
+            
             os.makedirs(export_folder, exist_ok=True)
             
             # Copy the file
@@ -155,6 +229,14 @@ class ExportManager:
                 shutil.copy2(timestamp_source, timestamp_dest)
                 exported_files.append(timestamp_file)
             
+            # Export the module's config file for traceability
+            config_exported = self._export_config_file(export_folder)
+            if config_exported:
+                exported_files.append("config_file")  # Add to manifest
+                self.logger.info(f"(EXPORT MANAGER) Exported config file")
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) Could not export config file")
+            
             # Create export manifest
             manifest_filename = self._create_export_manifest(exported_files, destination, export_folder, experiment_name)
             if not manifest_filename:
@@ -167,7 +249,7 @@ class ExportManager:
             self.logger.error(f"(EXPORT MANAGER) Export failed: {e}")
             return False
 
-    def export_all_files(self, destination: 'ExportManager.ExportDestination', experiment_name: str = None) -> bool:
+    def export_all_files(self, destination: 'Export.ExportDestination', experiment_name: str = None) -> bool:
         """Export all files in the recording folder to the specified destination
         
         Args:
@@ -183,15 +265,34 @@ class ExportManager:
                 if not self._mount_destination(destination):
                     return False
                     
-            # Create timestamped export folder with optional experiment name
+            # Create hierarchical export folder structure
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             if experiment_name:
                 # Sanitize experiment name for filesystem safety
                 safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                export_folder = os.path.join(self.mount_point, f"export_{safe_experiment_name}_{export_timestamp}")
+                
+                # Create top-level experiment folder (without timestamp)
+                experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
+                os.makedirs(experiment_folder, exist_ok=True)
+                
+                # Ensure the experiment folder has write permissions for all modules
+                try:
+                    os.chmod(experiment_folder, 0o777)  # rwxrwxrwx - full permissions
+                    self.logger.info(f"(EXPORT MANAGER) Set permissions on experiment folder: {experiment_folder}")
+                except Exception as e:
+                    self.logger.warning(f"(EXPORT MANAGER) Could not set permissions on experiment folder: {e}")
+                
+                # Create module-specific subfolder with timestamp
+                module_subfolder = f"{self.module_id}_{export_timestamp}"
+                export_folder = os.path.join(experiment_folder, module_subfolder)
+                
+                self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")
+                self.logger.info(f"(EXPORT MANAGER) Created module subfolder: {module_subfolder}")
             else:
-                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}")
+                # Fallback for experiments without names
+                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}_{self.module_id}")
+            
             os.makedirs(export_folder, exist_ok=True)
             
             # Export all files in the recording folder
@@ -216,8 +317,18 @@ class ExportManager:
                 self.logger.error("(EXPORT MANAGER) Failed to create export manifest")
                 return False
             
+            # Export the module's config file for traceability
+            config_exported = self._export_config_file(export_folder)
+            if config_exported:
+                files_to_export.append("config_file")  # Add to manifest
+                self.logger.info(f"(EXPORT MANAGER) Exported config file")
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) Could not export config file")
+            
             # Now export all files
             for filename in files_to_export:
+                if filename == "config_file":  # Skip the config file entry we just added
+                    continue
                 source_path = os.path.join(self.recording_folder, filename)
                 dest_path = os.path.join(export_folder, filename)
                 try:
@@ -227,14 +338,14 @@ class ExportManager:
                     self.logger.error(f"(EXPORT MANAGER) Failed to export file {filename}: {e}")
                     return False
             
-            self.logger.info(f"(EXPORT MANAGER) Successfully exported {len(files_to_export)} files to {export_folder}")
+            self.logger.info(f"(EXPORT MANAGER) Successfully exported {len(files_to_export)-1} files + config to {export_folder}")
             return True
             
         except Exception as e:
             self.logger.error(f"(EXPORT MANAGER) Export failed: {e}")
             return False
             
-    def _mount_destination(self, destination: 'ExportManager.ExportDestination') -> bool:
+    def _mount_destination(self, destination: 'Export.ExportDestination') -> bool:
         """Mount the specified destination
         
         Args:
@@ -244,7 +355,7 @@ class ExportManager:
             bool: True if mount successful
         """
         try:
-            if destination == ExportManager.ExportDestination.NAS:
+            if destination == Export.ExportDestination.NAS:
                 return self._mount_nas()
             else:
                 return self._mount_controller()
@@ -293,7 +404,7 @@ class ExportManager:
                     
                     if result.returncode == 0:
                         self.logger.info(f"(EXPORT MANAGER) Successfully mounted controller share at {self.mount_point} using SMB {version}")
-                        self.current_mount = ExportManager.ExportDestination.CONTROLLER
+                        self.current_mount = Export.ExportDestination.CONTROLLER
                         return True
                     else:
                         self.logger.warning(f"(EXPORT MANAGER) Failed to mount with SMB {version}: {result.stderr}")
@@ -359,7 +470,7 @@ class ExportManager:
                 # Don't return False here as the mount was successful
             
             self.logger.info(f"(EXPORT MANAGER) Successfully mounted NAS share at {self.mount_point}")
-            self.current_mount = ExportManager.ExportDestination.NAS
+            self.current_mount = Export.ExportDestination.NAS
             return True
             
         except subprocess.CalledProcessError as e:
@@ -367,6 +478,100 @@ class ExportManager:
             return False
         except Exception as e:
             self.logger.error(f"(EXPORT MANAGER) NAS mount failed: {e}")
+            return False
+            
+    def export_current_session_files(self, recording_folder: str, recording_session_id: str, experiment_name: str = None) -> bool:
+        """Export only the files from the current recording session
+        
+        Args:
+            recording_folder: Path to the recording folder
+            recording_session_id: Session ID to filter files by
+            experiment_name: Optional experiment name for folder structure
+            
+        Returns:
+            bool: True if export successful
+        """
+        try:
+            # Mount the export destination
+            if not self._mount_destination(self.ExportDestination.CONTROLLER):
+                self.logger.error("(EXPORT MANAGER) Failed to mount export destination")
+                return False
+            
+            # Create hierarchical export folder structure with conflict prevention
+            export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            if experiment_name:
+                safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_experiment_name = safe_experiment_name.replace(' ', '_')
+                
+                # Create top-level experiment folder (without timestamp)
+                experiment_folder = os.path.join(self.mount_point, safe_experiment_name)
+                os.makedirs(experiment_folder, exist_ok=True)
+                
+                # Ensure the experiment folder has write permissions for all modules
+                try:
+                    os.chmod(experiment_folder, 0o777)  # rwxrwxrwx - full permissions
+                    self.logger.info(f"(EXPORT MANAGER) Set permissions on experiment folder: {experiment_folder}")
+                except Exception as e:
+                    self.logger.warning(f"(EXPORT MANAGER) Could not set permissions on experiment folder: {e}")
+                
+                # Create module-specific subfolder with timestamp
+                module_subfolder = f"{self.module_id}_{export_timestamp}"
+                export_folder = os.path.join(experiment_folder, module_subfolder)
+                
+                self.logger.info(f"(EXPORT MANAGER) Created experiment folder: {experiment_folder}")
+                self.logger.info(f"(EXPORT MANAGER) Created module subfolder: {module_subfolder}")
+            else:
+                # Fallback for experiments without names
+                export_folder = os.path.join(self.mount_point, f"export_{export_timestamp}_{self.module_id}")
+            
+            os.makedirs(export_folder, exist_ok=True)
+            self.logger.info(f"(EXPORT MANAGER) Created export folder: {export_folder}")
+            
+            # Find files that belong to the current session
+            session_files = []
+            for filename in os.listdir(recording_folder):
+                if recording_session_id in filename:
+                    session_files.append(filename)
+                    self.logger.info(f"(EXPORT MANAGER) Found session file to export: {filename}")
+            
+            if not session_files:
+                self.logger.warning("(EXPORT MANAGER) No session files found to export")
+                return True
+            
+            # Export each session file
+            exported_count = 0
+            for filename in session_files:
+                try:
+                    source_path = os.path.join(recording_folder, filename)
+                    dest_path = os.path.join(export_folder, filename)
+                    shutil.copy2(source_path, dest_path)
+                    self.logger.info(f"(EXPORT MANAGER) Exported: {filename}")
+                    exported_count += 1
+                except Exception as e:
+                    self.logger.error(f"(EXPORT MANAGER) Failed to export {filename}: {e}")
+                    return False
+            
+            # Export the module's config file for traceability
+            config_exported = self._export_config_file(export_folder)
+            if config_exported:
+                exported_count += 1
+                session_files.append("config_file")  # Add to manifest
+                self.logger.info(f"(EXPORT MANAGER) Exported config file")
+            else:
+                self.logger.warning(f"(EXPORT MANAGER) Could not export config file")
+            
+            # Create export manifest
+            manifest_filename = self._create_export_manifest(session_files, self.ExportDestination.CONTROLLER, export_folder, experiment_name)
+            if not manifest_filename:
+                self.logger.error("(EXPORT MANAGER) Failed to create export manifest")
+                return False
+            
+            self.logger.info(f"(EXPORT MANAGER) Successfully exported {exported_count} session files to {export_folder}")
+            self.logger.info(f"(EXPORT MANAGER) Created export manifest: {manifest_filename}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"(EXPORT MANAGER) Export error: {e}")
             return False
             
     def unmount(self) -> bool:

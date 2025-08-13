@@ -40,8 +40,8 @@ import cv2
 
 class CameraCommand(Command):
     """Command handler specific to camera functionality"""
-    def __init__(self, logger, module_id, module_type, config=None, start_time=None):
-        super().__init__(logger, module_id, module_type, config, start_time)
+    def __init__(self, module_id, module_type, config=None, start_time=None):
+        super().__init__(module_id, module_type, config, start_time)
         self.logger.info("(CAMERA COMMAND HANDLER) Initialised")
 
     def handle_command(self, command: str):
@@ -158,7 +158,6 @@ class CameraModule(Module):
     def __init__(self, module_type="camera", config=None, config_file_path=None):
         # Initialize command handler before parent class
         self.command = CameraCommand(
-            logger=logging.getLogger(f"{module_type}.{self.generate_module_id(module_type)}"),
             module_id=self.generate_module_id(module_type),
             module_type=module_type,
             config=None,  # Will be set by parent class

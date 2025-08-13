@@ -22,7 +22,7 @@ from src.modules.config import Config
 from typing import Dict
 
 class Service:
-    def __init__(self, logger: logging.Logger, config: Config, module_id: str, module_type: str):
+    def __init__(self, config: Config, module_id: str, module_type: str):
         """
         Initialize the module service manager
 
@@ -34,7 +34,7 @@ class Service:
         """
 
         # Basic params
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.config = config
         self.module_id = module_id
         self.module_type = module_type

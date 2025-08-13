@@ -34,11 +34,11 @@ class Export:
             except ValueError:
                 raise ValueError(f"Invalid destination: {value}. Must be one of: {[d.value for d in cls]}")
     
-    def __init__(self, module_id: str, recording_folder: str, config: dict, logger: logging.Logger):
+    def __init__(self, module_id: str, recording_folder: str, config: dict):
         self.module_id = module_id
         self.recording_folder = recording_folder
         self.config = config
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.current_mount = None
         self.mount_point = "/mnt/export"  # Could be configurable
         self.callbacks = {}

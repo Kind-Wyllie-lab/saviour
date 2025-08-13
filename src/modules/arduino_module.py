@@ -26,8 +26,8 @@ import json
 
 class ArduinoCommand(Command):
     """Command handler specific to Arduino functionality"""
-    def __init__(self, logger, module_id, module_type, config=None, start_time=None):
-        super().__init__(logger, module_id, module_type, config, start_time)
+    def __init__(self, module_id, module_type, config=None, start_time=None):
+        super().__init__(module_id, module_type, config, start_time)
         self.logger.info("(ARDUINO COMMAND HANDLER) Initialised")
 
     def handle_command(self, command: str):
@@ -95,7 +95,6 @@ class ArduinoModule(Module):
     def __init__(self, module_type="arduino", config=None, config_file_path=None):
         # Initialize command handler before parent class
         self.command_handler = ArduinoCommand(
-            logger=logging.getLogger(f"{module_type}.{self.generate_module_id(module_type)}"),
             module_id=self.generate_module_id(module_type),
             module_type=module_type,
             config=None,  # Will be set by parent class

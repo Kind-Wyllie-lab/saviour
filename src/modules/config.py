@@ -74,7 +74,7 @@ class Config:
         "MODULE_STATUS_PORT": "communication.status_socket_port",
     }
     
-    def __init__(self, logger: logging.Logger, module_type: str, config_file_path: Optional[str] = None):
+    def __init__(self, module_type: str, config_file_path: Optional[str] = None):
         """
         Initialize the configuration manager
         
@@ -83,7 +83,7 @@ class Config:
             module_type: Type of the module (camera, microphone, etc.)
             config_file_path: Path to configuration file (optional)
         """
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.module_type = module_type
         
         # Set module-specific config file path if not provided

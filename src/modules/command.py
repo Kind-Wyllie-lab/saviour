@@ -26,7 +26,6 @@ class Command:
     """
     
     def __init__(self, 
-                 logger: logging.Logger,
                  module_id: str,
                  module_type: str,
                  config=None,
@@ -41,7 +40,7 @@ class Command:
             config: Manager for configuration
             start_time: When the module was started
         """
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.module_id = module_id
         self.module_type = module_type
         self.config = config

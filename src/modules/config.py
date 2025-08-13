@@ -220,6 +220,7 @@ class Config:
                     else:
                         return non_editable_current
                 
+                self.logger.warning(f"Configuration key {key_path} not found, returning default value {default}")
                 return default
             current = current[part]
         
@@ -309,10 +310,10 @@ class Config:
             with open(self.config_file_path, 'w') as f:
                 json.dump(self.config, f, indent=4)
             
-            self.logger.info(f"(MODULE CONFIG MANAGER) Configuration saved to {self.config_file_path}")
+            self.logger.info(f"Configuration saved to {self.config_file_path}")
             return True
         except Exception as e:
-            self.logger.error(f"(MODULE CONFIG MANAGER) Error saving configuration: {e}")
+            self.logger.error(f"Error saving configuration: {e}")
             return False
     
     def get_all(self) -> Dict[str, Any]:

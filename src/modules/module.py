@@ -79,7 +79,7 @@ class Module:
             self.logger.info(f"Created recording folder: {self.recording_folder}")
 
 
-        # Add console handler if none exists
+        # Add file handler if none exists
         if not self.logger.handlers:
             # Add file handler for persistent logging (useful when running as systemd service)
             try:

@@ -22,21 +22,34 @@ from dataclasses import dataclass # to define Module dataclass
 from typing import List, Dict, Any # for type hinting
 import asyncio # for asyncio
 
+# Check if running under systemd
+is_systemd = os.environ.get('INVOCATION_ID') is not None
+
+# Setup logging ONCE for all modules
+if is_systemd:
+    # Under systemd, let it handle timestamps
+    format_string = '%(levelname)s - %(name)s - %(message)s'
+else:
+    # When running directly, include timestamps
+    format_string = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+
+# Setup logging ONCE for all additional classes that log
+logging.basicConfig(
+    level=logging.INFO,
+    format=format_string
+)
+
 # Networking and synchronization
 import threading # for concurrent operations
 
 # Local managers
-import src.controller.controller_service_manager as service_manager
-import src.controller.controller_communication_manager as communication_manager
-import src.controller.controller_session_manager as session_manager
-import src.controller.controller_file_transfer_manager as file_transfer_manager
-# import src.controller.controller_database_manager as database_manager
-import src.controller.controller_health_monitor as health_monitor
-import src.controller.controller_buffer_manager as buffer_manager
-import src.controller.controller_config_manager as config_manager
-import src.controller.controller_ptp_manager as ptp_manager
-import src.controller.controller_web_interface as web_interface_manager
-import src.controller.controller_cli_interface as cli_interface
+from src.controller.service import Service
+from src.controller.communication import Communication
+from src.controller.health import Health
+from src.controller.buffer import Buffer
+from src.controller.config import config
+from src.controller.ptp import PTP
+from src.controller.web import Web
     
 # Habitat Controller Class
 class Controller:
@@ -49,9 +62,7 @@ class Controller:
         - A logger
         - A config manager, which initially loads the config file and sets up the config object which the controller can use to get parameters
         - A service manager, which initially registers a zeroconf service and (passively, as part of zeroconf object) starts a thread to browse for module services
-        - A session manager, which has a method to generate a session id for a module
         - A communication manager, which initially starts a thread to listen for status and data updates from modules
-        - A file transfer manager, which initially starts an aiohttp web server to receive files from modules
         - A data export manager, which initially creates a supabase client (is this a thread?)
         - A PTP manager, which initally defines the ptp4l and phc2sys arguments based on the role of the controller and will later start a thread
         - A buffer manager, which initially sets the max buffer size
@@ -66,81 +77,100 @@ class Controller:
         """
 
         # Setup logging
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.DEBUG)
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
 
-        # Add console handler if none exists
+        # Add file handler if none exists
         if not self.logger.handlers:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
+            # Add file handler for persistent logging (useful when running as systemd service)
+            try:
+                # Check if file logging is enabled in config
+                if self.config.get("logging.to_file", True):
+                    # Create logs directory if it doesn't exist
+                    log_dir = self.config.get("logging.directory", "/var/log/habitat")
+                    os.makedirs(log_dir, exist_ok=True)
+                    
+                    # Generate log filename with module info
+                    log_filename = f"{self.module_type}_{self.module_id}.log"
+                    log_filepath = os.path.join(log_dir, log_filename)
+                    
+                    # Get config values for rotation
+                    max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
+                    backup_count = self.config.get("logging.backup_count", 5)
+                    
+                    # Add file handler with rotation
+                    from logging.handlers import RotatingFileHandler
+                    file_handler = RotatingFileHandler(
+                        log_filepath,
+                        maxBytes=max_bytes,
+                        backupCount=backup_count
+                    )
+                    file_handler.setLevel(logging.INFO)
+                    self.logger.addHandler(file_handler)
+                    
+                    self.logger.info(f"File logging enabled: {log_filepath}")
+                    self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+                else:
+                    self.logger.info("File logging disabled in config")
+                    
+            except Exception as e:
+                # If file logging fails, log the error but don't crash
+                self.logger.warning(f"Failed to setup file logging: {e}")
+                self.logger.info("Continuing with console logging only")
             
         self.logger.info(f"(CONTROLLER) Initializing managers")
         # Initialize config manager
-        self.config_manager = config_manager.ControllerConfigManager(self.logger, config_file_path)
+        self.config = Config(config_file_path)
         self.module_config = {}
 
         # Parameters from config
-        self.max_buffer_size = self.config_manager.get("controller.max_buffer_size")
-        self.zmq_commands = self.config_manager.get("controller.zmq_commands")
-        self.cli_commands = self.config_manager.get("controller.cli_commands")
+        self.max_buffer_size = self.config.get("controller.max_buffer_size")
+        self.zmq_commands = self.config.get("controller.zmq_commands")
+        self.cli_commands = self.config.get("controller.cli_commands")
         
         # Control flags from config
-        self.manual_control = self.config_manager.get("controller.manual_control")
-        self.print_received_data = self.config_manager.get("controller.print_received_data")
+        self.manual_control = self.config.get("controller.manual_control")
+        self.print_received_data = self.config.get("controller.print_received_data")
         self.is_running = True  # Add flag for listener thread
 
         # Managers
-        self.service_manager = service_manager.ControllerServiceManager(self.logger, self.config_manager)
+        self.service = Service(self.config)
         
         # Register module discovery callback immediately to catch early discoveries
         def module_discovery_callback(module):
             self.on_module_discovered(module)
-            if hasattr(self, 'web_interface_manager'):
-                self.web_interface_manager.notify_module_update()
+            if hasattr(self, 'web'):
+                self.web.notify_module_update()
                 self.module_config[module.id] = {}
         
-        self.service_manager.on_module_discovered = module_discovery_callback
-        self.service_manager.on_module_removed = lambda module: (
-            self.web_interface_manager.notify_module_update() if hasattr(self, 'web_interface_manager') else None
+        self.service.on_module_discovered = module_discovery_callback
+        self.service.on_module_removed = lambda module: (
+            self.web.notify_module_update() if hasattr(self, 'web') else None
         )
         self.logger.info(f"(CONTROLLER) Module discovery callback registered early")
         
-        self.session_manager = session_manager.SessionManager()
-        self.communication_manager = communication_manager.ControllerCommunicationManager(
-            self.logger,
+        self.communication = Communication(
             status_callback=self.handle_status_update,
             data_callback=self.handle_data_update
         )
-        self.file_transfer = file_transfer_manager.ControllerFileTransfer(self.logger)
-        self.buffer_manager = buffer_manager.ControllerBufferManager(self.logger, self.max_buffer_size)
-        # self.database_manager = database_manager.ControllerDatabaseManager(self.logger, self.config_manager)
-        self.ptp_manager = ptp_manager.PTPManager(logger=self.logger,role=ptp_manager.PTPRole.MASTER)
+        self.buffer = Buffer(self.max_buffer_size)
+        # self.database = database.ControllerDatabaseManager(self.config)
+        self.ptp = PTP(role=ptp.PTPRole.MASTER)
         
         # Check which interfaces are enabled
-        self.web_interface = None # Flag to indicate if the web interface is enabled
-        self.cli_interface = None # Flag to indicate if the CLI interface is enabled
-        if self.config_manager.get("interface.web_interface") == True:
+        self.web = None # Flag to indicate if the web interface is enabled
+        if self.config.get("interface.web") == True:
             self.logger.info(f"(CONTROLLER) Web interface flag set to True")
-            self.web_interface = True # Flag to indicate if the web interface is enabled
-            self.web_interface_manager = web_interface_manager.WebInterfaceManager(self.logger, self.config_manager) # Should this be instantiated here or in controller.py? 
+            self.web = True # Flag to indicate if the web interface is enabled
+            self.web = web.WebInterfaceManager(self.config) # Should this be instantiated here or in controller.py? 
         else:
             self.logger.info(f"(CONTROLLER) Web interface flag set to False")
-            self.web_interface = False
-
-        if self.config_manager.get("interface.cli") == True:
-            self.logger.info(f"(CONTROLLER) CLI interface flag set to True")
-            self.cli_interface = cli_interface.CLIInterface(self.logger)
-        else:
-            self.logger.info(f"(CONTROLLER) CLI interface flag set to False")
-            self.cli_interface = False
+            self.web = False
 
         # Initialize health monitor with configuration
-        heartbeat_interval = self.config_manager.get("health_monitor.heartbeat_interval")
-        heartbeat_timeout = self.config_manager.get("health_monitor.heartbeat_timeout")
-        self.health_monitor = health_monitor.ControllerHealthMonitor(
+        heartbeat_interval = self.config.get("health_monitor.heartbeat_interval")
+        heartbeat_timeout = self.config.get("health_monitor.heartbeat_timeout")
+        self.health = health_monitor.ControllerHealthMonitor(
             self.logger, 
             heartbeat_interval=heartbeat_interval,
             heartbeat_timeout=heartbeat_timeout
@@ -148,7 +178,7 @@ class Controller:
 
         # Start health monitoring
         self.logger.info("(CONTROLLER) Starting health monitoring thread")
-        self.health_monitor.start_monitoring()
+        self.health.start_monitoring()
 
         # Register callbacks
         self.register_callbacks()
@@ -156,29 +186,20 @@ class Controller:
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""
         # Web interface
-        if self.web_interface:
-            self.web_interface_manager.register_callbacks({
-                "get_modules": self.service_manager.get_modules,
-                "get_ptp_history": self.buffer_manager.get_ptp_history,
-                "send_command": self.communication_manager.send_command,
-                "get_module_health": self.health_monitor.get_module_health
+        if self.web:
+            self.web.register_callbacks({
+                "get_modules": self.service.get_modules,
+                "get_ptp_history": self.buffer.get_ptp_history,
+                "send_command": self.communication.send_command,
+                "get_module_health": self.health.get_module_health
             })
         
         # Register status change callback with health monitor
-        self.health_monitor.set_callbacks({
+        self.health.set_callbacks({
             "on_status_change": self.on_module_status_change
         })
         self.logger.info(f"(CONTROLLER) Status change callback registered with health monitor")
-        
-        # CLI 
-        if self.cli_interface:
-            self.cli_interface.register_callbacks(
-                get_modules=self.service_manager.get_modules,
-                get_ptp_history=self.buffer_manager.get_ptp_history,
-                get_zmq_commands=self.get_zmq_commands,
-                send_command=self.communication_manager.send_command,
-                get_module_health=self.health_monitor.get_module_health
-            )
+
     
 
     def handle_status_update(self, topic: str, data: str):
@@ -189,14 +210,14 @@ class Controller:
             import json
             status_data = json.loads(data)
             status_type = status_data.get('type', 'unknown')
-            self.web_interface_manager.handle_module_status(module_id, status_data)
+            self.web.handle_module_status(module_id, status_data)
             match status_type:
                 case 'heartbeat':
                     self.logger.info(f"(CONTROLLER) Heartbeat received from {module_id}")
-                    self.health_monitor.update_module_health(module_id, status_data)
+                    self.health.update_module_health(module_id, status_data)
                 case 'ptp_status':
                     self.logger.info(f"(CONTROLLER) PTP status received from {module_id}: {status_data}")
-                    self.buffer_manager.add_ptp_history(module_id, status_data)
+                    self.buffer.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
                     self.logger.info(f"(CONTROLLER) Recordings list received from {module_id}")
                 case 'get_config':
@@ -214,7 +235,7 @@ class Controller:
                     # If the set_config was successful, we should refresh the config
                     if status_data.get('status') == 'success':
                         # Request updated config from this module
-                        self.communication_manager.send_command(module_id, "get_config", {})
+                        self.communication.send_command(module_id, "get_config", {})
                     else:
                         self.logger.error(f"(CONTROLLER) Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
                 case _:
@@ -238,7 +259,7 @@ class Controller:
 
 
         # Send status change event to web interface
-        self.web_interface_manager.socketio.emit('module_status_change', {
+        self.web.socketio.emit('module_status_change', {
             'module_id': module_id,
             'status': status
         })
@@ -257,38 +278,38 @@ class Controller:
         try:
             # Stop PTP
             self.logger.info("(CONTROLLER) Stopping PTP manager")
-            self.ptp_manager.stop()
+            self.ptp.stop()
 
             # Stop all threads by setting flags
             self.is_running = False
             
             # Stop health monitoring
             self.logger.info("(CONTROLLER) Stopping health monitoring")
-            self.health_monitor.stop_monitoring()
+            self.health.stop_monitoring()
             
             # Clean up health monitoring
             self.logger.info("(CONTROLLER) Cleaning up module health tracking")
-            self.health_monitor.clear_all_health()
+            self.health.clear_all_health()
             
             # Clean up module data buffer
             self.logger.info("(CONTROLLER) Cleaning up module data buffer")
-            self.buffer_manager.clear_module_data()
+            self.buffer.clear_module_data()
             
             # Clean up modules list
             self.logger.info("(CONTROLLER) Cleaning up modules list")
-            self.service_manager.modules.clear()
+            self.service.modules.clear()
 
             # Clean up service manager
             self.logger.info("(CONTROLLER) Cleaning up service manager")
-            self.service_manager.cleanup()
+            self.service.cleanup()
             
             # Clean up communication manager
             self.logger.info("(CONTROLLER) Cleaning up communication manager")
-            self.communication_manager.cleanup()
+            self.communication.cleanup()
             
             # Clean up database manager
             self.logger.info("(CONTROLLER) Cleaning up database manager")
-            # self.database_manager.cleanup()
+            # self.database.cleanup()
 
             # Give modules time to detect the controller is gone
             time.sleep(1)
@@ -317,28 +338,23 @@ class Controller:
 
         # Register controller service for module discovery
         self.logger.info("(CONTROLLER) Registering controller service...")
-        if not self.service_manager.register_service():
+        if not self.service.register_service():
             self.logger.error("(CONTROLLER) Failed to register controller service")
             return False
         self.logger.info("(CONTROLLER) Controller service registered successfully")
 
         # Start PTP
         self.logger.info("(CONTROLLER) Starting PTP manager...")
-        self.ptp_manager.start() # This will start a thread to run ptp4l and phc2sys
+        self.ptp.start() # This will start a thread to run ptp4l and phc2sys
 
         # Start the web interface
-        if self.web_interface:
+        if self.web:
             self.logger.info("(CONTROLLER) Starting web interface")
-            self.web_interface_manager.start() # This will start a thread to serve a webapp and listen for commands from user
+            self.web.start() # This will start a thread to serve a webapp and listen for commands from user
             
             # Update web interface with initial module list
-            if hasattr(self, 'service_manager'):
-                self.web_interface_manager.update_modules(self.service_manager.modules)
-
-        # Start the CLI interface
-        if self.cli_interface:
-            self.logger.info("(CONTROLLER) Starting CLI interface")
-            self.cli_interface.start() # This will start a thread to listen for commands from the user
+            if hasattr(self, 'service'):
+                self.web.update_modules(self.service.modules)
 
         # Keep the main thread alive
         try: 
@@ -366,7 +382,7 @@ class Controller:
         Returns:
             Configuration value
         """
-        return self.config_manager.get(key, default)
+        return self.config.get(key, default)
         
     def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
         """
@@ -383,7 +399,7 @@ class Controller:
         # Update local variable if applicable
         if key == "controller.max_buffer_size":
             self.max_buffer_size = value
-            self.buffer_manager.max_buffer_size = value
+            self.buffer.max_buffer_size = value
         elif key == "controller.manual_control":
             self.manual_control = value
         elif key == "controller.print_received_data":
@@ -394,11 +410,11 @@ class Controller:
             self.cli_commands = value
         
         # Update in config manager
-        return self.config_manager.set(key, value, persist) 
+        return self.config.set(key, value, persist) 
 
     def get_zmq_commands(self):
         """Get the list of available ZMQ commands"""
-        return self.config_manager.get("controller.zmq_commands", []) 
+        return self.config.get("controller.zmq_commands", []) 
 
     def on_module_discovered(self, module):
         """Callback for when a new module is discovered"""
@@ -415,11 +431,11 @@ class Controller:
             'uptime': 0,
             'disk_space': 0
         }
-        self.health_monitor.update_module_health(module.id, initial_health_data)
+        self.health.update_module_health(module.id, initial_health_data)
         
         # Update web interface
-        if hasattr(self, 'web_interface_manager'):
-            self.web_interface_manager.update_modules(self.service_manager.modules)
+        if hasattr(self, 'web'):
+            self.web.update_modules(self.service.modules)
 
 if __name__ == "__main__":
     controller = Controller(config_file_path="config.json")

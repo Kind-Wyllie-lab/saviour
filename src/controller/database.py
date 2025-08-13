@@ -22,8 +22,8 @@ except ImportError:
     NWB_AVAILABLE = False
     logging.warning("PyNWB not available. NWB file export will be disabled.")
 
-class ControllerDatabaseManager:
-    def __init__(self, logger: logging.Logger, config_manager=None):
+class Database:
+    def __init__(self, config_manager=None):
         """
         Initialize the database manager
         
@@ -31,7 +31,7 @@ class ControllerDatabaseManager:
             logger: Logger instance
             config_manager: Optional configuration manager
         """
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
         
         # Initialize database client internally

@@ -14,7 +14,7 @@ import time
 import logging
 from typing import Dict, List, Any, Optional
 
-class ControllerBufferManager:
+class Buffer:
     def __init__(self, logger: logging.Logger, max_buffer_size: int = 500):
         """Initialize the buffer manager"""
         self.logger = logger

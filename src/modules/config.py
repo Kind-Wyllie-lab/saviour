@@ -18,7 +18,8 @@ from typing import Dict, Any, Optional, Union
 class Config:
     """Manages configuration for habitat modules"""
     
-    # Default configuration values
+    # Default configuration values 
+    # TODO: Consider deleting this
     DEFAULT_CONFIG = {
         # Module parameters
         "module": {

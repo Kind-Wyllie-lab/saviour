@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Controller Interface
+Controller Web Interface
 
 Handles user interaction with the habitat controller, including:
-- Manual control CLI
+- Web based GUI
 - Command parsing and execution
 - Help system and module listing
 """
@@ -20,9 +20,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-class WebInterfaceManager:
-    def __init__(self, logger: logging.Logger, config_manager):
-        self.logger = logger
+class Web:
+    def __init__(self, config_manager):
+        self.logger = logging.getLogger(__name__)
         self.config = config_manager
 
         # Get the port from the config
@@ -71,9 +71,9 @@ class WebInterfaceManager:
 
     def register_module_update_handler(self, handler):
         """Register a handler for module list updates"""
-        self.logger.info(f"(WEB INTERFACE MANAGER) Registering new module update handler")
+        self.logger.info(f"Registering new module update handler")
         self.module_update_handlers.append(handler)
-        self.logger.info(f"(WEB INTERFACE MANAGER) Total module update handlers: {len(self.module_update_handlers)}")
+        self.logger.info(f"Total module update handlers: {len(self.module_update_handlers)}")
 
     def notify_ptp_update(self):
         """Notify all registered handlers of a PTP update"""
@@ -83,18 +83,18 @@ class WebInterfaceManager:
                 try:
                     handler(history)
                 except Exception as e:
-                    self.logger.error(f"(WEB INTERFACE MANAGER) Error in PTP update handler: {e}")
+                    self.logger.error(f"Error in PTP update handler: {e}")
 
     def notify_module_update(self):
         """Notify all registered handlers of a module list update"""
-        self.logger.info(f"(WEB INTERFACE MANAGER) Notifying module update to {len(self.module_update_handlers)} handlers")
+        self.logger.info(f"Notifying module update to {len(self.module_update_handlers)} handlers")
         if self.callbacks["get_modules"]:
             modules = self.callbacks["get_modules"]()
-            self.logger.info(f"(WEB INTERFACE MANAGER) Got {len(modules)} modules from callback")
+            self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Use socketio.emit instead of individual handlers to ensure proper context
             self.socketio.emit('module_update', {"modules": modules})
-            self.logger.info(f"(WEB INTERFACE MANAGER) Sent module update to all clients")
+            self.logger.info(f"Sent module update to all clients")
 
     def register_routes(self):
         # Main pages
@@ -113,26 +113,26 @@ class WebInterfaceManager:
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect(auth=None):
-            self.logger.info(f"(WEB INTERFACE MANAGER) handle_connect called with auth: {auth}")
+            self.logger.info(f"handle_connect called with auth: {auth}")
             client_ip = request.remote_addr
             self.socketio.emit('client_ip', client_ip)
-            self.logger.info(f"(WEB INTERFACE MANAGER) Client connected")
+            self.logger.info(f"Client connected")
             
             # Send initial module list
-            self.logger.info(f"(WEB INTERFACE MANAGER) About to call get_modules()")
+            self.logger.info(f"About to call get_modules()")
             modules = self.get_modules()
-            self.logger.info(f"(WEB INTERFACE MANAGER) get_modules() returned: {type(modules)}")
-            self.logger.info(f"(WEB INTERFACE MANAGER) Sending initial module list to new client: {len(modules)} modules")
+            self.logger.info(f"get_modules() returned: {type(modules)}")
+            self.logger.info(f"Sending initial module list to new client: {len(modules)} modules")
             self.socketio.emit('module_update', {"modules": modules})
             
             # Send current experiment name to new client
             if self.current_experiment_name:
                 self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
-                self.logger.info(f"(WEB INTERFACE MANAGER) Sent current experiment name to new client: {self.current_experiment_name}")
+                self.logger.info(f"Sent current experiment name to new client: {self.current_experiment_name}")
 
         @self.socketio.on('disconnect')
         def handle_disconnect():
-            self.logger.info(f"(WEB INTERFACE MANAGER) Client disconnected")
+            self.logger.info(f"Client disconnected")
 
         @self.socketio.on('save_experiment_name')
         def handle_save_experiment_name(data):
@@ -140,26 +140,26 @@ class WebInterfaceManager:
             try:
                 experiment_name = data.get('experiment_name', '').strip()
                 self.current_experiment_name = experiment_name
-                self.logger.info(f"(WEB INTERFACE MANAGER) Saved experiment name: {experiment_name}")
+                self.logger.info(f"Saved experiment name: {experiment_name}")
                 
                 # Broadcast to all clients
                 self.socketio.emit('experiment_name_update', {"experiment_name": experiment_name})
-                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasted experiment name update to all clients")
+                self.logger.info(f"Broadcasted experiment name update to all clients")
                 
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error saving experiment name: {str(e)}")
+                self.logger.error(f"Error saving experiment name: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
         @self.socketio.on('get_experiment_name')
         def handle_get_experiment_name():
             """Handle request for current experiment name"""
             try:
-                self.logger.info(f"(WEB INTERFACE MANAGER) Client requested experiment name")
+                self.logger.info(f"Client requested experiment name")
                 self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
-                self.logger.info(f"(WEB INTERFACE MANAGER) Sent experiment name to client: {self.current_experiment_name}")
+                self.logger.info(f"Sent experiment name to client: {self.current_experiment_name}")
                 
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting experiment name: {str(e)}")
+                self.logger.error(f"Error getting experiment name: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
         @self.socketio.on('command')
@@ -178,13 +178,13 @@ class WebInterfaceManager:
                 module_id = data.get('module_id')
                 params = data.get('params', {})
                 
-                self.logger.info(f"(WEB INTERFACE MANAGER) Received command via WebSocket: {data}")
+                self.logger.info(f"Received command via WebSocket: {data}")
                 
                 # Special handling for list_recordings to all modules
                 if command_type == 'list_recordings' and module_id == 'all':
                     modules = self.get_modules()
                     if not modules:
-                        self.logger.warning("(WEB INTERFACE MANAGER) No modules found for list_recordings aggregation.")
+                        self.logger.warning("No modules found for list_recordings aggregation.")
                         self.socketio.emit('recordings_list', {'module_recordings': [], 'exported_recordings': self.get_exported_recordings()})
                         return
                     with self._pending_recordings_lock:
@@ -233,7 +233,7 @@ class WebInterfaceManager:
                 # Send command to module
                 if self.callbacks["send_command"]:
                     self.callbacks["send_command"](module_id, command, params)
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Command sent successfully: {command} to module {module_id}")
+                    self.logger.info(f"Command sent successfully: {command} to module {module_id}")
                     
                     # If this was a clear_recordings command, request updated list
                     if command_type == 'clear_recordings':
@@ -242,32 +242,32 @@ class WebInterfaceManager:
                         # Request updated recordings list
                         if self.callbacks["send_command"]:
                             self.callbacks["send_command"](module_id, 'list_recordings', {})
-                            self.logger.info(f"(WEB INTERFACE MANAGER) Requested updated recordings list after clear")
+                            self.logger.info(f"Requested updated recordings list after clear")
                 else:
-                    self.logger.error("(WEB INTERFACE MANAGER) No command handler registered")
+                    self.logger.error("No command handler registered")
                     
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error handling command: {str(e)}")
+                self.logger.error(f"Error handling command: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
         @self.socketio.on('module_update')
         def handle_module_update():
             """Handle request for module data"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) Client requested module data")
+            self.logger.info(f"Client requested module data")
             
             # Get current modules from callback
             modules = self.get_modules()
-            self.logger.info(f"(WEB INTERFACE MANAGER) Got {len(modules)} modules from callback")
+            self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Send module update to all clients
             self.socketio.emit('module_update', {'modules': modules})
-            self.logger.info(f"(WEB INTERFACE MANAGER) Sent module update to all clients")
+            self.logger.info(f"Sent module update to all clients")
 
         @self.socketio.on('module_status')
         def handle_module_status(data):
             """Handle module status update"""
             try:
-                self.logger.info(f"(WEB INTERFACE MANAGER) Received module status: {data}")
+                self.logger.info(f"Received module status: {data}")
                 if not isinstance(data, dict):
                     raise ValueError("Status data must be a dictionary")
                 
@@ -275,11 +275,11 @@ class WebInterfaceManager:
                 status = data.get('status')
                 
                 if not module_id or not status:
-                    raise ValueError("(WEB INTERFACE MANAGER) Status must include 'module_id' and 'status'")
+                    raise ValueError("Status must include 'module_id' and 'status'")
                 
                 # Handle recordings list response
                 if status.get('type') == 'recordings_list':
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting module recordings for module {module_id}")
+                    self.logger.info(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
                     
                     # Send individual module recordings response
@@ -291,7 +291,7 @@ class WebInterfaceManager:
                 
                 # Handle export complete response
                 if status.get('type') == 'export_complete':
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting export complete for module {module_id}")
+                    self.logger.info(f"Broadcasting export complete for module {module_id}")
                     self.socketio.emit('export_complete', {
                         'module_id': module_id,
                         'success': status.get('success', False),
@@ -302,7 +302,7 @@ class WebInterfaceManager:
                 
                 # Handle recording started/stopped status
                 if status.get('type') in ['recording_started', 'recording_stopped']:
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recording status for module {module_id}")
+                    self.logger.info(f"Broadcasting recording status for module {module_id}")
                     self.socketio.emit('module_status', {
                         'module_id': module_id,
                         'status': status
@@ -311,7 +311,7 @@ class WebInterfaceManager:
                 
                 # For heartbeat and other status types
                 if 'recording_status' not in status:
-                    self.logger.warning("(WEB INTERFACE MANAGER) Recording status not in received status update.")
+                    self.logger.warning("Recording status not in received status update.")
                 
                 # Broadcast status to all clients
                 self.socketio.emit('module_status', {
@@ -320,25 +320,25 @@ class WebInterfaceManager:
                 })
                 
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error handling module status: {str(e)}")
+                self.logger.error(f"Error handling module status: {str(e)}")
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
 
         # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/list_modules endpoint called. Listing modules")
+            self.logger.info(f"/api/list_modules endpoint called. Listing modules")
             modules = self.get_modules()
-            self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(modules)} modules")
+            self.logger.info(f"Found {len(modules)} modules")
             return jsonify({"modules": modules})
 
         @self.app.route('/api/ptp_history', methods=['GET'])
         def ptp_history():
             """Get PTP history for all modules"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/ptp_history endpoint called. Getting PTP history")
+            self.logger.info(f"/api/ptp_history endpoint called. Getting PTP history")
             if self.callbacks["get_ptp_history"]:
                 history = self.callbacks["get_ptp_history"]()
-                self.logger.info(f"(WEB INTERFACE MANAGER) Got PTP history for {len(history)} modules")
+                self.logger.info(f"Got PTP history for {len(history)} modules")
                 return jsonify(history)
             return jsonify({})
 
@@ -371,7 +371,7 @@ class WebInterfaceManager:
                     }), 400
                 
                 data = request.get_json(force=True)
-                self.logger.info(f"(WEB INTERFACE MANAGER) Received command request: {data}")
+                self.logger.info(f"Received command request: {data}")
                 
                 command = data.get('command')
                 module_id = data.get('module_id')
@@ -387,7 +387,7 @@ class WebInterfaceManager:
                         }
                     }), 400
                 
-                self.logger.info(f"(WEB INTERFACE MANAGER) Processing command: {command} for module: {module_id}")
+                self.logger.info(f"Processing command: {command} for module: {module_id}")
                 
                 if self.callbacks["send_command"]:
                     result = self.callbacks["send_command"](module_id, command, params)
@@ -398,14 +398,14 @@ class WebInterfaceManager:
                         "module_id": module_id
                     })
                 else:
-                    self.logger.error("(WEB INTERFACE MANAGER) No command callback registered")
+                    self.logger.error("No command callback registered")
                     return jsonify({
                         "error": "Command system not available",
                         "status": "error"
                     }), 503
                     
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error in send_command endpoint: {str(e)}")
+                self.logger.error(f"Error in send_command endpoint: {str(e)}")
                 return jsonify({
                     "error": str(e),
                     "status": "error"
@@ -414,17 +414,17 @@ class WebInterfaceManager:
         @self.app.route('/api/module_health', methods=['GET'])
         def module_health():
             """Get the health status of all modules"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) /api/module_health endpoint called. Getting module health")
+            self.logger.info(f"/api/module_health endpoint called. Getting module health")
             if self.callbacks["get_module_health"]:
                 health = self.callbacks["get_module_health"]()
-                self.logger.info(f"(WEB INTERFACE MANAGER) Got module health for {len(health)} modules")
+                self.logger.info(f"Got module health for {len(health)} modules")
                 return jsonify(health)
             return jsonify({})
 
         @self.app.route('/api/exported_recordings', methods=['GET'])
         def get_exported_recordings_api():
             """Get list of exported recordings"""
-            self.logger.info("(WEB INTERFACE MANAGER) /api/exported_recordings endpoint called")
+            self.logger.info("/api/exported_recordings endpoint called")
             exported_recordings = self.get_exported_recordings()
             return jsonify({"exported_recordings": exported_recordings})
 
@@ -437,7 +437,7 @@ class WebInterfaceManager:
                     'exported_recordings': recordings
                 })
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting exported recordings: {str(e)}")
+                self.logger.error(f"Error getting exported recordings: {str(e)}")
                 self.socketio.emit('exported_recordings_list', {
                     'exported_recordings': [],
                     'error': str(e)
@@ -452,7 +452,7 @@ class WebInterfaceManager:
                     'modules': modules
                 })
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting modules: {str(e)}")
+                self.logger.error(f"Error getting modules: {str(e)}")
                 self.socketio.emit('modules_list', {
                     'modules': [],
                     'error': str(e)
@@ -473,7 +473,7 @@ class WebInterfaceManager:
                         'error': 'Module health callback not available'
                     })
             except Exception as e:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Error getting module health: {str(e)}")
+                self.logger.error(f"Error getting module health: {str(e)}")
                 self.socketio.emit('module_health_update', {
                     'module_health': {},
                     'error': str(e)
@@ -481,17 +481,17 @@ class WebInterfaceManager:
 
     def get_modules(self):
         """Get list of all discovered modules"""
-        self.logger.info("(WEB INTERFACE MANAGER) Getting modules list")
+        self.logger.info("Getting modules list")
         if self.callbacks["get_modules"]:
-            self.logger.info(f"(WEB INTERFACE MANAGER) Callback type: {type(self.callbacks['get_modules'])}")
-            self.logger.info(f"(WEB INTERFACE MANAGER) Callback: {self.callbacks['get_modules']}")
+            self.logger.info(f"Callback type: {type(self.callbacks['get_modules'])}")
+            self.logger.info(f"Callback: {self.callbacks['get_modules']}")
             # Call the callback function to get the actual modules list
             modules = self.callbacks["get_modules"]()
-            self.logger.info(f"(WEB INTERFACE MANAGER) Modules type: {type(modules)}")
-            self.logger.info(f"(WEB INTERFACE MANAGER) Modules: {modules}")
+            self.logger.info(f"Modules type: {type(modules)}")
+            self.logger.info(f"Modules: {modules}")
             return modules
         else:
-            self.logger.warning("(WEB INTERFACE MANAGER) No get_modules callback registered")
+            self.logger.warning("No get_modules callback registered")
             return []
     
     def update_modules(self, modules: list):
@@ -501,7 +501,7 @@ class WebInterfaceManager:
     def start(self):
         """Start the web interface in a separate thread"""
         if not self._running:
-            self.logger.info(f"(WEB INTERFACE MANAGER) Starting web interface on port {self.port}")
+            self.logger.info(f"Starting web interface on port {self.port}")
             self._running = True
             self.web_thread = threading.Thread(
                 target=self._run_server,
@@ -522,7 +522,7 @@ class WebInterfaceManager:
 
     def list_modules(self):
         """List all discovered modules"""
-        self.logger.info("(WEB INTERFACE MANAGER) Listing modules")
+        self.logger.info("Listing modules")
         modules = self.get_modules()
         return jsonify({"modules": modules})
 
@@ -553,27 +553,27 @@ class WebInterfaceManager:
         recordings = []
         nas_mount_point = Path("/mnt/nas")
         
-        self.logger.info(f"(WEB INTERFACE MANAGER) Scanning NAS for recordings...")
+        self.logger.info(f"Scanning NAS for recordings...")
         
         # Try to mount NAS if not already mounted
         if not nas_mount_point.exists() or not nas_mount_point.is_mount():
-            self.logger.info(f"(WEB INTERFACE MANAGER) NAS not mounted, attempting to mount...")
+            self.logger.info(f"NAS not mounted, attempting to mount...")
             if not self.mount_nas():
-                self.logger.error(f"(WEB INTERFACE MANAGER) Failed to mount NAS, returning empty list")
+                self.logger.error(f"Failed to mount NAS, returning empty list")
                 return recordings  # Return empty list if mounting failed
         
-        self.logger.info(f"(WEB INTERFACE MANAGER) NAS is mounted at {nas_mount_point}")
+        self.logger.info(f"NAS is mounted at {nas_mount_point}")
         
         # Check what's in the root NAS directory
         if nas_mount_point.exists():
             root_contents = list(nas_mount_point.iterdir())
-            self.logger.info(f"(WEB INTERFACE MANAGER) NAS root contents: {[item.name for item in root_contents]}")
+            self.logger.info(f"NAS root contents: {[item.name for item in root_contents]}")
             
             # Look specifically for export directories
             export_dirs = [item for item in root_contents if item.is_dir() and item.name.startswith('export_')]
-            self.logger.info(f"(WEB INTERFACE MANAGER) Found export directories: {[item.name for item in export_dirs]}")
+            self.logger.info(f"Found export directories: {[item.name for item in export_dirs]}")
         else:
-            self.logger.error(f"(WEB INTERFACE MANAGER) NAS mount point does not exist: {nas_mount_point}")
+            self.logger.error(f"NAS mount point does not exist: {nas_mount_point}")
             return recordings
         
         # Scan multiple directories for recordings
@@ -581,14 +581,14 @@ class WebInterfaceManager:
         
         for dir_name in directories_to_scan:
             scan_path = nas_mount_point / dir_name
-            self.logger.info(f"(WEB INTERFACE MANAGER) Looking for recordings in: {scan_path}")
+            self.logger.info(f"Looking for recordings in: {scan_path}")
             
             if scan_path.exists():
-                self.logger.info(f"(WEB INTERFACE MANAGER) {dir_name} directory exists, scanning for files...")
+                self.logger.info(f"{dir_name} directory exists, scanning for files...")
                 for file in scan_path.glob('**/*'):
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Found file: {file} (suffix: {file.suffix})")
+                    self.logger.info(f"Found file: {file} (suffix: {file.suffix})")
                     if file.is_file() and file.suffix in ['.mp4', '.txt']:
-                        self.logger.info(f"(WEB INTERFACE MANAGER) Adding file to recordings list: {file}")
+                        self.logger.info(f"Adding file to recordings list: {file}")
                         recordings.append({
                             'filename': f"nas/{dir_name}/{str(file.relative_to(scan_path))}",
                             'size': file.stat().st_size,
@@ -597,18 +597,18 @@ class WebInterfaceManager:
                             'destination': 'nas'
                         })
             else:
-                self.logger.info(f"(WEB INTERFACE MANAGER) {dir_name} directory does not exist: {scan_path}")
+                self.logger.info(f"{dir_name} directory does not exist: {scan_path}")
         
         # Also scan for export directories (like export_20250624_220253) in the root
-        self.logger.info(f"(WEB INTERFACE MANAGER) Scanning for export directories in root...")
+        self.logger.info(f"Scanning for export directories in root...")
         for item in nas_mount_point.iterdir():
-            self.logger.info(f"(WEB INTERFACE MANAGER) Checking item: {item.name} (is_dir: {item.is_dir()}, starts_with_export: {item.name.startswith('export_')})")
+            self.logger.info(f"Checking item: {item.name} (is_dir: {item.is_dir()}, starts_with_export: {item.name.startswith('export_')})")
             if item.is_dir() and item.name.startswith('export_'):
-                self.logger.info(f"(WEB INTERFACE MANAGER) Found export directory: {item}")
+                self.logger.info(f"Found export directory: {item}")
                 for file in item.glob('**/*'):
-                    self.logger.info(f"(WEB INTERFACE MANAGER) Found file in export directory: {file} (suffix: {file.suffix})")
+                    self.logger.info(f"Found file in export directory: {file} (suffix: {file.suffix})")
                     if file.is_file() and file.suffix in ['.mp4', '.txt']:
-                        self.logger.info(f"(WEB INTERFACE MANAGER) Adding export file to recordings list: {file}")
+                        self.logger.info(f"Adding export file to recordings list: {file}")
                         recordings.append({
                             'filename': f"nas/{item.name}/{str(file.relative_to(item))}",
                             'size': file.stat().st_size,
@@ -617,7 +617,7 @@ class WebInterfaceManager:
                             'destination': 'nas'
                         })
         
-        self.logger.info(f"(WEB INTERFACE MANAGER) Found {len(recordings)} NAS recordings")
+        self.logger.info(f"Found {len(recordings)} NAS recordings")
         return recordings
 
     def mount_nas(self):
@@ -651,20 +651,20 @@ class WebInterfaceManager:
             result = subprocess.run(mount_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
-                self.logger.error(f"(WEB INTERFACE MANAGER) Failed to mount NAS: {result.stderr}")
+                self.logger.error(f"Failed to mount NAS: {result.stderr}")
                 return False
             
-            self.logger.info(f"(WEB INTERFACE MANAGER) Successfully mounted NAS at {mount_point}")
+            self.logger.info(f"Successfully mounted NAS at {mount_point}")
             return True
             
         except Exception as e:
-            self.logger.error(f"(WEB INTERFACE MANAGER) NAS mount failed: {str(e)}")
+            self.logger.error(f"NAS mount failed: {str(e)}")
             return False
 
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
         try:
-            self.logger.info(f"(WEB INTERFACE MANAGER) Received status from {module_id}: {status}")
+            self.logger.info(f"Received status from {module_id}: {status}")
 
             # Ensure status has required fields
             if not isinstance(status, dict):
@@ -672,7 +672,7 @@ class WebInterfaceManager:
 
             # Handle recordings list response
             if status.get('type') == 'recordings_list':
-                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting module recordings for module {module_id}")
+                self.logger.info(f"Broadcasting module recordings for module {module_id}")
                 module_recordings = status.get('recordings', [])
                 
                 # Send individual module recordings response
@@ -684,7 +684,7 @@ class WebInterfaceManager:
 
             # Handle export complete response
             if status.get('type') == 'export_complete':
-                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting export complete for module {module_id}")
+                self.logger.info(f"Broadcasting export complete for module {module_id}")
                 self.socketio.emit('export_complete', {
                     'module_id': module_id,
                     'success': status.get('success', False),
@@ -695,7 +695,7 @@ class WebInterfaceManager:
 
             # Handle recording started/stopped status
             if status.get('type') in ['recording_started', 'recording_stopped']:
-                self.logger.info(f"(WEB INTERFACE MANAGER) Broadcasting recording status for module {module_id}")
+                self.logger.info(f"Broadcasting recording status for module {module_id}")
                 self.socketio.emit('module_status', {
                     'module_id': module_id,
                     'status': status
@@ -704,7 +704,7 @@ class WebInterfaceManager:
 
             # For heartbeat and other status types
             if 'recording_status' not in status:
-                self.logger.warning("(WEB INTERFACE MANAGER) Recording status not in received status update.")
+                self.logger.warning("Recording status not in received status update.")
                 
             # Emit the status to all connected clients
             self.socketio.emit('module_status', {
@@ -712,4 +712,4 @@ class WebInterfaceManager:
                 'status': status
             })
         except Exception as e:
-            self.logger.error(f"(WEB INTERFACE MANAGER) Error handling module status: {str(e)}")
+            self.logger.error(f"Error handling module status: {str(e)}")

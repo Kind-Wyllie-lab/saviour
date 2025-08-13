@@ -17,12 +17,12 @@ import time
 from typing import Callable, Dict, Any
 import json
 
-class ControllerCommunicationManager:
-    def __init__(self, logger: logging.Logger, 
+class Communication:
+    def __init__(self,
                  status_callback: Callable[[str, str], None] = None, # Use callbacks to handle status updates in the controller.py program, not here.
                  data_callback: Callable[[str, str], None] = None): # Use callbacks to handle data updates in the controller.py program, not here.
         """Initialize the communication manager"""
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.is_running = True
         self.status_callback = None
         self.data_callback = None

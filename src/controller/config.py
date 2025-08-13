@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Dict, Any, Optional, Union
 
-class ControllerConfigManager:
+class Config:
     """Manages configuration for the habitat controller system"""
     
     # Default configuration values
@@ -64,7 +64,7 @@ class ControllerConfigManager:
         "CONTROLLER_LOG_LEVEL": "logging.level",
     }
     
-    def __init__(self, logger: logging.Logger, config_file_path: Optional[str] = None):
+    def __init__(self, config_file_path: Optional[str] = None):
         """
         Initialize the configuration manager
         
@@ -72,7 +72,7 @@ class ControllerConfigManager:
             logger: Logger instance
             config_file_path: Path to configuration file (optional)
         """
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.config_file_path = config_file_path or os.path.join(os.path.dirname(__file__), "config.json")
         self.logger.info(f"(CONFIG MANAGER) Controller config file path set to: {self.config_file_path}")
         self.config = self._load_config()

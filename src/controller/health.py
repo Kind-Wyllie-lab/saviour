@@ -17,18 +17,17 @@ import logging
 from collections import deque
 from typing import Dict, Any, Optional, List
 
-class ControllerHealthMonitor:
-    def __init__(self, logger: logging.Logger, heartbeat_interval: int = 30, heartbeat_timeout: int = 90, history_size: int = 100):
+class Health:
+    def __init__(self, heartbeat_interval: int = 30, heartbeat_timeout: int = 90, history_size: int = 100):
         """Initialize the health monitor
         
         Args:
-            logger: Logger instance
             heartbeat_interval: Interval between health checks in seconds
             heartbeat_timeout: Time in seconds before marking a module as offline
             history_size: Number of historical health records to keep per module
         """
 
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
         self.history_size = history_size
@@ -43,7 +42,7 @@ class ControllerHealthMonitor:
         
         # Callback for status changes
         self.callbacks = None
-        self.logger.info(f"(HEALTH MONITOR) Initialised health monitor with heartbeat interval {self.heartbeat_interval}s, timeout {self.heartbeat_timeout}s.")
+        self.logger.info(f"Initialised health monitor with heartbeat interval {self.heartbeat_interval}s, timeout {self.heartbeat_timeout}s.")
     
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
         """
@@ -99,13 +98,13 @@ class ControllerHealthMonitor:
                     self.module_health[module_id]['phc2sys_freq'] = status_data['phc2sys_freq']
             
             if was_new_module:
-                self.logger.info(f"(HEALTH MONITOR) New module {module_id} added to health tracking")
+                self.logger.info(f"New module {module_id} added to health tracking")
             else:
-                self.logger.info(f"(HEALTH MONITOR) Module {module_id} health updated: {self.module_health[module_id]}")
+                self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
             return True
             
         except Exception as e:
-            self.logger.error(f"(HEALTH MONITOR) Error updating health for module {module_id}: {e}")
+            self.logger.error(f"Error updating health for module {module_id}: {e}")
             return False
     
     def get_module_health_history(self, module_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -209,7 +208,7 @@ class ControllerHealthMonitor:
     
     def monitor_health(self):
         """Monitor the health of all modules (runs in separate thread)"""
-        self.logger.info("(HEALTH MONITOR) Checking for offline modules via monitor_health()")
+        self.logger.info("Checking for offline modules via monitor_health()")
         cycle_count = 0
         while self.is_monitoring:
             current_time = time.time() # Get current time
@@ -217,14 +216,14 @@ class ControllerHealthMonitor:
             
             # Log every 10 cycles (50 seconds with 5s interval) to show the thread is alive
             if cycle_count % 10 == 0:
-                self.logger.info(f"(HEALTH MONITOR) Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
+                self.logger.info(f"Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
             
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
                 last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
                 time_diff = current_time - last_heartbeat
                 
                 # Debug logging for time calculations
-                self.logger.debug(f"(HEALTH MONITOR) Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
+                self.logger.debug(f"Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
                 
                 # Find offline modules
                 if time_diff > self.heartbeat_timeout: # If heartbeat not received within timeout period
@@ -239,44 +238,44 @@ class ControllerHealthMonitor:
                             try:
                                 self.callbacks["on_status_change"](module_id, 'offline')
                             except Exception as e:
-                                self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+                                self.logger.error(f"Error in status change callback: {e}")
                 else:
                     # Module is responsive, ensure it's marked as online
                     if self.module_health[module_id]['status'] == 'offline':
-                        self.logger.info(f"(HEALTH MONITOR) Module {module_id} is back online")
+                        self.logger.info(f"Module {module_id} is back online")
                         self.module_health[module_id]['status'] = 'online'
                         # Trigger callback for online status
                         if "on_status_change" in self.callbacks:
                             try:
                                 self.callbacks["on_status_change"](module_id, 'online')
                             except Exception as e:
-                                self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+                                self.logger.error(f"Error in status change callback: {e}")
             
             time.sleep(self.heartbeat_interval)
     
     def start_monitoring(self):
         """Start the health monitoring thread"""
         if self.is_monitoring:
-            self.logger.warning("(HEALTH MONITOR) Health monitoring is already running")
+            self.logger.warning("Health monitoring is already running")
             return
         
         self.is_monitoring = True
         self.monitor_thread = threading.Thread(target=self.monitor_health, daemon=True)
         self.monitor_thread.start()
-        self.logger.info(f"(HEALTH MONITOR) Started health monitoring with {self.heartbeat_interval}s interval")
+        self.logger.info(f"Started health monitoring with {self.heartbeat_interval}s interval")
     
     def stop_monitoring(self):
         """Stop the health monitoring thread"""
         self.is_monitoring = False
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5)
-        self.logger.info("(HEALTH MONITOR) Stopped health monitoring")
+        self.logger.info("Stopped health monitoring")
     
     def clear_all_health(self):
         """Clear all health data"""
         self.module_health.clear()
         self.module_health_history.clear()
-        self.logger.info("(HEALTH MONITOR) Cleared all health data")
+        self.logger.info("Cleared all health data")
     
     def get_health_summary(self) -> Dict[str, Any]:
         """
@@ -338,7 +337,7 @@ class ControllerHealthMonitor:
                     try:
                         self.callbacks["on_status_change"](module_id, 'offline')
                     except Exception as e:
-                        self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+                        self.logger.error(f"Error in status change callback: {e}")
             else:
                 self.logger.info(f"Module {module_id} already offline: {reason}")
         else:
@@ -362,7 +361,7 @@ class ControllerHealthMonitor:
                         try:
                             self.callbacks["on_status_change"](module_id, 'online')
                         except Exception as e:
-                            self.logger.error(f"(HEALTH MONITOR) Error in status change callback: {e}")
+                            self.logger.error(f"Error in status change callback: {e}")
                 else:
                     self.logger.info(f"Module {module_id} communication test successful - already online")
             else:

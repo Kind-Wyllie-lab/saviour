@@ -37,7 +37,7 @@ else:
 # Setup logging ONCE for all additional classes that log
 logging.basicConfig(
     level=logging.INFO,
-    format=format_string
+    format='%(levelname)s - %(name)s - %(message)s'
 )
 
 # Import managers

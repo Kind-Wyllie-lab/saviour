@@ -118,7 +118,7 @@ class Controller:
                 self.logger.info("Continuing with console logging only")
             
 
-        self.module_config = {}
+        self.module_config = {} # To store module config information
 
         # Parameters from config
         self.max_buffer_size = self.config.get("controller.max_buffer_size")
@@ -383,7 +383,7 @@ class Controller:
         if key == "controller.max_buffer_size":
             self.max_buffer_size = value
             self.buffer.max_buffer_size = value
-            
+
         # Update in config manager
         return self.config.set(key, value, persist) 
 

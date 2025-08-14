@@ -626,11 +626,16 @@ class Web:
             import subprocess
             
             # NAS configuration - updated to match working module_export_manager implementation
-            nas_ip = "192.168.0.2"
-            share_path = "data"
-            username = "sidbit"
-            password = "RaspberryWonder1305"
-            mount_point = "/mnt/nas"
+            # nas_ip = "192.168.0.2"
+            # share_path = "data"
+            # username = "sidbit"
+            # password = "RaspberryWonder1305"
+            # mount_point = "/mnt/nas"
+            nas_ip = self.config.get("nas.ip")
+            share_path = self.config.get("nas.share_path")
+            username = self.config.get("nas.username")
+            password = self.config.get("nas.password")
+            mount_point = self.config.get("nas.local_mount")
             
             # Create mount point if it doesn't exist
             mount_path = Path(mount_point)

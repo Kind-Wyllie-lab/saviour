@@ -15,9 +15,9 @@ import logging
 from typing import Dict, List, Any, Optional
 
 class Buffer:
-    def __init__(self, logger: logging.Logger, max_buffer_size: int = 500):
+    def __init__(self, max_buffer_size: int = 500):
         """Initialize the buffer manager"""
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self.max_buffer_size = max_buffer_size
         
         # Module data storage

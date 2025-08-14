@@ -77,6 +77,11 @@ class Config:
     ENV_CONFIG_MAPPING = {
         "SUPABASE_URL": "database.url",
         "SUPABASE_KEY": "database.key",
+        "NAS_IP": "nas.ip",
+        "NAS_SHARE_PATH": "nas.share_path",
+        "NAS_USERNAME": "nas.username",
+        "NAS_PASSWORD": "nas.password",
+        "NAS_LOCAL_MOUNT": "nas.local_mount",
         "CONTROLLER_PORT": "service.port",
         "CONTROLLER_MAX_BUFFER_SIZE": "controller.max_buffer_size",
         "CONTROLLER_MANUAL_CONTROL": "controller.manual_control",

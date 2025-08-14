@@ -37,7 +37,7 @@ else:
 logging.basicConfig(
     level=logging.INFO,
     format=format_string
-)
+)   
 
 # Networking and synchronization
 import threading # for concurrent operations
@@ -118,28 +118,18 @@ class Controller:
                 self.logger.info("Continuing with console logging only")
             
 
+        # Module state managemenet
         self.module_config = {} # To store module config information
-
-        # Parameters from config
         self.max_buffer_size = self.config.get("controller.max_buffer_size")
         
         # Control flags 
         self.is_running = True  # Add flag for listener thread
 
         # Managers
-        self.service = Service(self.config)
-        
-        # Register module discovery callback immediately to catch early discoveries
-        def module_discovery_callback(module):
-            self.on_module_discovered(module)
-            if hasattr(self, 'web'):
-                self.web.notify_module_update()
-                self.module_config[module.id] = {}
-        
-        self.service.on_module_discovered = module_discovery_callback
-        self.service.on_module_removed = lambda module: (
-            self.web.notify_module_update() if hasattr(self, 'web') else None
-        )
+        self.service = Service(self.config) 
+        self.service.on_module_discovered = self.on_module_discovered
+        self.service.on_module_removed = self.on_module_removed              
+
         self.logger.info(f"(CONTROLLER) Module discovery callback registered early")
         
         self.communication = Communication(
@@ -407,6 +397,12 @@ class Controller:
         # Update web interface
         if hasattr(self, 'web'):
             self.web.update_modules(self.service.modules)
+            self.web.notify_module_update()
+            self.module_config[module.id] = {}
+
+    def on_module_removed(self, module):
+        """Callback for when a module service is removed"""
+        self.web.notify_module_update()
 
 if __name__ == "__main__":
     controller = Controller(config_file_path="config.json")

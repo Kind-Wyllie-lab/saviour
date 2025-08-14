@@ -3,7 +3,7 @@
 """
 Controller Service Manager
 
-The service manager is responsible for discovering, registering and unregistering services (modules) with the controller.
+The service manager is responsible for discovering, registering and unregistering zeroconf services (modules) with the controller.
 
 """
 
@@ -36,7 +36,8 @@ class Service():
         self.modules = []
         self.module_health = {}
         self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
-        self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.
+        self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.#
+        self.callbacks = {} # Callbacks dict
         
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
@@ -278,7 +279,9 @@ class Service():
             self.logger.info(f"Updated last seen time for module: {module_id}")
 
     def remove_service(self, zeroconf, service_type, name):
-        """Remove a service from the list of discovered modules"""
+        """Remove a service from the list of discovered modules.
+        This will only trigger if a module broadcasts it's "remove service" message, which it is unlikely to do unless it is shutting down gracefully.
+        """
         self.logger.info(f"Removing module: {name}")
         try:
             # Find the module being removed

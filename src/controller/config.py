@@ -20,39 +20,58 @@ class Config:
     
     # Default configuration values
     DEFAULT_CONFIG = {
-        # Controller parameters
         "controller": {
-            "max_buffer_size": 1000,
+            "max_buffer_size": 2000,
             "manual_control": True,
             "print_received_data": False,
-            "commands": ["get_status", "get_data", "start_stream", "stop_stream", "record_video"],
-        },
-        
-        # Service parameters
-        "service": {
-            "port": 5000,
+            "cli_commands": ["help", 
+            "quit", 
+            "list",
+            "zmq send", 
+            "health status", 
+            "health history"],
+            "zmq_commands": ["get_status",
+            "start_recording",
+            "stop_recording",
+            "export_recordings",
+            "update_settings",
+            "list_recordings",
+            "clear_recordings"
+        ]},
+        "zeroconf": {
+            "port": 5353,
             "service_type": "_controller._tcp.local.",
-            "service_name": "controller._controller._tcp.local.",
+            "service_name": "controller._controller._tcp.local."
         },
-        
-        # Health monitoring parameters
+        "zmq": {
+            "cmd_port": 5555,
+            "status_port": 5556,
+            "host": "0.0.0.0"
+        },
         "health_monitor": {
             "heartbeat_interval": 30,
-            "heartbeat_timeout": 90,
+            "heartbeat_timeout": 90 
         },
-        
-        # Data export parameters
         "data_export": {
-            "export_interval": 10,
-            "health_export_interval": 10,
+            "export_interval": 15,
+            "health_export_interval": 30
         },
-        
-        # Logging parameters
+        "database": {
+            "url": "",
+            "key": ""
+        },
         "logging": {
             "level": "INFO",
-            "format": "%(asctime)s - %(levelname)s - %(message)s",
+            "format": "%(levelname)s - %(name)s - %(message)s",
+            "directory": "var/log/habitat",
+            "max_file_size_mb": 10,
+            "backup_count": 5
         },
-    }
+        "interface": {
+            "web_interface_port": 5000
+        }
+    } 
+
     
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {

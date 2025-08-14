@@ -47,8 +47,8 @@ from src.controller.service import Service
 from src.controller.communication import Communication
 from src.controller.health import Health
 from src.controller.buffer import Buffer
-from src.controller.config import config
-from src.controller.ptp import PTP
+from src.controller.config import Config
+from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
     
 # Habitat Controller Class
@@ -78,59 +78,52 @@ class Controller:
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
+        self.logger.info(f"(CONTROLLER) Initializing managers")
 
-        # Add file handler if none exists
+        # Initialize config manager
+        self.config = Config(config_file_path)
+
+        # Add logging file handler if none exists
         if not self.logger.handlers:
             # Add file handler for persistent logging (useful when running as systemd service)
             try:
-                # Check if file logging is enabled in config
-                if self.config.get("logging.to_file", True):
-                    # Create logs directory if it doesn't exist
-                    log_dir = self.config.get("logging.directory", "/var/log/habitat")
-                    os.makedirs(log_dir, exist_ok=True)
-                    
-                    # Generate log filename with module info
-                    log_filename = f"{self.module_type}_{self.module_id}.log"
-                    log_filepath = os.path.join(log_dir, log_filename)
-                    
-                    # Get config values for rotation
-                    max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
-                    backup_count = self.config.get("logging.backup_count", 5)
-                    
-                    # Add file handler with rotation
-                    from logging.handlers import RotatingFileHandler
-                    file_handler = RotatingFileHandler(
-                        log_filepath,
-                        maxBytes=max_bytes,
-                        backupCount=backup_count
-                    )
-                    file_handler.setLevel(logging.INFO)
-                    self.logger.addHandler(file_handler)
-                    
-                    self.logger.info(f"File logging enabled: {log_filepath}")
-                    self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
-                else:
-                    self.logger.info("File logging disabled in config")
-                    
+                # Create logs directory if it doesn't exist
+                log_dir = self.config.get("logging.directory", "/var/log/habitat")
+                os.makedirs(log_dir, exist_ok=True)
+                
+                # Generate log filename with module info
+                log_filename = f"{self.module_type}_{self.module_id}.log"
+                log_filepath = os.path.join(log_dir, log_filename)
+                
+                # Get config values for rotation
+                max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
+                backup_count = self.config.get("logging.backup_count", 5)
+                
+                # Add file handler with rotation
+                from logging.handlers import RotatingFileHandler
+                file_handler = RotatingFileHandler(
+                    log_filepath,
+                    maxBytes=max_bytes,
+                    backupCount=backup_count
+                )
+                file_handler.setLevel(logging.INFO)
+                self.logger.addHandler(file_handler)
+                
+                self.logger.info(f"File logging enabled: {log_filepath}")
+                self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+
             except Exception as e:
                 # If file logging fails, log the error but don't crash
                 self.logger.warning(f"Failed to setup file logging: {e}")
                 self.logger.info("Continuing with console logging only")
             
-        self.logger.info(f"(CONTROLLER) Initializing managers")
-        # Initialize config manager
-        self.config = Config(config_file_path)
+
         self.module_config = {}
 
         # Parameters from config
         self.max_buffer_size = self.config.get("controller.max_buffer_size")
-        self.zmq_commands = self.config.get("controller.zmq_commands")
-        self.cli_commands = self.config.get("controller.cli_commands")
         
-        # Control flags from config
-        self.manual_control = self.config.get("controller.manual_control")
-        self.print_received_data = self.config.get("controller.print_received_data")
+        # Control flags 
         self.is_running = True  # Add flag for listener thread
 
         # Managers
@@ -155,23 +148,13 @@ class Controller:
         )
         self.buffer = Buffer(self.max_buffer_size)
         # self.database = database.ControllerDatabaseManager(self.config)
-        self.ptp = PTP(role=ptp.PTPRole.MASTER)
-        
-        # Check which interfaces are enabled
-        self.web = None # Flag to indicate if the web interface is enabled
-        if self.config.get("interface.web") == True:
-            self.logger.info(f"(CONTROLLER) Web interface flag set to True")
-            self.web = True # Flag to indicate if the web interface is enabled
-            self.web = web.WebInterfaceManager(self.config) # Should this be instantiated here or in controller.py? 
-        else:
-            self.logger.info(f"(CONTROLLER) Web interface flag set to False")
-            self.web = False
+        self.ptp = PTP(role=PTPRole.MASTER)
+        self.web = Web(self.config)
 
         # Initialize health monitor with configuration
         heartbeat_interval = self.config.get("health_monitor.heartbeat_interval")
         heartbeat_timeout = self.config.get("health_monitor.heartbeat_timeout")
-        self.health = health_monitor.ControllerHealthMonitor(
-            self.logger, 
+        self.health = Health(
             heartbeat_interval=heartbeat_interval,
             heartbeat_timeout=heartbeat_timeout
         )
@@ -400,21 +383,9 @@ class Controller:
         if key == "controller.max_buffer_size":
             self.max_buffer_size = value
             self.buffer.max_buffer_size = value
-        elif key == "controller.manual_control":
-            self.manual_control = value
-        elif key == "controller.print_received_data":
-            self.print_received_data = value
-        elif key == "controller.zmq_commands":
-            self.zmq_commands = value
-        elif key == "controller.cli_commands":
-            self.cli_commands = value
-        
+            
         # Update in config manager
         return self.config.set(key, value, persist) 
-
-    def get_zmq_commands(self):
-        """Get the list of available ZMQ commands"""
-        return self.config.get("controller.zmq_commands", []) 
 
     def on_module_discovered(self, module):
         """Callback for when a new module is discovered"""

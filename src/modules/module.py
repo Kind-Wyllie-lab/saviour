@@ -436,6 +436,7 @@ class Module:
         Returns:
             dict with deleted_count and kept_count
         """
+        self.logger.info("Attempting to clear recordings")
         try:
             if not os.path.exists(self.recording_folder):
                 return {"deleted_count": 0, "kept_count": 0}
@@ -504,6 +505,8 @@ class Module:
                 except Exception as e:
                     self.logger.error(f"Error deleting recording {recording['filename']}: {e}")
             
+            self.logger.info("Deleteted {deleted_count} recordings")
+
             return {
                 "deleted_count": deleted_count,
                 "kept_count": kept_count
@@ -595,6 +598,7 @@ class Module:
                     "experiment_name": experiment_name,
                     "success": True
                 })
+                self.clear_recordings()
                 return True
                 
             # Export specific single file

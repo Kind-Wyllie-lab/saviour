@@ -55,106 +55,15 @@ class Service:
         self.zeroconf = None
         self.service_browser = None
         self.service_info = None
-    
-        # Get the ip address of the module
-        if os.name == 'nt': # Windows
-            self.ip = socket.gethostbyname(socket.gethostname())
-        else: # Linux/Unix
-            # Try multiple methods to get the actual network IP address
-            import time
-            self.ip = None
-            attempt = 0
-            while True:
-                attempt += 1
-                self.logger.info(f"Attempting to get eth0 IP (attempt {attempt})...")
-                # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
-                try:
-                    import subprocess
-                    result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
-                    if result.returncode == 0:
-                        # Parse ifconfig output to find eth0 IP
-                        for line in result.stdout.split('\n'):
-                            if 'inet ' in line:
-                                # Extract IP from "inet 192.168.1.197" format
-                                parts = line.strip().split()
-                                for i, part in enumerate(parts):
-                                    if part == 'inet' and i + 1 < len(parts):
-                                        potential_ip = parts[i + 1]
-                                        if potential_ip.startswith('192.168.1.'):
-                                            self.ip = potential_ip
-                                            self.logger.info(f"Found eth0 IP from ifconfig: {self.ip}")
-                                            break
-                                if self.ip:
-                                    break
-                        
-                        if not self.ip:
-                            self.logger.warning(f"No eth0 IP found in ifconfig output")
-                    else:
-                        self.logger.warning(f"ifconfig eth0 failed: {result.stderr}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
-                # Method 2: Try socket.getaddrinfo with a connection to get local IP
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        s.connect(("8.8.8.8", 80))
-                        potential_ip = s.getsockname()[0]
-                        s.close()
-                        
-                        # Only use eth0 IP
-                        if potential_ip.startswith('192.168.1.'):
-                            self.ip = potential_ip
-                            self.logger.info(f"Selected eth0 IP from socket connection: {self.ip}")
-                        else:
-                            self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to get IP from socket connection: {e}")
-                # Method 3: Try socket.gethostbyname but filter out loopback
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        hostname_ip = socket.gethostbyname(socket.gethostname())
-                        if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
-                            self.ip = hostname_ip
-                            self.logger.info(f"Selected eth0 IP from hostname resolution: {self.ip}")
-                        else:
-                            self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to get IP from hostname resolution: {e}")
-                # Method 4: Try to get IP from network interfaces
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        import subprocess
-                        result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
-                                              capture_output=True, text=True, timeout=5)
-                        if result.returncode == 0:
-                            lines = result.stdout.strip().split('\n')
-                            for line in lines:
-                                if 'src' in line:
-                                    parts = line.split()
-                                    src_index = parts.index('src')
-                                    if src_index + 1 < len(parts):
-                                        potential_ip = parts[src_index + 1]
-                                        if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
-                                            self.ip = potential_ip
-                                            self.logger.info(f"Selected eth0 IP from ip route: {self.ip}")
-                                            break
-                                        else:
-                                            self.logger.warning(f"ip route returned non-eth0 IP: {potential_ip}")
-                    except Exception as e:
-                        pass
-                # If still no valid IP, wait and retry indefinitely
-                if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
-                    self.logger.warning(f"No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
-                    time.sleep(2)
-                else:
-                    break
-            self.logger.info(f"Registering service with IP: {self.ip}")
-            # Service registration parameters
-            self.service_type = "_module._tcp.local."
-            self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
-            self.service_port = self.config.get("service.port", 5353) if config else 5353
-            # Initialize zeroconf
-            self.zeroconf = Zeroconf()
+        self.ip = self._find_own_ip()
+        self.logger.info(f"Registering service with IP: {self.ip}")
+        
+        # Service registration parameters
+        self.service_type = "_module._tcp.local."
+        self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
+        self.service_port = self.config.get("service.port", 5353) if config else 5353
+        # Initialize zeroconf
+        self.zeroconf = Zeroconf()
 
     def register_service(self):
         """Register the service with current IP address"""
@@ -283,6 +192,100 @@ class Service:
     
     def set_callbacks(self, callbacks: Dict):
         self.callbacks = callbacks
+    
+    def _find_own_ip(self):
+        # Get the ip address of the module
+        if os.name == 'nt': # Windows
+            self.ip = socket.gethostbyname(socket.gethostname())
+        else: # Linux/Unix
+            # Try multiple methods to get the actual network IP address
+            import time
+            self.ip = None
+            attempt = 0
+            while True:
+                attempt += 1
+                self.logger.info(f"Attempting to get eth0 IP (attempt {attempt})...")
+                # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
+                try:
+                    import subprocess
+                    result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        # Parse ifconfig output to find eth0 IP
+                        for line in result.stdout.split('\n'):
+                            if 'inet ' in line:
+                                # Extract IP from "inet 192.168.1.197" format
+                                parts = line.strip().split()
+                                for i, part in enumerate(parts):
+                                    if part == 'inet' and i + 1 < len(parts):
+                                        potential_ip = parts[i + 1]
+                                        if potential_ip.startswith('192.168.1.'):
+                                            self.ip = potential_ip
+                                            self.logger.info(f"Found eth0 IP from ifconfig: {self.ip}")
+                                            break
+                                if self.ip:
+                                    break
+                        
+                        if not self.ip:
+                            self.logger.warning(f"No eth0 IP found in ifconfig output")
+                    else:
+                        self.logger.warning(f"ifconfig eth0 failed: {result.stderr}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
+                # Method 2: Try socket.getaddrinfo with a connection to get local IP
+                if not self.ip or self.ip.startswith('127.'):
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        s.connect(("8.8.8.8", 80))
+                        potential_ip = s.getsockname()[0]
+                        s.close()
+                        
+                        # Only use eth0 IP
+                        if potential_ip.startswith('192.168.1.'):
+                            self.ip = potential_ip
+                            self.logger.info(f"Selected eth0 IP from socket connection: {self.ip}")
+                        else:
+                            self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to get IP from socket connection: {e}")
+                # Method 3: Try socket.gethostbyname but filter out loopback
+                if not self.ip or self.ip.startswith('127.'):
+                    try:
+                        hostname_ip = socket.gethostbyname(socket.gethostname())
+                        if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
+                            self.ip = hostname_ip
+                            self.logger.info(f"Selected eth0 IP from hostname resolution: {self.ip}")
+                        else:
+                            self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to get IP from hostname resolution: {e}")
+                # Method 4: Try to get IP from network interfaces
+                if not self.ip or self.ip.startswith('127.'):
+                    try:
+                        import subprocess
+                        result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
+                                              capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            lines = result.stdout.strip().split('\n')
+                            for line in lines:
+                                if 'src' in line:
+                                    parts = line.split()
+                                    src_index = parts.index('src')
+                                    if src_index + 1 < len(parts):
+                                        potential_ip = parts[src_index + 1]
+                                        if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
+                                            self.ip = potential_ip
+                                            self.logger.info(f"Selected eth0 IP from ip route: {self.ip}")
+                                            break
+                                        else:
+                                            self.logger.warning(f"ip route returned non-eth0 IP: {potential_ip}")
+                    except Exception as e:
+                        pass
+                # If still no valid IP, wait and retry indefinitely
+                if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
+                    self.logger.warning(f"No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
+                    time.sleep(2)
+                else:
+                    break
 
     def cleanup(self):
         """Clean up the zeroconf service"""

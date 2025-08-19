@@ -41,7 +41,9 @@ dependencies = [
     "Flask>=2.2.6",
     "Flask-SocketIO>=5.5.1",
     "simplejpeg>=1.8.2",
-    "opencv-python>=4.0.0"
+    "opencv-python>=4.0.0",
+    "SoundCard>=0.4.4",
+    "soundfile>=0.13.1",
 ]
 
 [tool.hatch.build.targets.wheel]

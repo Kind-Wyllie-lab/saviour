@@ -5,7 +5,20 @@
     --background-color: #f5f6fa;
     --text-color: #2c3e50;
     --border-color: #dcdde1;
+    --card-color: #ffffff;
+    --card-color-alt: #f8f9fa;
 }
+/* Dark mode */
+/* :root {
+    --primary-color: #2c3e50;
+    --secondary-color: #3498db;
+    --background-color: #222;
+    --text-color: #f5f6fa;
+    --border-color: #666;
+    --card-color: #333;
+    --card-color-alt: #444;
+} */
+
 
 /* Reset */
 * {
@@ -24,7 +37,7 @@ body {
 
 /* Header */
 .main-header {
-    background-color: #f8f9fa;
+    background-color: var(--card-color);
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     padding: 1rem 2rem;
 }
@@ -76,7 +89,7 @@ body {
 }
 
 .dashboard-card {
-    background-color: white;
+    background-color: var(--card-color);
     border-radius: 8px;
     padding: 1.5rem;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -94,7 +107,7 @@ body {
 }
 
 .module-item {
-    background: #f8f9fa;
+    background: var(--card-color-alt);
     padding: 1rem;
     border-radius: 4px;
     border: 1px solid var(--border-color);
@@ -161,7 +174,7 @@ body {
 #experiment-name-section {
     margin-bottom: 1rem;
     padding: 1rem;
-    background-color: #f8f9fa;
+    background-color: var(--card-color-alt);
     border-radius: 8px;
     border: 1px solid var(--border-color);
 }
@@ -302,7 +315,7 @@ body {
 
 .dialog-option {
     padding: 0.75rem 1rem;
-    background-color: #f8f9fa;
+    background-color: var(--card-color-alt);
     border: 1px solid var(--border-color);
     border-radius: 4px;
     cursor: pointer;
@@ -338,7 +351,7 @@ body {
 }
 
 .status-card {
-    background: #f8f9fa;
+    background: var(--card-color-alt);
     border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 1rem;
@@ -403,7 +416,7 @@ body {
     display: flex;
     flex-direction: column;
     padding: 0.8rem;
-    background: #f8f9fa;
+    background: var(--card-color-alt);
     border-radius: 6px;
 }
 
@@ -484,7 +497,7 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 1rem;
-    background: #f8f9fa;
+    background: var(--card-color-alt);
     border-radius: 6px;
     border: 1px solid var(--border-color);
 }
@@ -604,7 +617,7 @@ body {
 }
 
 .stream-card {
-    background: #f8f9fa;
+    background: var(--card-color-alt);
     border: 1px solid var(--border-color);
     border-radius: 8px;
     overflow: hidden;
@@ -1278,7 +1291,7 @@ body {
     gap: 10px;
     margin-bottom: 20px;
     padding: 15px;
-    background-color: #f8f9fa;
+    background-color: var(--card-color-alt);
     border-radius: 8px;
     border: 1px solid #e9ecef;
 }
@@ -1343,7 +1356,7 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 15px 20px;
-    background-color: #f8f9fa;
+    background-color: var(--card-color-alt);
     border-bottom: 1px solid #e9ecef;
     cursor: pointer;
     transition: background-color 0.2s;
@@ -1449,7 +1462,7 @@ body {
 .status-card.offline {
     border: 2px solid #dc3545;
     opacity: 0.7;
-    background-color: #f8f9fa;
+    background-color: var(--card-color-alt);
 }
 
 .status-card.offline .status-header {
@@ -1471,7 +1484,7 @@ body {
 .module-item.offline {
     border-left: 4px solid #dc3545;
     opacity: 0.7;
-    background-color: #f8f9fa;
+    background-color: var(--card-color-alt);
 }
 
 .module-item.offline .module-name::after {

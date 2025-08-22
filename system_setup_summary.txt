@@ -1,5 +1,5 @@
-Habitat Setup Summary
-Generated: 2025-07-08 09:35:10
+Saviour Setup Summary
+Generated: 2025-08-22 10:43:11
 Device Role: controller
 
 Device Role: CONTROLLER
@@ -24,11 +24,11 @@ Samba share configured successfully!
 Share name: controller_share
 Path: /home/pi/controller_share
 Username: pi
-Password: habitat
+Password: saviour
 
 Access from other devices:
-  Windows: \\192.168.0.65\controller_share
-  Linux/Mac: smb://192.168.0.65/controller_share
+  Windows: \\192.168.1.1\controller_share
+  Linux/Mac: smb://192.168.1.1/controller_share
 
 Samba control commands:
   Start: sudo systemctl start smbd nmbd
@@ -52,15 +52,15 @@ Network Configuration:
   - No internet routing - devices use wlan0 for internet
 
 === Controller Service Setup ===
-Habitat controller service configured and enabled at boot. (module style)
-Service: habitat-controller-service
+Saviour controller service configured and enabled at boot. (module style)
+Service: saviour-controller-service
 
 Controller service control commands:
-  Start: sudo systemctl start habitat-controller-service
-  Stop:  sudo systemctl stop habitat-controller-service
-  Status: sudo systemctl status habitat-controller-service
-  Logs: sudo journalctl -u habitat-controller-service -f
-  Restart: sudo systemctl restart habitat-controller-service
+  Start: sudo systemctl start saviour-controller-service
+  Stop:  sudo systemctl stop saviour-controller-service
+  Status: sudo systemctl status saviour-controller-service
+  Logs: sudo journalctl -u saviour-controller-service -f
+  Restart: sudo systemctl restart saviour-controller-service
 
 === PTP Services Status ===
 PTP services are configured and enabled at boot:

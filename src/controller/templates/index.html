@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Habitat Controller</title>
+    <title>SAVIOUR</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="icon" type="image/x-icon" href="/static/uofe_logo.png">
@@ -16,7 +16,7 @@
         <div class="dashboard-card">
             <div id="camera_streams_container">
                 <div class="streams-header">
-                    <h1>&#128161; Live Streams</h1>
+                    <h1>Live Streams</h1>
                     <div class="stream-controls">
                         <button id="show-all-streams" class="stream-control-btn" onclick="showAllStreams()">
                             Show All
@@ -147,58 +147,6 @@
                 description: 'Stop recording on selected modules',
                 needsFollowup: false
                 // Expected response: {status: 200, filename: "rec/{experiment_name}_{timestamp}.mp4", is_recording: false, message: "Recording stopped successfully", duration: 125.5, frames: 3765, filesize: 82.7mb}
-            },
-            shutdown: {
-                label: 'Shutdown',
-                type: 'shutdown',
-                description: 'Shutdown selected modules',
-                needsFollowup: false
-                // Expected response: {status: 200, timestamp: 172990083, type: 'shutdown_initiated'}
-            },
-            start_streaming: {
-                label: 'Start Streaming',
-                type: 'start_streaming',
-                description: 'Start streaming on selected modules - CAMERA ONLY',
-                needsFollowup: true,
-                // Expected response: {status: 200, stream_url: "http://{module_ip}:8080/video_feed", is_streaming: true, message: "Streaming started successfully"}
-                followupQuestions: [
-                    {
-                        id: 'stream_port',
-                        label: 'Stream Port',
-                        type: 'number',
-                        placeholder: '8080',
-                        default: 8080,
-                        required: true,
-                        min: 1024,
-                        max: 65535
-                    },
-                    {
-                        id: 'stream_quality',
-                        label: 'Stream Quality',
-                        type: 'select',
-                        options: [
-                            { value: 'low', label: 'Low (480p)' },
-                            { value: 'medium', label: 'Medium (720p)' },
-                            { value: 'high', label: 'High (1080p)' }
-                        ],
-                        default: 'medium',
-                        required: true
-                    }
-                ]
-            },
-            stop_streaming: {
-                label: 'Stop Streaming',
-                type: 'stop_streaming',
-                description: 'Stop streaming on selected modules - CAMERA ONLY',
-                needsFollowup: false
-                // Expected response: {status: 200, is_streaming: false, message: "Streaming stopped successfully"}
-            },
-            list_commands: {
-                label: 'List Commands',
-                type: 'list_commands',
-                description: ' List available commands for a given module',
-                needsFollowup: false
-                // Expected repsonse: {type: list_commands,  
             }
         };
 

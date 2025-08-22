@@ -387,6 +387,8 @@ class CameraModule(Module):
                     })
                 
                 # Auto-export is now handled by child classes (e.g., APACamera)
+                if self.config.get("auto_export") == True:
+                    self._auto_export()
                 # to use the new export manager methods
                 return True
             else:

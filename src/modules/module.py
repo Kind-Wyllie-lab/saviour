@@ -341,28 +341,31 @@ class Module:
                     "error": "Not recording"
                 })
                 return False
-            
-            if self.config.get("auto_export", True) and self.current_filename:
-                self.logger.info("Auto-export enabled, exporting recording using export manager")
-                try:
-                    # Use the export manager's method for consistency
-                    if self.export.export_current_session_files(
-                        recording_folder=self.recording_folder,
-                        recording_session_id=self.recording_session_id,
-                        experiment_name=self.current_experiment_name
-                    ):
-                        self.logger.info("Auto-export completed successfully")
-                    else:
-                        self.logger.warning("Auto-export failed, but recording was successful")
-                except Exception as e:
-                    self.logger.error(f"Auto-export error: {e}")
-            else:
-                self.logger.info("Auto-export disabled, not exporting recording")
-
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")
             return False
-        return True  # Just return True, let child class handle status
+        return True  # Just return True, let child class handle the rest
+
+    def _auto_export(self):
+        if self.config.get("auto_export", True) and self.current_filename:
+            self.logger.info("Auto-export enabled, exporting recording using export manager")
+            try:
+                # Use the export manager's method for consistency
+                if self.export.export_current_session_files(
+                    recording_folder=self.recording_folder,
+                    recording_session_id=self.recording_session_id,
+                    experiment_name=self.current_experiment_name
+                ):
+                    self.logger.info("Auto-export completed successfully")
+
+                    if self.config.get("auto_delete_on_export", True):
+                        self.clear_recordings()
+                else:
+                    self.logger.warning("Auto-export failed, but recording was successful")
+            except Exception as e:
+                self.logger.error(f"Auto-export error: {e}")
+        else:
+            self.logger.info("Auto-export disabled, not exporting recording")
 
     def _get_recordings_list(self):
         """Internal method to get list of recordings with metadata"""

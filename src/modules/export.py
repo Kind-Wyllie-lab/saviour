@@ -491,6 +491,7 @@ class Export:
         Returns:
             bool: True if export successful
         """
+        self.logger.info(f"Attempting to export files for session {recording_session_id}, experiment name {experiment_name}")
         try:
             # Mount the export destination
             if not self._mount_destination(self.ExportDestination.CONTROLLER):
@@ -529,7 +530,11 @@ class Export:
             
             # Find files that belong to the current session
             session_files = []
+            self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
+            self.logger.info(f"Looking for recordings in {recording_folder}")
+            self.logger.info(f"Recordings are as follows: {os.listdir(recording_folder)}")
             for filename in os.listdir(recording_folder):
+                self.logger.info(f"Examining file {filename} for auto export, trying to match {recording_session_id}")
                 if recording_session_id in filename:
                     session_files.append(filename)
                     self.logger.info(f"Found session file to export: {filename}")

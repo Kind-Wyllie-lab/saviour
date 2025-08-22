@@ -190,7 +190,7 @@ class Module:
         # Parameters from config
         self.samplerate = self.config.get("module.samplerate")
         self.recording_folder = self.config.get("recording_folder")
-        self.recording_filetype = self.config.get(f"{self.module_type}.file_format", None) # Find the appropriate filetype for this module type, 
+        self.recording_filetype = self.config.get("recording_filetype") # Find the appropriate filetype for this module type, 
 
         # Control State flags
         self.is_running = False  # Start as False

@@ -126,38 +126,6 @@ class Health:
             history = history[-limit:]
         return history
     
-    def get_module_health_stats(self, module_id: str, metric: str, window: int = 3600) -> Dict[str, float]:
-        """
-        Get statistics for a specific health metric over a time window
-        
-        Args:
-            module_id: ID of the module
-            metric: Health metric to analyze (e.g., 'cpu_usage', 'ptp_offset')
-            window: Time window in seconds to analyze
-            
-        Returns:
-            Dictionary containing min, max, avg, and latest values
-        """
-        if module_id not in self.module_health_history:
-            return {}
-        
-        current_time = time.time()
-        relevant_records = [
-            record for record in self.module_health_history[module_id]
-            if current_time - record['timestamp'] <= window and metric in record
-        ]
-        
-        if not relevant_records:
-            return {}
-        
-        values = [record[metric] for record in relevant_records]
-        return {
-            'min': min(values),
-            'max': max(values),
-            'avg': sum(values) / len(values),
-            'latest': values[-1],
-            'samples': len(values)
-        }
     
     def get_module_health(self, module_id: Optional[str] = None) -> Dict:
         """
@@ -223,7 +191,7 @@ class Health:
                 time_diff = current_time - last_heartbeat
                 
                 # Debug logging for time calculations
-                self.logger.debug(f"Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
+                self.logger.info(f"Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
                 
                 # Find offline modules
                 if time_diff > self.heartbeat_timeout: # If heartbeat not received within timeout period
@@ -251,8 +219,34 @@ class Health:
                             except Exception as e:
                                 self.logger.error(f"Error in status change callback: {e}")
             
+            # Check PTP health periodically
+            # if cycle_count % 6 == 0:  # Check PTP health every 6 cycles 
+            self._check_ptp_health()
+            
             time.sleep(self.heartbeat_interval)
     
+    def _check_ptp_health(self):
+        """
+        Check received PTP stats and reset PTP if necessary
+        """
+        reset_flag = False
+        for module in self.module_health:
+            if self.module_health[module]["ptp4l_freq"] > 100000 or self.module_health[module]["phc2sys_freq"] > 100000:
+                self.logger.warning(f"PTP frequency offset too high for module {module}: "
+                                    f"ptp4l_freq={self.module_health[module]['ptp4l_freq']}, "
+                                    f"phc2sys_freq={self.module_health[module]['phc2sys_freq']}. "
+                                    "Consider resetting PTP.")
+                reset_flag = True
+            if self.module_health[module]["ptp4l_offset"] > 10000 or self.module_health[module]["phc2sys_offset"] > 10000:
+                self.logger.warning(f"PTP offset too high for module {module}: "
+                                    f"ptp4l_offset={self.module_health[module]['ptp4l_offset']}, "
+                                    f"phc2sys_offset={self.module_health[module]['phc2sys_offset']}. "
+                                    "Consider resetting PTP.")
+                reset_flag = True
+            if reset_flag == True:
+                self.logger.info(f"Telling {module} to restart_ptp")
+                self.callbacks["send_command"](module, "restart_ptp", {})
+
     def start_monitoring(self):
         """Start the health monitoring thread"""
         if self.is_monitoring:

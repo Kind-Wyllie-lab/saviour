@@ -78,7 +78,7 @@ class Controller:
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"(CONTROLLER) Initializing managers")
+        self.logger.info(f"Initializing managers")
 
         # Initialize config manager
         self.config = Config(config_file_path)
@@ -130,7 +130,7 @@ class Controller:
         self.service.on_module_discovered = self.on_module_discovered
         self.service.on_module_removed = self.on_module_removed              
 
-        self.logger.info(f"(CONTROLLER) Module discovery callback registered early")
+        self.logger.info(f"Module discovery callback registered early")
         
         self.communication = Communication(
             status_callback=self.handle_status_update,
@@ -150,7 +150,7 @@ class Controller:
         )
 
         # Start health monitoring
-        self.logger.info("(CONTROLLER) Starting health monitoring thread")
+        self.logger.info("Starting health monitoring thread")
         self.health.start_monitoring()
 
         # Register callbacks
@@ -169,9 +169,10 @@ class Controller:
         
         # Register status change callback with health monitor
         self.health.set_callbacks({
-            "on_status_change": self.on_module_status_change
+            "on_status_change": self.on_module_status_change,
+            "send_command": self.communication.send_command
         })
-        self.logger.info(f"(CONTROLLER) Status change callback registered with health monitor")
+        self.logger.info(f"Status change callback registered with health monitor")
 
     
 
@@ -186,35 +187,35 @@ class Controller:
             self.web.handle_module_status(module_id, status_data)
             match status_type:
                 case 'heartbeat':
-                    self.logger.info(f"(CONTROLLER) Heartbeat received from {module_id}")
+                    self.logger.info(f"Heartbeat received from {module_id}")
                     self.health.update_module_health(module_id, status_data)
                 case 'ptp_status':
-                    self.logger.info(f"(CONTROLLER) PTP status received from {module_id}: {status_data}")
+                    self.logger.info(f"PTP status received from {module_id}: {status_data}")
                     self.buffer.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
-                    self.logger.info(f"(CONTROLLER) Recordings list received from {module_id}")
+                    self.logger.info(f"Recordings list received from {module_id}")
                 case 'get_config':
-                    self.logger.info(f"(CONTROLLER) Config dict received from {module_id}")
+                    self.logger.info(f"Config dict received from {module_id}")
                     config_data = status_data.get('config', {})
                     # Extract the editable section if it exists, otherwise store the entire config
                     if isinstance(config_data, dict) and 'editable' in config_data:
                         self.module_config[module_id] = config_data['editable']
-                        self.logger.info(f"(CONTROLLER) Stored editable config for {module_id}")
+                        self.logger.info(f"Stored editable config for {module_id}")
                     else:
                         self.module_config[module_id] = config_data
-                        self.logger.info(f"(CONTROLLER) Stored full config for {module_id}")
+                        self.logger.info(f"Stored full config for {module_id}")
                 case 'set_config':
-                    self.logger.info(f"(CONTROLLER) Set config response received from {module_id}: {status_data}")
+                    self.logger.info(f"Set config response received from {module_id}: {status_data}")
                     # If the set_config was successful, we should refresh the config
                     if status_data.get('status') == 'success':
                         # Request updated config from this module
                         self.communication.send_command(module_id, "get_config", {})
                     else:
-                        self.logger.error(f"(CONTROLLER) Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
+                        self.logger.error(f"Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
                 case _:
-                    self.logger.info(f"(CONTROLLER) Unknown status type from {module_id}: {status_type}")
+                    self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:
-            self.logger.error(f"(CONTROLLER) Error parsing status data for module {module_id}: {e}")
+            self.logger.error(f"Error parsing status data for module {module_id}: {e}")
 
     def on_module_status_change(self, module_id: str, status: str):
         """Callback for when module status changes (online/offline)
@@ -223,12 +224,12 @@ class Controller:
             module_id: String representing the module
             status: may be "online" or "offline"
         """
-        self.logger.info(f"(CONTROLLER) Module {module_id} status changed to: {status}")
+        self.logger.info(f"Module {module_id} status changed to: {status}")
         
         # TODO: What should happen when a module goes offline?
         if status=="offline":
             # TODO: Deregister it?
-            self.logger.info(f"(CONTROLLER) TODO: Deregister {module_id}")
+            self.logger.info(f"TODO: Deregister {module_id}")
 
 
         # Send status change event to web interface
@@ -246,52 +247,52 @@ class Controller:
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
-        self.logger.info("(CONTROLLER) Stopping controller...")
+        self.logger.info("Stopping controller...")
         
         try:
             # Stop PTP
-            self.logger.info("(CONTROLLER) Stopping PTP manager")
+            self.logger.info("Stopping PTP manager")
             self.ptp.stop()
 
             # Stop all threads by setting flags
             self.is_running = False
             
             # Stop health monitoring
-            self.logger.info("(CONTROLLER) Stopping health monitoring")
+            self.logger.info("Stopping health monitoring")
             self.health.stop_monitoring()
             
             # Clean up health monitoring
-            self.logger.info("(CONTROLLER) Cleaning up module health tracking")
+            self.logger.info("Cleaning up module health tracking")
             self.health.clear_all_health()
             
             # Clean up module data buffer
-            self.logger.info("(CONTROLLER) Cleaning up module data buffer")
+            self.logger.info("Cleaning up module data buffer")
             self.buffer.clear_module_data()
             
             # Clean up modules list
-            self.logger.info("(CONTROLLER) Cleaning up modules list")
+            self.logger.info("Cleaning up modules list")
             self.service.modules.clear()
 
             # Clean up service manager
-            self.logger.info("(CONTROLLER) Cleaning up service manager")
+            self.logger.info("Cleaning up service manager")
             self.service.cleanup()
             
             # Clean up communication manager
-            self.logger.info("(CONTROLLER) Cleaning up communication manager")
+            self.logger.info("Cleaning up communication manager")
             self.communication.cleanup()
             
             # Clean up database manager
-            self.logger.info("(CONTROLLER) Cleaning up database manager")
+            self.logger.info("Cleaning up database manager")
             # self.database.cleanup()
 
             # Give modules time to detect the controller is gone
             time.sleep(1)
             
-            self.logger.info("(CONTROLLER) Controller stopped successfully")
+            self.logger.info("Controller stopped successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f"(CONTROLLER) Error stopping controller: {e}")
+            self.logger.error(f"Error stopping controller: {e}")
             return False
 
     # Main methods
@@ -307,22 +308,22 @@ class Controller:
         - A interface manager, which receives input from CLI or web interface and handles it (and may also be used to send commands to modules)
         - A forever loop to keep the main controller thread alive
         """
-        self.logger.info("(CONTROLLER) Starting controller")
+        self.logger.info("Starting controller")
 
         # Register controller service for module discovery
-        self.logger.info("(CONTROLLER) Registering controller service...")
+        self.logger.info("Registering controller service...")
         if not self.service.register_service():
-            self.logger.error("(CONTROLLER) Failed to register controller service")
+            self.logger.error("Failed to register controller service")
             return False
-        self.logger.info("(CONTROLLER) Controller service registered successfully")
+        self.logger.info("Controller service registered successfully")
 
         # Start PTP
-        self.logger.info("(CONTROLLER) Starting PTP manager...")
+        self.logger.info("Starting PTP manager...")
         self.ptp.start() # This will start a thread to run ptp4l and phc2sys
 
         # Start the web interface
         if self.web:
-            self.logger.info("(CONTROLLER) Starting web interface")
+            self.logger.info("Starting web interface")
             self.web.start() # This will start a thread to serve a webapp and listen for commands from user
             
             # Update web interface with initial module list
@@ -334,11 +335,11 @@ class Controller:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            self.logger.info("(CONTROLLER) Keyboard interrupt received. Stopping controller...")
+            self.logger.info("Keyboard interrupt received. Stopping controller...")
             self.stop()
             return False
         except Exception as e:
-            self.logger.error(f"(CONTROLLER) Error in main thread: {e}")
+            self.logger.error(f"Error in main thread: {e}")
             self.stop()
             return False
         
@@ -379,7 +380,7 @@ class Controller:
 
     def on_module_discovered(self, module):
         """Callback for when a new module is discovered"""
-        self.logger.info(f"(CONTROLLER) Module discovered: {module.id}")
+        self.logger.info(f"Module discovered: {module.id}")
         
         # Add module to health monitor with initial offline status
         # This allows the health monitor to track the module even before it sends heartbeat

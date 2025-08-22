@@ -248,11 +248,22 @@ class PTP:
                 for line in phc2sys_logs.split('\n'):
                     if line.strip():
                         self._parse_phc2sys_line(line)
+            
+                self._check_ptp_offsets()
 
             except Exception as e:
                 self.logger.error(f"Error in monitor thread: {e}")
 
             time.sleep(1)  # Check every second
+
+    def _check_ptp_offsets(self):
+        if self.latest_phc2sys_freq > 100000 or self.latest_phc2sys_offset > 5000:
+            self.logger.warning(f"PTP phc2sys offsets too high ({self.latest_phc2sys_freq}, {self.latest_phc2sys_offset}), resetting PTP")
+            self._reset_ptp()
+    
+    def _reset_ptp(self):
+        subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)
+
 
     def _add_buffer_entry(self, timestamp):
         """Add a new entry to the buffer with current values."""

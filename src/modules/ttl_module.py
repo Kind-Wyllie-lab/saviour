@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 import random
 from src.modules.module import Module
-from habitat.src.modules.command import Command
+from src.modules.command import Command
 import logging
 import threading
 import gpiozero

@@ -356,7 +356,9 @@ class Module:
                         self.logger.warning("Auto-export failed, but recording was successful")
                 except Exception as e:
                     self.logger.error(f"Auto-export error: {e}")
-                    
+            else:
+                self.logger.info("Auto-export disabled, not exporting recording")
+
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")
             return False

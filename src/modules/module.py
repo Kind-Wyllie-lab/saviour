@@ -332,17 +332,34 @@ class Module:
         Stop recording. Should be extended with module-specific implementation.
         Returns True if ready to stop, False otherwise.
         """
-        # Check if recording
-        if not self.is_recording:
-            self.logger.info("Already stopped recording")
-            self.communication.send_status({
-                "type": "recording_stop_failed",
-                "error": "Not recording"
-            })
+        try:
+            # Check if recording
+            if not self.is_recording:
+                self.logger.info("Already stopped recording")
+                self.communication.send_status({
+                    "type": "recording_stop_failed",
+                    "error": "Not recording"
+                })
+                return False
+            
+            if self.config.get("auto_export", True) and self.current_filename:
+                self.logger.info("Auto-export enabled, exporting recording using export manager")
+                try:
+                    # Use the export manager's method for consistency
+                    if self.export.export_current_session_files(
+                        recording_folder=self.recording_folder,
+                        recording_session_id=self.recording_session_id,
+                        experiment_name=self.current_experiment_name
+                    ):
+                        self.logger.info("Auto-export completed successfully")
+                    else:
+                        self.logger.warning("Auto-export failed, but recording was successful")
+                except Exception as e:
+                    self.logger.error(f"Auto-export error: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error in stop_recording: {e}")
             return False
-        
-        # Auto-export is now handled by child classes that override stop_recording
-        # to use the new export manager methods
         return True  # Just return True, let child class handle status
 
     def _get_recordings_list(self):

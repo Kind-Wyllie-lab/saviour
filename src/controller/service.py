@@ -58,9 +58,9 @@ class Service():
         self.service_name = f"controller_{socket.gethostname()}._controller._tcp.local."
         
         if self.config_manager:
-            self.service_port = self.config_manager.get("service.port", self.service_port)
-            self.service_type = self.config_manager.get("service.service_type", self.service_type)
-            self.service_name = self.config_manager.get("service.service_name", self.service_name)
+            self.service_port = self.config_manager.get("zeroconf.port", self.service_port)
+            self.service_type = self.config_manager.get("zeroconf.service_type", self.service_type)
+            self.service_name = self.config_manager.get("zeroconf.service_name", self.service_name)
 
         # Initialize zeroconf but don't register service yet
         self.zeroconf = Zeroconf()

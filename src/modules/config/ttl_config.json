@@ -27,7 +27,7 @@
     "auto_export": true,
     "controller_share_path": "controller_share",
     "controller_username": "pi",
-    "controller_password": "habitat",
+    "controller_password": "saviour",
     "nas_ip": "192.168.0.2",
     "nas_share_path": "data",
     "nas_recordings_path": "recordings",

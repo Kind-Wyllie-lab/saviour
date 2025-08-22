@@ -55,7 +55,8 @@ class Service:
         self.zeroconf = None
         self.service_browser = None
         self.service_info = None
-        self.ip = self._find_own_ip()
+        self.ip = None
+        self._find_own_ip()  # Find own IP address on initialization
         self.logger.info(f"Registering service with IP: {self.ip}")
         
         # Service registration parameters
@@ -65,8 +66,16 @@ class Service:
         # Initialize zeroconf
         self.zeroconf = Zeroconf()
 
+
+    def start(self):
+        self.logger.info("Starting service registration")
+        if not self.ip:
+            self._find_own_ip()
+        
+
     def register_service(self):
         """Register the service with current IP address"""
+        self.logger.info(f"Starting service registration with ip {self.ip}")
         try:
             # Clean up any existing service registration
             if self.service_registered:
@@ -195,6 +204,7 @@ class Service:
     
     def _find_own_ip(self):
         # Get the ip address of the module
+        self.logger.info("Searching for own ip")
         if os.name == 'nt': # Windows
             self.ip = socket.gethostbyname(socket.gethostname())
         else: # Linux/Unix
@@ -220,8 +230,9 @@ class Service:
                                         potential_ip = parts[i + 1]
                                         if potential_ip.startswith('192.168.1.'):
                                             self.ip = potential_ip
+                                            self.backup_ip = potential_ip
                                             self.logger.info(f"Found eth0 IP from ifconfig: {self.ip}")
-                                            break
+                                            break   
                                 if self.ip:
                                     break
                         

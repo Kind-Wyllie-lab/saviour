@@ -319,6 +319,8 @@ class TTLModule(Module):
                         "message": f"Recording completed successfully with {len(self.ttl_event_buffer)} events"
                     })
                 
+                self._auto_export()
+
                 return True
             else:
                 self.logger.error("(MODULE) Error: recording_start_time was None")

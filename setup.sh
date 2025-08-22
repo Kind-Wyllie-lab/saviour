@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup.sh
-# Install system dependencies and set up virtual environment for the habitat project
+# Install system dependencies and set up virtual environment for the saviour system
 # Usage: bash setup.sh
 
 set -e # If any function throws an error (doesn't return 0), exit immediately.
@@ -24,7 +24,7 @@ log_section() {
 save_summary() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     cat > "$SUMMARY_FILE" <<EOF
-Habitat Setup Summary
+Saviour Setup Summary
 Generated: $timestamp
 Device Role: $DEVICE_ROLE
 EOF
@@ -289,7 +289,7 @@ configure_samba_share() {
     sudo tee /etc/samba/smb.conf > /dev/null <<EOF
 [global]
    workgroup = WORKGROUP
-   server string = Habitat Controller
+   server string = Saviour Controller
    server role = standalone server
    map to guest = bad user
    dns proxy = no
@@ -298,7 +298,7 @@ configure_samba_share() {
    max log size = 50
 
 [controller_share]
-   comment = Habitat Controller Share
+   comment = Saviour Controller Share
    path = /home/pi/controller_share
    browseable = yes
    writable = yes
@@ -309,9 +309,9 @@ configure_samba_share() {
    force group = pi
 EOF
 
-    # Set Samba password for pi user (default password: habitat)
+    # Set Samba password for pi user (default password: saviour)
     log_message "Setting Samba password for pi user..."
-    echo -e "habitat\nhabitat" | sudo smbpasswd -s -a pi
+    echo -e "saviour\nsaviour" | sudo smbpasswd -s -a pi
     
     # Restart Samba services
     sudo systemctl restart smbd
@@ -326,7 +326,7 @@ EOF
     echo "Share name: controller_share"
     echo "Path: /home/pi/controller_share"
     echo "Username: pi"
-    echo "Password: habitat"
+    echo "Password: saviour"
     echo ""
     echo "Access from other devices:"
     echo "  Windows: \\\\$(hostname -I | awk '{print $1}')\\controller_share"
@@ -375,7 +375,7 @@ configure_dhcp_server() {
     # Create new dnsmasq configuration for local network only
     log_message "Creating dnsmasq configuration for local network..."
     sudo tee /etc/dnsmasq.conf > /dev/null <<EOF
-# dnsmasq configuration for Habitat local network
+# dnsmasq configuration for Saviour local network
 # This Pi acts as DHCP server for local network only
 # No internet routing - devices must use wlan0 for internet
 
@@ -408,7 +408,7 @@ EOF
     sudo mkdir -p /etc/systemd/system/dnsmasq.service.d
     sudo tee /etc/systemd/system/dnsmasq.service.d/override.conf > /dev/null <<EOF
 [Unit]
-Description=DHCP Server for Habitat Local Network
+Description=DHCP Server for Saviour Local Network
 
 [Service]
 # Don't start automatically at boot
@@ -436,28 +436,28 @@ configure_module_service() {
         log_section "Configuring Module Systemd Service"
         
         # Stop existing service if running
-        sudo systemctl stop habitat-${MODULE_TYPE}-module 2>/dev/null || true
+        sudo systemctl stop saviour-${MODULE_TYPE}-module 2>/dev/null || true
         
         # Create service file based on module type
-        log_message "Creating habitat-${MODULE_TYPE}-module systemd service..."
-        sudo tee /etc/systemd/system/habitat-${MODULE_TYPE}-module.service > /dev/null <<EOF
+        log_message "Creating saviour-${MODULE_TYPE}-module systemd service..."
+        sudo tee /etc/systemd/system/saviour-${MODULE_TYPE}-module.service > /dev/null <<EOF
 [Unit]
-Description=Habitat ${MODULE_TYPE^} Module
+Description=Saviour ${MODULE_TYPE^} Module
 After=network.target ptp4l.service phc2sys.service
 Wants=network.target ptp4l.service phc2sys.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/habitat/src/modules
-ExecStart=/home/pi/Desktop/habitat/env/bin/python ${MODULE_TYPE}_module.py
+WorkingDirectory=/home/pi/Desktop/saviour/src/modules
+ExecStart=/home/pi/Desktop/saviour/env/bin/python ${MODULE_TYPE}_module.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PYTHONPATH=/home/pi/Desktop/habitat/src
+Environment=PYTHONPATH=/home/pi/Desktop/saviour/src
 
 [Install]
 WantedBy=multi-user.target
@@ -465,17 +465,17 @@ EOF
 
         # Reload systemd and enable service
         sudo systemctl daemon-reload
-        sudo systemctl enable habitat-${MODULE_TYPE}-module
+        sudo systemctl enable saviour-${MODULE_TYPE}-module
         
-        log_message "Habitat ${MODULE_TYPE} module service configured and enabled at boot."
-        echo "Habitat ${MODULE_TYPE} module service configured and enabled at boot."
+        log_message "Saviour ${MODULE_TYPE} module service configured and enabled at boot."
+        echo "Saviour ${MODULE_TYPE} module service configured and enabled at boot."
         echo ""
         echo "Module service control commands:"
-        echo "  Start: sudo systemctl start habitat-${MODULE_TYPE}-module"
-        echo "  Stop:  sudo systemctl stop habitat-${MODULE_TYPE}-module"
-        echo "  Status: sudo systemctl status habitat-${MODULE_TYPE}-module"
-        echo "  Logs: sudo journalctl -u habitat-${MODULE_TYPE}-module -f"
-        echo "  Restart: sudo systemctl restart habitat-${MODULE_TYPE}-module"
+        echo "  Start: sudo systemctl start saviour-${MODULE_TYPE}-module"
+        echo "  Stop:  sudo systemctl stop saviour-${MODULE_TYPE}-module"
+        echo "  Status: sudo systemctl status saviour-${MODULE_TYPE}-module"
+        echo "  Logs: sudo journalctl -u saviour-${MODULE_TYPE}-module -f"
+        echo "  Restart: sudo systemctl restart saviour-${MODULE_TYPE}-module"
     fi
 }
 
@@ -485,29 +485,29 @@ configure_controller_service() {
         log_section "Configuring Controller Systemd Service"
         
         # Stop existing service if running
-        sudo systemctl stop habitat-controller-service 2>/dev/null || true
-        sudo systemctl stop habitat-controller 2>/dev/null || true
+        sudo systemctl stop saviour-controller-service 2>/dev/null || true
+        sudo systemctl stop saviour-controller 2>/dev/null || true
         
         # Create service file for controller (match module service style)
-        log_message "Creating habitat-controller-service systemd service..."
-        sudo tee /etc/systemd/system/habitat-controller-service.service > /dev/null <<EOF
+        log_message "Creating saviour-controller-service systemd service..."
+        sudo tee /etc/systemd/system/saviour-controller-service.service > /dev/null <<EOF
 [Unit]
-Description=Habitat Controller Service
+Description=Saviour Controller Service
 After=network.target ptp4l.service phc2sys.service
 Wants=network.target ptp4l.service phc2sys.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/habitat/src/controller/
-ExecStart=/home/pi/Desktop/habitat/env/bin/python controller.py
+WorkingDirectory=/home/pi/Desktop/saviour/src/controller/
+ExecStart=/home/pi/Desktop/saviour/env/bin/python controller.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PYTHONPATH=/home/pi/Desktop/habitat/src
+Environment=PYTHONPATH=/home/pi/Desktop/saviour/src
 
 [Install]
 WantedBy=multi-user.target
@@ -515,22 +515,22 @@ EOF
 
         # Reload systemd and enable service
         sudo systemctl daemon-reload
-        sudo systemctl enable habitat-controller-service
+        sudo systemctl enable saviour-controller-service
         
-        log_message "Habitat controller service configured and enabled at boot. (module style)"
-        echo "Habitat controller service configured and enabled at boot. (module style)"
+        log_message "Saviour controller service configured and enabled at boot. (module style)"
+        echo "Saviour controller service configured and enabled at boot. (module style)"
         echo ""
         echo "Controller service control commands:"
-        echo "  Start: sudo systemctl start habitat-controller-service"
-        echo "  Stop:  sudo systemctl stop habitat-controller-service"
-        echo "  Status: sudo systemctl status habitat-controller-service"
-        echo "  Logs: sudo journalctl -u habitat-controller-service -f"
-        echo "  Restart: sudo systemctl restart habitat-controller-service"
+        echo "  Start: sudo systemctl start saviour-controller-service"
+        echo "  Stop:  sudo systemctl stop saviour-controller-service"
+        echo "  Status: sudo systemctl status saviour-controller-service"
+        echo "  Logs: sudo journalctl -u saviour-controller-service -f"
+        echo "  Restart: sudo systemctl restart saviour-controller-service"
     fi
 }
 
 # Initialize logging
-log_section "Habitat Setup Started"
+log_section "Saviour Setup Started"
 log_message "Setup script version: $(date '+%Y-%m-%d %H:%M:%S')"
 log_message "System: $(uname -a)"
 log_message "User: $(whoami)"
@@ -696,7 +696,7 @@ Samba share configured successfully!
 Share name: controller_share
 Path: /home/pi/controller_share
 Username: pi
-Password: habitat
+Password: saviour
 
 Access from other devices:
   Windows: \\\\$(hostname -I | awk '{print $1}')\\controller_share
@@ -724,15 +724,15 @@ Network Configuration:
   - No internet routing - devices use wlan0 for internet
 
 === Controller Service Setup ===
-Habitat controller service configured and enabled at boot. (module style)
-Service: habitat-controller-service
+Saviour controller service configured and enabled at boot. (module style)
+Service: saviour-controller-service
 
 Controller service control commands:
-  Start: sudo systemctl start habitat-controller-service
-  Stop:  sudo systemctl stop habitat-controller-service
-  Status: sudo systemctl status habitat-controller-service
-  Logs: sudo journalctl -u habitat-controller-service -f
-  Restart: sudo systemctl restart habitat-controller-service"
+  Start: sudo systemctl start saviour-controller-service
+  Stop:  sudo systemctl stop saviour-controller-service
+  Status: sudo systemctl status saviour-controller-service
+  Logs: sudo journalctl -u saviour-controller-service -f
+  Restart: sudo systemctl restart saviour-controller-service"
 else
     SUMMARY_CONTENT="Device Role: MODULE
 Module Type: ${MODULE_TYPE^^}
@@ -740,15 +740,15 @@ PTP Configuration: SLAVE mode
 This module will synchronize to the controller's PTP master.
 
 === Module Service Setup ===
-Habitat ${MODULE_TYPE} module service configured and enabled at boot.
-Service: habitat-${MODULE_TYPE}-module
+Saviour ${MODULE_TYPE} module service configured and enabled at boot.
+Service: saviour-${MODULE_TYPE}-module
 
 Module service control commands:
-  Start: sudo systemctl start habitat-${MODULE_TYPE}-module
-  Stop:  sudo systemctl stop habitat-${MODULE_TYPE}-module
-  Status: sudo systemctl status habitat-${MODULE_TYPE}-module
-  Logs: sudo journalctl -u habitat-${MODULE_TYPE}-module -f
-  Restart: sudo systemctl restart habitat-${MODULE_TYPE}-module"
+  Start: sudo systemctl start saviour-${MODULE_TYPE}-module
+  Stop:  sudo systemctl stop saviour-${MODULE_TYPE}-module
+  Status: sudo systemctl status saviour-${MODULE_TYPE}-module
+  Logs: sudo journalctl -u saviour-${MODULE_TYPE}-module -f
+  Restart: sudo systemctl restart saviour-${MODULE_TYPE}-module"
 fi
 
 SUMMARY_CONTENT="$SUMMARY_CONTENT
@@ -816,7 +816,7 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "Share name: controller_share"
     echo "Path: /home/pi/controller_share"
     echo "Username: pi"
-    echo "Password: habitat"
+    echo "Password: saviour"
     echo ""
     echo "Access from other devices:"
     echo "  Windows: \\\\$(hostname -I | awk '{print $1}')\\controller_share"
@@ -844,15 +844,15 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "  - No internet routing - devices use wlan0 for internet"
     echo ""
     echo "=== Controller Service Setup ==="
-    echo "Habitat controller service configured and enabled at boot. (module style)"
-    echo "Service: habitat-controller-service"
+    echo "Saviour controller service configured and enabled at boot. (module style)"
+    echo "Service: saviour-controller-service"
     echo ""
     echo "Controller service control commands:"
-    echo "  Start: sudo systemctl start habitat-controller-service"
-    echo "  Stop:  sudo systemctl stop habitat-controller-service"
-    echo "  Status: sudo systemctl status habitat-controller-service"
-    echo "  Logs: sudo journalctl -u habitat-controller-service -f"
-    echo "  Restart: sudo systemctl restart habitat-controller-service"
+    echo "  Start: sudo systemctl start saviour-controller-service"
+    echo "  Stop:  sudo systemctl stop saviour-controller-service"
+    echo "  Status: sudo systemctl status saviour-controller-service"
+    echo "  Logs: sudo journalctl -u saviour-controller-service -f"
+    echo "  Restart: sudo systemctl restart saviour-controller-service"
 else
     echo "=== Module Configuration Summary ==="
     echo "Device Role: MODULE"
@@ -861,15 +861,15 @@ else
     echo "This module will synchronize to the controller's PTP master."
     echo ""
     echo "=== Module Service Setup ==="
-    echo "Habitat ${MODULE_TYPE} module service configured and enabled at boot."
-    echo "Service: habitat-${MODULE_TYPE}-module"
+    echo "Saviour ${MODULE_TYPE} module service configured and enabled at boot."
+    echo "Service: saviour-${MODULE_TYPE}-module"
     echo ""
     echo "Module service control commands:"
-    echo "  Start: sudo systemctl start habitat-${MODULE_TYPE}-module"
-    echo "  Stop:  sudo systemctl stop habitat-${MODULE_TYPE}-module"
-    echo "  Status: sudo systemctl status habitat-${MODULE_TYPE}-module"
-    echo "  Logs: sudo journalctl -u habitat-${MODULE_TYPE}-module -f"
-    echo "  Restart: sudo systemctl restart habitat-${MODULE_TYPE}-module"
+    echo "  Start: sudo systemctl start saviour-${MODULE_TYPE}-module"
+    echo "  Stop:  sudo systemctl stop saviour-${MODULE_TYPE}-module"
+    echo "  Status: sudo systemctl status saviour-${MODULE_TYPE}-module"
+    echo "  Logs: sudo journalctl -u saviour-${MODULE_TYPE}-module -f"
+    echo "  Restart: sudo systemctl restart saviour-${MODULE_TYPE}-module"
 fi
 
 echo ""

@@ -34,7 +34,6 @@ class Network():
 
         # Module tracking
         self.modules = []
-        self.module_health = {}
         self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
         self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.#
         self.callbacks = {} # Callbacks dict
@@ -220,7 +219,6 @@ class Network():
                 
                 # Clear module list
                 self.modules.clear()
-                self.module_health.clear()
                 self.module_discovery_times.clear()
                 self.module_last_seen.clear()
                 self.logger.info("Cleared module tracking")
@@ -233,6 +231,7 @@ class Network():
         self.logger.info(f"Validating module {module.id}")
         if self.modules:
             self.logger.info(f"Validing against {self.modules}")
+            valid_module = True # Flag which will get set false if module turns out to be a duplicate
             for existing_module in self.modules:
                 self.logger.info(f"Comparing {existing_module.id} to {module.id}")
                 if existing_module.id == module.id:
@@ -240,15 +239,17 @@ class Network():
                     existing_module.ip = module.ip
                     existing_module.port = module.port
                     existing_module.properties = module.properties
-                    return False
+                    valid_module = False
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
                     existing_module.id = module.id
                     existing_module.port = module.port
                     existing_module.properties = module.properties
-                    return False
+                    valid_module = False
                 else:
                     continue
+            # Finish looping and return whether module was valid or not
+            return valid_module
         else:
             self.logger.info("No modules yet discovered, adding this as first module")
             return True
@@ -303,10 +304,6 @@ class Network():
             # Find the module being removed
             module_to_remove = next((module for module in self.modules if module.name == name), None)
             if module_to_remove:
-                # Clean up health tracking
-                if module_to_remove.id in self.module_health:
-                    self.logger.info(f"Removing health tracking for module {module_to_remove.id}")
-                    del self.module_health[module_to_remove.id]
                 
                 # Clean up tracking information
                 if module_to_remove.id in self.module_discovery_times:
@@ -359,7 +356,6 @@ class Network():
                 'port': module.port,
                 'last_seen': last_seen,
                 'discovery_time': discovery_time,
-                'uptime': current_time - discovery_time if discovery_time > 0 else 0,
-                'health': self.module_health.get(module_id, {})
+                'uptime': current_time - discovery_time if discovery_time > 0 else 0
             }
         return None

@@ -191,7 +191,7 @@ class Health:
                 time_diff = current_time - last_heartbeat
                 
                 # Debug logging for time calculations
-                self.logger.info(f"Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
+                # self.logger.info(f"Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
                 
                 # Find offline modules
                 if time_diff > self.heartbeat_timeout: # If heartbeat not received within timeout period
@@ -224,25 +224,32 @@ class Health:
             self._check_ptp_health()
             
             time.sleep(self.heartbeat_interval)
+            # time.sleep(5)
     
     def _check_ptp_health(self):
         """
         Check received PTP stats and reset PTP if necessary
         """
+        self.logger.info(self.module_health)
         reset_flag = False
         for module in self.module_health:
-            if self.module_health[module]["ptp4l_freq"] > 100000 or self.module_health[module]["phc2sys_freq"] > 100000:
-                self.logger.warning(f"PTP frequency offset too high for module {module}: "
-                                    f"ptp4l_freq={self.module_health[module]['ptp4l_freq']}, "
-                                    f"phc2sys_freq={self.module_health[module]['phc2sys_freq']}. "
-                                    "Consider resetting PTP.")
-                reset_flag = True
-            if self.module_health[module]["ptp4l_offset"] > 10000 or self.module_health[module]["phc2sys_offset"] > 10000:
-                self.logger.warning(f"PTP offset too high for module {module}: "
-                                    f"ptp4l_offset={self.module_health[module]['ptp4l_offset']}, "
-                                    f"phc2sys_offset={self.module_health[module]['phc2sys_offset']}. "
-                                    "Consider resetting PTP.")
-                reset_flag = True
+            # TODO: Consider putting all ptp params in a nested dict here that we could loop through e.g. for param in self.module_health[module]["ptp"]:
+            if self.module_health[module]["ptp4l_freq"] is not None:
+                if abs(self.module_health[module]["ptp4l_freq"]) > 100000:
+                    self.logger.warning(f"ptp4l_freq offset too high for module {module}: {self.module_health[module]['ptp4l_freq']}")           
+                    reset_flag = True
+            if self.module_health[module]["phc2sys_freq"] is not None:
+                if abs(self.module_health[module]["phc2sys_freq"]) > 100000:
+                    self.logger.warning(f"phc2sys_freq offset too high for module {module}: {self.module_health[module]['phc2sys_freq']}")             
+                    reset_flag = True
+            if self.module_health[module]["ptp4l_offset"] is not None:
+                if abs(self.module_health[module]["ptp4l_offset"]) > 10000:
+                    self.logger.warning(f"ptp4l_offset too high for module {module}: {self.module_health[module]['ptp4l_offset']}")             
+                    reset_flag = True
+            if self.module_health[module]["phc2sys_offset"] is not None:
+                if abs(self.module_health[module]["phc2sys_offset"]) > 10000:
+                    self.logger.warning(f"phc2sys_offset too high for module {module}: {self.module_health[module]['phc2sys_offset']}")         
+                    reset_flag = True
             if reset_flag == True:
                 self.logger.info(f"Telling {module} to restart_ptp")
                 self.callbacks["send_command"](module, "restart_ptp", {})

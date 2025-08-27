@@ -186,6 +186,8 @@ class Health:
             if cycle_count % 10 == 0:
                 self.logger.info(f"Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
             
+
+            self.logger.info(f"Online modules: {self.get_online_modules()}, offline modules: {self.get_offline_modules()}")
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
                 last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
                 time_diff = current_time - last_heartbeat

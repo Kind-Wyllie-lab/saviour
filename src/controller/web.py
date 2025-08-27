@@ -105,6 +105,10 @@ class Web:
         @self.app.route('/recordings')
         def recordings():
             return render_template('recordings.html')
+
+        @self.app.route('/settings')
+        def settings():
+            return render_template('settings.html')
     
         @self.app.route('/guide')
         def guide():

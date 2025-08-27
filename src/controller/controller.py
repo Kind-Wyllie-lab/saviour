@@ -43,7 +43,7 @@ logging.basicConfig(
 import threading # for concurrent operations
 
 # Local managers
-from src.controller.service import Service
+from src.controller.network import Network
 from src.controller.communication import Communication
 from src.controller.health import Health
 from src.controller.buffer import Buffer
@@ -61,12 +61,11 @@ class Controller:
         Instantiates the following:
         - A logger
         - A config manager, which initially loads the config file and sets up the config object which the controller can use to get parameters
-        - A service manager, which initially registers a zeroconf service and (passively, as part of zeroconf object) starts a thread to browse for module services
+        - A network manager, which initially registers a zeroconf network and (passively, as part of zeroconf object) starts a thread to browse for module networks
         - A communication manager, which initially starts a thread to listen for status and data updates from modules
-        - A data export manager, which initially creates a supabase client (is this a thread?)
         - A PTP manager, which initally defines the ptp4l and phc2sys arguments based on the role of the controller and will later start a thread
         - A buffer manager, which initially sets the max buffer size
-        - An interface manager, which initially may instantiate a web interface manager and a CLI interface manager, and will later start a manual control loop thread if CLI interface is enabled. These are to be separated later.
+        - A web manager, which hosts a flask based webapp GUI
         - A health monitor, which then has it's start monitoring method called to start a thread to monitor the health of the modules
 
         Args:
@@ -85,7 +84,7 @@ class Controller:
 
         # Add logging file handler if none exists
         if not self.logger.handlers:
-            # Add file handler for persistent logging (useful when running as systemd service)
+            # Add file handler for persistent logging (useful when running as systemd network)
             try:
                 # Create logs directory if it doesn't exist
                 log_dir = self.config.get("logging.directory", "/var/log/habitat")
@@ -126,9 +125,9 @@ class Controller:
         self.is_running = True  # Add flag for listener thread
 
         # Managers
-        self.service = Service(self.config) 
-        self.service.on_module_discovered = self.on_module_discovered
-        self.service.on_module_removed = self.on_module_removed              
+        self.network = Network(self.config) 
+        self.network.on_module_discovered = self.on_module_discovered
+        self.network.on_module_removed = self.on_module_removed              
 
         self.logger.info(f"Module discovery callback registered early")
         
@@ -161,7 +160,7 @@ class Controller:
         # Web interface
         if self.web:
             self.web.register_callbacks({
-                "get_modules": self.service.get_modules,
+                "get_modules": self.network.get_modules,
                 "get_ptp_history": self.buffer.get_ptp_history,
                 "send_command": self.communication.send_command,
                 "get_module_health": self.health.get_module_health
@@ -271,11 +270,11 @@ class Controller:
             
             # Clean up modules list
             self.logger.info("Cleaning up modules list")
-            self.service.modules.clear()
+            self.network.modules.clear()
 
-            # Clean up service manager
-            self.logger.info("Cleaning up service manager")
-            self.service.cleanup()
+            # Clean up network manager
+            self.logger.info("Cleaning up network manager")
+            self.network.cleanup()
             
             # Clean up communication manager
             self.logger.info("Cleaning up communication manager")
@@ -310,12 +309,12 @@ class Controller:
         """
         self.logger.info("Starting controller")
 
-        # Register controller service for module discovery
+        # Register controller network for module discovery
         self.logger.info("Registering controller service...")
-        if not self.service.register_service():
-            self.logger.error("Failed to register controller service")
+        if not self.network.register_service():
+            self.logger.error("Failed to register controller network")
             return False
-        self.logger.info("Controller service registered successfully")
+        self.logger.info("Controller network registered successfully")
 
         # Start PTP
         self.logger.info("Starting PTP manager...")
@@ -327,8 +326,8 @@ class Controller:
             self.web.start() # This will start a thread to serve a webapp and listen for commands from user
             
             # Update web interface with initial module list
-            if hasattr(self, 'service'):
-                self.web.update_modules(self.service.modules)
+            if hasattr(self, 'network'):
+                self.web.update_modules(self.network.modules)
 
         # Keep the main thread alive
         try: 
@@ -397,12 +396,12 @@ class Controller:
         
         # Update web interface
         if hasattr(self, 'web'):
-            self.web.update_modules(self.service.modules)
+            self.web.update_modules(self.network.modules)
             self.web.notify_module_update()
             self.module_config[module.id] = {}
 
     def on_module_removed(self, module):
-        """Callback for when a module service is removed"""
+        """Callback for when a module network is removed"""
         self.web.notify_module_update()
 
 if __name__ == "__main__":

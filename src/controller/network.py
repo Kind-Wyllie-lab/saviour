@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Controller Service Manager
+Controller Network Manager
 
-The service manager is responsible for discovering, registering and unregistering zeroconf services (modules) with the controller.
+The network manager is responsible for discovering, registering and unregistering zeroconf services (modules) with the controller, as well as discovering controller's own ip.
 
 """
 
@@ -27,7 +27,7 @@ class Module:
     port: int
     properties: Dict[str, Any]
 
-class Service():
+class Network():
     def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
@@ -244,19 +244,36 @@ class Service():
                 properties=info.properties
             )
             
-            # Check if this module already exists
-            existing_module = next((m for m in self.modules if m.id == module.id), None)
-            if existing_module:
-                # Update existing module with new information
-                self.logger.info(f"Updating existing module: {module.id}")
-                existing_module.ip = module.ip
-                existing_module.port = module.port
-                existing_module.properties = module.properties
-                module = existing_module
-            else:
-                # Add new module
+            # self.logger.
+            if self._validate_discovered_module(module) == True:
                 self.modules.append(module)
                 self.logger.info(f"Added new module: {module}")
+            
+            self.logger.info(f"New module list: {self.modules}")
+
+            # # Check if this module already exists based on module id
+            # existing_module = next((m for m in self.modules if m.id == module.id), None)
+            # if existing_module:
+            #     # Update existing module with new information
+            #     self.logger.info(f"Updating existing module: {module.id}")
+            #     existing_module.ip = module.ip
+            #     existing_module.port = module.port
+            #     existing_module.properties = module.properties
+            #     module = existing_module
+            # else:
+            #     # Check if this module already exists based on module id
+            #     existing_module_ip = next((m for m in self.modules if m.ip == module.ip), None)
+            #     if existing_module:
+            #         # Update existing module with new information
+            #         self.logger.info(f"Updating existing module: {module.id}")
+            #         existing_module.ip = module.ip
+            #         existing_module.port = module.port
+            #         existing_module.properties = module.properties
+            #         module = existing_module
+            #     else:
+            #         # Add new module
+            #         self.modules.append(module)
+            #         self.logger.info(f"Added new module: {module}")
             
             # Update tracking information
             current_time = time.time()
@@ -267,6 +284,33 @@ class Service():
             if self.on_module_discovered:
                 self.logger.info(f"Calling module discovery callback")
                 self.on_module_discovered(module)
+
+    def _validate_discovered_module(self, module):
+        self.logger.info(f"Validating module {module.id}")
+        if self.modules:
+            self.logger.info(f"Validing against {self.modules}")
+            for existing_module in self.modules:
+                self.logger.info(f"Comparing {existing_module.id} to {module.id}")
+                if existing_module.id == module.id:
+                    self.logger.info(f"ID {module.id} is already in known modules, updating service info")
+                    existing_module.ip = module.ip
+                    existing_module.port = module.port
+                    existing_module.properties = module.properties
+                    return False
+                if existing_module.ip == module.ip:
+                    self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
+                    existing_module.id = module.id
+                    existing_module.port = module.port
+                    existing_module.properties = module.properties
+                    return False
+                else:
+                    self.logger.info(f"{module.id} is valid, adding to list")
+                    return True
+        else:
+            self.logger.info("No modules yet discovered, adding this as first module")
+            return True
+
+            
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""

@@ -254,7 +254,7 @@ class PTP:
             except Exception as e:
                 self.logger.error(f"Error in monitor thread: {e}")
 
-            time.sleep(1)  # Check every second
+            time.sleep(10)  # Check every second
 
     def _check_ptp_offsets(self):
         if self.latest_phc2sys_freq > 100000 or self.latest_phc2sys_offset > 5000:

@@ -30,6 +30,7 @@ class Health:
         self.logger = logging.getLogger(__name__)
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
+        self.monitor_interval = 30 
         self.history_size = history_size
         
         # Health data storage
@@ -222,11 +223,10 @@ class Health:
                                 self.logger.error(f"Error in status change callback: {e}")
             
             # Check PTP health periodically
-            # if cycle_count % 6 == 0:  # Check PTP health every 6 cycles 
-            self._check_ptp_health()
+            if cycle_count % 2 == 0:  # Check PTP health every couple cycles 
+                self._check_ptp_health()
             
-            time.sleep(self.heartbeat_interval)
-            # time.sleep(5)
+            time.sleep(self.monitor_interval)
     
     def _check_ptp_health(self):
         """

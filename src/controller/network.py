@@ -248,8 +248,7 @@ class Network():
                     existing_module.properties = module.properties
                     return False
                 else:
-                    self.logger.info(f"{module.id} is valid, adding to list")
-                    return True
+                    continue
         else:
             self.logger.info("No modules yet discovered, adding this as first module")
             return True

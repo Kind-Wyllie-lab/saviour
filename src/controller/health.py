@@ -36,6 +36,9 @@ class Health:
         # Health data storage
         self.module_health = {}  # Current health data
         self.module_health_history = {}  # Historical health data
+
+        # Module online/offline states
+        self.module_states = {}
         
         # Control flags
         self.is_monitoring = False
@@ -154,7 +157,8 @@ class Health:
         current_time = time.time()
         
         for module_id, health in self.module_health.items():
-            if (current_time - health['timestamp']) > self.heartbeat_timeout:
+            if self.module_health[module_id]["status"] == "offline": 
+            # if (current_time - health['timestamp']) > self.heartbeat_timeout:
                 offline_modules.append(module_id)
         
         return offline_modules
@@ -170,7 +174,8 @@ class Health:
         current_time = time.time()
         
         for module_id, health in self.module_health.items():
-            if (current_time - health['last_heartbeat']) <= self.heartbeat_timeout: # If a heartbeat was received within 1 timeout period of now
+            if self.module_health[module_id]["status"] == "online":
+            # if (current_time - health['timestamp']) <= self.heartbeat_timeout: # optionally do another heartbeat check here just inacse monitor loop hasn't caught it yet
                 online_modules.append(module_id) # It's online
         
         return online_modules
@@ -189,6 +194,7 @@ class Health:
             
 
             self.logger.info(f"Online modules: {self.get_online_modules()}, offline modules: {self.get_offline_modules()}")
+            # self.logger.info(f"Module health: {self.module_health}")
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
                 last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
                 time_diff = current_time - last_heartbeat
@@ -221,6 +227,8 @@ class Health:
                                 self.callbacks["on_status_change"](module_id, 'online')
                             except Exception as e:
                                 self.logger.error(f"Error in status change callback: {e}")
+                
+                self.logger.info(f"Module {module_id} is {self.module_health[module_id]['status']}")
             
             # Check PTP health periodically
             if cycle_count % 2 == 0:  # Check PTP health every couple cycles 

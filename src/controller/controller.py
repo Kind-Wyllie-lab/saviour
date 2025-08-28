@@ -173,11 +173,8 @@ class Controller:
         })
         self.logger.info(f"Status change callback registered with health monitor")
 
-    
-
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
-        print() # New line  
         module_id = topic.split('/')[1] # get module id from topic
         try:
             import json
@@ -193,6 +190,11 @@ class Controller:
                     self.buffer.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
+                case 'ACK':
+                    self.logger.info(f"Command acknowledged by {module_id}: {status_data['command']}")
+                case 'status':
+                    self.logger.info(f"{module_id} sent status type message likely response to get status command")
+                    self.health.update_module_health(module_id, status_data)
                 case 'get_config':
                     self.logger.info(f"Config dict received from {module_id}")
                     config_data = status_data.get('config', {})
@@ -268,10 +270,6 @@ class Controller:
             self.logger.info("Cleaning up module data buffer")
             self.buffer.clear_module_data()
             
-            # Clean up modules list
-            self.logger.info("Cleaning up modules list")
-            self.network.modules.clear()
-
             # Clean up network manager
             self.logger.info("Cleaning up network manager")
             self.network.cleanup()
@@ -327,7 +325,7 @@ class Controller:
             
             # Update web interface with initial module list
             if hasattr(self, 'network'):
-                self.web.update_modules(self.network.modules)
+                self.web.update_modules(self.network.discovered_modules)
 
         # Keep the main thread alive
         try: 
@@ -396,7 +394,7 @@ class Controller:
         
         # Update web interface
         if hasattr(self, 'web'):
-            self.web.update_modules(self.network.modules)
+            self.web.update_modules(self.network.discovered_modules)
             self.web.notify_module_update()
             self.module_config[module.id] = {}
 

@@ -34,10 +34,6 @@ class Web:
         
         # Callbacks
         self.callbacks = {} # An empty dict which will later be assigned callback functions
-
-        # Webhook handlers
-        self.ptp_update_handlers = []
-        self.module_update_handlers = []
         
         # Experiment name persistence
         self.current_experiment_name = ""
@@ -65,29 +61,14 @@ class Web:
         """
         self.callbacks = callbacks
 
-    def register_ptp_update_handler(self, handler):
-        """Register a handler for PTP updates"""
-        self.ptp_update_handlers.append(handler)
-
-    def register_module_update_handler(self, handler):
-        """Register a handler for module list updates"""
-        self.logger.info(f"Registering new module update handler")
-        self.module_update_handlers.append(handler)
-        self.logger.info(f"Total module update handlers: {len(self.module_update_handlers)}")
-
     def notify_ptp_update(self):
-        """Notify all registered handlers of a PTP update"""
+        """Notify a PTP update"""
         if self.callbacks["get_ptp_history"]:
             history = self.callbacks["get_ptp_history"]()
-            for handler in self.ptp_update_handlers:
-                try:
-                    handler(history)
-                except Exception as e:
-                    self.logger.error(f"Error in PTP update handler: {e}")
 
     def notify_module_update(self):
-        """Notify all registered handlers of a module list update"""
-        self.logger.info(f"Notifying module update to {len(self.module_update_handlers)} handlers")
+        """Get list of modules from callback to network object and emit them on module_update"""
+        self.logger.info(f"Getting list of modules and sending emitting 'module_update'")
         if self.callbacks["get_modules"]:
             modules = self.callbacks["get_modules"]()
             self.logger.info(f"Got {len(modules)} modules from callback")
@@ -124,9 +105,8 @@ class Web:
             
             # Send initial module list
             self.logger.info(f"About to call get_modules()")
-            modules = self.get_modules()
-            self.logger.info(f"get_modules() returned: {type(modules)}")
-            self.logger.info(f"Sending initial module list to new client: {len(modules)} modules")
+            modules = self.callbacks["get_modules"]()
+            self.logger.info(f"get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('module_update', {"modules": modules})
             
             # Send current experiment name to new client
@@ -186,7 +166,7 @@ class Web:
                 
                 # Special handling for list_recordings to all modules
                 if command_type == 'list_recordings' and module_id == 'all':
-                    modules = self.get_modules()
+                    modules = self.callbacks["get_modules"]()
                     if not modules:
                         self.logger.warning("No modules found for list_recordings aggregation.")
                         self.socketio.emit('recordings_list', {'module_recordings': [], 'exported_recordings': self.get_exported_recordings()})
@@ -257,10 +237,10 @@ class Web:
         @self.socketio.on('module_update')
         def handle_module_update():
             """Handle request for module data"""
-            self.logger.info(f"Client requested module data")
+            self.logger.info(f"module_update event received from frontend")
             
             # Get current modules from callback
-            modules = self.get_modules()
+            modules = self.callbacks["get_modules"]()
             self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Send module update to all clients
@@ -332,7 +312,7 @@ class Web:
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
             self.logger.info(f"/api/list_modules endpoint called. Listing modules")
-            modules = self.get_modules()
+            modules = self.callbacks["get_modules"]()
             self.logger.info(f"Found {len(modules)} modules")
             return jsonify({"modules": modules})
 
@@ -451,7 +431,7 @@ class Web:
         def handle_get_modules():
             """Handle request for list of modules"""
             try:
-                modules = self.get_modules()
+                modules = self.callbacks["get_modules"]()
                 self.socketio.emit('modules_list', {
                     'modules': modules
                 })
@@ -482,21 +462,6 @@ class Web:
                     'module_health': {},
                     'error': str(e)
                 })
-
-    def get_modules(self):
-        """Get list of all discovered modules"""
-        self.logger.info("Getting modules list")
-        if self.callbacks["get_modules"]:
-            self.logger.info(f"Callback type: {type(self.callbacks['get_modules'])}")
-            self.logger.info(f"Callback: {self.callbacks['get_modules']}")
-            # Call the callback function to get the actual modules list
-            modules = self.callbacks["get_modules"]()
-            self.logger.info(f"Modules type: {type(modules)}")
-            self.logger.info(f"Modules: {modules}")
-            return modules
-        else:
-            self.logger.warning("No get_modules callback registered")
-            return []
     
     def update_modules(self, modules: list):
         """Update the list of modules from the controller service manager"""
@@ -527,7 +492,7 @@ class Web:
     def list_modules(self):
         """List all discovered modules"""
         self.logger.info("Listing modules")
-        modules = self.get_modules()
+        modules = self.callbacks["get_modules"]()
         return jsonify({"modules": modules})
 
     def get_exported_recordings(self):
@@ -630,11 +595,6 @@ class Web:
             import subprocess
             
             # NAS configuration - updated to match working module_export_manager implementation
-            # nas_ip = "192.168.0.2"
-            # share_path = "data"
-            # username = "sidbit"
-            # password = "RaspberryWonder1305"
-            # mount_point = "/mnt/nas"
             nas_ip = self.config.get("nas.ip")
             share_path = self.config.get("nas.share_path")
             username = self.config.get("nas.username")

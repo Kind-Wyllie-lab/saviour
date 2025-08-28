@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "habitat"
+name = "saviour"
 version = "0.1.0"
 description = "Modular Synchronised Data Capture System for behavioral testing labs"
 readme = "README.md"
@@ -67,7 +67,7 @@ select = ["E", "F", "I", "N", "W", "B", "UP", "PL", "RUF"]
 ignore = []
 
 [tool.ruff.isort]
-known-first-party = ["habitat"]
+known-first-party = ["saviour"]
 
 [tool.mypy]
 python_version = "3.8"
@@ -82,7 +82,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [project.urls]
-Homepage = "https://github.com/Kind-Wyllie-lab/habitat"
-Documentation = "https://github.com/Kind-Wyllie-lab/habitat#readme"
-Repository = "https://github.com/Kind-Wyllie-lab/habitat.git"
-Issues = "https://github.com/Kind-Wyllie-lab/habitat/issues" 
+Homepage = "https://github.com/Kind-Wyllie-lab/saviour"
+Documentation = "https://github.com/Kind-Wyllie-lab/saviour#readme"
+Repository = "https://github.com/Kind-Wyllie-lab/saviour.git"
+Issues = "https://github.com/Kind-Wyllie-lab/saviour/issues" 

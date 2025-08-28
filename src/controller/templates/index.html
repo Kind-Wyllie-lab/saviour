@@ -4,7 +4,7 @@
     <title>SAVIOUR</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="icon" type="image/x-icon" href="/static/uofe_logo.png">
+    <link rel="icon" type="image/x-icon" href="/static/uofe_logo.jpg">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script> <!--Import socketio, used for websocket communication i.e. updates pushed from controller-->
     <script src="{{ url_for('static', filename='js/header.js') }}"></script> <!--Import header.js, used for the header of the page-->
     <script src="{{ url_for('static', filename='js/module-item.js') }}"></script> <!--Import module-item.js, used for the module list-->
@@ -180,14 +180,13 @@
             });
         }
 
-        console.log('Script starting...'); // Initial script load
-
         var socket = io(); // The socket object receives updates from the controller
         let isInitialLoad = true; // Flag to track initial page load
         
         // WebSocket event handlers
         socket.on('connect', function() { // When connection is established, log it
             console.log('WebSocket connection established');
+            console.log("Emitting module_update");
             socket.emit('module_update'); // Request initial module data
             socket.emit('get_experiment_name'); // Request current experiment name
             refreshModuleStatus(); // Get module status on page load
@@ -1074,6 +1073,7 @@
         socket.on('export_complete', function(data) {
             if (data.success) {
                 // Refresh the recordings list
+                console.log("Emitting module_update");
                 socket.emit('module_update');
             } else {
                 alert(`Export failed: ${data.error || 'Unknown error'}`);

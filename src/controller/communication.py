@@ -57,7 +57,6 @@ class Communication:
         """Send a command to a specific module"""
         # Handle params
         if not params:
-            self.logger.info(f"No params provided - was this a mistake?")
             params = {}
         json_params = json.dumps(params)
 

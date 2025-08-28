@@ -21,16 +21,16 @@ from src.modules.config import Config
 
 from typing import Dict
 
-class Service:
+class Network:
     def __init__(self, config: Config, module_id: str, module_type: str):
         """
-        Initialize the module service manager
+        Initialize the module network manager
 
         Args:
             logger: The logger to use for logging
             config: The config manager to use for configuration
             module_id: The id of the module
-            module: The module itself.
+            module_type: The type of module e.g. camera.
         """
 
         # Basic params

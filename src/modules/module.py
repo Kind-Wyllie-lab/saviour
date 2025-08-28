@@ -45,7 +45,7 @@ from src.modules.config import Config
 from src.modules.communication import Communication
 from src.modules.health import Health
 from src.modules.command import Command
-from src.modules.service import Service
+from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 
@@ -147,14 +147,14 @@ class Module:
                 start_time=None # Will be set during start()
             )
 
-        self.logger.info(f"Initialising service manager")
+        self.logger.info(f"Initialising network manager")
 
-        self.service = Service(self.config, module_id=self.module_id, module_type=self.module_type)
+        self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type)
 
         # Register Callbacks
         self.callbacks = { # Define a universal set of callbacks
             'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
-            'get_controller_ip': lambda: self.service.controller_ip,  # or whatever the callback function is
+            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
             'get_samplerate': lambda: self.config.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
             'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
             'restart_ptp': self.ptp.restart, # Restart PTP services
@@ -177,7 +177,7 @@ class Module:
             'when_controller_discovered': self.when_controller_discovered,
             'controller_disconnected': self.controller_disconnected
         }
-        self.service.set_callbacks(self.callbacks)
+        self.network.set_callbacks(self.callbacks)
         self.health.set_callbacks(self.callbacks)
         self.communication.set_callbacks(self.callbacks)
         self.command.set_callbacks(self.callbacks)
@@ -205,7 +205,7 @@ class Module:
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
-        self.logger.info(f"Service manager informs that controller was discovered at {controller_ip}:{controller_port}")
+        self.logger.info(f"Network manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"Module will now initialize the necessary managers")
         
         # Check if we're already connected to this controller
@@ -686,7 +686,7 @@ class Module:
             return False
         
         # Register service with proper IP address
-        if not self.service.register_service():
+        if not self.network.register_service():
             self.logger.error("Failed to register service")
             return False
         
@@ -698,12 +698,12 @@ class Module:
         self.command.start_time = self.start_time
         
         # Start command listener thread if controller is discovered
-        if self.service.controller_ip:
-            self.logger.info(f"Attempting to connect to controller at {self.service.controller_ip}")
+        if self.network.controller_ip:
+            self.logger.info(f"Attempting to connect to controller at {self.network.controller_ip}")
             # Connect to the controller
             self.communication.connect(
-                self.service.controller_ip,
-                self.service.controller_port
+                self.network.controller_ip,
+                self.network.controller_port
             )
             self.communication.start_command_listener()
 
@@ -795,8 +795,8 @@ class Module:
             self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
-            self.logger.info("Cleaning up service manager...")
-            self.service.cleanup()
+            self.logger.info("Cleaning up network manager...")
+            self.network.cleanup()
             
             # Fifth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("Cleaning up communication manager...")

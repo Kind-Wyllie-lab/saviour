@@ -795,7 +795,7 @@ class Module:
             self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
-            self.logger.info("Cleaning up service manager...")
+            self.logger.info("Cleaning up network manager...")
             self.network.cleanup()
             
             # Fifth: Stop the communication manager (ZMQ cleanup)

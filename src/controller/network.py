@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Controller Service Manager
+Controller Network Manager
 
-The service manager is responsible for discovering, registering and unregistering zeroconf services (modules) with the controller.
+The network manager is responsible for discovering, registering and unregistering zeroconf services (modules) with the controller, as well as discovering controller's own ip.
 
 """
 
@@ -27,14 +27,13 @@ class Module:
     port: int
     properties: Dict[str, Any]
 
-class Service():
+class Network():
     def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
 
         # Module tracking
         self.modules = []
-        self.module_health = {}
         self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
         self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.#
         self.callbacks = {} # Callbacks dict
@@ -58,9 +57,9 @@ class Service():
         self.service_name = f"controller_{socket.gethostname()}._controller._tcp.local."
         
         if self.config_manager:
-            self.service_port = self.config_manager.get("service.port", self.service_port)
-            self.service_type = self.config_manager.get("service.service_type", self.service_type)
-            self.service_name = self.config_manager.get("service.service_name", self.service_name)
+            self.service_port = self.config_manager.get("zeroconf.port", self.service_port)
+            self.service_type = self.config_manager.get("zeroconf.service_type", self.service_type)
+            self.service_name = self.config_manager.get("zeroconf.service_name", self.service_name)
 
         # Initialize zeroconf but don't register service yet
         self.zeroconf = Zeroconf()
@@ -220,7 +219,6 @@ class Service():
                 
                 # Clear module list
                 self.modules.clear()
-                self.module_health.clear()
                 self.module_discovery_times.clear()
                 self.module_last_seen.clear()
                 self.logger.info("Cleared module tracking")
@@ -229,6 +227,33 @@ class Service():
         finally:
             self.logger.info("Service manager cleanup complete")
     
+    def _validate_discovered_module(self, module):
+        self.logger.info(f"Validating module {module.id}")
+        if self.modules:
+            self.logger.info(f"Validing against {self.modules}")
+            valid_module = True # Flag which will get set false if module turns out to be a duplicate
+            for existing_module in self.modules:
+                self.logger.info(f"Comparing {existing_module.id} to {module.id}")
+                if existing_module.id == module.id:
+                    self.logger.info(f"ID {module.id} is already in known modules, updating service info")
+                    existing_module.ip = module.ip
+                    existing_module.port = module.port
+                    existing_module.properties = module.properties
+                    valid_module = False
+                if existing_module.ip == module.ip:
+                    self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
+                    existing_module.id = module.id
+                    existing_module.port = module.port
+                    existing_module.properties = module.properties
+                    valid_module = False
+                else:
+                    continue
+            # Finish looping and return whether module was valid or not
+            return valid_module
+        else:
+            self.logger.info("No modules yet discovered, adding this as first module")
+            return True
+
     # zeroconf methods
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
@@ -244,19 +269,11 @@ class Service():
                 properties=info.properties
             )
             
-            # Check if this module already exists
-            existing_module = next((m for m in self.modules if m.id == module.id), None)
-            if existing_module:
-                # Update existing module with new information
-                self.logger.info(f"Updating existing module: {module.id}")
-                existing_module.ip = module.ip
-                existing_module.port = module.port
-                existing_module.properties = module.properties
-                module = existing_module
-            else:
-                # Add new module
+            if self._validate_discovered_module(module) == True:
                 self.modules.append(module)
                 self.logger.info(f"Added new module: {module}")
+            
+            self.logger.info(f"New module list: {self.modules}")
             
             # Update tracking information
             current_time = time.time()
@@ -287,10 +304,6 @@ class Service():
             # Find the module being removed
             module_to_remove = next((module for module in self.modules if module.name == name), None)
             if module_to_remove:
-                # Clean up health tracking
-                if module_to_remove.id in self.module_health:
-                    self.logger.info(f"Removing health tracking for module {module_to_remove.id}")
-                    del self.module_health[module_to_remove.id]
                 
                 # Clean up tracking information
                 if module_to_remove.id in self.module_discovery_times:
@@ -343,7 +356,6 @@ class Service():
                 'port': module.port,
                 'last_seen': last_seen,
                 'discovery_time': discovery_time,
-                'uptime': current_time - discovery_time if discovery_time > 0 else 0,
-                'health': self.module_health.get(module_id, {})
+                'uptime': current_time - discovery_time if discovery_time > 0 else 0
             }
         return None

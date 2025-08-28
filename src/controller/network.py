@@ -33,7 +33,7 @@ class Network():
         self.config_manager = config_manager
 
         # Module tracking
-        self.modules = []
+        self.discovered_modules = []
         self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
         self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.#
         self.callbacks = {} # Callbacks dict
@@ -218,7 +218,7 @@ class Network():
                 self.logger.info("Closed zeroconf")
                 
                 # Clear module list
-                self.modules.clear()
+                self.discovered_modules.clear()
                 self.module_discovery_times.clear()
                 self.module_last_seen.clear()
                 self.logger.info("Cleared module tracking")
@@ -229,10 +229,10 @@ class Network():
     
     def _validate_discovered_module(self, module):
         self.logger.info(f"Validating module {module.id}")
-        if self.modules:
-            self.logger.info(f"Validing against {self.modules}")
+        if self.discovered_modules:
+            self.logger.info(f"Validing against {self.discovered_modules}")
             valid_module = True # Flag which will get set false if module turns out to be a duplicate
-            for existing_module in self.modules:
+            for existing_module in self.discovered_modules:
                 self.logger.info(f"Comparing {existing_module.id} to {module.id}")
                 if existing_module.id == module.id:
                     self.logger.info(f"ID {module.id} is already in known modules, updating service info")
@@ -270,10 +270,10 @@ class Network():
             )
             
             if self._validate_discovered_module(module) == True:
-                self.modules.append(module)
+                self.discovered_modules.append(module)
                 self.logger.info(f"Added new module: {module}")
             
-            self.logger.info(f"New module list: {self.modules}")
+            self.logger.info(f"New module list: {self.discovered_modules}")
             
             # Update tracking information
             current_time = time.time()
@@ -302,7 +302,7 @@ class Network():
         self.logger.info(f"Removing module: {name}")
         try:
             # Find the module being removed
-            module_to_remove = next((module for module in self.modules if module.name == name), None)
+            module_to_remove = next((module for module in self.discovered_modules if module.name == name), None)
             if module_to_remove:
                 
                 # Clean up tracking information
@@ -312,7 +312,7 @@ class Network():
                     del self.module_last_seen[module_to_remove.id]
                 
                 # Remove from modules list
-                self.modules = [module for module in self.modules if module.name != name]
+                self.discovered_modules = [module for module in self.discovered_modules if module.name != name]
                 self.logger.info(f"Module {module_to_remove.id} removed from tracking")
 
                 # Call the callback if it exists
@@ -327,7 +327,7 @@ class Network():
     def get_modules(self):
         """Return module list"""
         modules = []
-        for module in self.modules:
+        for module in self.discovered_modules:
             # Convert module to dict and ensure all keys are strings
             module_dict = {
                 'id': module.id,
@@ -343,7 +343,7 @@ class Network():
     
     def get_module_status(self, module_id: str) -> Optional[Dict]:
         """Get detailed status for a specific module"""
-        module = next((m for m in self.modules if m.id == module_id), None)
+        module = next((m for m in self.discovered_modules if m.id == module_id), None)
         if module:
             current_time = time.time()
             last_seen = self.module_last_seen.get(module_id, 0)

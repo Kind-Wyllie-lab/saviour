@@ -449,15 +449,15 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/saviour/src/modules
-ExecStart=/home/pi/Desktop/saviour/env/bin/python ${MODULE_TYPE}_module.py
+WorkingDirectory=/usr/local/src/saviour/src/modules
+ExecStart=/usr/local/src/saviour/env/bin/python ${MODULE_TYPE}_module.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PYTHONPATH=/home/pi/Desktop/saviour/src
+Environment=PYTHONPATH=/usr/local/src/saviour/src
 
 [Install]
 WantedBy=multi-user.target
@@ -499,15 +499,15 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/pi/Desktop/saviour/src/controller/
-ExecStart=/home/pi/Desktop/saviour/env/bin/python controller.py
+WorkingDirectory=/usr/local/src/saviour/src/controller/
+ExecStart=/usr/local/src/saviour/env/bin/python controller.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PYTHONPATH=/home/pi/Desktop/saviour/src
+Environment=PYTHONPATH=/usr/local/src/saviour/src
 
 [Install]
 WantedBy=multi-user.target

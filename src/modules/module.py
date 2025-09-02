@@ -165,7 +165,7 @@ class Module:
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
-            'clear_recordings': self.clear_recordings,
+            'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
             'handle_command': self.command.handle_command, 
@@ -186,6 +186,7 @@ class Module:
         # Recording management
         self.recording_session_id = None
         self.current_filename = None
+        self.session_files = []
 
         # Parameters from config
         self.samplerate = self.config.get("module.samplerate")
@@ -341,10 +342,26 @@ class Module:
                     "error": "Not recording"
                 })
                 return False
+            
+            # Get session files
+            self._get_session_files()
+
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")
             return False
         return True  # Just return True, let child class handle the rest
+
+    def _get_session_files(self):
+        # Find files that belong to the current recording session
+        self.session_files = []
+        self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
+        self.logger.info(f"Looking for recordings in {self.recording_folder}")
+        self.logger.info(f"Recordings are as follows: {os.listdir(self.recording_folder)}")
+        for filename in os.listdir(self.recording_folder):
+            self.logger.info(f"Examining file {filename} for auto export, trying to match {self.recording_session_id}")
+            if self.recording_session_id in filename:
+                self.session_files.append(filename)
+                self.logger.info(f"Found session file to export: {filename}")
 
     def _auto_export(self):
         if self.config.get("auto_export", True) and self.current_filename:
@@ -352,6 +369,7 @@ class Module:
             try:
                 # Use the export manager's method for consistency
                 if self.export.export_current_session_files(
+                    session_files=self.session_files,
                     recording_folder=self.recording_folder,
                     recording_session_id=self.recording_session_id,
                     experiment_name=self.current_experiment_name
@@ -359,7 +377,7 @@ class Module:
                     self.logger.info("Auto-export completed successfully")
 
                     if self.config.get("auto_delete_on_export", True):
-                        self.clear_recordings()
+                        self._clear_recordings(filenames=self.session_files)
                 else:
                     self.logger.warning("Auto-export failed, but recording was successful")
             except Exception as e:
@@ -446,7 +464,7 @@ class Module:
             # Return empty list instead of re-raising
             return []
 
-    def clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
+    def _clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
         """Clear recordings
         
         Args:
@@ -620,7 +638,7 @@ class Module:
                     "experiment_name": experiment_name,
                     "success": True
                 })
-                self.clear_recordings()
+                self._clear_recordings()
                 return True
                 
             # Export specific single file

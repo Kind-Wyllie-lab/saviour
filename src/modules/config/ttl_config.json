@@ -1,6 +1,6 @@
 {
     "pins": {
-        "2": {
+        "19": {
             "type": "output",
             "output_type": "experiment_clock",
             "duty_cycle": "75%",
@@ -10,7 +10,7 @@
             "type": "input",
             "description": "Debug output from GPIO2"
         },
-        "14": {
+        "26": {
             "type": "output",
             "output_type": "pseudorandom",
             "min_interval": 0.5,

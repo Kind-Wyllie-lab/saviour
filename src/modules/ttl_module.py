@@ -149,7 +149,7 @@ class TTLModule(Module):
         
         # Set up export manager callbacks
         self.export.set_callbacks({
-            'get_controller_ip': lambda: self.service.controller_ip
+            'get_controller_ip': lambda: self.network.controller_ip
         })
 
         # TTL specific variables
@@ -202,11 +202,11 @@ class TTLModule(Module):
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'list_recordings': super().list_recordings,
-            'clear_recordings': self.clear_recordings,
+            'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
             'update_pins': self.update_pins,
             'get_pin_config': self.get_pin_config,
-            'get_controller_ip': lambda: self.service.controller_ip,
+            'get_controller_ip': lambda: self.network.controller_ip,
             'shutdown': self._shutdown,
         })
 

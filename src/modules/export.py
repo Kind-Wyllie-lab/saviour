@@ -480,7 +480,7 @@ class Export:
             self.logger.error(f"NAS mount failed: {e}")
             return False
             
-    def export_current_session_files(self, recording_folder: str, recording_session_id: str, experiment_name: str = None) -> bool:
+    def export_current_session_files(self, session_files: list, recording_folder: str, recording_session_id: str, experiment_name: str = None) -> bool:
         """Export only the files from the current recording session
         
         Args:

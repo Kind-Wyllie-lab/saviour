@@ -1,13 +1,13 @@
 #!/bin/bash
 # uninstall.sh
-# Uninstall Habitat system and clean up all configurations
+# Uninstall Saviour system and clean up all configurations
 # Usage: bash uninstall.sh
 
 set -e # If any function throws an error (doesn't return 0), exit immediately.
 
 # Setup logging
-LOG_FILE="habitat_uninstall.log"
-SUMMARY_FILE="habitat_uninstall_summary.txt"
+LOG_FILE="saviour_uninstall.log"
+SUMMARY_FILE="saviour_uninstall_summary.txt"
 
 # Function to log messages
 log_message() {
@@ -24,7 +24,7 @@ log_section() {
 save_summary() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     cat > "$SUMMARY_FILE" <<EOF
-Habitat Uninstall Summary
+Saviour Uninstall Summary
 Generated: $timestamp
 
 $1
@@ -38,30 +38,30 @@ detect_device_configuration() {
     log_section "Auto-Detecting Device Configuration"
     
     # Check for controller service
-    if systemctl list-unit-files | grep -q "habitat-controller-service"; then
+    if systemctl list-unit-files | grep -q "saviour-controller-service"; then
         DEVICE_ROLE="controller"
-        log_message "Detected CONTROLLER device (found habitat-controller-service)"
-        echo "Detected CONTROLLER device (found habitat-controller-service)"
+        log_message "Detected CONTROLLER device (found saviour-controller-service)"
+        echo "Detected CONTROLLER device (found saviour-controller-service)"
     # Check for module services
-    elif systemctl list-unit-files | grep -q "habitat-camera-module"; then
+    elif systemctl list-unit-files | grep -q "saviour-camera-module"; then
         DEVICE_ROLE="module"
         MODULE_TYPE="camera"
-        log_message "Detected CAMERA MODULE device (found habitat-camera-module)"
-        echo "Detected CAMERA MODULE device (found habitat-camera-module)"
-    elif systemctl list-unit-files | grep -q "habitat-microphone-module"; then
+        log_message "Detected CAMERA MODULE device (found saviour-camera-module)"
+        echo "Detected CAMERA MODULE device (found saviour-camera-module)"
+    elif systemctl list-unit-files | grep -q "saviour-microphone-module"; then
         DEVICE_ROLE="module"
         MODULE_TYPE="microphone"
-        log_message "Detected MICROPHONE MODULE device (found habitat-microphone-module)"
-        echo "Detected MICROPHONE MODULE device (found habitat-microphone-module)"
-    elif systemctl list-unit-files | grep -q "habitat-arduino-module"; then
+        log_message "Detected MICROPHONE MODULE device (found saviour-microphone-module)"
+        echo "Detected MICROPHONE MODULE device (found saviour-microphone-module)"
+    elif systemctl list-unit-files | grep -q "saviour-arduino-module"; then
         DEVICE_ROLE="module"
         MODULE_TYPE="arduino"
-        log_message "Detected ARDUINO MODULE device (found habitat-arduino-module)"
-        echo "Detected ARDUINO MODULE device (found habitat-arduino-module)"
+        log_message "Detected ARDUINO MODULE device (found saviour-arduino-module)"
+        echo "Detected ARDUINO MODULE device (found saviour-arduino-module)"
     else
         # Fallback to manual selection if no services found
-        log_message "No Habitat services detected, falling back to manual selection"
-        echo "No Habitat services detected. Please specify the role manually:"
+        log_message "No Saviour services detected, falling back to manual selection"
+        echo "No Saviour services detected. Please specify the role manually:"
         echo "1) Controller - Master device that coordinates other modules"
         echo "2) Module - Slave device that connects to a controller"
         echo ""
@@ -128,54 +128,54 @@ ask_module_type() {
     fi
 }
 
-# Function to stop and disable Habitat systemd services
-uninstall_habitat_services() {
-    log_section "Stopping and Disabling Habitat Services"
+# Function to stop and disable Saviour systemd services
+uninstall_saviour_services() {
+    log_section "Stopping and Disabling Saviour Services"
     
     # Stop and disable controller service
-    if systemctl is-active --quiet habitat-controller-service 2>/dev/null; then
-        log_message "Stopping habitat-controller-service..."
-        sudo systemctl stop habitat-controller-service
-        echo "Stopped habitat-controller-service"
+    if systemctl is-active --quiet saviour-controller-service 2>/dev/null; then
+        log_message "Stopping saviour-controller-service..."
+        sudo systemctl stop saviour-controller-service
+        echo "Stopped saviour-controller-service"
     fi
     
-    if systemctl is-enabled --quiet habitat-controller-service 2>/dev/null; then
-        log_message "Disabling habitat-controller-service..."
-        sudo systemctl disable habitat-controller-service
-        echo "Disabled habitat-controller-service"
+    if systemctl is-enabled --quiet saviour-controller-service 2>/dev/null; then
+        log_message "Disabling saviour-controller-service..."
+        sudo systemctl disable saviour-controller-service
+        echo "Disabled saviour-controller-service"
     fi
     
     # Stop and disable module services
     if [ "$DEVICE_ROLE" = "module" ]; then
-        if systemctl is-active --quiet habitat-${MODULE_TYPE}-module 2>/dev/null; then
-            log_message "Stopping habitat-${MODULE_TYPE}-module..."
-            sudo systemctl stop habitat-${MODULE_TYPE}-module
-            echo "Stopped habitat-${MODULE_TYPE}-module"
+        if systemctl is-active --quiet saviour-${MODULE_TYPE}-module 2>/dev/null; then
+            log_message "Stopping saviour-${MODULE_TYPE}-module..."
+            sudo systemctl stop saviour-${MODULE_TYPE}-module
+            echo "Stopped saviour-${MODULE_TYPE}-module"
         fi
         
-        if systemctl is-enabled --quiet habitat-${MODULE_TYPE}-module 2>/dev/null; then
-            log_message "Disabling habitat-${MODULE_TYPE}-module..."
-            sudo systemctl disable habitat-${MODULE_TYPE}-module
-            echo "Disabled habitat-${MODULE_TYPE}-module"
+        if systemctl is-enabled --quiet saviour-${MODULE_TYPE}-module 2>/dev/null; then
+            log_message "Disabling saviour-${MODULE_TYPE}-module..."
+            sudo systemctl disable saviour-${MODULE_TYPE}-module
+            echo "Disabled saviour-${MODULE_TYPE}-module"
         fi
     fi
     
     # Remove service files
-    if [ -f /etc/systemd/system/habitat-controller-service.service ]; then
-        log_message "Removing habitat-controller-service.service..."
-        sudo rm /etc/systemd/system/habitat-controller-service.service
-        echo "Removed habitat-controller-service.service"
+    if [ -f /etc/systemd/system/saviour-controller-service.service ]; then
+        log_message "Removing saviour-controller-service.service..."
+        sudo rm /etc/systemd/system/saviour-controller-service.service
+        echo "Removed saviour-controller-service.service"
     fi
     
-    if [ "$DEVICE_ROLE" = "module" ] && [ -f /etc/systemd/system/habitat-${MODULE_TYPE}-module.service ]; then
-        log_message "Removing habitat-${MODULE_TYPE}-module.service..."
-        sudo rm /etc/systemd/system/habitat-${MODULE_TYPE}-module.service
-        echo "Removed habitat-${MODULE_TYPE}-module.service"
+    if [ "$DEVICE_ROLE" = "module" ] && [ -f /etc/systemd/system/saviour-${MODULE_TYPE}-module.service ]; then
+        log_message "Removing saviour-${MODULE_TYPE}-module.service..."
+        sudo rm /etc/systemd/system/saviour-${MODULE_TYPE}-module.service
+        echo "Removed saviour-${MODULE_TYPE}-module.service"
     fi
     
     # Reload systemd
     sudo systemctl daemon-reload
-    log_message "Habitat services uninstalled"
+    log_message "Saviour services uninstalled"
 }
 
 # Function to uninstall PTP services
@@ -471,15 +471,15 @@ remove_camera_configuration() {
 cleanup_log_files() {
     log_section "Cleaning Up Log Files"
     
-    # Remove Habitat-related log files
-    HABITAT_LOG_FILES=(
-        "habitat_setup.log"
-        "habitat_setup_summary.txt"
-        "habitat_uninstall.log"
-        "habitat_uninstall_summary.txt"
+    # Remove Saviour-related log files
+    SAVIOUR_LOG_FILES=(
+        "saviour_setup.log"
+        "saviour_setup_summary.txt"
+        "saviour_uninstall.log"
+        "saviour_uninstall_summary.txt"
     )
     
-    for log_file in "${HABITAT_LOG_FILES[@]}"; do
+    for log_file in "${SAVIOUR_LOG_FILES[@]}"; do
         if [ -f "$log_file" ]; then
             log_message "Removing $log_file..."
             rm "$log_file"
@@ -491,7 +491,7 @@ cleanup_log_files() {
 }
 
 # Initialize logging
-log_section "Habitat Uninstall Started"
+log_section "Saviour Uninstall Started"
 log_message "Uninstall script version: $(date '+%Y-%m-%d %H:%M:%S')"
 log_message "System: $(uname -a)"
 log_message "User: $(whoami)"
@@ -502,8 +502,8 @@ detect_device_configuration
 # Ask user about module type if this is a module and type wasn't auto-detected
 ask_module_type
 
-# Stop and disable Habitat systemd services
-uninstall_habitat_services
+# Stop and disable Saviour systemd services
+uninstall_saviour_services
 
 # Uninstall PTP services
 uninstall_ptp_services
@@ -536,7 +536,7 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     SUMMARY_CONTENT="Device Role: CONTROLLER (was configured)
 
 === Services Removed ===
-- habitat-controller-service: Stopped, disabled, and removed
+- saviour-controller-service: Stopped, disabled, and removed
 - ptp4l: Stopped, disabled, and removed
 - phc2sys: Stopped, disabled, and removed
 - smbd/nmbd: Stopped, disabled, and restored to defaults
@@ -549,18 +549,18 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
 - Camera: Removed camera_auto_detect=1 from /boot/config.txt
 
 === Files Removed ===
-- /etc/systemd/system/habitat-controller-service.service
+- /etc/systemd/system/saviour-controller-service.service
 - /etc/systemd/system/ptp4l.service
 - /etc/systemd/system/phc2sys.service
 - /home/pi/controller_share (directory)
 - Virtual environment (env/)
-- Log files (habitat_setup.log, etc.)"
+- Log files (saviour_setup.log, etc.)"
 else
     SUMMARY_CONTENT="Device Role: MODULE (was configured)
 Module Type: ${MODULE_TYPE^^}
 
 === Services Removed ===
-- habitat-${MODULE_TYPE}-module: Stopped, disabled, and removed
+- saviour-${MODULE_TYPE}-module: Stopped, disabled, and removed
 - ptp4l: Stopped, disabled, and removed
 - phc2sys: Stopped, disabled, and removed
 
@@ -569,11 +569,11 @@ Module Type: ${MODULE_TYPE^^}
 - Camera: Removed camera_auto_detect=1 from /boot/config.txt
 
 === Files Removed ===
-- /etc/systemd/system/habitat-${MODULE_TYPE}-module.service
+- /etc/systemd/system/saviour-${MODULE_TYPE}-module.service
 - /etc/systemd/system/ptp4l.service
 - /etc/systemd/system/phc2sys.service
 - Virtual environment (env/)
-- Log files (habitat_setup.log, etc.)"
+- Log files (saviour_setup.log, etc.)"
 fi
 
 SUMMARY_CONTENT="$SUMMARY_CONTENT
@@ -584,19 +584,19 @@ SUMMARY_CONTENT="$SUMMARY_CONTENT
 3. Reboot may be required for some changes to take effect
 
 === Manual Cleanup (if needed) ===
-- Check for any remaining Habitat-related files in /home/pi/Desktop/habitat/
+- Check for any remaining Saviour-related files in /usr/local/src/saviour/
 - Remove any remaining log files or configuration backups
-- Check /var/log/ for any Habitat-related log files"
+- Check /var/log/ for any Saviour-related log files"
 
 # Save summary to file
 save_summary "$SUMMARY_CONTENT"
 
 log_section "Uninstall Complete"
-log_message "Habitat system uninstalled successfully"
+log_message "Saviour system uninstalled successfully"
 
 # Display summary
 echo "=== Uninstall Complete! ==="
-echo "Habitat system has been successfully uninstalled."
+echo "Saviour system has been successfully uninstalled."
 echo ""
 echo "Uninstall log saved to: $LOG_FILE"
 echo "Summary saved to: $SUMMARY_FILE"
@@ -607,7 +607,7 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "Device Role: CONTROLLER (was configured)"
     echo ""
     echo "=== Services Removed ==="
-    echo "- habitat-controller-service: Stopped, disabled, and removed"
+    echo "- saviour-controller-service: Stopped, disabled, and removed"
     echo "- ptp4l: Stopped, disabled, and removed"
     echo "- phc2sys: Stopped, disabled, and removed"
     echo "- smbd/nmbd: Stopped, disabled, and restored to defaults"
@@ -620,19 +620,19 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "- Camera: Removed camera_auto_detect=1 from /boot/config.txt"
     echo ""
     echo "=== Files Removed ==="
-    echo "- /etc/systemd/system/habitat-controller-service.service"
+    echo "- /etc/systemd/system/saviour-controller-service.service"
     echo "- /etc/systemd/system/ptp4l.service"
     echo "- /etc/systemd/system/phc2sys.service"
     echo "- /home/pi/controller_share (directory)"
     echo "- Virtual environment (env/)"
-    echo "- Log files (habitat_setup.log, etc.)"
+    echo "- Log files (saviour_setup.log, etc.)"
 else
     echo "=== Module Uninstall Summary ==="
     echo "Device Role: MODULE (was configured)"
     echo "Module Type: ${MODULE_TYPE^^}"
     echo ""
     echo "=== Services Removed ==="
-    echo "- habitat-${MODULE_TYPE}-module: Stopped, disabled, and removed"
+    echo "- saviour-${MODULE_TYPE}-module: Stopped, disabled, and removed"
     echo "- ptp4l: Stopped, disabled, and removed"
     echo "- phc2sys: Stopped, disabled, and removed"
     echo ""
@@ -641,11 +641,11 @@ else
     echo "- Camera: Removed camera_auto_detect=1 from /boot/config.txt"
     echo ""
     echo "=== Files Removed ==="
-    echo "- /etc/systemd/system/habitat-${MODULE_TYPE}-module.service"
+    echo "- /etc/systemd/system/saviour-${MODULE_TYPE}-module.service"
     echo "- /etc/systemd/system/ptp4l.service"
     echo "- /etc/systemd/system/phc2sys.service"
     echo "- Virtual environment (env/)"
-    echo "- Log files (habitat_setup.log, etc.)"
+    echo "- Log files (saviour_setup.log, etc.)"
 fi
 
 echo ""
@@ -655,9 +655,9 @@ echo "2. Run: bash setup.sh to install APA system"
 echo "3. Reboot may be required for some changes to take effect"
 echo ""
 echo "=== Manual Cleanup (if needed) ==="
-echo "- Check for any remaining Habitat-related files in /home/pi/Desktop/habitat/"
+echo "- Check for any remaining Saviour-related files in /usr/local/src/saviour/"
 echo "- Remove any remaining log files or configuration backups"
-echo "- Check /var/log/ for any Habitat-related log files"
+echo "- Check /var/log/ for any Saviour-related log files"
 
 log_section "Uninstall Script Completed"
 log_message "Uninstall script finished successfully"

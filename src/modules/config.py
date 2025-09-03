@@ -20,6 +20,7 @@ class Config:
     
     # Default configuration values 
     # TODO: Consider deleting this
+    DEFAULT_CONFIG = {}
     DEFAULT_CONFIG = {
         # Module parameters
         "module": {
@@ -38,23 +39,6 @@ class Config:
             "command_socket_port": 5555,
             "status_socket_port": 5556,
             "data_format": "json",
-        },
-        
-        # Health monitoring parameters
-        "health_monitor": {
-            "cpu_check_enabled": True,
-            "memory_check_enabled": True,
-            "disk_check_enabled": True,
-            "warning_threshold_cpu": 80,
-            "warning_threshold_memory": 80,
-            "warning_threshold_disk": 80,
-        },
-        
-        # File transfer parameters
-        "file_transfer": {
-            "max_retries": 3,
-            "chunk_size": 65536,
-            "timeout": 30,
         },
         
         # Logging parameters

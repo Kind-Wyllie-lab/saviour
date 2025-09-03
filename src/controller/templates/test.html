@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TEST - SAVIOUR</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='uofe_logo_alpha.png') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script> <!--Import socketio, used for websocket communication i.e. updates pushed from controller-->
+    <script src="{{ url_for('static', filename='js/header.js') }}"></script> <!--Import header.js, used for the header of the page-->
+</head>
+<body>
+    <main-header></main-header>
+
+    <div class="dashboard-container">
+        <button id="get-configs-button">Get Module Configs</button>
+        <button id="send-command-button">Send command</button>
+        <label for="command">Command</label>
+        <input type="text" id="command" name="command"><br><br>
+        <label for="params">Params (JSON)</label>
+        <input type="text" id="params" name="params"><br><br>
+    </div>
+
+    <script>
+        // ============================================================================
+        // GLOBAL VARIABLES
+        // ============================================================================
+        
+        // Initialize Socket.IO connection for real-time communication with the backend
+        const socket = io();
+        
+        // ============================================================================
+        // SOCKET.IO EVENT HANDLERS
+        // ============================================================================
+        
+        // Handle successful connection to the server
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            // refreshSettings(); // Request the current config from the backend
+            // console.log('Requested APA settings from backend');
+            socket.emit('module_update'); // Request initial module data for livestream
+            getModuleConfigs();
+        });
+        
+        // Handle disconnection from the server
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+        });
+
+        // ============================================================================
+        // SENDING COMMANDS
+        // ============================================================================
+        function sendCommand() {
+            var input = document.getElementById("command").value;
+            var params = document.getElementById("params").value;
+            // See if it's a JSON of params
+            try {
+                params = JSON.parse(params);
+            } catch (e) {
+                console.log("Params not given in JSON format");
+                // {"experiment_name":"frontend"}
+            }
+
+            var commandObject = {
+                "type": input,
+                "module_id": "all",
+                "params": params
+            }
+            console.log('Sending command: ' + commandObject);
+            console.log(commandObject);
+            socket.emit('send_command', commandObject);
+        }
+
+        document.getElementById("send-command-button").addEventListener("click", sendCommand);
+        
+        // ============================================================================
+        // MODULE CONFIGURATION MANAGEMENT
+        // ============================================================================
+        
+        // Handle module configuration updates from the backend
+        socket.on('module_configs_update', (data) => {
+            console.log('Module configs update event:', data);
+        })
+
+        // Handle module updates from the backend
+        socket.on('module_update', (data) => {
+            console.log('Received module update:', data);
+        });
+
+        // Request module configurations from the backend
+        function getModuleConfigs() {
+            console.log('Requesting module configurations...');
+            socket.emit('get_module_configs');
+        }
+
+        document.getElementById("get-configs-button").addEventListener("click", getModuleConfigs);
+
+        // Call once on page load
+        getModuleConfigs();
+    </script>
+</body>
+</html>

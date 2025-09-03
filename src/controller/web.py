@@ -95,6 +95,10 @@ class Web:
         def guide():
             return render_template('guide.html')
 
+        @self.app.route('/test')
+        def test():
+            return render_template('test.html')
+
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect(auth=None):
@@ -146,7 +150,7 @@ class Web:
                 self.logger.error(f"Error getting experiment name: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
-        @self.socketio.on('command')
+        @self.socketio.on('send_command')
         def handle_command(data):
             """
             Handle command from frontend.
@@ -307,6 +311,60 @@ class Web:
                 self.logger.error(f"Error handling module status: {str(e)}")
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
+
+        # Settings Page stuff
+        @self.socketio.on('get_module_configs')
+        def handle_get_module_configs(data=None):
+            """Handle request for module configuration data"""
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Get module configs called")
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Available callbacks: {list(self.callbacks.keys())}")
+            if "get_module_configs" in self.callbacks:
+                # Request config from all modules - refresh the config stored on controller
+                if "send_command" in self.callbacks:
+                    self.logger.info(f"(APA WEB INTERFACE MANAGER) Sending get_config command to all modules")
+                    self.callbacks["send_command"]("all", "get_config", {})
+                # Get the current module configs
+                module_configs = self.callbacks["get_module_configs"]()
+                self.logger.info(f"(APA WEB INTERFACE MANAGER) Retrieved module configs: {module_configs}")
+                self.socketio.emit('module_configs_update', {
+                    'module_configs': module_configs
+                })
+            else:
+                self.logger.warning(f"(APA WEB INTERFACE MANAGER) get_module_configs callback not available")
+                self.socketio.emit('module_configs_update', {
+                    'module_configs': {},
+                    'error': 'Module configs not available'
+                })
+            
+        @self.socketio.on('save_module_config')
+        def handle_save_module_config(data):
+            """Handle save module config from frontend"""
+            self.logger.info(f"(WEB INTERFACE MANAGER) Received request to save config to module with data {data}")
+            if "send_command" in self.callbacks:
+                # Format command with parameters
+                command = "set_config"
+                # Extract params from the data
+                params = data.get("params", {})
+                
+                # Send the config update command to all modules
+                self.callbacks["send_command"]("all", command, params)
+                
+                # Get updated module configs
+                if "get_module_configs" in self.callbacks:
+                    module_configs = self.callbacks["get_module_configs"]()
+                    self.socketio.emit('module_configs_update', {
+                        'module_configs': module_configs
+                    })
+                else:
+                    self.socketio.emit('module_configs_update', {
+                        'module_configs': {},
+                        'error': 'Module configs not available'
+                    })
+            else:
+                self.socketio.emit('module_configs_update', {
+                    'module_configs': {},
+                    'error': 'Send command not available'
+                })
 
         # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
         @self.app.route('/api/list_modules', methods=['GET'])

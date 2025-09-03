@@ -94,12 +94,16 @@ The system includes:
 ### Installation
 1. Clone the repository
    ```sh
-   # Navigate to your desired working directory
-   cd /path/to/your/workspace
+   # Navigate to /usr/local/src (standard folder for userspace source code)
+   cd /usr/local/src/
    
+   # Create folder and give permissions
+   sudo mkdir -p saviour
+   sudo chown -R pi:pi saviour/
+
    # Clone the repository
-   git clone https://github.com/Kind-Wyllie-lab/habitat.git
-   cd habitat
+   git clone https://github.com/Kind-Wyllie-lab/saviour.git
+   cd saviour
    ```
 
 2. Run the setup script

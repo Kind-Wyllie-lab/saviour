@@ -564,7 +564,7 @@
             };
 
             console.log('Sending command with params:', command);
-            socket.emit('command', command);
+            socket.emit('send_command', command);
             currentCommand = null;
             selectedModuleId = null;
         }
@@ -646,7 +646,7 @@
             }
 
             console.log('Sending command:', command);
-            socket.emit('command', command);
+            socket.emit('send_command', command);
             currentCommand = null;
         }
 
@@ -658,7 +658,7 @@
                 module_id: 'all',
                 params: {}
             };
-            socket.emit('command', command);
+            socket.emit('send_command', command);
         }
 
         // Add click handler for "All Modules" option
@@ -1033,7 +1033,7 @@
             moduleRecordingsList.querySelectorAll('.action-button.export').forEach(button => {
                 button.addEventListener('click', () => {
                     const filename = button.dataset.filename;
-                    socket.emit('command', {
+                    socket.emit('send_command', {
                         type: 'export_recordings',
                         module_id: 'all',
                         params: {
@@ -1047,7 +1047,7 @@
                 button.addEventListener('click', () => {
                     const filename = button.dataset.filename;
                     if (confirm(`Are you sure you want to delete ${filename}?`)) {
-                        socket.emit('command', {
+                        socket.emit('send_command', {
                             type: 'clear_recordings',
                             module_id: 'all',
                             params: {

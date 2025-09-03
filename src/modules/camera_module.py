@@ -225,7 +225,7 @@ class CameraModule(Module):
             'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.service.controller_ip,
+            'get_controller_ip': self.network.controller_ip,
             'shutdown': self._shutdown,
         })
 
@@ -473,7 +473,7 @@ class CameraModule(Module):
             # Always use port 8080 for Flask server
             port = 8080
             
-            self.logger.info(f"(MODULE) Starting streaming from {self.service.ip}:{port}")
+            self.logger.info(f"(MODULE) Starting streaming from {self.network.ip}:{port}")
 
             # Start the camera if not already running
             if not self.picam2.started:
@@ -496,7 +496,7 @@ class CameraModule(Module):
                 'type': 'streaming_started',
                 'port': port,
                 'status': 'success',
-                'message': f'Streaming started from {self.service.ip}:{port}'
+                'message': f'Streaming started from {self.network.ip}:{port}'
             })
             
             return True

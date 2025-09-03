@@ -219,7 +219,7 @@ class CameraModule(Module):
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
-            'clear_recordings': self.clear_recordings,
+            'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
             'handle_update_camera_settings': self.handle_update_camera_settings,  # Camera specific
             'get_latest_recording': self.get_latest_recording,  # Camera specific

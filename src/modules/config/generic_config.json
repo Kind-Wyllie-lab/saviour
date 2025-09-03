@@ -17,24 +17,11 @@
         "data_format": "json",
         "compression": false
     },
-    "health_monitor": {
-        "cpu_check_enabled": true,
-        "memory_check_enabled": true,
-        "disk_check_enabled": true,
-        "warning_threshold_cpu": 80,
-        "warning_threshold_memory": 80,
-        "warning_threshold_disk": 80
-    },
-    "file_transfer": {
-        "max_retries": 3,
-        "chunk_size": 65536,
-        "timeout": 30
-    },
     "logging": {
         "level": "INFO",
         "format": "%(asctime)s - %(levelname)s - %(message)s",
         "to_file": true,
-        "directory": "/var/log/habitat",
+        "directory": "/var/log/saviour",
         "max_file_size_mb": 10,
         "backup_count": 5
     },
@@ -42,11 +29,6 @@
         "reconnect_attempts": 5,
         "reconnect_delay": 5,
         "timeout": 10
-    },
-    "power": {
-        "low_power_mode_enabled": false,
-        "auto_shutdown_on_idle": false,
-        "idle_timeout_minutes": 30
     },
     "recording_folder": "rec",
     "recording_filetype": "txt",

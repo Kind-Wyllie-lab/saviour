@@ -1,4 +1,36 @@
 {
+    "module": {
+        "heartbeat_interval": 30,
+        "name": "unnamed",
+        "samplerate": 200,
+        "status_reporting": true,
+        "error_retry_count": 3,
+        "error_retry_delay": 5
+    },
+    "zeroconf": {
+        "port": 5353,
+        "service_type": "_module._tcp.local.",
+        "announce": true
+    },
+    "communication": {
+        "command_socket_port": 5555,
+        "status_socket_port": 5556,
+        "data_format": "json",
+        "compression": false
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s",
+        "to_file": true,
+        "directory": "/var/log/saviour",
+        "max_file_size_mb": 10,
+        "backup_count": 5
+    },
+    "network": {
+        "reconnect_attempts": 5,
+        "reconnect_delay": 5,
+        "timeout": 10
+    },
     "pins": {
         "19": {
             "type": "output",

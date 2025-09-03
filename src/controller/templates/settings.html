@@ -15,7 +15,7 @@
             <div class="module-config-header">
                 <h2>Module Configurations</h2>
                 <div class="header-buttons">
-                    <button id="refresh-configs-btn" onclick="requestModuleConfigs()" class="refresh-btn">
+                    <button id="refresh-configs-btn" onclick="getModuleConfigs()" class="refresh-btn">
                         <span class="refresh-icon">🔄</span> Refresh Configs
                     </button>
 
@@ -107,7 +107,7 @@
             // refreshSettings(); // Request the current config from the backend
             // console.log('Requested APA settings from backend');
             socket.emit('module_update'); // Request initial module data for livestream
-            requestModuleConfigs();
+            getModuleConfigs();
         });
         
         // Handle disconnection from the server
@@ -421,9 +421,9 @@
         // ============================================================================
         
         // Request module configurations from the backend
-        function requestModuleConfigs() {
+        function getModuleConfigs() {
             console.log('Requesting module configurations...');
-            socket.emit('request_module_configs');
+            socket.emit('get_module_configs');
         }
 
         // Toggle configuration section dropdown
@@ -606,7 +606,7 @@
             
             // Send the updated configuration to the backend
             // Wrap in 'editable' structure to match the module's config format
-            socket.emit('command', {
+            socket.emit('send_command', {
                 module_id: moduleId,
                 type: "set_config",
                 params: { editable: configData }
@@ -698,7 +698,7 @@
         function resetConfig(moduleId) {
             if (confirm(`Are you sure you want to reset the configuration for module ${moduleId}?`)) {
                 // Request fresh config from the module
-                socket.emit('request_module_configs');
+                socket.emit('get_module_configs');
             }
         }
 
@@ -729,7 +729,7 @@
                 }
                 
                 // Send the updated configuration to the backend
-                socket.emit('command', {
+                socket.emit('send_command', {
                     module_id: moduleId,
                     type: "set_config",
                     params: { editable: configData }
@@ -759,7 +759,7 @@
                 resetAllBtn.disabled = true;
 
                 // Request fresh configs from all modules
-                socket.emit('request_module_configs');
+                socket.emit('get_module_configs');
                 
                 setTimeout(() => {
                     resetAllBtn.textContent = '✅ Reset!';
@@ -786,7 +786,7 @@
         });
 
         // Call once on page load
-        requestModuleConfigs();
+        getModuleConfigs();
     </script>
 </body>
 </html>

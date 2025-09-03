@@ -163,9 +163,17 @@ class Controller:
                 "get_modules": self.network.get_modules,
                 "get_ptp_history": self.buffer.get_ptp_history,
                 "send_command": self.communication.send_command,
-                "get_module_health": self.health.get_module_health
+                "get_module_health": self.health.get_module_health,
+                # "get_modules": self.get_modules,  # From APA - a custom get_modules method instead of service.get_modules. Look this up.
+                # "start_experiment": self.start_experiment,
+                # "stop_experiment": self.stop_experiment,
+                "get_config": lambda: self.config.config,
+                # "save_settings": self._save_settings,
+                # "reset_settings": self.config.reset_config,
+                "get_module_configs": self.get_module_configs,
+                "get_samba_info": self.get_samba_info,
             })
-        
+            
         # Register status change callback with health monitor
         self.health.set_callbacks({
             "on_status_change": self.on_module_status_change,
@@ -401,6 +409,50 @@ class Controller:
     def on_module_removed(self, module):
         """Callback for when a module network is removed"""
         self.web.notify_module_update()
+
+    def get_module_configs(self):
+        """Get the module configuration data for online modules only"""
+        # Get list of online modules from health monitor
+        online_modules = self.health.get_online_modules()
+        self.logger.info(f"(APA CONTROLLER) Online modules: {online_modules}")
+        
+        # Filter module_config to only include online modules
+        filtered_configs = {}
+        for module_id, config in getattr(self, 'module_config', {}).items():
+            if module_id in online_modules:
+                filtered_configs[module_id] = config
+                self.logger.info(f"(APA CONTROLLER) Including config for online module: {module_id}")
+            else:
+                self.logger.info(f"(APA CONTROLLER) Excluding config for offline module: {module_id}")
+        
+        return filtered_configs
+
+    def get_samba_info(self):
+        """Get Samba share information from configuration"""
+        try:
+            # Get controller IP address from service manager (already detected and stored)
+            controller_ip = self.service.ip
+            
+            # Get Samba configuration from config
+            samba_config = {
+                'share_name': self.config.get('samba.share_name', 'controller_share'),
+                'username': self.config.get('samba.username', 'pi'),
+                'password': self.config.get('samba.password', 'apa'),
+                'share_path': f'\\\\{controller_ip}\\{self.config.get("samba.share_name", "controller_share")}',
+                'controller_ip': controller_ip
+            }
+            
+            self.logger.info(f"(APA CONTROLLER) Returning Samba info: {samba_config}")
+            return samba_config
+        except Exception as e:
+            self.logger.error(f"(APA CONTROLLER) Error getting Samba info: {e}")
+            return {
+                'share_name': 'controller_share',
+                'username': 'pi',
+                'password': 'apa',
+                'share_path': '\\\\192.168.1.1\\controller_share',
+                'controller_ip': '192.168.1.1'
+            }
 
 if __name__ == "__main__":
     controller = Controller(config_file_path="config.json")

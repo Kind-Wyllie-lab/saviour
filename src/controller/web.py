@@ -146,6 +146,10 @@ class Web:
                 self.logger.error(f"Error getting experiment name: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
+        @self.socketio.on('start_recording')
+        def start_recording(experiment_name):
+            pass
+
         @self.socketio.on('send_command')
         def handle_command(data):
             """
@@ -545,6 +549,28 @@ class Web:
         """Update the list of modules from the controller service manager"""
         self._modules = modules
 
+    def update_module_readiness(self, module_id: str, ready_status: dict):
+        """Update module readiness state and broadcast to all clients"""
+        import time
+        
+        # Store the readiness status with timestamp
+        self.module_readiness[module_id] = {
+            'ready': ready_status.get('ready', False),
+            'timestamp': time.time(),
+            'checks': ready_status.get('checks', {}),
+            'error': ready_status.get('error')
+        }
+        
+        self.logger.info(f"Updated readiness for {module_id}: {'ready' if ready_status.get('ready') else 'not ready'}")
+        
+        # Broadcast to all connected clients
+        self.socketio.emit('module_readiness_update', {
+            'module_id': module_id,
+            'ready': ready_status.get('ready', False),
+            'timestamp': self.module_readiness[module_id]['timestamp'],
+            'checks': ready_status.get('checks', {}),
+            'error': ready_status.get('error')
+        })
     def start(self):
         """Start the web interface in a separate thread"""
         if not self._running:

@@ -2,8 +2,7 @@ import React, { useEffect, useState } from "react";
 import socket from "../../socket";
 import "./ExperimentMetadata.css";
 
-function ExperimentMetadata() {
-  // Local state for experiment metadata
+function ExperimentMetadata({ setExperimentName }) {
   const [metadata, setMetadata] = useState({
     rat_id: "001",
     strain: "Wistar",
@@ -14,27 +13,21 @@ function ExperimentMetadata() {
 
   // Effect: request current metadata on mount
   useEffect(() => {
-    // Ask server for current experiment metadata
     socket.emit("get_experiment_metadata");
 
-    // Listen for server response
-    socket.on("experiment_metadata_response", (data) => {
+    const handleResponse = (data) => {
       if (data.status === "success") {
         setMetadata(data.metadata);
+        setExperimentName(generateExperimentName(data.metadata));
       }
-    });
+    };
 
-    // Listen for any live updates from server
-    socket.on("experiment_metadata_updated", (data) => {
-      if (data.status === "success") {
-        setMetadata(data.metadata);
-      }
-    });
+    socket.on("experiment_metadata_response", handleResponse);
+    socket.on("experiment_metadata_updated", handleResponse);
 
-    // Cleanup listeners on unmount
     return () => {
-      socket.off("experiment_metadata_response");
-      socket.off("experiment_metadata_updated");
+      socket.off("experiment_metadata_response", handleResponse);
+      socket.off("experiment_metadata_updated", handleResponse);
     };
   }, []);
 
@@ -43,18 +36,23 @@ function ExperimentMetadata() {
     const updated = { ...metadata, [field]: value };
     setMetadata(updated);
 
+    // Update experiment name in Dashboard
+    setExperimentName(generateExperimentName(updated));
+
     // Send updated metadata to backend
     socket.emit("update_experiment_metadata", updated);
   };
 
-  // Generate experiment name
-  const generateExperimentName = () => {
-    const { rat_id, strain, batch, stage, trial } = metadata;
+  // Generate experiment name from metadata
+  const generateExperimentName = (data = metadata) => {
+    const { rat_id, strain, batch, stage, trial } = data;
     return `apa_${rat_id}_${strain}_${batch}_${stage}_t${trial}`;
   };
 
   return (
     <div className="experiment-metadata-container">
+      <h2>Experiment Metadata</h2>
+
       <div className="metadata-form-row">
         <label htmlFor="rat-id">Rat ID</label>
         <input

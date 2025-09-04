@@ -7,6 +7,7 @@ import "./Dashboard.css";
 import ModuleCard from "../../components/ModuleCard/ModuleCard";
 import LivestreamCard from "../../components/LivestreamCard/LivestreamCard";
 import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
+import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
 
 // Check websocket connection
 socket.on("connect", () => {
@@ -19,6 +20,7 @@ socket.on("disconnect", () => {
 
 function Dashboard() {
   const [modules, setModules] = useState([]);
+  const [experimentName, setExperimentName] = useState(""); // The experiment name 
 
   useEffect(() => {
     console.log("Emitting get_modules");
@@ -39,35 +41,42 @@ function Dashboard() {
 
   return (
     <main className="dashboard">
-      <section>
-        <ExperimentMetadata />
-      </section>
-      <section>
-        <h2>Modules (Network)</h2>
-        <div className="module-grid">
-          {modules.length > 0 ? (
-            modules.map((module) => (
-              <ModuleCard key={module.id} module={module} />
-            ))
-          ) : (
-            <p>No modules connected</p>
-          )}
+      <div className="dashboard-wrapper">
+        <div className="dashboard-container">
+          {/* left side */}
+          <section>
+            <h2>Modules (Network)</h2>
+            <div className="module-grid">
+              {modules.length > 0 ? (
+                modules.map((module) => (
+                  <ModuleCard key={module.id} module={module} />
+                ))
+              ) : (
+                <p>No modules connected</p>
+              )}
+            </div>
+          </section>
+          <section>
+            <h2>Camera Streams</h2>
+            <div className="livestream-grid">
+              {cameraModules.length > 0 ? (
+                cameraModules.map((cam) => (
+                  <LivestreamCard key={cam.id} module={cam} />
+                ))
+              ) : (
+                <p>No camera modules connected</p>
+              )}
+            </div>
+          </section>
         </div>
-      </section>
 
-      <section>
-        <h2>Camera Streams</h2>
-        <div className="livestream-grid">
-          {cameraModules.length > 0 ? (
-            cameraModules.map((cam) => (
-              <LivestreamCard key={cam.id} module={cam} />
-            ))
-          ) : (
-            <p>No camera modules connected</p>
-          )}
-        </div>
-      </section>
-      
+        <div className="sidebar-container">
+          <section>
+            <ExperimentMetadata setExperimentName={setExperimentName} />
+            <CommandsPanel modules={modules} experimentName={experimentName} />
+          </section>
+        </div>    
+      </div>
     </main>
   );
 }

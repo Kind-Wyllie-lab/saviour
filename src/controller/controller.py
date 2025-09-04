@@ -160,16 +160,13 @@ class Controller:
         # Web interface
         if self.web:
             self.web.register_callbacks({
-                "get_modules": self.network.get_modules,
+                # "get_modules": self.network.get_modules, # TODO: CHange this to 
+                "get_modules": self._get_modules_for_frontend,
                 "get_ptp_history": self.buffer.get_ptp_history,
                 "send_command": self.communication.send_command,
                 "get_module_health": self.health.get_module_health,
                 # "get_modules": self.get_modules,  # From APA - a custom get_modules method instead of service.get_modules. Look this up.
-                # "start_experiment": self.start_experiment,
-                # "stop_experiment": self.stop_experiment,
                 "get_config": lambda: self.config.config,
-                # "save_settings": self._save_settings,
-                # "reset_settings": self.config.reset_config,
                 "get_module_configs": self.get_module_configs,
                 "get_samba_info": self.get_samba_info,
             })
@@ -180,6 +177,39 @@ class Controller:
             "send_command": self.communication.send_command
         })
         self.logger.info(f"Status change callback registered with health monitor")
+
+
+    def _get_modules_for_frontend(self): # From APA
+        """Get list of online modules from health monitor instead of service manager, append additional information"""
+        # Get online modules from health monitor
+        online_module_ids = self.health.get_online_modules()
+        self.logger.info(f"Health monitor reports online modules: {online_module_ids}")
+        
+        # Debug: Check what modules are in service manager
+        network_module_ids = [module.id for module in self.network.discovered_modules]
+        self.logger.info(f"Service manager has modules: {network_module_ids}")
+        
+        # Convert to module dicts using service manager's discovered modules
+        modules = []
+        for module in self.network.discovered_modules:
+            if module.id in online_module_ids:
+                module_dict = {
+                    'id': module.id,
+                    'type': module.type,
+                    'ip': module.ip,
+                    'port': module.port,
+                    'status': 'online',  # Add status field for frontend
+                    'properties': {k.decode() if isinstance(k, bytes) else k: 
+                                 v.decode() if isinstance(v, bytes) else v 
+                                 for k, v in module.properties.items()}
+                }
+                modules.append(module_dict)
+                self.logger.info(f"Including online module in get_modules: {module.id}")
+            else:
+                self.logger.info(f"Excluding offline module from get_modules: {module.id}")
+        
+        self.logger.info(f"get_modules returning {len(modules)} modules")
+        return modules
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -221,6 +251,23 @@ class Controller:
                         self.communication.send_command(module_id, "get_config", {})
                     else:
                         self.logger.error(f"Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
+                case 'readiness_validation':
+                    # Handle readiness validation response
+                    ready = status_data.get('ready', False)
+                    self.logger.info(f"Readiness validation response from {module_id}: {'ready' if ready else 'not ready'}")
+                    
+                    # Store readiness state in web interface manager
+                    self.web.update_module_readiness(module_id, status_data)
+                    
+                    # Emit the readiness validation status to frontend (legacy support)
+                    self.web.socketio.emit('module_status', {
+                        'type': 'readiness_validation',
+                        'module_id': module_id,
+                        'ready': ready,
+                        'timestamp': status_data.get('timestamp'),
+                        'checks': status_data.get('checks', {}),
+                        'error': status_data.get('error')
+                    })
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:

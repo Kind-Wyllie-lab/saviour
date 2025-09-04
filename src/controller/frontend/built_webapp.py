@@ -7,8 +7,8 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Example modules
 modules = {
-    "pi1": {"name": "Pi 1", "status": "online", "temperature": 42},
-    "pi2": {"name": "Pi 2", "status": "offline", "temperature": None},
+    "pi1": {"id": "pi_df76", "name": "Pi 1", "status": "online", "temperature": 42},
+    "pi2": {"id": "pi_yn81", "name": "Pi 2", "status": "offline", "temperature": None},
 }
 
 @socketio.on("get_modules")

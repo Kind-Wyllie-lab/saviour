@@ -9,7 +9,8 @@ function ModuleCard({ module }) {
     return (
         <div className="module-card">
             <h3>{module.id}</h3>
-            <p>Status: {module.status}</p>
+            <p>IP: {module.ip}</p>
+            <p>Type: {module.type}</p>
         </div>
     );
 }

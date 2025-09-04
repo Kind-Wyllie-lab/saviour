@@ -11,7 +11,7 @@ Handles user interaction with the habitat controller, including:
 
 import logging
 import time
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 from typing import Any
 import threading
@@ -29,8 +29,8 @@ class Web:
         self.port = self.config.get("interface.web_interface_port")
 
         # Flask setup
-        self.app = Flask(__name__)
-        self.socketio = SocketIO(self.app, cors_allowed_origins="*", async_mode='threading')
+        self.app = Flask(__name__, static_folder="frontend/build")
+        self.socketio = SocketIO(self.app, host="0.0.0.0", cors_allowed_origins="*", async_mode='threading')
         
         # Callbacks
         self.callbacks = {} # An empty dict which will later be assigned callback functions
@@ -77,27 +77,15 @@ class Web:
             self.socketio.emit('module_update', {"modules": modules})
             self.logger.info(f"Sent module update to all clients")
 
-    def register_routes(self):
-        # Main pages
-        @self.app.route('/')
-        def index():
-            return render_template('index.html')
-        
-        @self.app.route('/recordings')
-        def recordings():
-            return render_template('recordings.html')
-
-        @self.app.route('/settings')
-        def settings():
-            return render_template('settings.html')
-    
-        @self.app.route('/guide')
-        def guide():
-            return render_template('guide.html')
-
-        @self.app.route('/test')
-        def test():
-            return render_template('test.html')
+    def register_routes(self):      
+        # Serve React app
+        @self.app.route("/", defaults={"path": ""})
+        @self.app.route("/<path:path>")
+        def serve(path):
+            if path != "" and os.path.exists(os.path.join(self.app.static_folder, path)):
+                return send_from_directory(self.app.static_folder, path)
+            else:
+                return send_from_directory(self.app.static_folder, "index.html")
 
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
@@ -108,7 +96,6 @@ class Web:
             self.logger.info(f"Client connected")
             
             # Send initial module list
-            self.logger.info(f"About to call get_modules()")
             modules = self.callbacks["get_modules"]()
             self.logger.info(f"get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('module_update', {"modules": modules})
@@ -238,18 +225,18 @@ class Web:
                 self.logger.error(f"Error handling command: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
-        @self.socketio.on('module_update')
+        @self.socketio.on('get_modules')
         def handle_module_update():
             """Handle request for module data"""
-            self.logger.info(f"module_update event received from frontend")
+            self.logger.info(f"Frontend called 'get_modules'")
             
             # Get current modules from callback
             modules = self.callbacks["get_modules"]()
             self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Send module update to all clients
-            self.socketio.emit('module_update', {'modules': modules})
-            self.logger.info(f"Sent module update to all clients")
+            self.socketio.emit('modules_update', {'modules': modules})
+            self.logger.info(f"Sent module update to all clients: {modules}")
 
         @self.socketio.on('module_status')
         def handle_module_status(data):
@@ -482,21 +469,6 @@ class Web:
                 self.logger.error(f"Error getting exported recordings: {str(e)}")
                 self.socketio.emit('exported_recordings_list', {
                     'exported_recordings': [],
-                    'error': str(e)
-                })
-
-        @self.socketio.on('get_modules')
-        def handle_get_modules():
-            """Handle request for list of modules"""
-            try:
-                modules = self.callbacks["get_modules"]()
-                self.socketio.emit('modules_list', {
-                    'modules': modules
-                })
-            except Exception as e:
-                self.logger.error(f"Error getting modules: {str(e)}")
-                self.socketio.emit('modules_list', {
-                    'modules': [],
                     'error': str(e)
                 })
 

@@ -20,9 +20,9 @@ function Header() {
                 <nav className="main-nav">
                     <ul>
                         <li><Link to="/" className="nav-link">Dashboard</Link></li>
-                        <li><Link to="/recordings" className="nav-link">Recordings</Link></li>
+                        {/* <li><Link to="/recordings" className="nav-link">Recordings</Link></li> */}
                         <li><Link to="/settings" className="nav-link">Settings</Link></li>
-                        <li><Link to="/test" className="nav-link">Test</Link></li>
+                        {/* <li><Link to="/test" className="nav-link">Test</Link></li> */}
                     </ul>
                 </nav>
             </div>

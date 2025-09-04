@@ -1,0 +1,106 @@
+.livestream-card {
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  margin: 10px;
+  padding: 10px;
+  background-color: #f9f9f9;
+  width: 300px; /* adjust card width as needed */
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.stream-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.stream-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.stream-placeholder, .stream-video {
+  border: 1px dashed #aaa;
+  border-radius: 4px;
+  padding: 10px;
+  text-align: center;
+  background-color: #eaeaea;
+}
+
+.stream-placeholder p {
+  margin: 5px 0;
+}
+
+.stream-controls {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+}
+
+.stream-controls button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stream-controls button:hover {
+  background-color: #0056b3;
+}
+
+.stream-video img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+
+/* Fullscreen card styles */
+.livestream-card.fullscreen {
+  position: fixed;          /* Fix to viewport */
+  top: 0;
+  left: 0;
+  width: 100vw;             /* Full width */
+  height: 100vh;            /* Full height */
+  background-color: black;  /* Clean background */
+  z-index: 9999;            /* On top of everything */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;  /* Center vertically */
+  align-items: center;      /* Center horizontally */
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* Make the video container fill the fullscreen card */
+.livestream-card.fullscreen .stream-video {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+
+.livestream-card.fullscreen .stream-video img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;      /* Maintain aspect ratio */
+  border-radius: 0;         /* Remove rounded corners in fullscreen */
+}
+
+.livestream-card.fullscreen .stream-controls {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  flex-direction: column;
+  gap: 10px;
+}

@@ -6,6 +6,7 @@ import socket from "../../socket";
 import "./Dashboard.css";
 import ModuleCard from "../../components/ModuleCard/ModuleCard";
 import LivestreamCard from "../../components/LivestreamCard/LivestreamCard";
+import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
 
 // Check websocket connection
 socket.on("connect", () => {
@@ -39,6 +40,9 @@ function Dashboard() {
   return (
     <main className="dashboard">
       <section>
+        <ExperimentMetadata />
+      </section>
+      <section>
         <h2>Modules (Network)</h2>
         <div className="module-grid">
           {modules.length > 0 ? (
@@ -63,6 +67,7 @@ function Dashboard() {
           )}
         </div>
       </section>
+      
     </main>
   );
 }

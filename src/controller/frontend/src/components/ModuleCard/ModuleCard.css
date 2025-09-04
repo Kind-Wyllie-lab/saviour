@@ -1,0 +1,7 @@
+.module-card {
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 0.5rem;
+    background-color: #fafafa;
+  }

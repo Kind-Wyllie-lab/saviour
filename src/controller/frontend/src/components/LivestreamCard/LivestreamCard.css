@@ -1,13 +1,31 @@
 .livestream-card {
+  flex: 1 1 300px;
+  min-width: 200px;
+  max-width: 400px;
+  min-height: 450px; /* optional, enforce taller cards */
   border: 1px solid #ccc;
   border-radius: 8px;
-  margin: 10px;
+  margin: 0;
   padding: 10px;
   background-color: #f9f9f9;
-  width: 300px; /* adjust card width as needed */
   display: flex;
   flex-direction: column;
   box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.stream-video {
+  flex: 1;           /* allow video container to take remaining space */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.stream-video img {
+  width: 100%;
+  height: 100%;      /* fill the container */
+  object-fit: contain;/* keep aspect ratio */
+  border-radius: 4px;
 }
 
 .stream-card-header {
@@ -53,13 +71,6 @@
 .stream-controls button:hover {
   background-color: #0056b3;
 }
-
-.stream-video img {
-  width: 100%;
-  height: auto;
-  border-radius: 4px;
-}
-
 
 /* Fullscreen card styles */
 .livestream-card.fullscreen {

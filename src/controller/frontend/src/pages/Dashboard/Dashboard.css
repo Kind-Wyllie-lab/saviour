@@ -23,7 +23,7 @@
 .livestream-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 15px;
+  gap: 16px;
   justify-content: flex-start;
   margin-top: 20px;
 }

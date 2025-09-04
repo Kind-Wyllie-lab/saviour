@@ -34,6 +34,15 @@ class Web:
         
         # Callbacks
         self.callbacks = {} # An empty dict which will later be assigned callback functions
+
+        # Store experiment metadata in memory
+        self.experiment_metadata = {
+            'rat_id': '001',
+            'strain': 'Wistar',
+            'batch': 'B1',
+            'stage': 'habituation',
+            'trial': '1'
+        }
         
         # Experiment name persistence
         self.current_experiment_name = ""
@@ -298,6 +307,45 @@ class Web:
                 self.logger.error(f"Error handling module status: {str(e)}")
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
+
+        # Experiment metadata
+        @self.socketio.on('update_experiment_metadata')
+        def handle_update_experiment_metadata(data):
+            """Handle experiment metadata updates from frontend"""
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Received experiment metadata update: {data}")
+            
+            # Update stored metadata
+            if 'rat_id' in data:
+                self.experiment_metadata['rat_id'] = data['rat_id']
+            if 'strain' in data:
+                self.experiment_metadata['strain'] = data['strain']
+            if 'batch' in data:
+                self.experiment_metadata['batch'] = data['batch']
+            if 'stage' in data:
+                self.experiment_metadata['stage'] = data['stage']
+            if 'trial' in data:
+                self.experiment_metadata['trial'] = data['trial']
+            
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Updated experiment metadata: {self.experiment_metadata}")
+            
+            # Send confirmation back to client
+            self.socketio.emit('experiment_metadata_updated', {
+                'status': 'success',
+                'metadata': self.experiment_metadata
+            })
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Sent experiment metadata update confirmation")
+        
+        @self.socketio.on('get_experiment_metadata')
+        def handle_get_experiment_metadata(data=None):
+            """Handle request for experiment metadata from frontend"""
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Client requested experiment metadata")
+            
+            # Send current metadata to client
+            self.socketio.emit('experiment_metadata_response', {
+                'status': 'success',
+                'metadata': self.experiment_metadata
+            })
+            self.logger.info(f"(APA WEB INTERFACE MANAGER) Sent experiment metadata to client")
 
         # Settings Page stuff
         @self.socketio.on('get_module_configs')

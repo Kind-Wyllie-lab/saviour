@@ -1,0 +1,17 @@
+.dashboard {
+    padding: 2rem;
+  }
+  
+  .dashboard-widgets {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  
+  .widget {
+    flex: 1;
+    padding: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background-color: #fafafa;
+  }

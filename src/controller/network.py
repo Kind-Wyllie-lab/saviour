@@ -239,14 +239,16 @@ class Network():
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
-                    self.notify_module_update(self.discovered_modules)
+                    self.notify_module_ip_change(module.id, module.ip)
+                    # self.notify_module_update(self.discovered_modules)
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
                     existing_module.id = module.id
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
-                    self.notify_module_update(self.discovered_modules)
+                    self.notify_module_id_change(module.ip, module.id)
+                    # self.notify_module_update(self.discovered_modules)
                 else:
                     continue
             # Finish looping and return whether module was valid or not

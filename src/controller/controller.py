@@ -184,43 +184,16 @@ class Controller:
         })
 
         self.network.notify_module_update = self.modules.network_notify_module_update
+        self.network.notify_module_id_change = self.modules.network_notify_module_id_change
+        self.network.notify_module_ip_change = self.modules.network_notify_module_ip_change
 
         self.modules.push_module_update_to_frontend = self.web.push_module_update
-
+    
+    # def network_notify_module_update(self):
 
 
     def _get_modules_for_frontend(self): # From APA
         """Get list of online modules from health monitor instead of service manager, append additional information"""
-        # # Get online modules from health monitor
-        # online_module_ids = self.health.get_online_modules()
-        # self.logger.info(f"Health monitor reports online modules: {online_module_ids}")
-        
-        # # Debug: Check what modules are in service manager
-        # network_module_ids = [module.id for module in self.network.discovered_modules]
-        # self.logger.info(f"Service manager has modules: {network_module_ids}")
-        
-        # # Convert to module dicts using service manager's discovered modules
-        # modules = []
-        # for module in self.network.discovered_modules:
-        #     if module.id in online_module_ids:
-        #         module_dict = {
-        #             'id': module.id,
-        #             'type': module.type,
-        #             'ip': module.ip,
-        #             'port': module.port,
-        #             'status': 'online',  # Add status field for frontend
-        #             'properties': {k.decode() if isinstance(k, bytes) else k: 
-        #                          v.decode() if isinstance(v, bytes) else v 
-        #                          for k, v in module.properties.items()}
-        #         }
-        #         modules.append(module_dict)
-        #         self.logger.info(f"Including online module in get_modules: {module.id}")
-        #     else:
-        #         self.logger.info(f"Excluding offline module from get_modules: {module.id}")
-        
-        # self.logger.info(f"Old method yielded {modules}")
-
-        # self.logger.info(f"get_modules returning {len(modules)} modules")
         modules = self.modules.get_modules()
         self.logger.info(f"get modules returning {modules}")
         return modules

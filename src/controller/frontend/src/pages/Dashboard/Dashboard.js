@@ -19,25 +19,50 @@ socket.on("disconnect", () => {
 });
 
 function Dashboard() {
-  const [modules, setModules] = useState([]);
+  const [modules, setModules] = useState({}); // Modules object returned from backend
   const [experimentName, setExperimentName] = useState(""); // The experiment name 
 
   useEffect(() => {
     console.log("Emitting get_modules");
     socket.emit("get_modules"); // Ask backend for modules
 
+    // Expecting data.modules like
+    // { "camera_d610": { ip: "192.168.1.136", type: "camera", online: true } }
     socket.on("modules_update", (data) => {
       console.log("Received modules:", data);
-      // Expecting { modules: [...] }
-      setModules(data.modules || []);
+      // Add default ready/checks/error
+      const withDefaults = Object.fromEntries(
+        Object.entries(data).map(([id, m]) => [
+          id,
+          { ...m, id, ready: false, checks: {}, error: null },
+        ])
+      );
+      setModules(withDefaults);
+    });
+
+    socket.on("update_module_readiness", (data) => {
+      console.log("Received update_module_readiness, data:", data);
+
+      setModules((prevModules) => ({
+        ...prevModules,
+        [data.module_id]: {
+          ...prevModules[data.module_id],
+          ready: data.ready,
+          checks: data.checks,
+          error: data.error,
+        },
+      }));
     });
 
     return () => {
-      socket.off("modules_update");
+      socket.off("modules_update"); // Unregister listener to prevent multiple listeners on component re-render or remount
+      socket.off("update_module_readiness"); // As above
     };
   }, []);
 
-  const cameraModules = modules.filter((m) => m.type === "camera");
+  // Convert modujles object to array for easy rendering
+  const moduleList = Object.values(modules);
+  const cameraModules = moduleList.filter((m) => m.type === "camera");
 
   return (
     <main className="dashboard">
@@ -47,8 +72,8 @@ function Dashboard() {
           <section>
             <h2>Modules (Network)</h2>
             <div className="module-grid">
-              {modules.length > 0 ? (
-                modules.map((module) => (
+              {moduleList.length > 0 ? (
+                moduleList.map((module) => (
                   <ModuleCard key={module.id} module={module} />
                 ))
               ) : (
@@ -73,7 +98,7 @@ function Dashboard() {
         <div className="sidebar-container">
           <section>
             <ExperimentMetadata setExperimentName={setExperimentName} />
-            <CommandsPanel modules={modules} experimentName={experimentName} />
+            <CommandsPanel modules={moduleList} experimentName={experimentName} />
           </section>
         </div>    
       </div>

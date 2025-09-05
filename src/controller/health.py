@@ -34,7 +34,7 @@ class Health:
         self.history_size = history_size
         
         # Health data storage
-        self.module_health = {}  # Current health data
+        self.module_health = {}  # Current health data. module_id as primary key.
         self.module_health_history = {}  # Historical health data
 
         # Module online/offline states
@@ -229,6 +229,7 @@ class Health:
                                 self.logger.error(f"Error in status change callback: {e}")
                 
                 self.logger.info(f"Module {module_id} is {self.module_health[module_id]['status']}")
+                self.callbacks["on_status_change"](module_id, self.module_health[module_id]['status'])
             
             # Check PTP health periodically
             if cycle_count % 2 == 0:  # Check PTP health every couple cycles 

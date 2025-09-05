@@ -26,8 +26,8 @@ function CommandsPanel({ modules, experimentName }) {
     };
   
     // Derived states from modules
-    const allModulesReady = modules.every((m) => m.ready);
-    const anyRecording = modules.some((m) => m.recording);
+    const allModulesReady = modules.every((m) => m.status === "READY");
+    const anyRecording = modules.some((m) => m.status === "RECORDING");
   
     return (
       <div className="commands-panel">
@@ -37,7 +37,7 @@ function CommandsPanel({ modules, experimentName }) {
         <button onClick={handleStopRecording} disabled={!anyRecording}>
           Stop Recording
         </button>
-        <button onClick={handleCheckReady}>Check Ready</button>
+        <button onClick={handleCheckReady} disabled={allModulesReady}>Check Ready</button>
       </div>
     );
   }

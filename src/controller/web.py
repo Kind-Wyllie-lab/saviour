@@ -7,6 +7,9 @@ Handles user interaction with the habitat controller, including:
 - Web based GUI
 - Command parsing and execution
 - Help system and module listing
+
+Author: Andrew SG
+Created: ?
 """
 
 import logging
@@ -50,6 +53,15 @@ class Web:
         # Register routes and webhooks        
         self.register_routes() # Register routes e.g. index, camera, status etc
 
+        # Store module readiness state in memory (backend-driven)
+        # TODO: Should readiness state be stored here?
+        self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
+        self.readiness_expiration_time = 300  # 5 minutes in seconds
+
+        self.rest_api = False
+        if self.rest_api == True:
+            self.register_rest_api_routes()
+
         # Test mode
         self.test = False
         self._running = False
@@ -70,13 +82,8 @@ class Web:
         """
         self.callbacks = callbacks
 
-    def notify_ptp_update(self):
-        """Notify a PTP update"""
-        if self.callbacks["get_ptp_history"]:
-            history = self.callbacks["get_ptp_history"]()
-
     def notify_module_update(self):
-        """Get list of modules from callback to network object and emit them on module_update"""
+        """Function that can be used externally by controller.py to notify frontend when modules updated"""
         self.logger.info(f"Getting list of modules and sending emitting 'module_update'")
         if self.callbacks["get_modules"]:
             modules = self.callbacks["get_modules"]()
@@ -85,6 +92,10 @@ class Web:
             # Use socketio.emit instead of individual handlers to ensure proper context
             self.socketio.emit('module_update', {"modules": modules})
             self.logger.info(f"Sent module update to all clients")
+
+    def push_module_update(self, modules: dict):
+        self.logger.info(f"Pushing update module list to frontend: {modules}")
+        self.socketio.emit('modules_update', modules)
 
     def register_routes(self):      
         # Serve React app
@@ -106,7 +117,7 @@ class Web:
             
             # Send initial module list
             modules = self.callbacks["get_modules"]()
-            self.logger.info(f"get_modules() returned: {modules}, sending {len(modules)} modules to new client")
+            self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('module_update', {"modules": modules})
             
             # Send current experiment name to new client
@@ -118,36 +129,9 @@ class Web:
         def handle_disconnect():
             self.logger.info(f"Client disconnected")
 
-        @self.socketio.on('save_experiment_name')
-        def handle_save_experiment_name(data):
-            """Handle saving experiment name from frontend"""
-            try:
-                experiment_name = data.get('experiment_name', '').strip()
-                self.current_experiment_name = experiment_name
-                self.logger.info(f"Saved experiment name: {experiment_name}")
-                
-                # Broadcast to all clients
-                self.socketio.emit('experiment_name_update', {"experiment_name": experiment_name})
-                self.logger.info(f"Broadcasted experiment name update to all clients")
-                
-            except Exception as e:
-                self.logger.error(f"Error saving experiment name: {str(e)}")
-                self.socketio.emit('error', {'message': str(e)})
-
-        @self.socketio.on('get_experiment_name')
-        def handle_get_experiment_name():
-            """Handle request for current experiment name"""
-            try:
-                self.logger.info(f"Client requested experiment name")
-                self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
-                self.logger.info(f"Sent experiment name to client: {self.current_experiment_name}")
-                
-            except Exception as e:
-                self.logger.error(f"Error getting experiment name: {str(e)}")
-                self.socketio.emit('error', {'message': str(e)})
-
         @self.socketio.on('start_recording')
-        def start_recording(experiment_name):
+        def start_recording(data):
+
             pass
 
         @self.socketio.on('send_command')
@@ -248,7 +232,7 @@ class Web:
             self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Send module update to all clients
-            self.socketio.emit('modules_update', {'modules': modules})
+            self.socketio.emit('modules_update', modules)
             self.logger.info(f"Sent module update to all clients: {modules}")
 
         @self.socketio.on('module_status')
@@ -405,109 +389,6 @@ class Web:
                     'error': 'Send command not available'
                 })
 
-        # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
-        @self.app.route('/api/list_modules', methods=['GET'])
-        def list_modules():
-            self.logger.info(f"/api/list_modules endpoint called. Listing modules")
-            modules = self.callbacks["get_modules"]()
-            self.logger.info(f"Found {len(modules)} modules")
-            return jsonify({"modules": modules})
-
-        @self.app.route('/api/ptp_history', methods=['GET'])
-        def ptp_history():
-            """Get PTP history for all modules"""
-            self.logger.info(f"/api/ptp_history endpoint called. Getting PTP history")
-            if self.callbacks["get_ptp_history"]:
-                history = self.callbacks["get_ptp_history"]()
-                self.logger.info(f"Got PTP history for {len(history)} modules")
-                return jsonify(history)
-            return jsonify({})
-
-        @self.app.route('/api/send_command', methods=['POST'])
-        def send_command():
-            """
-            Send a command to a module.
-            
-            Request format:
-            {
-                "command": "string",  # The command to execute
-                "module_id": "string", # The module ID or "all"
-                "params": {           # Optional parameters
-                    "key": "value"
-                }
-            }
-            
-            Example:
-            curl -X POST http://192.168.0.98:5000/api/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
-            """
-            try:
-                if not request.is_json:
-                    return jsonify({
-                        "error": "Request must be JSON",
-                        "content_type": request.content_type,
-                        "example": {
-                            "command": "start_recording",
-                            "module_id": "all"
-                        }
-                    }), 400
-                
-                data = request.get_json(force=True)
-                self.logger.info(f"Received command request: {data}")
-                
-                command = data.get('command')
-                module_id = data.get('module_id')
-                params = data.get('params', {})
-                
-                if not command or not module_id:
-                    return jsonify({
-                        "error": "Missing required fields",
-                        "required": ["command", "module_id"],
-                        "received": {
-                            "command": command,
-                            "module_id": module_id
-                        }
-                    }), 400
-                
-                self.logger.info(f"Processing command: {command} for module: {module_id}")
-                
-                if self.callbacks["send_command"]:
-                    result = self.callbacks["send_command"](module_id, command, params)
-                    return jsonify({
-                        "status": "success",
-                        "message": "Command sent successfully",
-                        "command": command,
-                        "module_id": module_id
-                    })
-                else:
-                    self.logger.error("No command callback registered")
-                    return jsonify({
-                        "error": "Command system not available",
-                        "status": "error"
-                    }), 503
-                    
-            except Exception as e:
-                self.logger.error(f"Error in send_command endpoint: {str(e)}")
-                return jsonify({
-                    "error": str(e),
-                    "status": "error"
-                }), 500
-                
-        @self.app.route('/api/module_health', methods=['GET'])
-        def module_health():
-            """Get the health status of all modules"""
-            self.logger.info(f"/api/module_health endpoint called. Getting module health")
-            if self.callbacks["get_module_health"]:
-                health = self.callbacks["get_module_health"]()
-                self.logger.info(f"Got module health for {len(health)} modules")
-                return jsonify(health)
-            return jsonify({})
-
-        @self.app.route('/api/exported_recordings', methods=['GET'])
-        def get_exported_recordings_api():
-            """Get list of exported recordings"""
-            self.logger.info("/api/exported_recordings endpoint called")
-            exported_recordings = self.get_exported_recordings()
-            return jsonify({"exported_recordings": exported_recordings})
 
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():
@@ -564,7 +445,7 @@ class Web:
         self.logger.info(f"Updated readiness for {module_id}: {'ready' if ready_status.get('ready') else 'not ready'}")
         
         # Broadcast to all connected clients
-        self.socketio.emit('module_readiness_update', {
+        self.socketio.emit('update_module_readiness', {
             'module_id': module_id,
             'ready': ready_status.get('ready', False),
             'timestamp': self.module_readiness[module_id]['timestamp'],
@@ -786,3 +667,109 @@ class Web:
             })
         except Exception as e:
             self.logger.error(f"Error handling module status: {str(e)}")
+
+    def register_rest_api_routes(self):
+        
+        # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
+        @self.app.route('/api/list_modules', methods=['GET'])
+        def list_modules():
+            self.logger.info(f"/api/list_modules endpoint called. Listing modules")
+            modules = self.callbacks["get_modules"]()
+            self.logger.info(f"Found {len(modules)} modules")
+            return jsonify({"modules": modules})
+
+        @self.app.route('/api/ptp_history', methods=['GET'])
+        def ptp_history():
+            """Get PTP history for all modules"""
+            self.logger.info(f"/api/ptp_history endpoint called. Getting PTP history")
+            if self.callbacks["get_ptp_history"]:
+                history = self.callbacks["get_ptp_history"]()
+                self.logger.info(f"Got PTP history for {len(history)} modules")
+                return jsonify(history)
+            return jsonify({})
+
+        @self.app.route('/api/send_command', methods=['POST'])
+        def send_command():
+            """
+            Send a command to a module.
+            
+            Request format:
+            {
+                "command": "string",  # The command to execute
+                "module_id": "string", # The module ID or "all"
+                "params": {           # Optional parameters
+                    "key": "value"
+                }
+            }
+            
+            Example:
+            curl -X POST http://192.168.0.98:5000/api/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
+            """
+            try:
+                if not request.is_json:
+                    return jsonify({
+                        "error": "Request must be JSON",
+                        "content_type": request.content_type,
+                        "example": {
+                            "command": "start_recording",
+                            "module_id": "all"
+                        }
+                    }), 400
+                
+                data = request.get_json(force=True)
+                self.logger.info(f"Received command request: {data}")
+                
+                command = data.get('command')
+                module_id = data.get('module_id')
+                params = data.get('params', {})
+                
+                if not command or not module_id:
+                    return jsonify({
+                        "error": "Missing required fields",
+                        "required": ["command", "module_id"],
+                        "received": {
+                            "command": command,
+                            "module_id": module_id
+                        }
+                    }), 400
+                
+                self.logger.info(f"Processing command: {command} for module: {module_id}")
+                
+                if self.callbacks["send_command"]:
+                    result = self.callbacks["send_command"](module_id, command, params)
+                    return jsonify({
+                        "status": "success",
+                        "message": "Command sent successfully",
+                        "command": command,
+                        "module_id": module_id
+                    })
+                else:
+                    self.logger.error("No command callback registered")
+                    return jsonify({
+                        "error": "Command system not available",
+                        "status": "error"
+                    }), 503
+                    
+            except Exception as e:
+                self.logger.error(f"Error in send_command endpoint: {str(e)}")
+                return jsonify({
+                    "error": str(e),
+                    "status": "error"
+                }), 500
+                
+        @self.app.route('/api/module_health', methods=['GET'])
+        def module_health():
+            """Get the health status of all modules"""
+            self.logger.info(f"/api/module_health endpoint called. Getting module health")
+            if self.callbacks["get_module_health"]:
+                health = self.callbacks["get_module_health"]()
+                self.logger.info(f"Got module health for {len(health)} modules")
+                return jsonify(health)
+            return jsonify({})
+
+        @self.app.route('/api/exported_recordings', methods=['GET'])
+        def get_exported_recordings_api():
+            """Get list of exported recordings"""
+            self.logger.info("/api/exported_recordings endpoint called")
+            exported_recordings = self.get_exported_recordings()
+            return jsonify({"exported_recordings": exported_recordings})

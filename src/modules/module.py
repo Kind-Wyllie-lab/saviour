@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Base Module Class
+SAVIOUR System - Base Module Class
 
 This is the base class for all peripheral modules in the Habitat system.
 
 Author: Andrew SG
 Created: 17/03/2025
-License: GPLv3
 """
 
 import sys

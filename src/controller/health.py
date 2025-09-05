@@ -192,7 +192,7 @@ class Health:
             if cycle_count % 10 == 0:
                 self.logger.info(f"Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
             
-
+            self.logger.info(f"Tracking these modules: {self.module_health.keys()}")
             self.logger.info(f"Online modules: {self.get_online_modules()}, offline modules: {self.get_offline_modules()}")
             # self.logger.info(f"Module health: {self.module_health}")
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict

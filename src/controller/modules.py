@@ -60,6 +60,24 @@ class Modules:
 
         self.broadcast_updated_modules()
 
+    def network_notify_module_id_change(self, module_ip, module_id):
+        # Find the old key that has this IP
+        new_module_id = module_id
+        old_module_id = None
+        for mod_id, mod in self.modules.items():
+            if mod["ip"] == module_ip:
+                old_module_id = mod_id
+                break
+
+        if old_module_id:
+            # Move the module data to the new key
+            self.modules[new_module_id] = self.modules.pop(old_module_id)
+        self.broadcast_updated_modules()
+
+    def network_notify_module_ip_change(self, module_id, module_ip):
+        self.modules["module_id"]["ip"] = module_ip
+        self.broadcast_updated_modules()
+
     def communication_notify_module_update(self, module_id: str, module_data: dict):
         self.logger.info(f"Received update from Communication object concerning module {module_id}, with data {module_data}")
         self.logger.info("No implementation yet.")
@@ -76,6 +94,8 @@ class Modules:
     def notify_module_online_update(self, module_id: str, online: bool):
         self.logger.info(f"Received update concerning module {module_id}, online status {online}")
         self.modules[module_id]["online"] = online
+        if not online:
+            self.modules[module_id]["status"] = "OFFLINE"
         self.broadcast_updated_modules()
 
     def notify_recording_started(self, module_id:str, module_data: dict):

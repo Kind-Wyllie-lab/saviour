@@ -34,9 +34,8 @@ class Network():
 
         # Module tracking
         self.discovered_modules = []
-        self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
-        self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.#
-        self.callbacks = {} # Callbacks dict
+        self.notify_module_update = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
+        self.notify_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.
         
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
@@ -240,12 +239,14 @@ class Network():
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
+                    self.notify_module_update(self.discovered_modules)
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
                     existing_module.id = module.id
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
+                    self.notify_module_update(self.discovered_modules)
                 else:
                     continue
             # Finish looping and return whether module was valid or not
@@ -281,9 +282,8 @@ class Network():
             self.module_last_seen[module.id] = current_time
             
             # Call the callback if it exists
-            if self.on_module_discovered:
-                self.logger.info(f"Calling module discovery callback")
-                self.on_module_discovered(module)
+            self.logger.info(f"Calling module discovery callback")
+            self.notify_module_update(self.discovered_modules)
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""

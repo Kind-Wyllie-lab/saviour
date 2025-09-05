@@ -11,6 +11,8 @@ function ModuleCard({ module }) {
             <h3>{module.id}</h3>
             <p>IP: {module.ip}</p>
             <p>Type: {module.type}</p>
+            <p>Status: {module.online ? "Online" : "Offline"}</p>
+            <p>State: {module.status}</p>
         </div>
     );
 }

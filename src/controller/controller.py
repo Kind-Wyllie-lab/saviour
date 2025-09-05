@@ -269,6 +269,10 @@ class Controller:
                 case 'recording_started':
                     self.logger.info(f"{module_id} has started recording")
                     self.modules.notify_recording_started(module_id, status_data)
+                
+                case 'recording_stopped':
+                    self.logger.info(f"{module_id} has stopped recording")
+                    self.modules.notify_recording_stopped(module_id, status_data)
 
                 case 'readiness_validation':
                     # Handle readiness validation response

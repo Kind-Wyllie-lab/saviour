@@ -90,6 +90,8 @@ function ExperimentMetadata({ setExperimentName }) {
           <option value="habituation">habituation</option>
           <option value="training">training</option>
           <option value="testing">testing</option>
+          {/* <option value="probe">probe</option> */}
+          {/* <option value="conflict">conflict</option> */}
         </select>
       </div>
 

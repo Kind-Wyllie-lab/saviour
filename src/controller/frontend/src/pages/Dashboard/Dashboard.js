@@ -40,23 +40,23 @@ function Dashboard() {
       setModules(withDefaults);
     });
 
-    socket.on("update_module_readiness", (data) => {
-      console.log("Received update_module_readiness, data:", data);
+    // socket.on("update_module_readiness", (data) => {
+    //   console.log("Received update_module_readiness, data:", data);
 
-      setModules((prevModules) => ({
-        ...prevModules,
-        [data.module_id]: {
-          ...prevModules[data.module_id],
-          ready: data.ready,
-          checks: data.checks,
-          error: data.error,
-        },
-      }));
-    });
+    //   setModules((prevModules) => ({
+    //     ...prevModules,
+    //     [data.module_id]: {
+    //       ...prevModules[data.module_id],
+    //       ready: data.ready,
+    //       checks: data.checks,
+    //       error: data.error,
+    //     },
+    //   }));
+    // });
 
     return () => {
       socket.off("modules_update"); // Unregister listener to prevent multiple listeners on component re-render or remount
-      socket.off("update_module_readiness"); // As above
+      // socket.off("update_module_readiness"); // As above
     };
   }, []);
 
@@ -70,7 +70,7 @@ function Dashboard() {
         <div className="dashboard-container">
           {/* left side */}
           <section>
-            <h2>Modules (Network)</h2>
+            <h2>Connected Modules</h2>
             <div className="module-grid">
               {moduleList.length > 0 ? (
                 moduleList.map((module) => (

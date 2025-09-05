@@ -1,8 +1,54 @@
 .module-card {
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    padding: 1rem;
-    margin: 0.5rem;
-    background-color: #fafafa;
-    max-width: 300px;
-  }
+  border: 3px solid #ccc;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 5px;
+  position: relative;
+  transition: all 0.2s;
+  background-color: #fff;
+  color: #000;
+  max-width: 200px;
+}
+
+.module-card.ready {
+  border-color: #007bff; /* blue border */
+}
+
+.module-card.recording {
+  border-color: #ff0000; /* red border */
+}
+
+/* Red circle indicator for recording */
+.recording-indicator {
+  width: 12px;
+  height: 12px;
+  background-color: red;
+  border-radius: 50%;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* Gray out offline modules */
+.module-card.offline {
+  border-color: #ccc;
+  background-color: #f0f0f0;
+  color: #888;
+  opacity: 0.6;
+}
+
+.offline-indicator {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: #888;
+  font-weight: bold;
+  font-size: 12px;
+}

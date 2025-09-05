@@ -46,14 +46,16 @@ class Modules:
                 self.modules[module.id] = {
                     "ip": module.ip,
                     "type": module.type,
-                    "online": True # Assume it's online at time of discovery # TODO: Consider asking health monitor if it's online?
+                    "online": True, # Assume it's online at time of discovery # TODO: Consider asking health monitor if it's online?
+                    "status": "NOT_READY" # Assume it's not yet ready at time of discovery # TODO: Consider calling check ready once?
                 }
             else:
                 self.logger.info(f"Existing module {module.id}, updating")
                 self.modules[module.id] = {
                     "ip": module.ip,
                     "type": module.type,
-                    "online": True  # Assume it's online at time of discovery # TODO: Consider asking health monitor if it's online?
+                    "online": True,  # Assume it's online at time of discovery # TODO: Consider asking health monitor if it's online?
+                    "status": "NOT_READY" # Assume it's not yet ready at time of discovery # TODO: Consider calling check ready once?
                 }
 
         self.broadcast_updated_modules()
@@ -84,6 +86,16 @@ class Modules:
         else:
             self.logger.warning("Status start_recording received but recording param was False, some kind of error.") 
         self.broadcast_updated_modules()
+
+    def notify_recording_stopped(self, module_id:str, module_data: dict):
+        self.logger.info(f"{module_id} stopped recording {module_data}")
+        if module_data["recording"] == False:
+            self.logger.info("Recording was false")
+            self.modules[module_id]["status"] = "NOT READY"
+        else:
+            self.logger.warning("Status stop_recording received but recording param was still True, some kind of error.") 
+        self.broadcast_updated_modules()
+
 
     def broadcast_updated_modules(self):
         self.logger.info(f"Updated module list: {self.modules}")

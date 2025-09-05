@@ -37,7 +37,7 @@ function CommandsPanel({ modules, experimentName }) {
         <button onClick={handleStopRecording} disabled={!anyRecording}>
           Stop Recording
         </button>
-        <button onClick={handleCheckReady} disabled={allModulesReady}>Check Ready</button>
+        <button onClick={handleCheckReady} disabled={allModulesReady || anyRecording}>Check Ready</button>
       </div>
     );
   }

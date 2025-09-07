@@ -18,6 +18,8 @@ Controller can then run get_modules() here for a neatly packaged dict of modules
 """
 
 import logging
+import time
+import threading
 
 class Modules:
     def __init__(self):
@@ -25,10 +27,13 @@ class Modules:
 
         self.modules = {} # A dict of modules. module_id as primary key
 
+        self.ready_timeout = 120 # Seconds to wait before a module is considered NOT_READY again
+        self.ready_timeout_thread = threading.Thread(target=self._ready_timeout_checker)
+
         self.example_modules = {
             "module_d67a": {
                 "online": True,
-                "status": "NOTREADY",
+                "status": "NOT_READY",
             },
             "camera_1567": {
                 "online": True,
@@ -60,6 +65,18 @@ class Modules:
 
         self.broadcast_updated_modules()
 
+    def _ready_timeout_checker(self):
+        while True:
+            current_time = time.time()
+            for module_id, module_data in self.modules.items():
+                if module_data.get("status") == "READY":
+                    ready_time = module_data.get("ready_time", 0)
+                    if current_time - ready_time > self.ready_timeout:
+                        self.logger.info(f"Module {module_id} has timed out from READY to NOT_READY")
+                        self.modules[module_id]["status"] = "NOT_READY"
+                        self.broadcast_updated_modules()
+            time.sleep(5)
+
     def network_notify_module_id_change(self, old_module_id, new_module_id):
         # Move the module data to the new key
         self.modules[new_module_id] = self.modules.pop(old_module_id)
@@ -78,6 +95,8 @@ class Modules:
         self.logger.info(f"Received update concerning module {module_id}, with ready status {ready}")
         if ready == True:
             status = "READY"
+            self.modules[module_id]["status"] = status
+            self.modules[module_id]["ready_time"] = time.time()
         else:
             status = "NOT_READY"
         self.modules[module_id]["status"] = status
@@ -113,6 +132,9 @@ class Modules:
         self.logger.info(f"Updated module list: {self.modules}")
         self.push_module_update_to_frontend(self.modules)
 
-
     def get_modules(self):
         return self.modules
+    
+    def start(self):
+        self.logger.info("Starting Modules manager")
+        self.ready_timeout_thread.start()   

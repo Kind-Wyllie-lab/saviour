@@ -257,6 +257,9 @@ class PTP:
             time.sleep(10)  # Check every second
 
     def _check_ptp_offsets(self):
+        if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset is None:
+            self.logger.warning("PTP offsets not yet available, skipping check")
+            return
         if self.latest_phc2sys_freq > 100000 or self.latest_phc2sys_offset > 5000:
             self.logger.warning(f"PTP phc2sys offsets too high ({self.latest_phc2sys_freq}, {self.latest_phc2sys_offset}), resetting PTP")
             self._reset_ptp()

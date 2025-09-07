@@ -638,10 +638,6 @@ class Web:
                     'status': status
                 })
                 return
-
-            # For heartbeat and other status types
-            if 'recording_status' not in status:
-                self.logger.warning("Recording status not in received status update.")
                 
             # Emit the status to all connected clients
             self.socketio.emit('module_status', {

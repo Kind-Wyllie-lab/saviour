@@ -16,8 +16,6 @@ function Settings() {
 
     socket.on("module_configs_update", (data) => {
       setModuleConfigs(data);
-      console.log("Received module configs:", data);
-      console.log(Object.entries(data.module_configs || {}));
     }); // When module configs received from backend
 
     // Cleanup listener on unmount

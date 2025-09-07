@@ -357,18 +357,18 @@ class Web:
                     'error': 'Module configs not available'
                 })
             
-        @self.socketio.on('save_module_configs')
+        @self.socketio.on('save_module_config')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
-            self.logger.info(f"Received request to save config to module with data {data}")
+            self.logger.info(f"Received request to save config to module {data['id']} with data {data['config']}")
             if "send_command" in self.callbacks:
                 # Format command with parameters
                 command = "set_config"
                 # Extract params from the data
-                params = data.get("params", {})
+                params = data.get("config", {})
                 
                 # Send the config update command to all modules
-                self.callbacks["send_command"]("all", command, params)
+                self.callbacks["send_command"](data['id'], command, params)
                 
                 # Get updated module configs
                 if "get_module_configs" in self.callbacks:

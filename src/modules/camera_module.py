@@ -372,7 +372,7 @@ class CameraModule(Module):
                         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                         # Convert back to BGR for consistency with other processing
                         m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, 1, (50,255,50), 1) # TODO: Make origin reference lores dimensions.
+                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale", 2), (50,255,50), self.config.get("camera.text_thickness", 1)) # TODO: Make origin reference lores dimensions.
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 

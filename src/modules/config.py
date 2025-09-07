@@ -20,33 +20,40 @@ class Config:
     
     # Default configuration values 
     # TODO: Consider deleting this
-    DEFAULT_CONFIG = {}
     DEFAULT_CONFIG = {
-        # Module parameters
-        "module": {
-            "heartbeat_interval": 30,
-            "samplerate": 200,
+        "editable": {
+
         },
+        "non_editable": {
         
-        # Service parameters
-        "service": {
-            "port": 5000,
-            "service_type": "_module._tcp.local.",
-        },
-        
-        # Communication parameters
-        "communication": {
-            "command_socket_port": 5555,
-            "status_socket_port": 5556,
-            "data_format": "json",
-        },
-        
-        # Logging parameters
-        "logging": {
-            "level": "INFO",
-            "format": "%(asctime)s - %(levelname)s - %(message)s",
-        },
+        }
     }
+    # DEFAULT_CONFIG = {
+    #     # Module parameters
+    #     "module": {
+    #         "heartbeat_interval": 30,
+    #         "samplerate": 200,
+    #     },
+        
+    #     # Service parameters
+    #     "service": {
+    #         "port": 5000,
+    #         "service_type": "_module._tcp.local.",
+    #     },
+        
+    #     # Communication parameters
+    #     "communication": {
+    #         "command_socket_port": 5555,
+    #         "status_socket_port": 5556,
+    #         "data_format": "json",
+    #     },
+        
+    #     # Logging parameters
+    #     "logging": {
+    #         "level": "INFO",
+    #         "format": "%(asctime)s - %(levelname)s - %(message)s",
+    #     },
+    # }
     
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {
@@ -94,9 +101,6 @@ class Config:
         """
         # Start with default config
         config = self.DEFAULT_CONFIG.copy()
-        
-        # Add module type to config
-        config["module"]["type"] = self.module_type
         
         # Load base configuration file if it exists
         if os.path.exists(self.base_config_file_path):

@@ -1,31 +1,33 @@
 {
-    "module": {
-        "heartbeat_interval": 30,
-        "samplerate": 200,
-        "type": "camera"
-    },
-    "service": {
-        "port": 5000,
-        "service_type": "_module._tcp.local."
-    },
-    "communication": {
-        "command_socket_port": 5555,
-        "status_socket_port": 5556,
-        "data_format": "json"
-    },
-    "logging": {
-        "level": "INFO",
-        "format": "%(asctime)s - %(levelname)s - %(message)s"
-    },
     "editable": {
         "camera": {
             "monochrome": false,
             "width": 1280,
             "height": 1280,
-            "fps": 33
+            "fps": 33,
+            "text_scale": 2,
+            "text_thickness": 3
         }
     },
     "non_editable": {
+        "module": {
+            "heartbeat_interval": 30,
+            "samplerate": 200,
+            "type": "camera"
+        },
+        "service": {
+            "port": 5000,
+            "service_type": "_module._tcp.local."
+        },
+        "communication": {
+            "command_socket_port": 5555,
+            "status_socket_port": 5556,
+            "data_format": "json"
+        },
+        "logging": {
+            "level": "INFO",
+            "format": "%(asctime)s - %(levelname)s - %(message)s"
+        },
         "camera": {
             "codec": "h264",
             "profile": "high",

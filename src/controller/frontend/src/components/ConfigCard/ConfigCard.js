@@ -32,7 +32,7 @@ function ConfigCard({ id, config }) {
       const fieldKey = fieldPath.join(".");
 
       if (typeof value === "object" && value !== null) {
-        const collapsed = collapsedSections[fieldKey] ?? true;
+        const collapsed = collapsedSections[fieldKey] ?? false;
         return (
           <fieldset key={fieldKey} className="nested-fieldset">
             <legend
@@ -62,8 +62,9 @@ function ConfigCard({ id, config }) {
 
   const handleSave = () => {
     import("../../socket").then(({ default: socket }) => {
-      console.log("Saving config for module", id, formData);
-      socket.emit("save_module_config", { id, config: formData });
+      const formattedData = { editable: formData };
+      console.log("Saving config for module", id, formattedData);
+      socket.emit("save_module_config", { id, config: formattedData });
     });
   };
 

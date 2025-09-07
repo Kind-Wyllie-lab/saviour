@@ -406,6 +406,10 @@ class Controller:
             if hasattr(self, 'network'):
                 self.web.update_modules(self.network.discovered_modules)
 
+
+        # Start the modules manager
+        self.modules.start()
+        
         # Keep the main thread alive
         try: 
             while True:

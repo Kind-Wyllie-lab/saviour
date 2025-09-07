@@ -372,9 +372,10 @@ class Export:
                 self.logger.error("Could not get controller IP from callback")
                 return False
                 
-            share_path = self.config.get('controller_share_path', '/share')
+            # These are currently defaulting to standard values, config broken somehow 070925
+            share_path = self.config.get('controller_share_path', 'controller_share')
             username = self.config.get('controller_username', 'pi')
-            password = self.config.get('controller_password', 'pass')
+            password = self.config.get('controller_password', 'saviour')
             
             self.logger.info(f"Attempting to mount controller share: //{controller_ip}/{share_path}")
             self.logger.info(f"Using credentials: username={username}")

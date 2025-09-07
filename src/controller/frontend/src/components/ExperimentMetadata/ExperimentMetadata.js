@@ -4,6 +4,7 @@ import "./ExperimentMetadata.css";
 
 function ExperimentMetadata({ setExperimentName }) {
   const [metadata, setMetadata] = useState({
+    experiment: "demo",
     rat_id: "001",
     strain: "Wistar",
     batch: "B1",
@@ -45,13 +46,21 @@ function ExperimentMetadata({ setExperimentName }) {
 
   // Generate experiment name from metadata
   const generateExperimentName = (data = metadata) => {
-    const { rat_id, strain, batch, stage, trial } = data;
-    return `apa_${rat_id}_${strain}_${batch}_${stage}_t${trial}`;
+    const { experiment, rat_id, strain, batch, stage, trial } = data;
+    return `${experiment}_${rat_id}_${strain}_${batch}_${stage}_t${trial}`;
   };
 
   return (
     <div className="experiment-metadata-container">
       <h2>Experiment Metadata</h2>
+      <div className="metadata-form-row">
+        <label htmlFor="experiment">Experiment</label>
+        <input
+          id="experiment"
+          value={metadata.experiment}
+          onChange={(e) => handleChange("experiment", e.target.value)}
+        />
+      </div>
 
       <div className="metadata-form-row">
         <label htmlFor="rat-id">Rat ID</label>

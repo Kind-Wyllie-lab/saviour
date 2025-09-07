@@ -40,6 +40,7 @@ class Web:
 
         # Store experiment metadata in memory
         self.experiment_metadata = {
+            'experiment': 'demo',
             'rat_id': '001',
             'strain': 'Wistar',
             'batch': 'B1',
@@ -300,9 +301,11 @@ class Web:
         @self.socketio.on('update_experiment_metadata')
         def handle_update_experiment_metadata(data):
             """Handle experiment metadata updates from frontend"""
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Received experiment metadata update: {data}")
+            self.logger.info(f"Received experiment metadata update: {data}")
             
             # Update stored metadata
+            if 'experiment' in data:
+                self.experiment_metadata['experiment'] = data['experiment']
             if 'rat_id' in data:
                 self.experiment_metadata['rat_id'] = data['rat_id']
             if 'strain' in data:
@@ -314,46 +317,46 @@ class Web:
             if 'trial' in data:
                 self.experiment_metadata['trial'] = data['trial']
             
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Updated experiment metadata: {self.experiment_metadata}")
+            self.logger.info(f"Updated experiment metadata: {self.experiment_metadata}")
             
             # Send confirmation back to client
             self.socketio.emit('experiment_metadata_updated', {
                 'status': 'success',
                 'metadata': self.experiment_metadata
             })
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Sent experiment metadata update confirmation")
+            self.logger.info(f"Sent experiment metadata update confirmation")
         
         @self.socketio.on('get_experiment_metadata')
         def handle_get_experiment_metadata(data=None):
             """Handle request for experiment metadata from frontend"""
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Client requested experiment metadata")
+            self.logger.info(f"Client requested experiment metadata")
             
             # Send current metadata to client
             self.socketio.emit('experiment_metadata_response', {
                 'status': 'success',
                 'metadata': self.experiment_metadata
             })
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Sent experiment metadata to client")
+            self.logger.info(f"Sent experiment metadata to client")
 
         # Settings Page stuff
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Get module configs called")
-            self.logger.info(f"(APA WEB INTERFACE MANAGER) Available callbacks: {list(self.callbacks.keys())}")
+            self.logger.info(f"Get module configs called")
+            self.logger.info(f"Available callbacks: {list(self.callbacks.keys())}")
             if "get_module_configs" in self.callbacks:
                 # Request config from all modules - refresh the config stored on controller
                 if "send_command" in self.callbacks:
-                    self.logger.info(f"(APA WEB INTERFACE MANAGER) Sending get_config command to all modules")
+                    self.logger.info(f"Sending get_config command to all modules")
                     self.callbacks["send_command"]("all", "get_config", {})
                 # Get the current module configs
                 module_configs = self.callbacks["get_module_configs"]()
-                self.logger.info(f"(APA WEB INTERFACE MANAGER) Retrieved module configs: {module_configs}")
+                self.logger.info(f"Retrieved module configs: {module_configs}")
                 self.socketio.emit('module_configs_update', {
                     'module_configs': module_configs
                 })
             else:
-                self.logger.warning(f"(APA WEB INTERFACE MANAGER) get_module_configs callback not available")
+                self.logger.warning(f"get_module_configs callback not available")
                 self.socketio.emit('module_configs_update', {
                     'module_configs': {},
                     'error': 'Module configs not available'

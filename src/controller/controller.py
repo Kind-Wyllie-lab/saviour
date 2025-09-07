@@ -183,13 +183,34 @@ class Controller:
             "send_command": self.communication.send_command
         })
 
-        self.network.notify_module_update = self.modules.network_notify_module_update
-        self.network.notify_module_id_change = self.modules.network_notify_module_id_change
-        self.network.notify_module_ip_change = self.modules.network_notify_module_ip_change
+        # self.network.notify_module_update = self.modules.network_notify_module_update
+        # self.network.notify_module_id_change = self.modules.network_notify_module_id_change
+        # self.network.notify_module_ip_change = self.modules.network_notify_module_ip_change
+
+        self.network.notify_module_update = self.network_notify_module_update
+        self.network.notify_module_id_change = self.network_notify_module_id_change
+        # self.network.notify_module_ip_change = self.network_notify_module_ip_change
 
         self.modules.push_module_update_to_frontend = self.web.push_module_update
     
-    # def network_notify_module_update(self):
+    def network_notify_module_update(self, discovered_modules: dict):
+        """Observer callback for when network manager detects a module update
+        Need to tell Modules and Health about this.
+        """
+        self.modules.network_notify_module_update(discovered_modules)
+        self.health.network_notify_module_update(discovered_modules)
+    
+    def network_notify_module_id_change(self, old_id: str, new_id: str):
+        """Observer callback for when network manager detects a module ID change
+        Need to tell Modules and Health about this.
+        """
+        self.modules.network_notify_module_id_change(old_id, new_id)
+        self.health.network_notify_module_id_change(old_id, new_id)
+        # Also need to update module_config dict if old_id exists there
+        if old_id in self.module_config:
+            self.module_config[new_id] = self.module_config.pop(old_id)
+            self.logger.info(f"Updated module_config key from {old_id} to {new_id}")
+
 
 
     def _get_modules_for_frontend(self): # From APA

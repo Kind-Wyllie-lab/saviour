@@ -239,15 +239,18 @@ class Network():
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
+                    self.logger.info(f"IP changed for module {module.id}, new IP: {module.ip}")
                     self.notify_module_ip_change(module.id, module.ip)
                     # self.notify_module_update(self.discovered_modules)
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
+                    old_module_id = existing_module.id
                     existing_module.id = module.id
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
-                    self.notify_module_id_change(module.ip, module.id)
+                    self.logger.info(f"ID changed for module at IP {module.ip}, old ID: {existing_module} new ID: {module.id}")
+                    self.notify_module_id_change(old_module_id, module.id)
                     # self.notify_module_update(self.discovered_modules)
                 else:
                     continue

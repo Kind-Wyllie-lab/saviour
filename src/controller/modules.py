@@ -60,21 +60,13 @@ class Modules:
 
         self.broadcast_updated_modules()
 
-    def network_notify_module_id_change(self, module_ip, module_id):
-        # Find the old key that has this IP
-        new_module_id = module_id
-        old_module_id = None
-        for mod_id, mod in self.modules.items():
-            if mod["ip"] == module_ip:
-                old_module_id = mod_id
-                break
-
-        if old_module_id:
-            # Move the module data to the new key
-            self.modules[new_module_id] = self.modules.pop(old_module_id)
+    def network_notify_module_id_change(self, old_module_id, new_module_id):
+        # Move the module data to the new key
+        self.modules[new_module_id] = self.modules.pop(old_module_id)
         self.broadcast_updated_modules()
 
     def network_notify_module_ip_change(self, module_id, module_ip):
+        # IP changed for module
         self.modules["module_id"]["ip"] = module_ip
         self.broadcast_updated_modules()
 

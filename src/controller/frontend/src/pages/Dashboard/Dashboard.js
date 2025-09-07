@@ -40,20 +40,6 @@ function Dashboard() {
       setModules(withDefaults);
     });
 
-    // socket.on("update_module_readiness", (data) => {
-    //   console.log("Received update_module_readiness, data:", data);
-
-    //   setModules((prevModules) => ({
-    //     ...prevModules,
-    //     [data.module_id]: {
-    //       ...prevModules[data.module_id],
-    //       ready: data.ready,
-    //       checks: data.checks,
-    //       error: data.error,
-    //     },
-    //   }));
-    // });
-
     return () => {
       socket.off("modules_update"); // Unregister listener to prevent multiple listeners on component re-render or remount
       // socket.off("update_module_readiness"); // As above
@@ -98,6 +84,8 @@ function Dashboard() {
         <div className="sidebar-container">
           <section>
             <ExperimentMetadata setExperimentName={setExperimentName} />
+          </section>
+          <section>
             <CommandsPanel modules={moduleList} experimentName={experimentName} />
           </section>
         </div>    

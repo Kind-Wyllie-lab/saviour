@@ -56,8 +56,6 @@ class CameraCommand(Command):
             
             # Handle camera-specific commands
             match cmd:
-                case "update_camera_settings":
-                    self._handle_update_camera_settings(params)
                 case "start_streaming":
                     self._handle_start_streaming(params)
                 case "stop_streaming":
@@ -68,47 +66,6 @@ class CameraCommand(Command):
                     
         except Exception as e:
             self._handle_error(e)
-
-    def _handle_update_camera_settings(self, params: list):
-        # TODO: Delete this, as this will be achieved by set_config command? Generic method for all modules.
-        """Handle update_camera_settings command"""
-        self.logger.info("(CAMERA COMMAND HANDLER) Command identified as update_camera_settings")
-        try:
-            if not params:
-                raise ValueError("No settings provided for update_camera_settings")
-            
-            settings = json.loads(params[0])
-            if 'handle_update_camera_settings' in self.callbacks:
-                success = self.callbacks['handle_update_camera_settings'](settings)
-                if success:
-                    self.callbacks["send_status"]({
-                        "type": "camera_settings_updated",
-                        "settings": settings,
-                        "success": True
-                    })
-                else:
-                    self.callbacks["send_status"]({
-                        "type": "camera_settings_update_failed",
-                        "error": "Failed to update settings"
-                    })
-            else:
-                self.logger.error("(CAMERA COMMAND HANDLER) No handle_update_camera_settings callback provided")
-                self.callbacks["send_status"]({
-                    "type": "camera_settings_update_failed",
-                    "error": "Module not configured for camera settings"
-                })
-        except json.JSONDecodeError:
-            self.logger.error("(COMMAND HANDLER) Invalid JSON in update_camera_settings command")
-            self.callbacks["send_status"]({
-                "type": "camera_settings_update_failed",
-                "error": "Invalid JSON format"
-            })
-        except Exception as e:
-            self.logger.error(f"(CAMERA COMMAND HANDLER) Error updating camera settings: {str(e)}")
-            self.callbacks["send_status"]({
-                "type": "camera_settings_update_failed",
-                "error": str(e)
-            })
 
     def _handle_start_streaming(self, params: list):
         """Handle start_streaming command"""
@@ -169,6 +126,10 @@ class CameraModule(Module):
     
         # Initialize camera
         self.picam2 = Picamera2()
+        self.height = None
+        self.width = None
+        self.fps = None
+        self.mode = None
 
         # Get camera modes
         self.camera_modes = self.picam2.sensor_modes
@@ -181,19 +142,6 @@ class CameraModule(Module):
         self.streaming_server_process = None
         self.should_stop_streaming = False  # Add flag for graceful shutdown
         self.register_routes()
-
-        # Default camera config if not in config manager
-        if not self.config.get("camera"):
-            self.config.set("camera", {
-                "fps": 100,
-                "width": 1280,
-                "height": 720,
-                "codec": "h264",
-                "profile": "high",
-                "level": 4.2,
-                "intra": 30,
-                "file_format": "h264"
-            })
             
         # Configure camera
         time.sleep(0.1)
@@ -221,7 +169,6 @@ class CameraModule(Module):
             'list_recordings': self.list_recordings,
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
-            'handle_update_camera_settings': self.handle_update_camera_settings,  # Camera specific
             'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
@@ -234,20 +181,28 @@ class CameraModule(Module):
     def configure_camera(self):
         """Configure the camera with current settings"""
         try:
+            self.logger.info("Configure camera called")
+
+            if self.picam2.started:
+                self.picam2.stop()
+
             # Get camera settings from config
-            fps = self.config.get("camera.fps", 25)  # Default to 25fps
-            width = self.config.get("camera.width", 1280)
-            height = self.config.get("camera.height", 720)
+            self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
+            self.width = self.config.get("camera.width", 1280)
+            self.height = self.config.get("camera.height", 720)
             
             # Pick appropriate sensor mode - we will use mode 0 by default
-            mode = self.camera_modes[0]
+            self.mode = self.camera_modes[0]
 
-            sensor = {"output_size": mode["size"], "bit_depth": mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
-            main = {"size": (width, height), "format": "YUV420"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
-            lores = {"size": (320, 240), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
-            controls = {"FrameRate": fps} # target framerate, in reality it might be lower.
+            sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
+            main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
+            lores = {"size": (self.width, self.height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
+            controls = {"FrameRate": self.fps} # target framerate, in reality it might be lower.
             
-            self.logger.info(f"Sensor stream set to size {width},{height} and bit depth {mode['bit_depth']} to target {fps}fps.")
+            if self.config.get("camera.monochrome") is True:
+                self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
+
+            self.logger.info(f"Sensor stream set to size {self.width},{self.height} and bit depth {self.mode['bit_depth']} to target {self.fps}fps.")
 
             # Create video configuration with explicit framerate
             config = self.picam2.create_video_configuration(main=main,
@@ -267,7 +222,7 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
-            self.logger.info(f"Camera configured successfully at {fps}fps")
+            self.logger.info(f"Camera configured successfully at {self.fps}fps")
             return True
             
         except Exception as e:
@@ -277,6 +232,68 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
+    
+
+    def set_config(self, new_config: dict, persist: bool) -> bool:
+        # Check if camera settings are being changed
+        camera_config_changed = False
+        if 'editable' in new_config and 'camera' in new_config['editable']:
+            current_camera_config = self.config.get("camera")
+            new_camera_config = new_config['editable']['camera']
+            
+            # Check if any camera settings are different
+            for key in ['fps', 'width', 'height', 'file_format']:
+                if key in new_camera_config and current_camera_config.get(key) != new_camera_config[key]:
+                    camera_config_changed = True
+                    self.logger.info("Camera config has changed")
+                    break
+        
+        # Apply the config first
+        success = super().set_config(new_config, persist)
+        if success:
+            # If camera settings changed and we're streaming, restart the stream
+            # TODO: Should this also restart recording? Not really, as we never want to change settings while recording, right? So maybe prevent this happening.
+            self.logger.info("Checking if camera config changed and currently streaming")
+            if camera_config_changed and self.is_streaming:
+                self.logger.info("Camera settings changed, restarting stream to apply new configuration")
+                
+                # Set restart flag to prevent incorrect status reports
+                self._restarting_stream = True
+                
+                # Stop streaming
+                self.stop_streaming()
+                
+                # Wait a moment for the stream to fully stop
+                time.sleep(1)
+                
+                # Configure camera with new settings
+                try:
+                    self.configure_camera()
+                    self.logger.info("Camera reconfigured successfully")
+                except Exception as e:
+                    self.logger.error(f"Error reconfiguring camera: {e}")
+                
+                # Restart streaming
+                try:
+                    self.logger.info("Restarting stream with new settings")
+                    self.start_streaming()
+                    self.logger.info("Streaming restarted with new camera settings")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
+                
+                # Clear restart flag after restart is complete
+                self._restarting_stream = False
+            elif camera_config_changed and not self.is_streaming:
+                # Camera settings changed but we're not streaming, just reconfigure
+                self.logger.info("Camera config changed but not streaming")
+                try:
+                    self.configure_camera()
+                    self.logger.info("Camera reconfigured successfully (not streaming)")
+                except Exception as e:
+                    self.logger.error(f"Error reconfiguring camera: {e}")
+            else:
+                self.logger.info("Camera config not changed")
+        return success
 
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start continuous video recording"""
@@ -340,8 +357,22 @@ class CameraModule(Module):
             if frame_wall_clock != 'No data':
                 self.frame_times.append(frame_wall_clock)
                 timestamp = time.strftime("%Y-%m-%d %X")
+
+                # Apply mask to main stream
+                with MappedArray(req, 'main') as m:
+                    if self.config.get("camera.monochrome") is True:
+                        # Convert BGR to grayscale
+                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                        # Convert back to BGR for consistency with other processing
+                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
                 with MappedArray(req, "lores") as m:
-                    cv2.putText(m.array, timestamp, (0,235), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50,255,50), 1) # TODO: Make origin reference lores dimensions.
+                    if self.config.get("camera.monochrome") is True:
+                        # Convert BGR to grayscale
+                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                        # Convert back to BGR for consistency with other processing
+                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, 1, (50,255,50), 1) # TODO: Make origin reference lores dimensions.
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
@@ -409,53 +440,6 @@ class CameraModule(Module):
                     "status": "error",
                     "error": str(e)
                 })
-            return False
-        
-    def set_camera_parameters(self, params: dict) -> bool:
-        """
-        Set camera parameters and update config
-        
-        Args:
-            params: Dictionary of camera parameters to update
-            
-        Returns:
-            bool: True if successful
-        """
-        try:
-            for key, value in params.items():
-                config_key = f"camera.{key}"
-                self.config.set(config_key, value)
-                
-            # Update file format if it's in the params
-            if 'file_format' in params:
-                self.recording_filetype = params['file_format']
-                
-            self.logger.info(f"(MODULE) Camera parameters updated: {params}")
-            return True
-        except Exception as e:
-            self.logger.error(f"(MODULE) Error setting camera parameters: {e}")
-            return False
-        
-    def handle_update_camera_settings(self, params: dict) -> bool:
-        """Handle update_camera_settings command"""
-        try:
-            # Update camera parameters
-            success = self.set_camera_parameters(params)
-            
-            # Send status update
-            self.communication.send_status({
-                "type": "camera_settings_updated",
-                "settings": params,
-                "success": success
-            })
-            
-            return success
-        except Exception as e:
-            self.logger.error(f"(MODULE) Error updating camera settings: {e}")
-            self.communication.send_status({
-                "type": "camera_settings_update_failed",
-                "error": str(e)
-            })
             return False
 
     def get_latest_recording(self):

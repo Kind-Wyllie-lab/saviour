@@ -1,43 +1,68 @@
 {
-    "camera": {
-        "width": 1280,
-        "height": 720,
-        "fps": 30,
-        "codec": "h264",
-        "profile": "high",
-        "level": 4.2,
-        "bitrate": 10000000,
-        "file_format": "mp4"
+    "module": {
+        "heartbeat_interval": 30,
+        "samplerate": 200,
+        "type": "camera"
     },
-    "recording": {
-        "segment_length_seconds": 600,
-        "pre_record_seconds": 5,
-        "post_record_seconds": 5,
-        "timestamp_overlay": true,
-        "timestamp_format": "%Y-%m-%d %H:%M:%S",
-        "timestamp_position": "bottom-right"
+    "service": {
+        "port": 5000,
+        "service_type": "_module._tcp.local."
     },
-    "streaming": {
-        "enabled": true,
-        "port": 8554,
-        "transport": "udp"
+    "communication": {
+        "command_socket_port": 5555,
+        "status_socket_port": 5556,
+        "data_format": "json"
     },
-    "nas": {
-        "enabled": true,
-        "host": "192.168.0.2",
-        "share": "data",
-        "mount_point": "/mnt/nas",
-        "export_folder": "videos"
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s"
     },
-    "recording_folder": "rec",
-    "recording_filetype": "h264",
-    "auto_export": true,
-    "controller_share_path": "controller_share",
-    "controller_username": "pi",
-    "controller_password": "saviour",
-    "nas_ip": "192.168.0.2",
-    "nas_share_path": "data",
-    "nas_recordings_path": "recordings",
-    "nas_username": "sidbit",
-    "nas_password": "RaspberryWonder1305"
+    "editable": {
+        "camera": {
+            "monochrome": false,
+            "width": 1280,
+            "height": 1280,
+            "fps": 33
+        }
+    },
+    "non_editable": {
+        "camera": {
+            "codec": "h264",
+            "profile": "high",
+            "level": 4.2,
+            "bitrate": 10000000,
+            "file_format": "mp4"
+        },
+        "recording": {
+            "segment_length_seconds": 600,
+            "pre_record_seconds": 5,
+            "post_record_seconds": 5,
+            "timestamp_overlay": true,
+            "timestamp_format": "%Y-%m-%d %H:%M:%S",
+            "timestamp_position": "bottom-right"
+        },
+        "streaming": {
+            "enabled": true,
+            "port": 8554,
+            "transport": "udp"
+        },
+        "nas": {
+            "enabled": true,
+            "host": "192.168.0.2",
+            "share": "data",
+            "mount_point": "/mnt/nas",
+            "export_folder": "videos"
+        },
+        "recording_folder": "rec",
+        "recording_filetype": "h264",
+        "auto_export": true,
+        "controller_share_path": "controller_share",
+        "controller_username": "pi",
+        "controller_password": "saviour",
+        "nas_ip": "192.168.0.2",
+        "nas_share_path": "data",
+        "nas_recordings_path": "recordings",
+        "nas_username": "sidbit",
+        "nas_password": "RaspberryWonder1305"
+    }
 }

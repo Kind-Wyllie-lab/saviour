@@ -1,0 +1,38 @@
+.config-card {
+  border: 1px solid #ccc;
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.nested-fieldset {
+  border: 1px dashed #aaa;
+  margin: 10px 0;
+  padding: 10px;
+}
+
+.nested-fieldset legend {
+  font-weight: bold;
+}
+
+.form-field {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.form-field label {
+  width: 180px;
+  font-weight: 500;
+}
+
+.form-field input[type="text"],
+.form-field input[type="number"] {
+  flex: 1;
+  padding: 4px;
+}
+
+.form-field input[type="checkbox"] {
+  transform: scale(1.2);
+}

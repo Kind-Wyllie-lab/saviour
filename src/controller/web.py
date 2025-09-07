@@ -130,11 +130,6 @@ class Web:
         def handle_disconnect():
             self.logger.info(f"Client disconnected")
 
-        @self.socketio.on('start_recording')
-        def start_recording(data):
-
-            pass
-
         @self.socketio.on('send_command')
         def handle_command(data):
             """
@@ -236,7 +231,7 @@ class Web:
             self.socketio.emit('modules_update', modules)
             self.logger.info(f"Sent module update to all clients: {modules}")
 
-        @self.socketio.on('module_status')
+        @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
         def handle_module_status(data):
             """Handle module status update"""
             try:
@@ -362,10 +357,10 @@ class Web:
                     'error': 'Module configs not available'
                 })
             
-        @self.socketio.on('save_module_config')
+        @self.socketio.on('save_module_configs')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
-            self.logger.info(f"(WEB INTERFACE MANAGER) Received request to save config to module with data {data}")
+            self.logger.info(f"Received request to save config to module with data {data}")
             if "send_command" in self.callbacks:
                 # Format command with parameters
                 command = "set_config"

@@ -110,7 +110,36 @@ class Health:
         except Exception as e:
             self.logger.error(f"Error updating health for module {module_id}: {e}")
             return False
+
+    def network_notify_module_update(self, discovered_modules: dict):
+        """Receive discovered modules from network manager
+        Ensure health tracking is aware of all modules
+        """
+        self.logger.info(f"Received discovered modules from Network: {discovered_modules}")
+        for module in discovered_modules:
+            if module.id not in self.module_health:
+                self.logger.info(f"Discovered new module {module.id}, adding to health tracking")
+                self.module_health[module.id] = {
+                    'timestamp': time.time(),
+                    'last_heartbeat': 0,  # No heartbeat yet
+                    'status': 'offline',  # Start as offline until first heartbeat
+                    'cpu_temp': None,
+                    'cpu_usage': None,
+                    'memory_usage': None,
+                    'uptime': None,
+                    'disk_space': None,
+                    'ptp4l_offset': None,
+                    'ptp4l_freq': None,
+                    'phc2sys_offset': None,
+                    'phc2sys_freq': None
+                }
     
+    def network_notify_module_id_change(self, old_module_id, new_module_id):
+        # Move the module data to the new key
+        self.module_health[new_module_id] = self.module_health.pop(old_module_id)
+        if old_module_id in self.module_health_history:
+            self.module_health_history[new_module_id] = self.module_health_history.pop(old_module_id)
+
     def get_module_health_history(self, module_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Get historical health data for a specific module

@@ -1,35 +1,40 @@
 // src/pages/Dashboard.js
 import React, { useEffect, useState } from "react";
 import socket from "../../socket";
-
-// Styling and components
-import "./Settings.css"; // optional, if you want page-specific styles
+import "./Settings.css";
 import ConfigCard from "../../components/ConfigCard/ConfigCard";
 
 function Settings() {
-  // const [modules, setModules] = useState({}); 
-  const [moduleConfigs, setModuleConfigs] = useState({}); // State to hold module configurations
+  const [moduleConfigs, setModuleConfigs] = useState(null); // null = loading state
 
-  useEffect(() => { // React hook that runs "side effects"; functionality outside of rendering.
-    console.log("Emitting get_module_configs");
-    socket.emit("get_module_configs"); // Ask backend for module configurations
-
-    socket.on("module_configs_update", (data) => {
-      setModuleConfigs(data);
-    }); // When module configs received from backend
-
-    // Cleanup listener on unmount
-    return () => {
-      socket.off("module_configs_update");
+  useEffect(() => {
+    // Define handler
+    const handleUpdate = (data) => {
+      console.log("Received module configs:", data);
+      setModuleConfigs(data.module_configs || {});
     };
-  }, []); // [] Dependency array indicates function should run once after first render (componentDidMount)
 
+    // Listen for updates
+    socket.on("module_configs_update", handleUpdate);
+
+    // Always request current configs on mount
+    socket.emit("get_module_configs");
+
+    // Cleanup
+    return () => {
+      socket.off("module_configs_update", handleUpdate);
+    };
+  }, []);
+
+  if (moduleConfigs === null) {
+    return <main className="settings"><p>Loading modules...</p></main>;
+  }
 
   return (
     <main className="settings">
       <h2>Modules to update settings for</h2>
       <div className="module-grid">
-        {Object.entries(moduleConfigs.module_configs || {}).map(([id, moduleConfig]) => (
+        {Object.entries(moduleConfigs).map(([id, moduleConfig]) => (
           <ConfigCard key={id} id={id} config={moduleConfig} />
         ))}
       </div>

@@ -1,9 +1,13 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import './ConfigCard.css';
 
 function ConfigCard({ id, config }) {
   const [formData, setFormData] = useState(config);
-  const [collapsed, setCollapsed] = useState(true); // collapsed by default
+  const [collapsed, setCollapsed] = useState(false); // top-level collapse
+  const [collapsedSections, setCollapsedSections] = useState({}); // per-section collapse
+
+  // Keep formData synced if parent updates config
+  useEffect(() => setFormData(config), [config]);
 
   const handleChange = (path, e) => {
     const newData = { ...formData };
@@ -28,10 +32,16 @@ function ConfigCard({ id, config }) {
       const fieldKey = fieldPath.join(".");
 
       if (typeof value === "object" && value !== null) {
+        const collapsed = collapsedSections[fieldKey] ?? true;
         return (
           <fieldset key={fieldKey} className="nested-fieldset">
-            <legend>{key}</legend>
-            {renderFields(value, fieldPath)}
+            <legend
+              onClick={() => setCollapsedSections(prev => ({ ...prev, [fieldKey]: !collapsed }))}
+              style={{ cursor: "pointer" }}
+            >
+              {key} {collapsed ? "(+)" : "(-)"}
+            </legend>
+            {!collapsed && <div className="nested">{renderFields(value, fieldPath)}</div>}
           </fieldset>
         );
       }
@@ -60,10 +70,9 @@ function ConfigCard({ id, config }) {
   return (
     <div className="config-card">
       <div className="card-header">
-        <h3>{id}</h3>
-        <button type="button" onClick={() => setCollapsed(!collapsed)}>
-          {collapsed ? "Expand" : "Collapse"}
-        </button>
+        <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
+          {id} {collapsed ? "(+)" : "(-)"}
+        </h3>
       </div>
 
       {!collapsed && (

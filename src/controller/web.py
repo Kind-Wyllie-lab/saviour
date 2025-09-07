@@ -369,23 +369,8 @@ class Web:
                 
                 # Send the config update command to all modules
                 self.callbacks["send_command"](data['id'], command, params)
-                
-                # Get updated module configs
-                if "get_module_configs" in self.callbacks:
-                    module_configs = self.callbacks["get_module_configs"]()
-                    self.socketio.emit('module_configs_update', {
-                        'module_configs': module_configs
-                    })
-                else:
-                    self.socketio.emit('module_configs_update', {
-                        'module_configs': {},
-                        'error': 'Module configs not available'
-                    })
             else:
-                self.socketio.emit('module_configs_update', {
-                    'module_configs': {},
-                    'error': 'Send command not available'
-                })
+                self.logger.error("No 'send command' callback registered")
 
 
         @self.socketio.on('get_exported_recordings')

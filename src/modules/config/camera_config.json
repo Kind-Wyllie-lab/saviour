@@ -4,7 +4,7 @@
             "monochrome": false,
             "width": 1280,
             "height": 1280,
-            "fps": 33,
+            "fps": 60,
             "text_scale": 2,
             "text_thickness": 3
         }
@@ -66,5 +66,19 @@
         "nas_recordings_path": "recordings",
         "nas_username": "sidbit",
         "nas_password": "RaspberryWonder1305"
+    },
+    "module": {
+        "heartbeat_interval": "30",
+        "samplerate": "200"
+    },
+    "service": {
+        "port": "5000"
+    },
+    "logging": {
+        "level": "INFO"
+    },
+    "communication": {
+        "command_socket_port": "5555",
+        "status_socket_port": "5556"
     }
 }

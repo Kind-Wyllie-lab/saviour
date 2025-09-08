@@ -1,9 +1,10 @@
 # Python Virtual Environment
+# I have chosen not to ignore these at present as it will speed up cross-device development.
 Lib/
 Scripts/
 Include/
 pyvenv.cfg
-.env
+ .env
 .venv
 env/
 venv/
@@ -34,6 +35,7 @@ log.txt
 *.swo
 .cursor/
 
+
 # OS specific files
 .DS_Store
 Thumbs.db
@@ -43,3 +45,20 @@ config/local_config.json
 
 # Brief
 brief/
+
+# Video recordings
+rec/
+videos/
+*.mp4
+*.ts
+*.h264
+
+# Work in progress
+wip/
+
+# Share folder
+habitat_share/
+
+# Setup files
+system_setup_summary.txt
+system_setup.log

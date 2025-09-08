@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Recordings - Habitat Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" type="image/x-icon" href="/static/uofe_logo.png">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/header.js') }}"></script>
+</head>
+<body>
+    <main-header></main-header>
+    
+    <div class="dashboard-container">
+        <div class="dashboard-card">
+            <div class="recordings-header">
+                <h1>📹 Recordings</h1>
+                <a href="/" class="back-button">Back to Dashboard</a>
+            </div>
+        </div>
+        
+        <div class="dashboard-card">
+            <div id="recordings-section">
+                <div class="recordings-container">
+                    <div class="recordings-tabs">
+                        <div class="tabs-left">
+                            <button class="tab-button active" data-tab="module-recordings">Module Recordings</button>
+                            <button class="tab-button" data-tab="exported-recordings">Exported Recordings</button>
+                        </div>
+                        <div class="tabs-right">
+                            <button id="refresh-recordings" class="refresh-btn" onclick="refreshRecordings()">
+                                🔄 Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div id="module-recordings" class="recordings-content active">
+                        <div class="recordings-filter">
+                            <label for="experiment-filter">Filter by Name:</label>
+                            <input type="text" id="experiment-filter" placeholder="Enter experiment name or folder name to filter...">
+                            <button id="clear-filter" class="filter-button">Clear Filter</button>
+                        </div>
+                        <div class="recordings-list"></div>
+                    </div>
+                    <div id="exported-recordings" class="recordings-content">
+                        <div class="recordings-filter">
+                            <label for="export-destination-filter">Filter by Destination:</label>
+                            <select id="export-destination-filter">
+                                <option value="all">All Destinations</option>
+                                <option value="controller">Controller Storage</option>
+                                <option value="nas">NAS Storage</option>
+                            </select>
+                            <button id="clear-export-filter" class="filter-button">Clear Filter</button>
+                        </div>
+                        <div class="recordings-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Selection Dialog -->
+    <div id="module-selection-dialog" class="dialog" style="display: none;">
+        <div class="dialog-content">
+            <h3>Select Module</h3>
+            <div class="dialog-options">
+                <button class="dialog-option" data-module="all">All Modules</button>
+                <div id="module-options"></div>
+            </div>
+            <button class="dialog-close">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Follow-up Questions Dialog -->
+    <div id="followup-dialog" class="dialog" style="display: none;">
+        <div class="dialog-content">
+            <h3 id="followup-title">Additional Parameters</h3>
+            <div id="followup-content">
+                <!-- Dynamic content will be generated here -->
+            </div>
+            <div class="dialog-buttons">
+                <button id="followup-confirm" class="dialog-confirm">Confirm</button>
+                <button id="followup-cancel" class="dialog-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/recordings.js') }}"></script>
+</body>
+</html> 

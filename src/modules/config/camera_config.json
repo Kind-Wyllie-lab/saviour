@@ -2,9 +2,9 @@
     "editable": {
         "camera": {
             "monochrome": false,
-            "width": 1280,
-            "height": 1280,
-            "fps": 60,
+            "width": 1080,
+            "height": 1080,
+            "fps": 30,
             "text_scale": 2,
             "text_thickness": 3
         }
@@ -32,7 +32,7 @@
             "codec": "h264",
             "profile": "high",
             "level": 4.2,
-            "bitrate": 10000000,
+            "bitrate": 2000000,
             "file_format": "mp4"
         },
         "recording": {

@@ -240,6 +240,10 @@ class TTLModule(Module):
             # Start monitoring all input pins
             self._start_recording_all_input_pins()
 
+            if duration > 0:
+                self.logger.info("Attempting to start recording thread")
+                self.recording_thread.start()
+
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({

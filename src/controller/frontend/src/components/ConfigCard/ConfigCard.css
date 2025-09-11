@@ -9,6 +9,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  align-items: stretch;   /* <-- make children stretch horizontally */
+  align-self: flex-start; /* <-- let card shrink to its content height */
 }
 
 .nested-fieldset {

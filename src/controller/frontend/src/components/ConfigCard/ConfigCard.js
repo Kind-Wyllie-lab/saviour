@@ -79,7 +79,7 @@ function ConfigCard({ id, config }) {
       {!collapsed && (
         <>
           <form>{renderFields(formData)}</form>
-          <button type="button" onClick={handleSave}>Save Config</button>
+          <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
         </>
       )}
     </div>

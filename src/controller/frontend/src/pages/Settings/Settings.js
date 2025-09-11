@@ -18,6 +18,7 @@ function Settings() {
     socket.on("module_configs_update", handleUpdate);
 
     // Always request current configs on mount
+    console.log("Emitting get_module_configs");
     socket.emit("get_module_configs");
 
     // Cleanup

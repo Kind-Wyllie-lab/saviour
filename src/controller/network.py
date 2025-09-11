@@ -299,6 +299,7 @@ class Network():
             module_id = str(info.properties.get(b'id', b'unknown').decode())
             self.module_last_seen[module_id] = time.time()
             self.logger.info(f"Updated last seen time for module: {module_id}")
+            self.notify_module_update(self.discovered_modules)
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules.

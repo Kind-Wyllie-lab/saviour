@@ -2,14 +2,17 @@
   flex: 1 1 300px;
   min-width: 200px;
   max-width: 400px;
-  min-height: 450px; /* optional, enforce taller cards */
-  border: 1px solid #ccc;
+  /* optional, enforce taller cards*/
+  /* min-height: 450px; */
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   margin: 0;
   padding: 10px;
-  background-color: #f9f9f9;
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
   display: flex;
   flex-direction: column;
+  /* gap: 4px; */
   box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
@@ -26,6 +29,7 @@
   height: 100%;      /* fill the container */
   object-fit: contain;/* keep aspect ratio */
   border-radius: 4px;
+  padding: 6px;
 }
 
 .stream-card-header {
@@ -38,15 +42,16 @@
 
 .stream-content {
   display: flex;
+  gap: 6px;
   flex-direction: column;
 }
 
 .stream-placeholder, .stream-video {
-  border: 1px dashed #aaa;
+  border: 1px dashed var(--border-color);
   border-radius: 4px;
   padding: 10px;
   text-align: center;
-  background-color: #eaeaea;
+  background-color: var(--bg-color);
 }
 
 .stream-placeholder p {
@@ -56,11 +61,12 @@
 .stream-controls {
   display: flex;
   justify-content: space-between;
+  gap: 16px;
   margin-top: 5px;
 }
 
 .stream-controls button {
-  background-color: #007bff;
+  background-color: var(--accent-color);
   color: white;
   border: none;
   padding: 4px 8px;
@@ -69,8 +75,10 @@
 }
 
 .stream-controls button:hover {
-  background-color: #0056b3;
+  /* background-color: #0056b3; */
+  filter: brightness(1.2); /* Button gets brighter when hovering */
 }
+
 
 /* Fullscreen card styles */
 .livestream-card.fullscreen {

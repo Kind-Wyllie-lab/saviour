@@ -1,13 +1,18 @@
 .config-card {
-  border: 1px solid #ccc;
+  border: 1px solid var(--border-color);
   padding: 10px;
   margin: 10px 0;
   border-radius: 6px;
-  background: #fafafa;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .nested-fieldset {
-  border: 1px dashed #aaa;
+  border: 1px dashed var(--border-color);
   margin: 10px 0;
   padding: 10px;
 }
@@ -31,8 +36,22 @@
 .form-field input[type="number"] {
   flex: 1;
   padding: 4px;
+  background-color: var(--bg-color);
+  color: var(--text-color);
 }
 
 .form-field input[type="checkbox"] {
   transform: scale(1.2);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+
+.save-button {
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: none;
+  background-color: var(--accent-color);
+  color: white;
+  cursor: pointer;
+  font-weight: bold;
 }

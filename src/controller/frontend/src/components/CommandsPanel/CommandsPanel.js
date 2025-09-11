@@ -31,13 +31,13 @@ function CommandsPanel({ modules, experimentName }) {
   
     return (
       <div className="commands-panel">
-        <button onClick={handleStartRecording} disabled={!allModulesReady || anyRecording}>
+        <button className="start-button" onClick={handleStartRecording} disabled={!allModulesReady || anyRecording}>
           Start Recording
         </button>
-        <button onClick={handleStopRecording} disabled={!anyRecording}>
+        <button className="stop-button" onClick={handleStopRecording} disabled={!anyRecording}>
           Stop Recording
         </button>
-        <button onClick={handleCheckReady} disabled={allModulesReady || anyRecording}>Check Ready</button>
+        <button className="ready-button" onClick={handleCheckReady} disabled={allModulesReady || anyRecording}>Check Ready</button>
       </div>
     );
   }

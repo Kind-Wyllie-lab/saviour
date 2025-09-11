@@ -1,6 +1,6 @@
 /* Header */
 .main-header {
-    background-color: var(--card-color);
+    background-color: var(--card-bg-color);
     padding: 1rem 2rem;
 }
 
@@ -33,11 +33,11 @@
 
 .nav-link {
     text-decoration: none;
-    color: #333;
+    color: var(--text-color);
     font-weight: 500;
     transition: color 0.2s ease;
 }
 
 .nav-link:hover {
-    color: #007bff;
+    color: var(--accent-color);
 } 

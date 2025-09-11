@@ -2,17 +2,19 @@
     "microphone": {
         "device_index": 0,
         "type": "usb",
-        "sample_rate": 44100,
+        "sample_rate": 128000,
         "channels": 1,
         "bit_depth": 16,
         "chunk_size": 1024,
         "gain": 1.0,
         "noise_reduction": true,
         "echo_cancellation": false,
-        "auto_gain_control": true
+        "auto_gain_control": true,
+        "frame_num": 131072,
+        "block_size": 131072
     },
     "recording": {
-        "format": "wav",
+        "format": "flac",
         "directory": "audio_recordings",
         "max_length_seconds": 3600,
         "continuous": false,

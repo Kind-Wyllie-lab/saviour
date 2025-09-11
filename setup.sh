@@ -458,6 +458,8 @@ StandardError=journal
 
 # Environment variables
 Environment=PYTHONPATH=/usr/local/src/saviour/src
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse/"
 
 [Install]
 WantedBy=multi-user.target

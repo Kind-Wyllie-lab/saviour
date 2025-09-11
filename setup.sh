@@ -597,6 +597,18 @@ for pkg in "${SYSTEM_PACKAGES[@]}"; do
     fi
 done
 
+# Configure Pipewire sampling rate for Audiomoth
+if [ "$MODULE_TYPE" = "microphone" ]; then
+    sudo install -d /etc/pipewire/pipewire.conf.d
+    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+    context.properties = {
+        default.clock.rate = 192000
+        default.clock.allowed-rates = [ 96000 192000 384000]
+    }
+    EOF
+    systemctl --user restart pipewire pipewire-pulse wireplumber
+fi
+
 # Enable camera interface if not already enabled
 if ! grep -q "camera_auto_detect=1" /boot/config.txt; then
     log_message "Enabling camera interface..."

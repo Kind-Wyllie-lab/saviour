@@ -68,6 +68,8 @@ class Module:
         self.module_id = self.generate_module_id(self.module_type)
         self.config_path = config_path
         self.recording_folder = "rec"  # Default recording folder
+        self.recording_thread = None # A thread to automatically stop recording if a duration is given
+        self.recording_start_time = None # When a recording was started
         
         # Setup logging first
         self.logger = logging.getLogger(__name__)
@@ -204,6 +206,14 @@ class Module:
         # Track when module started for uptime calculation
         self.start_time = None
 
+    def auto_stop_recording(self, duration: int):
+        self.logger.info(f"Starting thread to stop recording after {duration}s")
+        while ((time.time() - self.recording_start_time) < duration):
+            self.logger.info("Looping, not stopping recording yet")
+            time.sleep(0.5) # Wait
+        self.logger.info("Stopping recording")
+        self.stop_recording()
+
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"Network manager informs that controller was discovered at {controller_ip}:{controller_port}")
@@ -325,6 +335,10 @@ class Module:
         os.makedirs(self.recording_folder, exist_ok=True)
 
         # TODO: Start generating health metadata to go with file
+
+        if duration > 0:
+            self.recording_thread = threading.Thread(target=self.auto_stop_recording, args=(int(duration),))
+        # Child classes can call self.recording_thread.start()
         
         return self.current_filename  # Just return filename, let child class handle status
 

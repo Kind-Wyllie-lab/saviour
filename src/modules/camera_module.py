@@ -321,6 +321,10 @@ class CameraModule(Module):
             self.recording_start_time = time.time()
             self.frame_times = []  # Reset frame times
 
+            if duration > 0:
+                self.logger.info("Attempting to start recording thread")
+                self.recording_thread.start()
+
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
@@ -381,6 +385,8 @@ class CameraModule(Module):
         # First check if recording using parent class
         if not super().stop_recording():
             return False
+        
+        self.logger.info("Stopping recording now")
         
         try:
             # Stop recording with camera-specific code

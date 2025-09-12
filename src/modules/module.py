@@ -745,7 +745,7 @@ class Module:
                 self.ptp.start()
 
             # Start sending heartbeats
-            time.sleep(0.1)
+            time.sleep(1)
             self.health.start_heartbeats()
         
         return True

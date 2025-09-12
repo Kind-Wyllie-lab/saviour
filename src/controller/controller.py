@@ -137,7 +137,6 @@ class Controller:
         
         self.communication = Communication(
             status_callback=self.handle_status_update,
-            data_callback=self.handle_data_update
         )
         self.buffer = Buffer(self.max_buffer_size)
         # self.database = database.ControllerDatabaseManager(self.config)
@@ -175,6 +174,7 @@ class Controller:
             "get_config": lambda: self.config.config,
             "get_module_configs": self.get_module_configs,
             "get_samba_info": self.get_samba_info,
+            "remove_module": self._remove_module
         })
             
         # Register status change callback with health monitor
@@ -193,6 +193,11 @@ class Controller:
 
         self.modules.push_module_update_to_frontend = self.web.push_module_update
     
+    def _remove_module(self, module_id: str):
+        self.modules.remove_module(module_id)
+        self.health.remove_module(module_id)
+        self.communication.send_command(module_id, "shutdown", {})
+
     def network_notify_module_update(self, discovered_modules: dict):
         """Observer callback for when network manager detects a module update
         Need to tell Modules and Health about this.
@@ -298,32 +303,19 @@ class Controller:
             status: may be "online" or "offline"
         """
         self.logger.info(f"Module {module_id} status changed to: {status}")
-        
+
         if status == "online":
             online = True
         elif status == "offline":
             online = False
-        
+
         self.modules.notify_module_online_update(module_id, online)
-
-        # TODO: What should happen when a module goes offline?
-        if status=="offline":
-            # TODO: Deregister it?
-            self.logger.info(f"TODO: Deregister {module_id}")
-
 
         # Send status change event to web interface
         self.web.socketio.emit('module_status_change', {
             'module_id': module_id,
             'status': status
         })
-
-    def handle_data_update(self, topic: str, data: str):
-        """Handle a data update from a module"""
-        # TODO: Implement this
-        # Formerly data pipeline was envisioned as a stream of data from modules to the controller, which would then be buffered and exported to the database.
-        # This is no longer the case. Modules record data locally, which controller then directs to be exported to either a NAS, database, or controller's own storage. 
-
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""

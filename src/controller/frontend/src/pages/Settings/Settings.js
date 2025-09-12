@@ -27,13 +27,16 @@ function Settings() {
     };
   }, []);
 
-  if (moduleConfigs === null) {
-    return <main className="settings"><p>Loading modules...</p></main>;
+  if (!moduleConfigs || Object.keys(moduleConfigs).length === 0) {
+    return <main className="settings">
+            <h2>Module Settings</h2>
+            <p>Loading module configs, try refreshing</p>
+          </main>;
   }
 
   return (
     <main className="settings">
-      <h2>Modules to update settings for</h2>
+      <h2>Module Settings</h2>
       <div className="module-grid">
         {Object.entries(moduleConfigs).map(([id, moduleConfig]) => (
           <ConfigCard key={id} id={id} config={moduleConfig} />

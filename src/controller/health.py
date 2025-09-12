@@ -105,6 +105,8 @@ class Health:
                 self.logger.info(f"New module {module_id} added to health tracking")
             else:
                 self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
+
+            self.callbacks["on_status_change"](module_id, self.module_health[module_id]['status'])
             return True
             
         except Exception as e:
@@ -159,6 +161,9 @@ class Health:
             history = history[-limit:]
         return history
     
+    def remove_module(self, module_id: str):
+        if module_id in self.module_health.keys():
+            self.module_health.pop(module_id)
     
     def get_module_health(self, module_id: Optional[str] = None) -> Dict:
         """

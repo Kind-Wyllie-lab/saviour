@@ -127,6 +127,11 @@ class Modules:
             self.logger.warning("Status stop_recording received but recording param was still True, some kind of error.") 
         self.broadcast_updated_modules()
 
+    def remove_module(self, module_id: str):
+        if module_id in self.modules.keys():
+            self.modules.pop(module_id)
+            self.broadcast_updated_modules()
+            
 
     def broadcast_updated_modules(self):
         self.logger.info(f"Updated module list: {self.modules}")

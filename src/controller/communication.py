@@ -77,7 +77,7 @@ class Communication:
                 if topic.startswith('status/'): # If status message, pass it to the status callback
                     self.handle_status_update(topic, data)
                 elif topic.startswith('data/'): # If data message, pass it to the data callback
-                    self.handle_data_update(topic, data)
+                    self.logger.info("Received a zmq data/ message")
                     
             except zmq.Again:
                 # No message available, continue to check is_running

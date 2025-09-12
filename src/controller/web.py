@@ -408,6 +408,12 @@ class Web:
                     'module_health': {},
                     'error': str(e)
                 })
+        
+        @self.socketio.on('remove_module')
+        def handle_remove_module(module):
+            self.logger.info(f"Received request to remove module: {module['id']}")
+            self.callbacks["remove_module"](module['id'])
+
     
     def update_modules(self, modules: list):
         """Update the list of modules from the controller service manager"""

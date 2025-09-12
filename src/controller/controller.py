@@ -302,20 +302,14 @@ class Controller:
             module_id: String representing the module
             status: may be "online" or "offline"
         """
-        self.logger.info(f"Module {module_id} status changed to: {status}")
-
         if status == "online":
             online = True
         elif status == "offline":
             online = False
 
-        self.modules.notify_module_online_update(module_id, online)
+        self.logger.info(f"Module {module_id} status is: {status}, online status: {online}")
 
-        # Send status change event to web interface
-        self.web.socketio.emit('module_status_change', {
-            'module_id': module_id,
-            'status': status
-        })
+        self.modules.notify_module_online_update(module_id, online)
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""

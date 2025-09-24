@@ -175,7 +175,6 @@ class Controller:
             "get_module_configs": self.get_module_configs,
             "get_samba_info": self.get_samba_info,
             "remove_module": self._remove_module,
-            "get_own_ip": self.network.get_own_ip
         })
             
         # Register status change callback with health monitor
@@ -303,6 +302,7 @@ class Controller:
             module_id: String representing the module
             status: may be "online" or "offline"
         """
+        self.logger.info(f"on_module_status_change called for {module_id} with status {status}")
         if status == "online":
             online = True
         elif status == "offline":

@@ -104,12 +104,15 @@ class Modules:
 
     def notify_module_online_update(self, module_id: str, online: bool):
         self.logger.info(f"Received update concerning module {module_id}, online status {online}")
-        self.modules[module_id]["online"] = online
-        if online == True:
-            self.modules[module_id]["status"] = "ONLINE"
+        has_changed = self.modules[module_id]["online"] != online # Check if it changed
+
+        self.modules[module_id]["online"] = online # Set the boolean value of online in the modules rcecord
+        if not online:
+            self.modules[module_id]["status"] = "OFFLINE" # If it's offline, also set it's status to OFFLINE.
         else:
-            self.modules[module_id]["status"] = "OFFLINE"
-        
+            if has_changed:
+                self.modules[module_id]["status"] = "NOT_READY" # Module has just been marked back online, so flip it's status to "NOT READY"
+                
         self.broadcast_updated_modules()
 
     def notify_recording_started(self, module_id:str, module_data: dict):

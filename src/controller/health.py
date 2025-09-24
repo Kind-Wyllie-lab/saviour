@@ -36,6 +36,7 @@ class Health:
         # Health data storage
         self.module_health = {}  # Current health data. module_id as primary key.
         self.module_health_history = {}  # Historical health data
+        self.controller_health = {} # Historical controller health data.
 
         # Module online/offline states
         self.module_states = {}
@@ -270,7 +271,7 @@ class Health:
                 self._check_ptp_health()
             
             time.sleep(self.monitor_interval)
-    
+
     def _check_ptp_health(self):
         """
         Check received PTP stats and reset PTP if necessary

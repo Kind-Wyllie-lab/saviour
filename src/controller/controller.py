@@ -174,7 +174,8 @@ class Controller:
             "get_config": lambda: self.config.config,
             "get_module_configs": self.get_module_configs,
             "get_samba_info": self.get_samba_info,
-            "remove_module": self._remove_module
+            "remove_module": self._remove_module,
+            "get_own_ip": self.network.get_own_ip
         })
             
         # Register status change callback with health monitor

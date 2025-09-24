@@ -42,12 +42,9 @@ class Network():
         self.module_last_seen = {}
         
         # Get the ip address of the controller
-        if os.name == 'nt': # Windows
-            self.ip = socket.gethostbyname(socket.gethostname())
-        else: # Linux/Unix
-            # For controller, wait for proper network IP (192.168.1.1)
-            self.ip = self._wait_for_proper_ip()
-        
+        self.ip_is_valid = False
+        self.ip = self._wait_for_proper_ip()
+
         self.logger.info(f"Controller IP address: {self.ip}")
         
         # Get service configuration from config manager if available
@@ -96,6 +93,7 @@ class Network():
                                     potential_ip = parts[i + 1]
                                     if potential_ip.startswith('192.168.1.'):
                                         ip = potential_ip
+                                        self.ip_is_valid = True
                                         self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
                                         break
                             if ip:
@@ -120,6 +118,7 @@ class Network():
                     # Only use eth0 IP
                     if potential_ip.startswith('192.168.1.'):
                         ip = potential_ip
+                        self.ip_is_valid = True
                         self.logger.info(f"Selected eth0 IP from socket connection: {ip}")
                     else:
                         self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
@@ -132,6 +131,7 @@ class Network():
                     hostname_ip = socket.gethostbyname(socket.gethostname())
                     if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
                         ip = hostname_ip
+                        self.ip_is_valid = True
                         self.logger.info(f"Selected eth0 IP from hostname resolution: {ip}")
                     else:
                         self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
@@ -155,6 +155,7 @@ class Network():
                                     potential_ip = parts[src_index + 1]
                                     if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
                                         ip = potential_ip
+                                        self.ip_is_valid = True
                                         self.logger.info(f"Selected eth0 IP from ip route: {ip}")
                                         break
                                     else:
@@ -347,6 +348,13 @@ class Network():
             modules.append(module_dict)
         return modules
     
+    def get_own_ip(self):
+        if ip_is_valid:
+            return self.ip
+        else:
+            self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")
+            self._wait_for_proper_ip()
+
     def get_module_status(self, module_id: str) -> Optional[Dict]:
         """Get detailed status for a specific module"""
         module = next((m for m in self.discovered_modules if m.id == module_id), None)

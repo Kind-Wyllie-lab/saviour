@@ -387,7 +387,10 @@ bind-interfaces
 dhcp-range=192.168.1.100,192.168.1.200,12h
 
 # Set the Pi as the gateway for local network
-dhcp-option=3,192.168.1.1
+# dhcp-option=3,192.168.1.1
+
+# 25/09/25 no longer including 192.168.1.1 as it interfered with my dual NIC setup 
+dhcp-option=3
 
 # Set DNS servers (optional - devices will use wlan0 for internet)
 # dhcp-option=6,8.8.8.8,8.8.4.4

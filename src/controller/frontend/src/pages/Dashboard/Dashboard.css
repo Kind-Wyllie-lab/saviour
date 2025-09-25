@@ -1,0 +1,61 @@
+.dashboard {
+  padding: 30px;
+  font-family: Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  min-height: 100vh;
+}
+
+.dashboard-wrapper {
+  display: flex;
+  width: 100%;
+  gap: 20px;
+}
+
+.dashboard-container {
+  flex: 3;             /* main dashboard takes ~3/4 width */
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dashboard h2 {
+  margin-bottom: 15px;
+}
+
+.module-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  justify-content: flex-start;
+}
+
+.module-grid > * {
+  flex: 1 1 300px; /* adjust card width and responsiveness */
+}
+
+.livestream-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: flex-start;
+  margin-top: 20px;
+}
+
+
+/* Livestreams take most of the width */
+.livestreams-container {
+  flex: 3;           /* grow 3x relative to sidebar */
+  display: flex;
+  flex-wrap: wrap;    /* wrap cards on smaller screens */
+  gap: 20px;          /* space between cards */
+}
+
+/* Sidebar for metadata, commands, etc. */
+.sidebar-container {
+  flex: 1;             /* sidebar takes ~1/4 width */
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 500px;
+}

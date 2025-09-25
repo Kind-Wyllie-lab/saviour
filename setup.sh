@@ -461,6 +461,8 @@ StandardError=journal
 
 # Environment variables
 Environment=PYTHONPATH=/usr/local/src/saviour/src
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse/"
 
 [Install]
 WantedBy=multi-user.target
@@ -597,6 +599,18 @@ for pkg in "${SYSTEM_PACKAGES[@]}"; do
         sudo apt-get install -y "$pkg"
     fi
 done
+
+# Configure Pipewire sampling rate for Audiomoth
+if [ "$MODULE_TYPE" = "microphone" ]; then
+    sudo install -d /etc/pipewire/pipewire.conf.d
+    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+    context.properties = {
+        default.clock.rate = 192000
+        default.clock.allowed-rates = [ 96000 192000 384000]
+    }
+    EOF
+    systemctl --user restart pipewire pipewire-pulse wireplumber
+fi
 
 # Enable camera interface if not already enabled
 if ! grep -q "camera_auto_detect=1" /boot/config.txt; then

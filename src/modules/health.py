@@ -72,7 +72,7 @@ class Health:
         while self.heartbeats_active:
             current_time = time.time()
             # Check if it's time to send a heartbeat
-            if current_time - last_heartbeat_time >= self.heartbeat_interval:
+            if (current_time - last_heartbeat_time) >= int(self.heartbeat_interval):
                 try:
                     # Check if communication manager is still valid
                     if not self.callbacks["get_controller_ip"]:

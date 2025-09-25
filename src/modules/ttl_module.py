@@ -132,7 +132,7 @@ class TTLCommandHandler(Command):
             })
 
 class TTLModule(Module):
-    def __init__(self, module_type="ttl", config=None, config_file_path=None):
+    def __init__(self, module_type="ttl", config="config/ttl_config.json", config_file_path=None):
         # Call the parent class constructor first
         super().__init__(module_type, config, config_file_path)
         
@@ -239,6 +239,10 @@ class TTLModule(Module):
             
             # Start monitoring all input pins
             self._start_recording_all_input_pins()
+
+            if duration > 0:
+                self.logger.info("Attempting to start recording thread")
+                self.recording_thread.start()
 
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -869,7 +873,8 @@ class TTLModule(Module):
             # Get pin configuration
             pin_config = self.pin_configs.get(pin_number, {})
             duty_cycle_str = pin_config.get("duty_cycle", "50%")
-            
+            self.logger.info(f"Duty cycle for experiment clock {duty_cycle_str} from config")
+
             # Parse duty cycle (e.g., "75%" -> 0.75)
             duty_cycle = float(duty_cycle_str.replace("%", "")) / 100.0
             period = 1.0  # 1 second period
@@ -943,6 +948,8 @@ class TTLModule(Module):
             min_interval = pin_config.get("min_interval", 1.0)
             max_interval = pin_config.get("max_interval", 10.0)
             pulse_duration = pin_config.get("pulse_duration", 0.01)
+
+            self.logger.info(f"Min interval {min_interval}, max interval {max_interval}, pulse_duration {pulse_duration}")
             
             # Find the pin object
             pin_obj = None

@@ -89,8 +89,6 @@ The system includes:
 - 1x Raspberry Pi 5 per module, plus module specific hardware e.g. camera, audiomoth USV microphone 
 - An external storage device, e.g., Synology NAS DS1522+, or perhaps a controller Pi with NVME/SSD storage 
 
-
-
 ### Installation
 1. Clone the repository
    ```sh
@@ -108,21 +106,11 @@ The system includes:
 
 2. Run the setup script
     ```sh
-    # Make sure you're in the habitat directory
+    # Make sure you're in the correct directory
+    cd /usr/local/src/saviour/
     . setup.sh
     # You will be prompted to run tests. You can either choose yes or no. After this, setup is complete.
   
-3. Navigate to and run device specific program
-   ```sh
-   # For controller
-   cd src/controller/examples
-   sudo chmod 755 controller.sh # Only necessary first time
-   .controller.sh 
-
-   # For a camera module
-   cd src/modules/examples
-   sudo chmod 755 camera.sh # Only necessary first time 
-   .camera.sh
 
 <!-- USAGE -->
 ## Usage
@@ -136,9 +124,9 @@ Detailed usage instructions can be found in the [System Requirements Specificati
 - [X] Implement data storage and retrieval
 - [X] Add monitoring and health checks
 - [X] pyproject.toml style setup
-- [ ] Graphical user interface
+- [X] Graphical user interface
+- [X] Reliable PTP synchronisation
 - [ ] REST endpoints for synchronisation with webapp and other apps
-- [ ] Reliable PTP synchronisation
 - [ ] Add documentation
 
 
@@ -147,9 +135,9 @@ Detailed usage instructions can be found in the [System Requirements Specificati
 Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
 1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
+2. Create your Feature Branch (`git checkout -b feature/AmazingNewModule`)
+3. Commit your Changes (`git commit -m 'Add some AmazingNewModule'`)
+4. Push to the Branch (`git push origin feature/AmazingNewModule`)
 5. Open a Pull Request
 
 <!-- LICENSE -->
@@ -160,16 +148,16 @@ Distributed under the MIT License. See `LICENSE.txt` for more information.
 ## Contact
 Andrew Scott-George - ascottg@ed.ac.uk
 
-Project Link: [https://github.com/Kind-Wyllie-lab/habitat](https://github.com/Kind-Wyllie-lab/habitat)
+Project Link: [https://github.com/Kind-Wyllie-lab/saviour](https://github.com/Kind-Wyllie-lab/saviour)
 
 <!-- MARKDOWN LINKS & IMAGES -->
-[contributors-shield]: https://img.shields.io/github/contributors/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[contributors-url]: https://github.com/Kind-Wyllie-lab/habitat/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[forks-url]: https://github.com/Kind-Wyllie-lab/habitat/network/members
-[stars-shield]: https://img.shields.io/github/stars/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[stars-url]: https://github.com/Kind-Wyllie-lab/habitat/stargazers
-[issues-shield]: https://img.shields.io/github/issues/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[issues-url]: https://github.com/Kind-Wyllie-lab/habitat/issues
-[license-shield]: https://img.shields.io/github/license/Kind-Wyllie-lab/habitat.svg?style=for-the-badge
-[license-url]: https://github.com/Kind-Wyllie-lab/habitat/blob/master/LICENSE.txt
+[contributors-shield]: https://img.shields.io/github/contributors/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
+[contributors-url]: https://github.com/Kind-Wyllie-lab/saviour/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
+[forks-url]: https://github.com/Kind-Wyllie-lab/saviour/network/members
+[stars-shield]: https://img.shields.io/github/stars/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
+[stars-url]: https://github.com/Kind-Wyllie-lab/saviour/stargazers
+[issues-shield]: https://img.shields.io/github/issues/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
+[issues-url]: https://github.com/Kind-Wyllie-lab/saviour/issues
+[license-shield]: https://img.shields.io/github/license/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
+[license-url]: https://github.com/Kind-Wyllie-lab/saviour/blob/master/LICENSE.txt

@@ -26,6 +26,11 @@ import threading
 import json
 import soundfile 
 import soundcard
+import re
+
+
+
+
 
 class AudiomothCommand(Command):
     """Command handler specific to audiomoth functionality"""
@@ -89,7 +94,7 @@ class AudiomothCommand(Command):
             })
 
 class AudiomothModule(Module):
-    def __init__(self, module_type="audiomoth", config=None, config_file_path=None):
+    def __init__(self, module_type="microphone", config=None, config_file_path=None):
         # Initialize command handler before parent class
         self.command = AudiomothCommand(
             module_id=self.generate_module_id(module_type),
@@ -132,34 +137,41 @@ class AudiomothModule(Module):
             'get_latest_recording': self.get_latest_recording,  # audiomoth specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.service.controller_ip,
+            'get_controller_ip': self.network.controller_ip,
             'shutdown': self._shutdown,
         })
-
+        #self.command.set_callbacks({})
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()
-        for mic in self.mics():
+        for mic in self.mics:
             if "AudioMoth" in mic.name.split(" "):
                 serial = re.split(r"-|_", mic.id)[-3] # Serial code, unique identifier for each audiomoth
-                audiomoths[serial] = mic.id
+                self.audiomoths[serial] = mic.id
+        self.logger.info(f"Found {len(self.audiomoths.items())} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
 
-    def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit):
+    def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit, duration):
         self.logger.info(f"Starting recording thread for serial {serial}, unit {unit}")
+        sample_rate = self.config.get("microphone.sample_rate", 192000)
+        frame_num = self.config.get("microphone.frame_num", 1024*128)
+        block_size = self.config.get("microphone.block_size", 1024*128)
+        frame_batches_per_file = duration * sample_rate // frame_num
+        file_number = 1
+
         microphone = soundcard.get_microphone(microphone)
         file_counter = 0
-        with microphone.recorder(samplerate=self.samplerate, blocksize=self.blocksize) as recorder:
-            while file_counter < file_number and recording:
+        with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
+            while file_counter < file_number and self.is_recording:
                 # Get time of new file creation
-                mic_start_time = datetime.now().strftime("%Y-%m-%d-%H_%M_%S_%f")
+                mic_start_time = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S_%f")
                 self.logger.info(f"Created new recording file (number {file_counter+1}) for {serial} at {mic_start_time}")
                 # Create new file
                 batch_counter = 0
                 filename = f"{self.recording_folder}/{unit}_{mic_start_time}.flac" # #TODO: Tie this in with experiment filename creation in start_recording method.
                 # Run new file writing
-                with soundfile.SoundFile(filename, mode='x', samplerate=self.samplerate, channels=1, subtype="PCM_16") as file:
-                    while recording:
+                with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as file:
+                    while self.is_recording:
                         data = recorder.record(numframes=frame_num)
                         # from docs:
                         """The data will be returned as a frames × channels float32 numpy array.
@@ -170,30 +182,63 @@ class AudiomothModule(Module):
                         #data += recorder.flush()
                         file.write(data)
                         # If all frames written
-                        if (batch_counter == frame_batches):
+                        if (batch_counter == frame_batches_per_file):
                             file_counter += 1
                             break
         
         self.logger.info(f"Stopped recording on {serial}")
 
+    def handle_update_audiomoth_settings(self):
+        pass
+    
+    def clear_recordings(self):
+        pass
+    
+    def start_streaming(self):
+        pass
+
+    def stop_streaming(self):
+        pass
+
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start continuous video recording"""
+        duration = float(duration) * 60 
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
-        
+
         # First call parent class to handle common recording setup
         filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
         if not filename:
             return False
-        
-        try:
-            # Start the microphone if not already running
-            if not self.picam2.started:
-                self.picam2.start()
-                time.sleep(0.1)  # Give audiomoth time to start
+
+        try: 
+            #if there are audiomoths connected
+            if len(self.audiomoths) > 0:
+                self.audiomoth_threads = []
+                for serial, mic in self.audiomoths.items():
+                    #try:
+                    #    unit = audiomoth_to_unit[serial]
+                    #except KeyError:
+                    if True:
+                        self.logger.info(f"Unit not specified, using audiomoth serial instead [{serial}]")
+                    unit = serial
+                    # create recording thread
+                    recording_thread = threading.Thread(target=self._record_microphone, args=(serial, mic, unit, duration))
+                    self.audiomoth_threads.append(recording_thread)
+                    recording_thread.start()
+
+                    # join recording threads
+                    #for thread in self.audiomoth_threads:
+                    #    thread.join()
+
+            else:
+                self.logger.info("No audiomoths detected, cannot record")
             
+            self.is_recording = True
+
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+
                 self.communication.send_status({
                     "type": "recording_started",
                     "filename": filename,
@@ -220,7 +265,7 @@ class AudiomothModule(Module):
         
         try:
             # Stop recording with audiomoth-specific code
-            self.picam2.stop_encoder(self.main_encoder)
+            pass
             
             # Stop frame capture thread
             self.is_recording = False

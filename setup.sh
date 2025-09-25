@@ -2,6 +2,7 @@
 # setup.sh
 # Install system dependencies and set up virtual environment for the saviour system
 # Usage: bash setup.sh
+#working
 
 set -e # If any function throws an error (doesn't return 0), exit immediately.
 

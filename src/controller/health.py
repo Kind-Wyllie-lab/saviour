@@ -34,8 +34,9 @@ class Health:
         self.history_size = history_size
         
         # Health data storage
-        self.module_health = {}  # Current health data
+        self.module_health = {}  # Current health data. module_id as primary key.
         self.module_health_history = {}  # Historical health data
+        self.controller_health = {} # Historical controller health data.
 
         # Module online/offline states
         self.module_states = {}
@@ -105,12 +106,43 @@ class Health:
                 self.logger.info(f"New module {module_id} added to health tracking")
             else:
                 self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
+
+            self.callbacks["on_status_change"](module_id, self.module_health[module_id]['status'])
             return True
             
         except Exception as e:
             self.logger.error(f"Error updating health for module {module_id}: {e}")
             return False
+
+    def network_notify_module_update(self, discovered_modules: dict):
+        """Receive discovered modules from network manager
+        Ensure health tracking is aware of all modules
+        """
+        self.logger.info(f"Received discovered modules from Network: {discovered_modules}")
+        for module in discovered_modules:
+            if module.id not in self.module_health:
+                self.logger.info(f"Discovered new module {module.id}, adding to health tracking")
+                self.module_health[module.id] = {
+                    'timestamp': time.time(),
+                    'last_heartbeat': 0,  # No heartbeat yet
+                    'status': 'offline',  # Start as offline until first heartbeat
+                    'cpu_temp': None,
+                    'cpu_usage': None,
+                    'memory_usage': None,
+                    'uptime': None,
+                    'disk_space': None,
+                    'ptp4l_offset': None,
+                    'ptp4l_freq': None,
+                    'phc2sys_offset': None,
+                    'phc2sys_freq': None
+                }
     
+    def network_notify_module_id_change(self, old_module_id, new_module_id):
+        # Move the module data to the new key
+        self.module_health[new_module_id] = self.module_health.pop(old_module_id)
+        if old_module_id in self.module_health_history:
+            self.module_health_history[new_module_id] = self.module_health_history.pop(old_module_id)
+
     def get_module_health_history(self, module_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Get historical health data for a specific module
@@ -130,6 +162,9 @@ class Health:
             history = history[-limit:]
         return history
     
+    def remove_module(self, module_id: str):
+        if module_id in self.module_health.keys():
+            self.module_health.pop(module_id)
     
     def get_module_health(self, module_id: Optional[str] = None) -> Dict:
         """
@@ -192,7 +227,7 @@ class Health:
             if cycle_count % 10 == 0:
                 self.logger.info(f"Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
             
-
+            self.logger.info(f"Tracking these modules: {self.module_health.keys()}")
             self.logger.info(f"Online modules: {self.get_online_modules()}, offline modules: {self.get_offline_modules()}")
             # self.logger.info(f"Module health: {self.module_health}")
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
@@ -229,13 +264,14 @@ class Health:
                                 self.logger.error(f"Error in status change callback: {e}")
                 
                 self.logger.info(f"Module {module_id} is {self.module_health[module_id]['status']}")
+                self.callbacks["on_status_change"](module_id, self.module_health[module_id]['status'])
             
             # Check PTP health periodically
             if cycle_count % 2 == 0:  # Check PTP health every couple cycles 
                 self._check_ptp_health()
             
             time.sleep(self.monitor_interval)
-    
+
     def _check_ptp_health(self):
         """
         Check received PTP stats and reset PTP if necessary

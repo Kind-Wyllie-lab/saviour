@@ -8,6 +8,9 @@ This script serves as the main controller for the habitat system, providing:
 - Module discovery, monitoring, and health checks
 - Recording session management and control
 - Data collection and packaging in NWB format
+
+Author: Andrew SG
+Created: 17/03/2025
 """
 
 import sys
@@ -50,6 +53,7 @@ from src.controller.buffer import Buffer
 from src.controller.config import Config
 from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
+from src.controller.modules import Modules
     
 # Habitat Controller Class
 class Controller:
@@ -133,7 +137,6 @@ class Controller:
         
         self.communication = Communication(
             status_callback=self.handle_status_update,
-            data_callback=self.handle_data_update
         )
         self.buffer = Buffer(self.max_buffer_size)
         # self.database = database.ControllerDatabaseManager(self.config)
@@ -148,6 +151,8 @@ class Controller:
             heartbeat_timeout=heartbeat_timeout
         )
 
+        self.modules = Modules()
+
         # Start health monitoring
         self.logger.info("Starting health monitoring thread")
         self.health.start_monitoring()
@@ -158,28 +163,66 @@ class Controller:
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""
         # Web interface
-        if self.web:
-            self.web.register_callbacks({
-                "get_modules": self.network.get_modules,
-                "get_ptp_history": self.buffer.get_ptp_history,
-                "send_command": self.communication.send_command,
-                "get_module_health": self.health.get_module_health,
-                # "get_modules": self.get_modules,  # From APA - a custom get_modules method instead of service.get_modules. Look this up.
-                # "start_experiment": self.start_experiment,
-                # "stop_experiment": self.stop_experiment,
-                "get_config": lambda: self.config.config,
-                # "save_settings": self._save_settings,
-                # "reset_settings": self.config.reset_config,
-                "get_module_configs": self.get_module_configs,
-                "get_samba_info": self.get_samba_info,
-            })
+
+        self.web.register_callbacks({
+            # "get_modules": self.network.get_modules, # TODO: CHange this to 
+            "get_modules": self._get_modules_for_frontend,
+            "get_ptp_history": self.buffer.get_ptp_history,
+            "send_command": self.communication.send_command,
+            "get_module_health": self.health.get_module_health,
+            # "get_modules": self.get_modules,  # From APA - a custom get_modules method instead of service.get_modules. Look this up.
+            "get_config": lambda: self.config.config,
+            "get_module_configs": self.get_module_configs,
+            "get_samba_info": self.get_samba_info,
+            "remove_module": self._remove_module,
+        })
             
         # Register status change callback with health monitor
         self.health.set_callbacks({
             "on_status_change": self.on_module_status_change,
             "send_command": self.communication.send_command
         })
-        self.logger.info(f"Status change callback registered with health monitor")
+
+        # self.network.notify_module_update = self.modules.network_notify_module_update
+        # self.network.notify_module_id_change = self.modules.network_notify_module_id_change
+        # self.network.notify_module_ip_change = self.modules.network_notify_module_ip_change
+
+        self.network.notify_module_update = self.network_notify_module_update
+        self.network.notify_module_id_change = self.network_notify_module_id_change
+        # self.network.notify_module_ip_change = self.network_notify_module_ip_change
+
+        self.modules.push_module_update_to_frontend = self.web.push_module_update
+    
+    def _remove_module(self, module_id: str):
+        self.modules.remove_module(module_id)
+        self.health.remove_module(module_id)
+        self.communication.send_command(module_id, "shutdown", {})
+
+    def network_notify_module_update(self, discovered_modules: dict):
+        """Observer callback for when network manager detects a module update
+        Need to tell Modules and Health about this.
+        """
+        self.modules.network_notify_module_update(discovered_modules)
+        self.health.network_notify_module_update(discovered_modules)
+    
+    def network_notify_module_id_change(self, old_id: str, new_id: str):
+        """Observer callback for when network manager detects a module ID change
+        Need to tell Modules and Health about this.
+        """
+        self.modules.network_notify_module_id_change(old_id, new_id)
+        self.health.network_notify_module_id_change(old_id, new_id)
+        # Also need to update module_config dict if old_id exists there
+        if old_id in self.module_config:
+            self.module_config[new_id] = self.module_config.pop(old_id)
+            self.logger.info(f"Updated module_config key from {old_id} to {new_id}")
+
+
+
+    def _get_modules_for_frontend(self): # From APA
+        """Get list of online modules from health monitor instead of service manager, append additional information"""
+        modules = self.modules.get_modules()
+        self.logger.info(f"get modules returning {modules}")
+        return modules
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -221,6 +264,32 @@ class Controller:
                         self.communication.send_command(module_id, "get_config", {})
                     else:
                         self.logger.error(f"Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
+                
+                case 'recording_started':
+                    self.logger.info(f"{module_id} has started recording")
+                    self.modules.notify_recording_started(module_id, status_data)
+                
+                case 'recording_stopped':
+                    self.logger.info(f"{module_id} has stopped recording")
+                    self.modules.notify_recording_stopped(module_id, status_data)
+
+                case 'readiness_validation':
+                    # Handle readiness validation response
+                    ready = status_data.get('ready', False)
+                    self.logger.info(f"Readiness validation response from {module_id}: {'ready' if ready else 'not ready'}")
+                    
+                    # Tell Module object that module is ready
+                    self.modules.notify_module_readiness_update(module_id, ready)
+                    
+                    # # Emit the readiness validation status to frontend (legacy support)
+                    # self.web.socketio.emit('module_status', {
+                    #     'type': 'readiness_validation',
+                    #     'module_id': module_id,
+                    #     'ready': ready,
+                    #     'timestamp': status_data.get('timestamp'),
+                    #     'checks': status_data.get('checks', {}),
+                    #     'error': status_data.get('error')
+                    # })
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:
@@ -233,26 +302,15 @@ class Controller:
             module_id: String representing the module
             status: may be "online" or "offline"
         """
-        self.logger.info(f"Module {module_id} status changed to: {status}")
-        
-        # TODO: What should happen when a module goes offline?
-        if status=="offline":
-            # TODO: Deregister it?
-            self.logger.info(f"TODO: Deregister {module_id}")
+        self.logger.info(f"on_module_status_change called for {module_id} with status {status}")
+        if status == "online":
+            online = True
+        elif status == "offline":
+            online = False
 
+        self.logger.info(f"Module {module_id} status is: {status}, online status: {online}")
 
-        # Send status change event to web interface
-        self.web.socketio.emit('module_status_change', {
-            'module_id': module_id,
-            'status': status
-        })
-
-    def handle_data_update(self, topic: str, data: str):
-        """Handle a data update from a module"""
-        # TODO: Implement this
-        # Formerly data pipeline was envisioned as a stream of data from modules to the controller, which would then be buffered and exported to the database.
-        # This is no longer the case. Modules record data locally, which controller then directs to be exported to either a NAS, database, or controller's own storage. 
-
+        self.modules.notify_module_online_update(module_id, online)
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
@@ -335,6 +393,10 @@ class Controller:
             if hasattr(self, 'network'):
                 self.web.update_modules(self.network.discovered_modules)
 
+
+        # Start the modules manager
+        self.modules.start()
+        
         # Keep the main thread alive
         try: 
             while True:

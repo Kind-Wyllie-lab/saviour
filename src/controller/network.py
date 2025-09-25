@@ -34,21 +34,17 @@ class Network():
 
         # Module tracking
         self.discovered_modules = []
-        self.on_module_discovered = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
-        self.on_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.#
-        self.callbacks = {} # Callbacks dict
+        self.notify_module_update = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
+        self.notify_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.
         
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
         self.module_last_seen = {}
         
         # Get the ip address of the controller
-        if os.name == 'nt': # Windows
-            self.ip = socket.gethostbyname(socket.gethostname())
-        else: # Linux/Unix
-            # For controller, wait for proper network IP (192.168.1.1)
-            self.ip = self._wait_for_proper_ip()
-        
+        self.ip_is_valid = False
+        self.ip = self._wait_for_proper_ip()
+
         self.logger.info(f"Controller IP address: {self.ip}")
         
         # Get service configuration from config manager if available
@@ -97,6 +93,7 @@ class Network():
                                     potential_ip = parts[i + 1]
                                     if potential_ip.startswith('192.168.1.'):
                                         ip = potential_ip
+                                        self.ip_is_valid = True
                                         self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
                                         break
                             if ip:
@@ -121,6 +118,7 @@ class Network():
                     # Only use eth0 IP
                     if potential_ip.startswith('192.168.1.'):
                         ip = potential_ip
+                        self.ip_is_valid = True
                         self.logger.info(f"Selected eth0 IP from socket connection: {ip}")
                     else:
                         self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
@@ -133,6 +131,7 @@ class Network():
                     hostname_ip = socket.gethostbyname(socket.gethostname())
                     if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
                         ip = hostname_ip
+                        self.ip_is_valid = True
                         self.logger.info(f"Selected eth0 IP from hostname resolution: {ip}")
                     else:
                         self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
@@ -156,6 +155,7 @@ class Network():
                                     potential_ip = parts[src_index + 1]
                                     if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
                                         ip = potential_ip
+                                        self.ip_is_valid = True
                                         self.logger.info(f"Selected eth0 IP from ip route: {ip}")
                                         break
                                     else:
@@ -240,12 +240,19 @@ class Network():
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
+                    self.logger.info(f"IP changed for module {module.id}, new IP: {module.ip}")
+                    self.notify_module_ip_change(module.id, module.ip)
+                    # self.notify_module_update(self.discovered_modules)
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
+                    old_module_id = existing_module.id
                     existing_module.id = module.id
                     existing_module.port = module.port
                     existing_module.properties = module.properties
                     valid_module = False
+                    self.logger.info(f"ID changed for module at IP {module.ip}, old ID: {existing_module} new ID: {module.id}")
+                    self.notify_module_id_change(old_module_id, module.id)
+                    # self.notify_module_update(self.discovered_modules)
                 else:
                     continue
             # Finish looping and return whether module was valid or not
@@ -281,9 +288,8 @@ class Network():
             self.module_last_seen[module.id] = current_time
             
             # Call the callback if it exists
-            if self.on_module_discovered:
-                self.logger.info(f"Calling module discovery callback")
-                self.on_module_discovered(module)
+            self.logger.info(f"Calling module discovery callback")
+            self.notify_module_update(self.discovered_modules)
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
@@ -294,6 +300,7 @@ class Network():
             module_id = str(info.properties.get(b'id', b'unknown').decode())
             self.module_last_seen[module_id] = time.time()
             self.logger.info(f"Updated last seen time for module: {module_id}")
+            self.notify_module_update(self.discovered_modules)
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules.
@@ -341,6 +348,13 @@ class Network():
             modules.append(module_dict)
         return modules
     
+    def get_own_ip(self):
+        if ip_is_valid:
+            return self.ip
+        else:
+            self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")
+            self._wait_for_proper_ip()
+
     def get_module_status(self, module_id: str) -> Optional[Dict]:
         """Get detailed status for a specific module"""
         module = next((m for m in self.discovered_modules if m.id == module_id), None)

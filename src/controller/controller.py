@@ -171,6 +171,7 @@ class Controller:
             "send_command": self.communication.send_command,
             "get_module_health": self.health.get_module_health,
             # "get_modules": self.get_modules,  # From APA - a custom get_modules method instead of service.get_modules. Look this up.
+            "get_discovered_modules": self.network.get_modules,
             "get_config": lambda: self.config.config,
             "get_module_configs": self.get_module_configs,
             "get_samba_info": self.get_samba_info,

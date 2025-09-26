@@ -6,6 +6,7 @@ import Header from "./components/Header/Header";
 import { Routes, Route } from "react-router-dom";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import Settings from "./pages/Settings/Settings";
+import Debug from "./pages/Debug/Debug";
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);
@@ -36,6 +37,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/debug" element={<Debug />} />
       </Routes>
     </div>
   );

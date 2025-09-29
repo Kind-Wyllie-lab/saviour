@@ -2,11 +2,13 @@
 import React, { useState, useEffect } from "react";
 import socket from "../../socket";
 import "./LoginModal.css";
+import { useNavigate } from "react-router-dom";
 
 function LoginModal({ onSuccess }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const navigate = useNavigate();
 
   useEffect(() => {
     socket.on("login_success", () => {
@@ -47,6 +49,7 @@ function LoginModal({ onSuccess }) {
         {error && <p className="error">{error}</p>}
         <div className="modal-buttons">
           <button onClick={handleLogin}>Login</button>
+          <button onClick={() => navigate("/")}>Cancel</button>
         </div>
       </div>
     </div>

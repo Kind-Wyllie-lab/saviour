@@ -11,6 +11,17 @@ function LoginModal({ onSuccess }) {
   const navigate = useNavigate();
 
   useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        navigate("/"); // Go home on ESC
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [navigate]);
+
+  useEffect(() => {
     socket.on("login_success", () => {
       setError("");
       onSuccess(); // lift up success to parent

@@ -8,6 +8,10 @@ function Settings() {
   const [moduleConfigs, setModuleConfigs] = useState(null); // null = loading state
 
   useEffect(() => {
+    // Always request current configs on mount
+    console.log("Emitting get_module_configs");
+    socket.emit("get_module_configs");
+
     // Define handler
     const handleUpdate = (data) => {
       console.log("Received module configs:", data);
@@ -16,10 +20,6 @@ function Settings() {
 
     // Listen for updates
     socket.on("module_configs_update", handleUpdate);
-
-    // Always request current configs on mount
-    console.log("Emitting get_module_configs");
-    socket.emit("get_module_configs");
 
     // Cleanup
     return () => {

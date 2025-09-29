@@ -218,6 +218,7 @@ class Web:
                 self.logger.error(f"Error handling command: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
+        """ Get Modules """
         @self.socketio.on('get_modules')
         def handle_module_update():
             """Handle request for module data"""
@@ -292,6 +293,7 @@ class Web:
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
 
+        """ Experiment Metadata """
         # Experiment metadata
         @self.socketio.on('update_experiment_metadata')
         def handle_update_experiment_metadata(data):
@@ -333,7 +335,7 @@ class Web:
             })
             self.logger.info(f"Sent experiment metadata to client")
 
-        # Settings Page stuff
+        """ Settings Page  """
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""
@@ -409,10 +411,36 @@ class Web:
                     'error': str(e)
                 })
         
+        """ Debug """
+        @self.socketio.on('get_debug_data')
+        def handle_get_debug_info():
+            self.logger.info(f"Received request for debug data")
+            debug_data = {}
+            debug_data["modules"] = self.callbacks["get_modules"]()
+            debug_data["module_health"] = self.callbacks["get_module_health"]()
+            debug_data["discovered_modules"] = self.callbacks["get_discovered_modules"]()
+            debug_data["module_configs"] = self.callbacks["get_module_configs"]()
+            self.socketio.emit("debug_data", debug_data)
+
+        """ Login """
+        @self.socketio.on("login")
+        def handle_login(data):
+            username = data.get("username")
+            password = data.get("password")
+
+            # Replace with secure password check
+            if username == "admin" and password == "secret":
+                self.socketio.emit("login_success", room=request.sid)
+            else:
+                self.socketio.emit("login_error", "Wrong username or password", room=request.sid)
+
+        """ Commands and utility """
         @self.socketio.on('remove_module')
         def handle_remove_module(module):
             self.logger.info(f"Received request to remove module: {module['id']}")
             self.callbacks["remove_module"](module['id'])
+
+        
 
     
     def update_modules(self, modules: list):

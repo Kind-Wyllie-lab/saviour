@@ -335,8 +335,9 @@ class Module:
 
         # TODO: Start generating health metadata to go with file
 
-        if duration > 0:
-            self.recording_thread = threading.Thread(target=self.auto_stop_recording, args=(int(duration),))
+        if duration is not None:
+            if duration > 0:
+                self.recording_thread = threading.Thread(target=self.auto_stop_recording, args=(int(duration),))
         # Child classes can call self.recording_thread.start()
         
         return self.current_filename  # Just return filename, let child class handle status

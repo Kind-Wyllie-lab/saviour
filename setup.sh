@@ -609,7 +609,7 @@ if [ "$MODULE_TYPE" = "microphone" ]; then
         default.clock.rate = 192000
         default.clock.allowed-rates = [ 96000 192000 384000]
     }
-    EOF
+EOF
     systemctl --user restart pipewire pipewire-pulse wireplumber
 fi
 

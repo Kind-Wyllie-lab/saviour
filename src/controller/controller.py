@@ -162,15 +162,13 @@ class Controller:
     
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""
+        self.logger.info("Registering callbacks")
         # Web interface
-
         self.web.register_callbacks({
-            # "get_modules": self.network.get_modules, # TODO: CHange this to 
             "get_modules": self._get_modules_for_frontend,
             "get_ptp_history": self.buffer.get_ptp_history,
             "send_command": self.communication.send_command,
             "get_module_health": self.health.get_module_health,
-            # "get_modules": self.get_modules,  # From APA - a custom get_modules method instead of service.get_modules. Look this up.
             "get_discovered_modules": self.network.get_modules,
             "get_config": lambda: self.config.config,
             "get_module_configs": self.get_module_configs,
@@ -477,16 +475,16 @@ class Controller:
         """Get the module configuration data for online modules only"""
         # Get list of online modules from health monitor
         online_modules = self.health.get_online_modules()
-        self.logger.info(f"(APA CONTROLLER) Online modules: {online_modules}")
+        self.logger.info(f"Online modules: {online_modules}")
         
         # Filter module_config to only include online modules
         filtered_configs = {}
         for module_id, config in getattr(self, 'module_config', {}).items():
             if module_id in online_modules:
                 filtered_configs[module_id] = config
-                self.logger.info(f"(APA CONTROLLER) Including config for online module: {module_id}")
+                self.logger.info(f"Including config for online module: {module_id}")
             else:
-                self.logger.info(f"(APA CONTROLLER) Excluding config for offline module: {module_id}")
+                self.logger.info(f"Excluding config for offline module: {module_id}")
         
         return filtered_configs
 
@@ -505,10 +503,10 @@ class Controller:
                 'controller_ip': controller_ip
             }
             
-            self.logger.info(f"(APA CONTROLLER) Returning Samba info: {samba_config}")
+            self.logger.info(f"Returning Samba info: {samba_config}")
             return samba_config
         except Exception as e:
-            self.logger.error(f"(APA CONTROLLER) Error getting Samba info: {e}")
+            self.logger.error(f"Error getting Samba info: {e}")
             return {
                 'share_name': 'controller_share',
                 'username': 'pi',

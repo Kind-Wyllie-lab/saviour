@@ -52,7 +52,8 @@ class Web:
         self.current_experiment_name = ""
 
         # Register routes and webhooks        
-        self.register_routes() # Register routes e.g. index, camera, status etc
+        self._register_routes() 
+        self._register_socketio_events() 
 
         # Store module readiness state in memory (backend-driven)
         # TODO: Should readiness state be stored here?
@@ -81,7 +82,7 @@ class Web:
             "send_command"
             "get_module_health"
         """
-        self.callbacks = callbacks
+        self.callbacks.update(callbacks)
 
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""
@@ -98,16 +99,22 @@ class Web:
         self.logger.info(f"Pushing update module list to frontend: {modules}")
         self.socketio.emit('modules_update', modules)
 
-    def register_routes(self):      
+    def _register_routes(self):      
         # Serve React app
         @self.app.route("/", defaults={"path": ""})
-        @self.app.route("/<path:path>")
+        @self.app.route("/<path>")
         def serve(path):
-            if path != "" and os.path.exists(os.path.join(self.app.static_folder, path)):
-                return send_from_directory(self.app.static_folder, path)
-            else:
-                return send_from_directory(self.app.static_folder, "index.html")
+            self.logger.info(f"Received request to access {path}")
+            static_folder = self.app.static_folder
+            file_path = os.path.join(static_folder, path)
 
+            if os.path.exists(file_path) and not os.path.isdir(file_path):
+                # If it's a real file, serve it
+                return send_from_directory(static_folder, path)
+
+            return send_from_directory(self.app.static_folder, "index.html")
+
+    def _register_socketio_events(self):
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect(auth=None):

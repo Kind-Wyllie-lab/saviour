@@ -347,24 +347,11 @@ class Web:
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""
             self.logger.info(f"Get module configs called")
-            self.logger.info(f"Available callbacks: {list(self.callbacks.keys())}")
             if "get_module_configs" in self.callbacks:
-                # Request config from all modules - refresh the config stored on controller
-                if "send_command" in self.callbacks:
-                    self.logger.info(f"Sending get_config command to all modules")
-                    self.callbacks["send_command"]("all", "get_config", {})
                 # Get the current module configs
-                module_configs = self.callbacks["get_module_configs"]()
-                self.logger.info(f"Retrieved module configs: {module_configs}")
-                self.socketio.emit('module_configs_update', {
-                    'module_configs': module_configs
-                })
+                self.callbacks["get_module_configs"]()
             else:
                 self.logger.warning(f"get_module_configs callback not available")
-                self.socketio.emit('module_configs_update', {
-                    'module_configs': {},
-                    'error': 'Module configs not available'
-                })
             
         @self.socketio.on('save_module_config')
         def handle_save_module_config(data):

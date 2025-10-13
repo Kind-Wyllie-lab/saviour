@@ -72,7 +72,7 @@ class Communication:
                 # Use a timeout on recv to allow checking is_running flag
                 message = self.status_socket.recv_string(zmq.NOBLOCK)
                 topic, data = message.split(' ', 1)
-                self.logger.debug(f"Received update: {message}")
+                # self.logger.debug(f"Received update: {message}")
                 
                 if topic.startswith('status/'): # If status message, pass it to the status callback
                     self.handle_status_update(topic, data)

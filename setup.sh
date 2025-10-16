@@ -470,6 +470,31 @@ EOF
     log_message "mDNS configured and enabled - controller will appear on network as saviour.local"
     echo "mDNS server configured and enabled."
     echo "Controller will appear on network as saviour.local"
+
+    log_message "Configuring iptables to forward port 80 traffic to port 5000"
+    sudo apt-get install iptables-persistent -y
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    sudo netfilter-persistent save
+}
+
+configure_frontend() {
+    log_section "Configuring Node.js and frontend"
+    echo "Installing nvm, Node.js, vite, and building frontend"
+    log_message "Installing nvm"
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash # Install nvm
+    \. "$HOME/.nvm/nvm.sh" # Instead of restarting the shell - from Node.js
+    log_message "Installing Node.js v22"
+    nvm install 22 # Install Node.js - make sure to keep version up to date
+    node -v # Should print v22. something
+    npm -v # Should print 10.9.3 or something
+
+    log_message "Installing vite and building frontend"
+    cd src/controller/frontend/
+    npm install
+    npm run build
+    echo "Frontend built"
+    log_message "nvm, Node.js, vite installed and frontend built"
+    cd ../../../
 }
 
 # Function to configure module systemd service
@@ -692,6 +717,13 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     configure_mdns
 else
     log_message "Module Pi detected. Skipping mDNS server."
+fi
+
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    log_message "Controller Pi detected. Configuring and building frontend..."
+    configure_frontend
+else
+    log_message "Module Pi detected. Skipping frontend build."
 fi
 
 # Configure module systemd service

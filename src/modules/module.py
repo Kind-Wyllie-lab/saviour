@@ -388,7 +388,9 @@ class Module:
                 data = self.health.get_health()
                 writer.writerow(data)
                 f.flush() # Ensure each line is written
-                time.sleep(interval)
+                # Wait for either a stop signal or timeout
+                if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
+                    break
 
     def stop_recording(self) -> bool:
         """

@@ -164,8 +164,8 @@ class CameraModule(Module):
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication.send_status(status),
             'get_health': self.health.get_health,
-            'start_recording': self.start_recording,
-            'stop_recording': self.stop_recording,
+            'start_recording': self._start_recording,
+            'stop_recording': self._stop_recording,
             'list_recordings': self.list_recordings,
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
@@ -362,14 +362,8 @@ class CameraModule(Module):
             
             # Start recording
             self.picam2.start_encoder(self.main_encoder, name="main") # 
-            self.is_recording = True
             self.recording_start_time = time.time()
             self.frame_times = []  # Reset frame times
-
-            if duration is not None:
-                if duration > 0:
-                    self.logger.info("Attempting to start recording thread")
-                    self.recording_thread.start()
 
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -426,81 +420,12 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
-    # def stop_recording(self) -> bool:
-    #     """Stop continuous video recording"""
-    #     # First check if recording using parent class
-    #     if not super().stop_recording():
-    #         return False
-        
-    #     self.logger.info("Stopping recording now")
-        
-    #     try:
-    #         # Stop recording with camera-specific code
-    #         self.picam2.stop_encoder(self.main_encoder)
-            
-    #         # Stop frame capture thread
-    #         self.is_recording = False
-            
-    #         # Calculate duration
-    #         if self.recording_start_time is not None:
-    #             duration = time.time() - self.recording_start_time
-                
-    #             # Save timestamps with experiment name if available
-    #             if hasattr(self, 'current_experiment_name') and self.current_experiment_name:
-    #                 # Sanitize experiment name for filename (remove special characters)
-    #                 safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-    #                 safe_experiment_name = safe_experiment_name.replace(' ', '_')
-    #                 timestamps_file = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}_timestamps.txt"
-    #             else:
-    #                 timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
-                
-    #             np.savetxt(timestamps_file, self.frame_times)
-                
-    #             # Send status response after successful recording stop
-    #             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-    #                 self.communication.send_status({
-    #                     "type": "recording_stopped",
-    #                     "filename": self.current_filename,
-    #                     "session_id": self.recording_session_id,
-    #                     "duration": duration,
-    #                     "frame_count": len(self.frame_times),
-    #                     "status": "success",
-    #                     "recording": False,
-    #                     "message": f"Recording completed successfully with {len(self.frame_times)} frames"
-    #                 })
-                
-    #             # Auto-export is now handled by child classes (e.g., APACamera)
-    #             if self.config.get("auto_export") == True:
-    #                 self._auto_export()
-    #             # to use the new export manager methods
-    #             return True
-    #         else:
-    #             self.logger.error("Error: recording_start_time was None")
-    #             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-    #                 self.communication.send_status({
-    #                     "type": "recording_stopped",
-    #                     "status": "error",
-    #                     "error": "Recording start time was not set, so could not create timestamps."
-    #                 })
-    #             return False
-            
-    #     except Exception as e:
-    #         self.logger.error(f"Error stopping recording: {e}")
-    #         if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-    #             self.communication.send_status({
-    #                 "type": "recording_stopped",
-    #                 "status": "error",
-    #                 "error": str(e)
-    #             })
-    #         return False
-
     def stop_recording(self):
+        """Camera Specific implementation of stop recording"""
         try:
+            self.logger.info("Attempting to stop camera specific recording")
             # Stop recording with camera-specific code
             self.picam2.stop_encoder(self.main_encoder)
-            
-            # Stop frame capture thread
-            self.is_recording = False
             
             # Calculate duration
             if self.recording_start_time is not None:
@@ -529,12 +454,9 @@ class CameraModule(Module):
                         "recording": False,
                         "message": f"Recording completed successfully with {len(self.frame_times)} frames"
                     })
-                
-                # Auto-export is now handled by child classes (e.g., APACamera)
-                if self.config.get("auto_export") == True:
-                    self._auto_export()
-                # to use the new export manager methods
-                return True
+
+                self.logger.info("Concluded camera stop_recording, waiting to exit")
+
             else:
                 self.logger.error("Error: recording_start_time was None")
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -545,15 +467,15 @@ class CameraModule(Module):
                     })
                 return False
         
-    except Exception as e:
-        self.logger.error(f"Error stopping recording: {e}")
-        if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-            self.communication.send_status({
-                "type": "recording_stopped",
-                "status": "error",
-                "error": str(e)
-            })
-        return False
+        except Exception as e:
+            self.logger.error(f"Error stopping recording: {e}")
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
+                    "type": "recording_stopped",
+                    "status": "error",
+                    "error": str(e)
+                })
+            return False
 
     def get_latest_recording(self):
         """Get the latest recording"""

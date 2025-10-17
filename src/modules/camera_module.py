@@ -42,11 +42,11 @@ class CameraCommand(Command):
     """Command handler specific to camera functionality"""
     def __init__(self, module_id, module_type, config=None, start_time=None):
         super().__init__(module_id, module_type, config, start_time)
-        self.logger.info("(CAMERA COMMAND HANDLER) Initialised")
+        self.logger.info("Initialised")
 
     def handle_command(self, command: str):
         """Handle camera-specific commands while preserving base functionality"""
-        self.logger.info("(CAMERA COMMAND HANDLER) Checking for camera specific commands.")
+        self.logger.info("Checking for camera specific commands.")
         
         try:
             # Parse command and parameters
@@ -69,7 +69,7 @@ class CameraCommand(Command):
 
     def _handle_start_streaming(self, params: list):
         """Handle start_streaming command"""
-        self.logger.info("(CAMERA COMMAND HANDLER) Command identified as start_streaming")
+        self.logger.info("Command identified as start_streaming")
         try:
             # Default to localhost if no IP provided
             receiver_ip = params[0] if params else None # TODO: No longer required
@@ -92,7 +92,7 @@ class CameraCommand(Command):
 
     def _handle_stop_streaming(self):
         """Handle stop_streaming command"""
-        self.logger.info("(CAMERA COMMAND HANDLER) Command identified as stop_streaming")
+        self.logger.info("Command identified as stop_streaming")
         if 'stop_streaming' in self.callbacks:
             success = self.callbacks['stop_streaming']()
             if success:
@@ -338,7 +338,7 @@ class CameraModule(Module):
             return True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error starting recording: {e}")
+            self.logger.error(f"Error starting recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_start_failed",
@@ -430,7 +430,7 @@ class CameraModule(Module):
                 # to use the new export manager methods
                 return True
             else:
-                self.logger.error("(MODULE) Error: recording_start_time was None")
+                self.logger.error("Error: recording_start_time was None")
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
@@ -440,7 +440,7 @@ class CameraModule(Module):
                 return False
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error stopping recording: {e}")
+            self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_stopped",
@@ -458,13 +458,13 @@ class CameraModule(Module):
         try:
             # Check if already streaming
             if self.is_streaming:
-                self.logger.warning("(MODULE) Already streaming")
+                self.logger.warning("Already streaming")
                 return False
 
             # Always use port 8080 for Flask server
             port = 8080
             
-            self.logger.info(f"(MODULE) Starting streaming from {self.network.ip}:{port}")
+            self.logger.info(f"Starting streaming from {self.network.ip}:{port}")
 
             # Start the camera if not already running
             if not self.picam2.started:
@@ -506,7 +506,7 @@ class CameraModule(Module):
         try:
             from werkzeug.serving import make_server
             self.streaming_server = make_server('0.0.0.0', port, self.streaming_app)
-            self.logger.info(f"(MODULE) Starting Flask server on port {port}")
+            self.logger.info(f"Starting Flask server on port {port}")
             self.streaming_server.serve_forever()
         except Exception as e:
             self.logger.error(f"Error running streaming server: {e}")
@@ -567,7 +567,7 @@ class CameraModule(Module):
         """Stop streaming video"""
         try:
             if not self.is_streaming:
-                self.logger.warning("(MODULE) Not currently streaming")
+                self.logger.warning("Not currently streaming")
                 return False
             
             # Set flag to stop frame generation
@@ -600,7 +600,7 @@ class CameraModule(Module):
             return True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error stopping stream: {e}")
+            self.logger.error(f"Error stopping stream: {e}")
             self.communication.send_status({
                 "type": "streaming_stopped",
                 "status": "error",
@@ -639,7 +639,7 @@ class CameraModule(Module):
             return super().stop()
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error stopping module: {e}")
+            self.logger.error(f"Error stopping module: {e}")
             return False
 
 

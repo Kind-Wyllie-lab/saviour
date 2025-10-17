@@ -313,6 +313,7 @@ class Module:
         # Store experiment folder information for export
         self.current_experiment_folder = experiment_folder
         self.controller_share_path = controller_share_path
+        self.current_experiment_name = experiment_name
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -337,6 +338,7 @@ class Module:
                 self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
 
         self.start_recording() # Call the start_recording method which handles the actual implementation
+        self.is_recording = True
  
         return self.current_filename  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
 
@@ -360,10 +362,18 @@ class Module:
                 return False
 
             self.stop_recording() # Specific implementation of stop_recording
+            self.is_recording = False
+            self.logger.info("Made it past stop_recording call")
 
             self._stop_recording_health_metadata()
+            self.logger.info("Made it past stop_recording_health_metadata call")
 
             self._get_session_files()
+            self.logger.info("Made it past _get_session_files call")
+
+            self.logger.info(f"Config says {self.config.get('auto_export')}")
+            if self.config.get("auto_export") == True:
+                self._auto_export()
 
             return True  # Just return True, let child class handle the rest
 
@@ -399,6 +409,7 @@ class Module:
 
     def _stop_recording_health_metadata(self) -> None:
         """Stop an existing health_recording_thread"""
+        self.logger.info("Inside stop_recording_health_metadata call")
         if self.health_recording_thread and self.health_recording_thread.is_alive():
             self.logger.info("Signalling health recording thread to stop")
             self.health_stop_event.set()
@@ -444,6 +455,7 @@ class Module:
                 self.logger.info(f"Found session file to export: {filename}")
 
     def _auto_export(self):
+        self.logger.info("Auto-export called")
         if self.config.get("auto_export", True) and self.current_filename:
             self.logger.info("Auto-export enabled, exporting recording using export manager")
             try:

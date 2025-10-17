@@ -20,6 +20,7 @@ Controller can then run get_modules() here for a neatly packaged dict of modules
 import logging
 import time
 import threading
+from typing import Dict
 
 class Modules:
     def __init__(self):
@@ -34,10 +35,16 @@ class Modules:
             "module_d67a": {
                 "online": True,
                 "status": "NOT_READY",
+                "config": {
+                    "group": 1
+                }
             },
             "camera_1567": {
                 "online": True,
-                "status": "RECORDING"
+                "status": "RECORDING",
+                "config": {
+                    "fps": 25
+                }
             }
         }
 
@@ -137,7 +144,40 @@ class Modules:
         if module_id in self.modules.keys():
             self.modules.pop(module_id)
             self.broadcast_updated_modules()
-            
+
+    def update_module_config(self, module_id: str, new_config: Dict):
+        """
+        Update configuration settings for existing modules.
+
+        Args:
+            module_id (str): The module_id which acts as key in self.modules
+            configs (Dict): A dictionary of config values for the module.
+        """
+        if module_id in self.modules:
+            module_entry = self.modules[module_id]
+            old_config = module_entry.get("config", {})
+            module_entry["config"] = {**old_config, **new_config}
+            self.logger.info(f"Updated config for {module_id}: {new_config}")
+        else:
+            # Add new module if it doesn't exist yet
+            self.modules[module_id] = {
+                "online": True,
+                "status": "NOT_READY",
+                "config": new_config
+            }
+            self.logger.warning(f"Added new module {module_id} with config: {new_config}")
+        self.broadcast_updated_modules() # Broadcast that module configs have updated
+        
+    def update_module_configs(self, configs: Dict):
+        """
+        Update configuration settings for existing modules.
+
+        Args:
+            configs (Dict): A dictionary where keys are module IDs and
+                            values are configuration dictionaries.
+        """
+        for module_id, new_config in configs.items():
+            self.update_module_config(module_id, new_config)
 
     def broadcast_updated_modules(self):
         self.logger.info(f"Updated module list: {self.modules}")

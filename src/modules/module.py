@@ -1109,9 +1109,18 @@ class Module:
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""
-        mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
+        # mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix (old method, led to MAC changing)
+        mac = get_mac_address("eth0")
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
+
+    def get_mac_address(self, interface="eth0"):
+        """Retreive mac address on specified interface, default eth0."""
+        try:
+            with open(f"/sys/class/net/{interface}/address") as f:
+                return f.read().strip().replace(":", "")
+        except FileNotFoundError:
+            return None
 
     def get_log_file_path(self) -> str:
         """Get the current log file path if file logging is enabled"""

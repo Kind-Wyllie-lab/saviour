@@ -21,6 +21,7 @@ import uuid
 import threading
 from typing import Dict, Any, Optional, Union
 import datetime
+import csv
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -69,6 +70,7 @@ class Module:
         self.recording_folder = "rec"  # Default recording folder
         self.recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
+        self.health_recording_thread = None # A thread to record health on
         
         # Setup logging first
         self.logger = logging.getLogger(__name__)
@@ -293,6 +295,7 @@ class Module:
 
     # Recording functions
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
+        #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
         
@@ -334,6 +337,7 @@ class Module:
         os.makedirs(self.recording_folder, exist_ok=True)
 
         # TODO: Start generating health metadata to go with file
+        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(self.current_filename,), daemon=True).start()
 
         if duration is not None:
             if duration > 0:
@@ -341,6 +345,24 @@ class Module:
         # Child classes can call self.recording_thread.start()
         
         return self.current_filename  # Just return filename, let child class handle status
+
+    def _record_health_metadata(self, experiment_name: str):
+        """
+        Runs in a thread.
+        Polls Health class for current health data.
+        Saves to file.
+        """
+        interval = 5 # Interval in seconds # TODO: Take this from config
+        csv_filename = f"{experiment_name}_health_metadata.csv"
+        fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
+        with open(csv_filename, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            while True:
+                data = self.health.get_health()
+                writer.writerow(data)
+                f.flush() # Ensure each line is written
+                time.sleep(interval)
 
     def stop_recording(self) -> bool:
         """
@@ -357,8 +379,11 @@ class Module:
                 })
                 return False
             
+            self.health_recording_thread.join() # Stop recording health metadata
+
             # Get session files
             self._get_session_files()
+
 
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")

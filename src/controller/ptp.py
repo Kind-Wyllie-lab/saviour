@@ -66,6 +66,13 @@ class PTP:
         self.last_offset = None
         self.last_freq = None
         self.monitor_thread = None
+
+        # PTP restart logic exponential backoff
+        self.last_ptp_restart_time = None # Time at which we last restarted ptp
+        self.ptp_stabilisation_timeout = 60 # Number of seconds after which if offsets are stable we can reset the number of retries; consider the fault resolved for now
+        self.ptp_restart_delay = 30 # Number of seconds to wait before attempting to restart phc2sys again
+        self.ptp_restart_multiplier = 2 # A multiplier
+        self.ptp_restart_retries = 0 # Number of retries since ptp was throwing errors
         
         # Unified offset buffer for storing all PTP values by timestamp
         self.ptp_buffer = []
@@ -261,8 +268,23 @@ class PTP:
             self.logger.warning("PTP offsets not yet available, skipping check")
             return
         if self.latest_phc2sys_freq > 100000 or self.latest_phc2sys_offset > 5000:
-            self.logger.warning(f"PTP phc2sys offsets too high ({self.latest_phc2sys_freq}, {self.latest_phc2sys_offset}), resetting PTP")
-            self._reset_ptp()
+            if _check_if_should_restart():
+                self.logger.warning(f"PTP phc2sys offsets too high ({self.latest_phc2sys_freq}, {self.latest_phc2sys_offset}), resetting PTP")
+                self.ptp_restart_retries += 1
+                self.last_ptp_restart_time = time.time()
+                self._reset_ptp()
+            else:
+                if time.time() - self.last_ptp_restart_time > self.ptp_stabilisation_timeout:
+                    self.logger.info(f"PTP seems to have stabilised, resetting retries")
+                    self.ptp_restart_retries = 0
+                return
+
+    def _check_if_should_restart(self):
+        if (time.time() - self.last_ptp_restart_time) > (self.ptp_restart_delay * self.ptp_restart_multiplier * self.ptp_restart_retries): 
+            self.logger.info("Should restart PTP")
+            return True
+        else:
+            return False
     
     def _reset_ptp(self):
         subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)

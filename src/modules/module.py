@@ -21,6 +21,7 @@ import uuid
 import threading
 from typing import Dict, Any, Optional, Union
 import datetime
+import csv
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -69,6 +70,8 @@ class Module:
         self.recording_folder = "rec"  # Default recording folder
         self.recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
+        self.health_recording_thread = None # A thread to record health on
+        self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
         
         # Setup logging first
         self.logger = logging.getLogger(__name__)
@@ -293,6 +296,7 @@ class Module:
 
     # Recording functions
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
+        #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
         
@@ -333,7 +337,8 @@ class Module:
         
         os.makedirs(self.recording_folder, exist_ok=True)
 
-        # TODO: Start generating health metadata to go with file
+        # Start generating health metadata to go with file
+        self._start_recording_health_metadata()
 
         if duration is not None:
             if duration > 0:
@@ -341,6 +346,51 @@ class Module:
         # Child classes can call self.recording_thread.start()
         
         return self.current_filename  # Just return filename, let child class handle status
+    
+    def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
+        """Start a thread to record health metadata. Will continue until stopped."""
+        if not filename:
+            filename = self.current_filename
+        self.health_stop_event.clear() # Clear the stop flag before starting
+        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
+        self.health_recording_thread.start()
+        if not self.health_recording_thread:
+            self.logger.error("Failed to start health recording thread")
+        else:
+            self.logger.info("Health recording thread started")
+
+    def _stop_recording_health_metadata(self) -> None:
+        """Stop an existing health_recording_thread"""
+        if self.health_recording_thread and self.health_recording_thread.is_alive():
+            self.logger.info("Signalling health recording thread to stop")
+            self.health_stop_event.set()
+            self.health_recording_thread.join(timeout=5)
+            if self.health_recording_thread.is_alive():
+                self.logger.warning("Health recording thread did not terminate cleanly")
+            else:
+                self.logger.info("Health recording thread stopped")
+        else:
+            self.logger.warning("No active health recording thread was found to stop")
+
+    def _record_health_metadata(self, experiment_name: str):
+        """
+        Runs in a thread.
+        Polls Health class for current health data.
+        Saves to file.
+        """
+        interval = 5 # Interval in seconds # TODO: Take this from config
+        csv_filename = f"{experiment_name}_health_metadata.csv"
+        fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
+        with open(csv_filename, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            while not self.health_stop_event.is_set():
+                data = self.health.get_health()
+                writer.writerow(data)
+                f.flush() # Ensure each line is written
+                # Wait for either a stop signal or timeout
+                if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
+                    break
 
     def stop_recording(self) -> bool:
         """
@@ -356,7 +406,9 @@ class Module:
                     "error": "Not recording"
                 })
                 return False
-            
+
+            self._stop_recording_health_metadata()
+
             # Get session files
             self._get_session_files()
 

@@ -243,7 +243,7 @@ class Web:
         def handle_module_status(data):
             """Handle module status update"""
             try:
-                self.logger.info(f"Received module status: {data}")
+                # self.logger.info(f"Received module status: {data}")
                 if not isinstance(data, dict):
                     raise ValueError("Status data must be a dictionary")
                 

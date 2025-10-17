@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/usr/env/bin bash
 # setup.sh
 # Install system dependencies and set up virtual environment for the saviour system
 # Usage: bash setup.sh
 #working
 
-set -e # If any function throws an error (doesn't return 0), exit immediately.
+set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
+trap 'rc=$?; echo "setup.sh failed with exit code $rc at line $LINENO"' ERR
 
 # Setup logging
 LOG_FILE="system_setup.log"
@@ -344,6 +345,11 @@ EOF
 configure_dhcp_server() {
     log_section "Configuring DHCP Server"
     
+    # Setup static ip
+    log_message "Setting static IP to 192.168.1.1 with nmcli"
+    sudo nmcli connection modify "Wired connection 1" ipv4.method manual
+    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.1/24
+
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
         log_message "[INSTALLING] dnsmasq"
@@ -387,14 +393,8 @@ bind-interfaces
 # DHCP range for local network (adjust as needed)
 dhcp-range=192.168.1.100,192.168.1.200,12h
 
-# Set the Pi as the gateway for local network
-# dhcp-option=3,192.168.1.1
-
-# 25/09/25 no longer including 192.168.1.1 as it interfered with my dual NIC setup 
+# Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
 dhcp-option=3
-
-# Set DNS servers (optional - devices will use wlan0 for internet)
-# dhcp-option=6,8.8.8.8,8.8.4.4
 
 # Disable DNS server functionality (we only want DHCP)
 port=0
@@ -425,13 +425,76 @@ EOF
 
     # Reload systemd and disable dnsmasq at boot
     sudo systemctl daemon-reload
-    sudo systemctl disable dnsmasq
+    sudo systemctl enable dnsmasq
+    sudo systemctl restart dnsmasq.service
     
-    log_message "DHCP server configured but disabled by default."
-    echo "DHCP server configured but disabled by default."
+    log_message "DHCP server configured and enabled."
+    echo "DHCP server configured and enabled."
     echo "To start DHCP server: sudo systemctl start dnsmasq"
     echo "To stop DHCP server: sudo systemctl stop dnsmasq"
-    echo "To enable at boot: sudo systemctl enable dnsmasq"
+}
+
+configure_mdns() {
+    log_section "Configuring controller mDNS via avahi daemon"
+    if ! is_installed "avahi-daemon"; then
+        log_message "Installing avahi-daemon";
+        sudo apt install avahi-daemon -y
+    else
+        log_message "avahi-daemon is already installed"
+    fi
+
+    # Configure avahi
+    sudo tee /etc/avahi/avahi-daemon.conf > /dev/null <<EOF
+# avahi daemon configuration for SAVIOUR local network
+[server]
+host-name=saviour
+use-ipv4=yes
+use-ipv6=yes
+allow-interfaces=eth0
+deny-interfaces=wlan0
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+publish-hinfo=no
+publish-workstation=yes
+EOF
+    # Reload systemd and enable
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now avahi-daemon
+    sudo systemctl restart avahi-daemon.service
+
+    log_message "mDNS configured and enabled - controller will appear on network as saviour.local"
+    echo "mDNS server configured and enabled."
+    echo "Controller will appear on network as saviour.local"
+
+    log_message "Configuring iptables to forward port 80 traffic to port 5000"
+    sudo apt-get install iptables-persistent -y
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    sudo netfilter-persistent save
+}
+
+configure_frontend() {
+    log_section "Configuring Node.js and frontend"
+    echo "Installing nvm, Node.js, vite, and building frontend"
+    log_message "Installing nvm"
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash # Install nvm
+    \. "$HOME/.nvm/nvm.sh" # Instead of restarting the shell - from Node.js
+    log_message "Installing Node.js v22"
+    nvm install 22 # Install Node.js - make sure to keep version up to date
+    node -v # Should print v22. something
+    npm -v # Should print 10.9.3 or something
+
+    log_message "Installing vite and building frontend"
+    cd src/controller/frontend/
+    npm install
+    npm run build
+    echo "Frontend built"
+    log_message "nvm, Node.js, vite installed and frontend built"
+    cd ../../../
 }
 
 # Function to configure module systemd service
@@ -602,17 +665,18 @@ for pkg in "${SYSTEM_PACKAGES[@]}"; do
 done
 
 # Configure Pipewire sampling rate for Audiomoth
-if [ "$MODULE_TYPE" = "microphone" ]; then
-    sudo install -d /etc/pipewire/pipewire.conf.d
-    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
-    context.properties = {
-        default.clock.rate = 192000
-        default.clock.allowed-rates = [ 96000 192000 384000]
-    }
+if [ "$DEVICE_ROLE" = "module" ]; then
+    if [ "$MODULE_TYPE" = "microphone" ]; then
+        sudo install -d /etc/pipewire/pipewire.conf.d
+        sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+        context.properties = {
+            default.clock.rate = 192000
+            default.clock.allowed-rates = [ 96000 192000 384000]
+        }
 EOF
-    systemctl --user restart pipewire pipewire-pulse wireplumber
+        systemctl --user restart pipewire pipewire-pulse wireplumber
+    fi
 fi
-
 # Enable camera interface if not already enabled
 if ! grep -q "camera_auto_detect=1" /boot/config.txt; then
     log_message "Enabling camera interface..."
@@ -646,6 +710,20 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     configure_dhcp_server
 else
     log_message "Module Pi detected. Skipping DHCP server configuration."
+fi
+
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    log_message "Controller Pi detected. Configuring mDNS server..."
+    configure_mdns
+else
+    log_message "Module Pi detected. Skipping mDNS server."
+fi
+
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    log_message "Controller Pi detected. Configuring and building frontend..."
+    configure_frontend
+else
+    log_message "Module Pi detected. Skipping frontend build."
 fi
 
 # Configure module systemd service

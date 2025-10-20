@@ -32,7 +32,7 @@ class Web:
         self.port = self.config.get("interface.web_interface_port")
 
         # Flask setup
-        self.app = Flask(__name__, static_folder="frontend/build")
+        self.app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
         self.socketio = SocketIO(self.app, host="0.0.0.0", cors_allowed_origins="*", async_mode='threading')
         
         # Callbacks

@@ -23,22 +23,24 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from config import Config
+
 class Web:
-    def __init__(self, config_manager):
+    def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
-        self.config = config_manager
+        self.config = config
 
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
 
         # Flask setup
-        self.app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
+        self.app = Flask(__name__, static_folder="frontend/dist", static_url_path="/")
         self.socketio = SocketIO(self.app, host="0.0.0.0", cors_allowed_origins="*", async_mode='threading')
         
         # Callbacks
         self.callbacks = {} # An empty dict which will later be assigned callback functions
 
-        # Store experiment metadata in memory
+        # Default experiment metadata
         self.experiment_metadata = {
             'experiment': 'demo',
             'rat_id': '001',
@@ -47,32 +49,24 @@ class Web:
             'stage': 'habituation',
             'trial': '1'
         }
-        
-        # Experiment name persistence
-        self.current_experiment_name = ""
+        self.current_experiment_name = "" # To be constructed from metadata, or overriden
 
         # Register routes and webhooks        
         self._register_routes() 
         self._register_socketio_events() 
 
-        # Store module readiness state in memory (backend-driven)
-        # TODO: Should readiness state be stored here?
+        # Store module readiness state in memory 
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
-        self.readiness_expiration_time = 300  # 5 minutes in seconds
 
         self.rest_api = False
         if self.rest_api == True:
-            self.register_rest_api_routes()
+            self._register_rest_api_routes()
 
-        # Test mode
-        self.test = False
+        # Running flag
         self._running = False
 
         # Set up paths
         self.habitat_share_dir = Path("/home/pi/controller_share")
-
-        self._pending_recordings_requests = None  # For aggregating recordings_list responses
-        self._pending_recordings_lock = threading.Lock()
     
     def register_callbacks(self, callbacks={}):
         """Register callbacks based on a dict.
@@ -154,43 +148,6 @@ class Web:
                 params = data.get('params', {})
                 
                 self.logger.info(f"Received command via WebSocket: {data}")
-                
-                # Special handling for list_recordings to all modules
-                if command_type == 'list_recordings' and module_id == 'all':
-                    modules = self.callbacks["get_modules"]()
-                    if not modules:
-                        self.logger.warning("No modules found for list_recordings aggregation.")
-                        self.socketio.emit('recordings_list', {'module_recordings': [], 'exported_recordings': self.get_exported_recordings()})
-                        return
-                    with self._pending_recordings_lock:
-                        self._pending_recordings_requests = {
-                            'expected': set(m['id'] for m in modules if 'id' in m),
-                            'received': {},
-                            'timer': None
-                        }
-                    # Send list_recordings to all modules
-                    for m in modules:
-                        if 'id' in m and self.callbacks["send_command"]:
-                            self.callbacks["send_command"](m['id'], 'list_recordings', {})
-                    # Start a timer to emit after timeout
-                    def emit_aggregated():
-                        with self._pending_recordings_lock:
-                            if self._pending_recordings_requests is None:
-                                return
-                            all_recordings = []
-                            for mod_id, recs in self._pending_recordings_requests['received'].items():
-                                for rec in recs:
-                                    rec['module_id'] = mod_id
-                                    all_recordings.append(rec)
-                            self.socketio.emit('recordings_list', {
-                                'module_recordings': all_recordings,
-                                'exported_recordings': self.get_exported_recordings()
-                            })
-                            self._pending_recordings_requests = None
-                    timer = threading.Timer(2.0, emit_aggregated)
-                    self._pending_recordings_requests['timer'] = timer
-                    timer.start()
-                    return
                 
                 # Format command with parameters
                 command = command_type 
@@ -675,7 +632,7 @@ class Web:
         except Exception as e:
             self.logger.error(f"Error handling module status: {str(e)}")
 
-    def register_rest_api_routes(self):
+    def _register_rest_api_routes(self):
         
         # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
         @self.app.route('/api/list_modules', methods=['GET'])

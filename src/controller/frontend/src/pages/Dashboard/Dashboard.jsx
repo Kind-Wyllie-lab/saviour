@@ -24,6 +24,7 @@ function Dashboard() {
 
   useEffect(() => {
     console.log("Emitting get_modules");
+    socket.emit("get_module_configs"); // Ask backend for module configs
     socket.emit("get_modules"); // Ask backend for modules
 
     // Expecting data.modules like

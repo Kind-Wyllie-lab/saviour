@@ -151,11 +151,15 @@ class CameraModule(Module):
         # State flags
         self.is_recording = False
         self.is_streaming = False
-        self.latest_recording = None
         self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
         # TODO: is this necessary? Already done in base class? We just want to append new camera-specific callbacks
+        self.camera_callbacks = {
+            'get_streaming_status': lambda: self.is_streaming,
+            'start_streaming': self.start_streaming,
+            'stop_streaming': self.stop_streaming
+        }
         self.command.set_callbacks({
             'generate_session_id': lambda module_id: self.generate_session_id(module_id),
             'get_samplerate': lambda: self.config.get("module.samplerate", 200),
@@ -164,12 +168,11 @@ class CameraModule(Module):
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication.send_status(status),
             'get_health': self.health.get_health,
-            'start_recording': self.start_recording,
-            'stop_recording': self.stop_recording,
+            'start_recording': self._start_recording,
+            'stop_recording': self._stop_recording,
             'list_recordings': self.list_recordings,
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
-            'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
             'get_controller_ip': self.network.controller_ip,
@@ -232,7 +235,6 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
-    
 
     def set_config(self, new_config: dict, persist: bool) -> bool:
         # Check if camera settings are being changed
@@ -295,16 +297,10 @@ class CameraModule(Module):
                 self.logger.info("Camera config not changed")
         return success
 
-    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
-        """Start continuous video recording"""
-        # Store experiment name for use in timestamps filename
-        self.current_experiment_name = experiment_name
-        
-        # First call parent class to handle common recording setup
-        filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
-        if not filename:
-            return False
-        
+    def start_recording(self):
+        """Implement camera-specific recording functionality"""
+        self.logger.info("Executing camera specific recording functionality...")
+        filename = f"{self.current_filename}.{self.recording_filetype}"
         try:
             # Start the camera if not already running
             if not self.picam2.started:
@@ -317,14 +313,8 @@ class CameraModule(Module):
             
             # Start recording
             self.picam2.start_encoder(self.main_encoder, name="main") # 
-            self.is_recording = True
             self.recording_start_time = time.time()
             self.frame_times = []  # Reset frame times
-
-            if duration is not None:
-                if duration > 0:
-                    self.logger.info("Attempting to start recording thread")
-                    self.recording_thread.start()
 
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -381,20 +371,12 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
-    def stop_recording(self) -> bool:
-        """Stop continuous video recording"""
-        # First check if recording using parent class
-        if not super().stop_recording():
-            return False
-        
-        self.logger.info("Stopping recording now")
-        
+    def stop_recording(self):
+        """Camera Specific implementation of stop recording"""
         try:
+            self.logger.info("Attempting to stop camera specific recording")
             # Stop recording with camera-specific code
             self.picam2.stop_encoder(self.main_encoder)
-            
-            # Stop frame capture thread
-            self.is_recording = False
             
             # Calculate duration
             if self.recording_start_time is not None:
@@ -423,12 +405,9 @@ class CameraModule(Module):
                         "recording": False,
                         "message": f"Recording completed successfully with {len(self.frame_times)} frames"
                     })
-                
-                # Auto-export is now handled by child classes (e.g., APACamera)
-                if self.config.get("auto_export") == True:
-                    self._auto_export()
-                # to use the new export manager methods
-                return True
+
+                self.logger.info("Concluded camera stop_recording, waiting to exit")
+
             else:
                 self.logger.error("Error: recording_start_time was None")
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -438,7 +417,7 @@ class CameraModule(Module):
                         "error": "Recording start time was not set, so could not create timestamps."
                     })
                 return False
-            
+        
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -448,10 +427,6 @@ class CameraModule(Module):
                     "error": str(e)
                 })
             return False
-
-    def get_latest_recording(self):
-        """Get the latest recording"""
-        return self.latest_recording
 
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         """Start streaming video to the specified receiver using Flask to send MJPEG"""

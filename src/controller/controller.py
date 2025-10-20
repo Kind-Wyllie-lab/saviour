@@ -268,7 +268,7 @@ class Controller:
                 case 'recording_stopped':
                     self.logger.info(f"{module_id} has stopped recording")
                     self.modules.notify_recording_stopped(module_id, status_data)
-                case 'readiness_validation':
+                case 'validate_readiness':
                     # Handle readiness validation response
                     ready = status_data.get('ready', False)
                     self.logger.info(f"Readiness validation response from {module_id}: {'ready' if ready else 'not ready'}")

@@ -151,11 +151,15 @@ class CameraModule(Module):
         # State flags
         self.is_recording = False
         self.is_streaming = False
-        self.latest_recording = None
         self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
         # TODO: is this necessary? Already done in base class? We just want to append new camera-specific callbacks
+        self.camera_callbacks = {
+            'get_streaming_status': lambda: self.is_streaming,
+            'start_streaming': self.start_streaming,
+            'stop_streaming': self.stop_streaming
+        }
         self.command.set_callbacks({
             'generate_session_id': lambda module_id: self.generate_session_id(module_id),
             'get_samplerate': lambda: self.config.get("module.samplerate", 200),
@@ -169,7 +173,6 @@ class CameraModule(Module):
             'list_recordings': self.list_recordings,
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
-            'get_latest_recording': self.get_latest_recording,  # Camera specific
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming,
             'get_controller_ip': self.network.controller_ip,
@@ -232,7 +235,6 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
-    
 
     def set_config(self, new_config: dict, persist: bool) -> bool:
         # Check if camera settings are being changed
@@ -294,57 +296,6 @@ class CameraModule(Module):
             else:
                 self.logger.info("Camera config not changed")
         return success
-
-    # def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
-    #     """Start continuous video recording"""
-    #     # Store experiment name for use in timestamps filename
-    #     self.current_experiment_name = experiment_name
-        
-    #     # First call parent class to handle common recording setup
-    #     filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
-    #     if not filename:
-    #         return False
-        
-    #     try:
-    #         # Start the camera if not already running
-    #         if not self.picam2.started:
-    #             self.picam2.start()
-    #             time.sleep(0.1)  # Give camera time to start
-            
-    #         # Create file output
-    #         self.file_output = PyavOutput(filename, format="mp4") # 7.2.4 in docs
-    #         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
-            
-    #         # Start recording
-    #         self.picam2.start_encoder(self.main_encoder, name="main") # 
-    #         self.is_recording = True
-    #         self.recording_start_time = time.time()
-    #         self.frame_times = []  # Reset frame times
-
-    #         if duration is not None:
-    #             if duration > 0:
-    #                 self.logger.info("Attempting to start recording thread")
-    #                 self.recording_thread.start()
-
-    #         # Send status response after successful recording start
-    #         if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-    #             self.communication.send_status({
-    #                 "type": "recording_started",
-    #                 "filename": filename,
-    #                 "recording": True,
-    #                 "session_id": self.recording_session_id
-    #             })
-            
-    #         return True
-            
-    #     except Exception as e:
-    #         self.logger.error(f"Error starting recording: {e}")
-    #         if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-    #             self.communication.send_status({
-    #                 "type": "recording_start_failed",
-    #                 "error": str(e)
-    #             })
-    #         return False
 
     def start_recording(self):
         """Implement camera-specific recording functionality"""
@@ -476,10 +427,6 @@ class CameraModule(Module):
                     "error": str(e)
                 })
             return False
-
-    def get_latest_recording(self):
-        """Get the latest recording"""
-        return self.latest_recording
 
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         """Start streaming video to the specified receiver using Flask to send MJPEG"""

@@ -112,15 +112,7 @@ class CameraCommand(Command):
             })
 
 class CameraModule(Module):
-    def __init__(self, module_type="camera", config=None, config_file_path=None):
-        # Initialize command handler before parent class
-        self.command = CameraCommand(
-            module_id=self.generate_module_id(module_type),
-            module_type=module_type,
-            config=None,  # Will be set by parent class
-            start_time=None  # Will be set during start()
-        )
-        
+    def __init__(self, module_type="camera", config=None, config_file_path=None):        
         # Call the parent class constructor
         super().__init__(module_type, config, config_file_path)
     
@@ -154,30 +146,12 @@ class CameraModule(Module):
         self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
-        # TODO: is this necessary? Already done in base class? We just want to append new camera-specific callbacks
         self.camera_callbacks = {
-            'get_streaming_status': lambda: self.is_streaming,
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming
         }
-        self.command.set_callbacks({
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp.get_status,
-            'get_streaming_status': lambda: self.is_streaming,
-            'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication.send_status(status),
-            'get_health': self.health.get_health,
-            'start_recording': self._start_recording,
-            'stop_recording': self._stop_recording,
-            'list_recordings': self.list_recordings,
-            'clear_recordings': self._clear_recordings,
-            'export_recordings': self.export_recordings,
-            'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.network.controller_ip,
-            'shutdown': self._shutdown,
-        })
+
+        self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
 
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 

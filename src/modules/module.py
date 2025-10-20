@@ -22,6 +22,7 @@ import threading
 from typing import Dict, Any, Optional, Union
 import datetime
 import csv
+from abc import ABC, abstractmethod 
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -49,7 +50,7 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 
-class Module:
+class Module(ABC):
     """
     Base class for all modules in the Habitat Controller.
 
@@ -342,9 +343,10 @@ class Module:
  
         return self.current_filename  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
 
+    @abstractmethod
     def start_recording(self):
-        # TODO: This is an abstract method?
-        self.logger.error("No specific implentation for start_recording provided!")
+        """To be implemented by subclasses"""
+        pass
 
     def _stop_recording(self) -> bool:
         """
@@ -381,9 +383,10 @@ class Module:
             self.logger.error(f"Error in stop_recording: {e}")
             return False
 
+    @abstractmethod
     def stop_recording(self):
-        # TODO: This is an abstract method? 
-        self.logger.error("No specific implentation for stop_recording provided!")
+        """To be implemented by subclasses"""
+        pass
     
     def _auto_stop_recording(self, duration: int):
         self.logger.info(f"Starting thread to stop recording after {duration}s")

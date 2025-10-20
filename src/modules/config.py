@@ -28,33 +28,7 @@ class Config:
         
         }
     }
-    # DEFAULT_CONFIG = {
-    #     # Module parameters
-    #     "module": {
-    #         "heartbeat_interval": 30,
-    #         "samplerate": 200,
-    #     },
-        
-    #     # Service parameters
-    #     "service": {
-    #         "port": 5000,
-    #         "service_type": "_module._tcp.local.",
-    #     },
-        
-    #     # Communication parameters
-    #     "communication": {
-    #         "command_socket_port": 5555,
-    #         "status_socket_port": 5556,
-    #         "data_format": "json",
-    #     },
-        
-    #     # Logging parameters
-    #     "logging": {
-    #         "level": "INFO",
-    #         "format": "%(asctime)s - %(levelname)s - %(message)s",
-    #     },
-    # }
-    
+
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {
         "MODULE_HEARTBEAT_INTERVAL": "module.heartbeat_interval",
@@ -65,33 +39,42 @@ class Config:
         "MODULE_STATUS_PORT": "communication.status_socket_port",
     }
     
-    def __init__(self, module_type: str, config_file_path: Optional[str] = None):
+    def __init__(self, config_file_path: Optional[str] = "config/base_config.json"):
         """
         Initialize the configuration manager
         
         Args:
-            logger: Logger instance
-            module_type: Type of the module (camera, microphone, etc.)
-            config_file_path: Path to configuration file (optional)
+            config_file_path: Path to the base configuration file (optional)
         """
         self.logger = logging.getLogger(__name__)
-        self.module_type = module_type
         
-        # Set module-specific config file path if not provided
-        if not config_file_path:
-            config_file_path = os.path.join(os.path.dirname(__file__), f"config/{module_type}_config.json")
-        
-        self.logger.info(f"Module of type {module_type} set to use config file path: {config_file_path}")
+        self.logger.info(f"Loading config from: {config_file_path}")
         
         self.config_file_path = config_file_path
         
         # Path to the base module config file
-        self.base_config_file_path = os.path.join(os.path.dirname(__file__), "base_module_config.json")
+        self.base_config_file_path = os.path.join(os.path.dirname(__file__), "config/base_config.json")
         
         self.config = self._load_config()
 
         self.logger.info(f"Module config loaded: {self.config}")
         
+    def load_additional(self, extra_config_path: str) -> None:
+        """
+        Load and merge an additional configuration file after initialization.
+        Useful for module-specific configs.
+        """
+        if not os.path.exists(extra_config_path):
+            self.logger.warning(f"Additional config file not found: {extra_config_path}")
+            return
+        try:
+            with open(extra_config_path, 'r') as f:
+                extra_config = json.load(f)
+            self._merge_configs(self.config, extra_config)
+            self.logger.info(f"Appended module-specific config from {extra_config_path}")
+        except Exception as e:
+            self.logger.error(f"Error loading additional config from {extra_config_path}: {e}")
+
     def _load_config(self) -> Dict[str, Any]:
         """
         Load configuration from default values, base config, environment variables, and module-specific config

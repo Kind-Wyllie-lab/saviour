@@ -222,7 +222,6 @@ class Communication:
         Args:
             status_data: Dictionary containing status information
         """
-        self.logger.info(f"Attempting to send message with data {status_data}")
         try:
             if not self.status_socket:
                 self.logger.warning("Status socket not available")

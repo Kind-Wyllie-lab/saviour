@@ -38,83 +38,10 @@ import json
 from flask import Flask, Response, request
 import cv2
 
-class CameraCommand(Command):
-    """Command handler specific to camera functionality"""
-    def __init__(self, module_id, module_type, config=None, start_time=None):
-        super().__init__(module_id, module_type, config, start_time)
-        self.logger.info("Initialised")
-
-    def handle_command(self, command: str):
-        """Handle camera-specific commands while preserving base functionality"""
-        self.logger.info("Checking for camera specific commands.")
-        
-        try:
-            # Parse command and parameters
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
-            
-            # Handle camera-specific commands
-            match cmd:
-                case "start_streaming":
-                    self._handle_start_streaming(params)
-                case "stop_streaming":
-                    self._handle_stop_streaming()
-                case _:
-                    # If not a camera-specific command, pass to parent class
-                    super().handle_command(command)
-                    
-        except Exception as e:
-            self._handle_error(e)
-
-    def _handle_start_streaming(self, params: list):
-        """Handle start_streaming command"""
-        self.logger.info("Command identified as start_streaming")
-        try:
-            # Default to localhost if no IP provided
-            receiver_ip = params[0] if params else None # TODO: No longer required
-            port = params[1] if len(params) > 1 else "10001" # TODO: No longer required with flask approach?
-            
-            if 'start_streaming' in self.callbacks:
-                self.callbacks['start_streaming'](receiver_ip, port)
-            else:
-                self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
-                self.callbacks["send_status"]({
-                    "type": "streaming_start_failed",
-                    "error": "Module not configured for streaming"
-                })
-        except Exception as e:
-            self.logger.error(f"(COMMAND HANDLER) Error starting stream: {str(e)}")
-            self.callbacks["send_status"]({
-                "type": "streaming_start_failed",
-                "error": str(e)
-            })
-
-    def _handle_stop_streaming(self):
-        """Handle stop_streaming command"""
-        self.logger.info("Command identified as stop_streaming")
-        if 'stop_streaming' in self.callbacks:
-            success = self.callbacks['stop_streaming']()
-            if success:
-                self.callbacks["send_status"]({
-                    "type": "streaming_stopped"
-                })
-            else:
-                self.callbacks["send_status"]({
-                    "type": "streaming_stop_failed",
-                    "error": "Failed to stop streaming"
-                })
-        else:
-            self.logger.error("(COMMAND HANDLER) No stop_streaming callback provided")
-            self.callbacks["send_status"]({
-                "type": "streaming_stop_failed",
-                "error": "Module not configured for streaming"
-            })
-
 class CameraModule(Module):
-    def __init__(self, module_type="camera", config=None, config_file_path=None):        
+    def __init__(self, module_type="camera"):        
         # Call the parent class constructor
-        super().__init__(module_type, config, config_file_path)
+        super().__init__(module_type)
     
         # Initialize camera
         self.picam2 = Picamera2()
@@ -145,14 +72,15 @@ class CameraModule(Module):
         self.is_streaming = False
         self.frame_times = []  # For storing frame timestamps
 
+        # Update config 
+        self.config.load_additional("camera_config.json")
+
         # Set up camera-specific callbacks for the command handler
         self.camera_callbacks = {
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming
         }
-
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
-
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
     def configure_camera(self):
@@ -271,7 +199,7 @@ class CameraModule(Module):
                 self.logger.info("Camera config not changed")
         return success
 
-    def start_recording(self):
+    def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
         filename = f"{self.current_filename}.{self.recording_filetype}"
@@ -345,7 +273,7 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
-    def stop_recording(self):
+    def _stop_recording(self):
         """Camera Specific implementation of stop recording"""
         try:
             self.logger.info("Attempting to stop camera specific recording")

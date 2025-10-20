@@ -1,0 +1,112 @@
+{
+    "editable": {
+        "camera": {
+            "monochrome": false,
+            "width": 1920,
+            "height": 1080,
+            "fps": 30,
+            "text_scale": 2,
+            "text_thickness": 3
+        }
+    },
+    "non_editable": {
+        "module": {
+            "heartbeat_interval": 30,
+            "samplerate": 200,
+            "type": "camera"
+        },
+        "service": {
+            "port": 5000,
+            "service_type": "_module._tcp.local."
+        },
+        "communication": {
+            "command_socket_port": 5555,
+            "status_socket_port": 5556,
+            "data_format": "json"
+        },
+        "logging": {
+            "level": "INFO",
+            "format": "%(asctime)s - %(levelname)s - %(message)s"
+        },
+        "camera": {
+            "codec": "h264",
+            "profile": "high",
+            "level": 4.2,
+            "bitrate": 2000000,
+            "file_format": "mp4"
+        },
+        "recording": {
+            "segment_length_seconds": 600,
+            "pre_record_seconds": 5,
+            "post_record_seconds": 5,
+            "timestamp_overlay": true,
+            "timestamp_format": "%Y-%m-%d %H:%M:%S",
+            "timestamp_position": "bottom-right"
+        },
+        "streaming": {
+            "enabled": true,
+            "port": 8554,
+            "transport": "udp"
+        },
+        "nas": {
+            "enabled": true,
+            "host": "192.168.0.2",
+            "share": "data",
+            "mount_point": "/mnt/nas",
+            "export_folder": "videos"
+        },
+        "recording_folder": "rec",
+        "recording_filetype": "mp4",
+        "auto_export": true,
+        "controller_share_path": "controller_share",
+        "controller_username": "pi",
+        "controller_password": "saviour",
+        "nas_ip": "192.168.0.2",
+        "nas_share_path": "data",
+        "nas_recordings_path": "recordings",
+        "nas_username": "sidbit",
+        "nas_password": "RaspberryWonder1305"
+    },
+    "module": {
+        "heartbeat_interval": "30",
+        "samplerate": "200",
+        "status_reporting": true,
+        "error_retry_count": 3,
+        "error_retry_delay": 5
+    },
+    "service": {
+        "port": "5000",
+        "service_type": "_module._tcp.local.",
+        "announce": true
+    },
+    "communication": {
+        "command_socket_port": "5555",
+        "status_socket_port": "5556",
+        "data_format": "json",
+        "compression": false
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(levelname)s - %(message)s",
+        "to_file": true,
+        "directory": "/var/log/saviour",
+        "max_file_size_mb": 10,
+        "backup_count": 5
+    },
+    "network": {
+        "reconnect_attempts": 5,
+        "reconnect_delay": 5,
+        "timeout": 10
+    },
+    "recording_folder": "rec",
+    "recording_filetype": "txt",
+    "auto_export": true,
+    "controller_share_path": "controller_share",
+    "controller_username": "pi",
+    "controller_password": "saviour",
+    "nas_ip": "192.168.0.2",
+    "nas_share_path": "data",
+    "nas_recordings_path": "recordings",
+    "nas_username": "sidbit",
+    "nas_password": "RaspberryWonder1305"
+}

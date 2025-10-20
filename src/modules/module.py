@@ -76,11 +76,10 @@ class Module(ABC):
         config (dict): Configuration parameters for the module
 
     """
-    def __init__(self, module_type: str, config: dict = None, config_path: str = None):
+    def __init__(self, module_type: str):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
-        self.config_path = config_path
         self.recording_folder = "rec"  # Default recording folder
         self._recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
@@ -138,7 +137,7 @@ class Module(ABC):
         # Managers
         self.logger.info(f"Initialising managers")
         self.logger.info(f"Initialising config manager")
-        self.config = Config(self.module_type, self.config_path)
+        self.config = Config()
         self.export = Export(
             module_id=self.module_id,
             recording_folder=self.recording_folder,
@@ -167,8 +166,8 @@ class Module(ABC):
         self.command_callbacks = { # A registry of commands that the module can respond to
             'restart_ptp': self.ptp.restart, # Restart PTP services
             'get_health': self.health.get_health,
-            'start_recording': self._start_recording,
-            'stop_recording': self._stop_recording,
+            'start_recording': self.start_recording,
+            'stop_recording': self.stop_recording,
             'list_recordings': self.list_recordings,
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
@@ -303,7 +302,7 @@ class Module(ABC):
 
     """Recording methods"""
     @command()
-    def _start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
+    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
         #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
@@ -353,18 +352,18 @@ class Module(ABC):
             if duration > 0:
                 self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
 
-        self.start_recording() # Call the start_recording method which handles the actual implementation
+        self._start_recording() # Call the start_recording method which handles the actual implementation
         self.is_recording = True
  
         return self.current_filename  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
 
     @abstractmethod
-    def start_recording(self):
+    def _start_recording(self):
         """To be implemented by subclasses"""
         pass
 
     @command()
-    def _stop_recording(self) -> bool:
+    def stop_recording(self) -> bool:
         """
         Stop recording. Should be extended with module-specific implementation.
         Returns True if ready to stop, False otherwise.
@@ -379,7 +378,7 @@ class Module(ABC):
                 })
                 return False
 
-            self.stop_recording() # Specific implementation of stop_recording
+            self._stop_recording() # Specific implementation of stop_recording
             self.is_recording = False
             self.logger.info("Made it past stop_recording call")
 
@@ -400,7 +399,7 @@ class Module(ABC):
             return False
 
     @abstractmethod
-    def stop_recording(self):
+    def _stop_recording(self):
         """To be implemented by subclasses"""
         pass
     

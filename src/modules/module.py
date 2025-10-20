@@ -22,6 +22,7 @@ import threading
 from typing import Dict, Any, Optional, Union
 import datetime
 import csv
+from abc import ABC, abstractmethod 
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -49,7 +50,7 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 
-class Module:
+class Module(ABC):
     """
     Base class for all modules in the Habitat Controller.
 
@@ -68,7 +69,7 @@ class Module:
         self.module_id = self.generate_module_id(self.module_type)
         self.config_path = config_path
         self.recording_folder = "rec"  # Default recording folder
-        self.recording_thread = None # A thread to automatically stop recording if a duration is given
+        self._recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
         self.health_recording_thread = None # A thread to record health on
         self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
@@ -166,8 +167,8 @@ class Module:
             'get_recording_status': lambda: self.is_recording,
             'send_status': lambda status: self.communication.send_status(status),
             'get_health': self.health.get_health,
-            'start_recording': self.start_recording,
-            'stop_recording': self.stop_recording,
+            'start_recording': self._start_recording,
+            'stop_recording': self._stop_recording,
             'list_recordings': self.list_recordings,
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
@@ -207,14 +208,6 @@ class Module:
 
         # Track when module started for uptime calculation
         self.start_time = None
-
-    def auto_stop_recording(self, duration: int):
-        self.logger.info(f"Starting thread to stop recording after {duration}s")
-        while ((time.time() - self.recording_start_time) < duration):
-            self.logger.info("Looping, not stopping recording yet")
-            time.sleep(0.5) # Wait
-        self.logger.info("Stopping recording")
-        self.stop_recording()
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -277,7 +270,7 @@ class Module:
         # Stop recording if active
         if self.is_recording:
             self.logger.info("Stopping recording due to controller disconnect")
-            self.stop_recording()
+            self._stop_recording()
         
         # Stop PTP services
         self.ptp.stop()
@@ -294,8 +287,8 @@ class Module:
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
-    # Recording functions
-    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
+    """Recording methods"""
+    def _start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
         #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
@@ -321,6 +314,7 @@ class Module:
         # Store experiment folder information for export
         self.current_experiment_folder = experiment_folder
         self.controller_share_path = controller_share_path
+        self.current_experiment_name = experiment_name
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -331,9 +325,9 @@ class Module:
             # Sanitize experiment name for filename (remove special characters)
             safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
             safe_experiment_name = safe_experiment_name.replace(' ', '_')
-            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}.{self.recording_filetype}"
+            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}"
         else:
-            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
+            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}"
         
         os.makedirs(self.recording_folder, exist_ok=True)
 
@@ -342,11 +336,68 @@ class Module:
 
         if duration is not None:
             if duration > 0:
-                self.recording_thread = threading.Thread(target=self.auto_stop_recording, args=(int(duration),))
-        # Child classes can call self.recording_thread.start()
-        
-        return self.current_filename  # Just return filename, let child class handle status
+                self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
+
+        self.start_recording() # Call the start_recording method which handles the actual implementation
+        self.is_recording = True
+ 
+        return self.current_filename  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
+
+    @abstractmethod
+    def start_recording(self):
+        """To be implemented by subclasses"""
+        pass
+
+    def _stop_recording(self) -> bool:
+        """
+        Stop recording. Should be extended with module-specific implementation.
+        Returns True if ready to stop, False otherwise.
+        """
+        try:
+            # Check if recording
+            if not self.is_recording:
+                self.logger.info("Already stopped recording")
+                self.communication.send_status({
+                    "type": "recording_stop_failed",
+                    "error": "Not recording"
+                })
+                return False
+
+            self.stop_recording() # Specific implementation of stop_recording
+            self.is_recording = False
+            self.logger.info("Made it past stop_recording call")
+
+            self._stop_recording_health_metadata()
+            self.logger.info("Made it past stop_recording_health_metadata call")
+
+            self._get_session_files()
+            self.logger.info("Made it past _get_session_files call")
+
+            self.logger.info(f"Config says {self.config.get('auto_export')}")
+            if self.config.get("auto_export") == True:
+                self._auto_export()
+
+            return True  # Just return True, let child class handle the rest
+
+        except Exception as e:
+            self.logger.error(f"Error in stop_recording: {e}")
+            return False
+
+    @abstractmethod
+    def stop_recording(self):
+        """To be implemented by subclasses"""
+        pass
     
+    def _auto_stop_recording(self, duration: int):
+        self.logger.info(f"Starting thread to stop recording after {duration}s")
+        while ((time.time() - self.recording_start_time) < duration):
+            remaining_time = duration - (time.time() - self.recording_start_time)
+            self.logger.info(f"Still recording, {remaining_time}s left")
+            time.sleep(0.5) # Wait
+        self.logger.info("Stopping recording")
+        self._stop_recording()
+
+    """Methods to record health metadata"""
     def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
         """Start a thread to record health metadata. Will continue until stopped."""
         if not filename:
@@ -361,6 +412,7 @@ class Module:
 
     def _stop_recording_health_metadata(self) -> None:
         """Stop an existing health_recording_thread"""
+        self.logger.info("Inside stop_recording_health_metadata call")
         if self.health_recording_thread and self.health_recording_thread.is_alive():
             self.logger.info("Signalling health recording thread to stop")
             self.health_stop_event.set()
@@ -392,31 +444,7 @@ class Module:
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
 
-    def stop_recording(self) -> bool:
-        """
-        Stop recording. Should be extended with module-specific implementation.
-        Returns True if ready to stop, False otherwise.
-        """
-        try:
-            # Check if recording
-            if not self.is_recording:
-                self.logger.info("Already stopped recording")
-                self.communication.send_status({
-                    "type": "recording_stop_failed",
-                    "error": "Not recording"
-                })
-                return False
-
-            self._stop_recording_health_metadata()
-
-            # Get session files
-            self._get_session_files()
-
-        except Exception as e:
-            self.logger.error(f"Error in stop_recording: {e}")
-            return False
-        return True  # Just return True, let child class handle the rest
-
+    """Recorded file management"""
     def _get_session_files(self):
         # Find files that belong to the current recording session
         self.session_files = []
@@ -430,6 +458,7 @@ class Module:
                 self.logger.info(f"Found session file to export: {filename}")
 
     def _auto_export(self):
+        self.logger.info("Auto-export called")
         if self.config.get("auto_export", True) and self.current_filename:
             self.logger.info("Auto-export enabled, exporting recording using export manager")
             try:

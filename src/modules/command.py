@@ -82,25 +82,25 @@ class Command:
         try:
             # Check if the command contains a JSON object
             if '{' in command and '}' in command:
-                self.logger.info(f"Found JSON in command")
+                # self.logger.info(f"Found JSON in command")
                 # Find the first '{' and last '}' to extract the JSON part
                 start_idx = command.find('{')
                 end_idx = command.rfind('}') + 1
                 
-                self.logger.info(f"JSON start: {start_idx}, end: {end_idx}")
+                # self.logger.info(f"JSON start: {start_idx}, end: {end_idx}")
                 
                 # Extract the command part (before the JSON)
                 cmd_part = command[:start_idx].strip()
                 json_part = command[start_idx:end_idx]
                 
-                self.logger.info(f"Command part: '{cmd_part}'")
-                self.logger.info(f"JSON part: '{json_part}'")
+                # self.logger.info(f"Command part: '{cmd_part}'")
+                # self.logger.info(f"JSON part: '{json_part}'")
                 
                 # Parse the command part
                 cmd_parts = cmd_part.split()
                 cmd = cmd_parts[0] if cmd_parts else ""
                 
-                self.logger.info(f"Extracted command: '{cmd}', JSON param: '{json_part}'")
+                # self.logger.info(f"Extracted command: '{cmd}', JSON param: '{json_part}'")
                 
                 # Return the command and the JSON as a single parameter
                 return cmd, [json_part]

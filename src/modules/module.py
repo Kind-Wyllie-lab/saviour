@@ -50,6 +50,19 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 
+def command(name=None):
+    """
+    Decorator to mark a method as a command.
+    Can be used as @command() or @command(name="foo")
+    Commands should return a dict response.
+
+    """
+    def decorator(func):
+        func._is_command = True
+        func._cmd_name = name or func.__name__
+        return func
+    return decorator
+
 class Module(ABC):
     """
     Base class for all modules in the Habitat Controller.
@@ -145,27 +158,14 @@ class Module(ABC):
             role=PTPRole.SLAVE)
         if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
             self.logger.info(f"Initialising command handler")
-            self.command = Command(
-                self.module_id,
-                self.module_type,
-                config=self.config,
-                start_time=None # Will be set during start()
-            )
+            self.command = Command(config=self.config)
 
         self.logger.info(f"Initialising network manager")
 
         self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type)
 
-        # Register Callbacks
-        self.callbacks = { # Define a universal set of callbacks
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
-            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
-            'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+        self.command_callbacks = { # A registry of commands that the module can respond to
             'restart_ptp': self.ptp.restart, # Restart PTP services
-            'get_streaming_status': lambda: self.is_streaming,
-            'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication.send_status(status),
             'get_health': self.health.get_health,
             'start_recording': self._start_recording,
             'stop_recording': self._stop_recording,
@@ -173,20 +173,34 @@ class Module(ABC):
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
-            'handle_command': self.command.handle_command, 
-            'get_config': self.config.get_all, # Gets the complete config from
+            'get_config': self.get_config, # Gets the complete config from
             'set_config': lambda new_config: self.set_config(new_config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
-            'get_log_file_path': self.get_log_file_path, # Get current log file path
             'shutdown': self._shutdown,
-            'when_controller_discovered': self.when_controller_discovered,
-            'controller_disconnected': self.controller_disconnected
         }
-        self.network.set_callbacks(self.callbacks)
-        self.health.set_callbacks(self.callbacks)
-        self.communication.set_callbacks(self.callbacks)
-        self.command.set_callbacks(self.callbacks)
-        self.export.set_callbacks(self.callbacks)
+
+        self.helper_callbacks = { # Define a set of helper methods that allow modules to gain access to state
+            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
+            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
+            'get_samplerate': lambda: self.config.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
+            'send_status': lambda status: self.communication.send_status(status),
+            'handle_command': self.command.handle_command, 
+            'when_controller_discovered': self.when_controller_discovered,
+            'controller_disconnected': self.controller_disconnected,
+            'get_ptp_status': self.ptp.get_status,
+            'get_recording_status': lambda: self.is_recording,
+            'get_streaming_status': lambda: self.is_streaming
+        }
+
+        # Register helper methods with modules
+        self.network.set_callbacks(self.helper_callbacks)
+        self.health.set_callbacks(self.helper_callbacks)
+        self.communication.set_callbacks(self.helper_callbacks)
+        self.command.set_callbacks(self.helper_callbacks)
+        self.export.set_callbacks(self.helper_callbacks)
+    
+        # Register commands with command router
+        self.command.set_commands(self.command_callbacks)
         
         # Recording management
         self.recording_session_id = None
@@ -288,6 +302,7 @@ class Module(ABC):
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
     """Recording methods"""
+    @command()
     def _start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
         #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
@@ -348,6 +363,7 @@ class Module(ABC):
         """To be implemented by subclasses"""
         pass
 
+    @command()
     def _stop_recording(self) -> bool:
         """
         Stop recording. Should be extended with module-specific implementation.
@@ -533,6 +549,7 @@ class Module(ABC):
             # Don't re-raise the exception - return empty list instead
             return []
 
+    @command()
     def list_recordings(self):
         """List all recorded files with metadata and send to controller"""
         try:
@@ -945,6 +962,12 @@ class Module(ABC):
         except Exception as e:
             self.logger.error(f"Error during shutdown: {e}")
 
+    """Config Methods"""
+    @command()
+    def get_config(self):
+        return {"config": self.config.get_all()}
+
+    @command()
     def set_config(self, new_config: dict, persist: bool = False) -> bool:
         """
         Set the entire configuration from a dictionary
@@ -1153,14 +1176,3 @@ class Module(ABC):
         except FileNotFoundError:
             return None
 
-    def get_log_file_path(self) -> str:
-        """Get the current log file path if file logging is enabled"""
-        try:
-            if self.config.get("logging.to_file", True):
-                log_dir = self.config.get("logging.directory", "/var/log/habitat")
-                log_filename = f"{self.module_type}_{self.module_id}.log"
-                return os.path.join(log_dir, log_filename)
-            else:
-                return "File logging disabled"
-        except Exception as e:
-            return f"Error getting log path: {e}"

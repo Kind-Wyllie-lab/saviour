@@ -198,6 +198,7 @@ class Module(ABC):
         self.communication.set_callbacks(self.helper_callbacks)
         self.command.set_callbacks(self.helper_callbacks)
         self.export.set_callbacks(self.helper_callbacks)
+        self.config.on_module_config_change = self.on_module_config_change
     
         # Register commands with command router
         self.command.set_commands(self.command_callbacks)

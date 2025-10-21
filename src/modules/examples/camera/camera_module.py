@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SAVIOUR Camera Module 
+Habitat System - Camera Module Class
 
 This class extends the base Module class to handle camera-specific functionality.
 
@@ -16,22 +16,27 @@ License: GPLv3
 
 # TODO: Consider using http.server instead of flask
 """
+
+import datetime
+import subprocess
 import os
 import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
+from src.modules.module import Module
+from src.modules.command import Command
 import logging
 import numpy as np
+import base64
+import signal
+import shutil
 import threading
 from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import PyavOutput, FfmpegOutput
+import json
 from flask import Flask, Response, request
 import cv2
-
-# SAVIOUR Imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from src.modules.module import Module
-from src.modules.command import Command
 
 class CameraModule(Module):
     def __init__(self, module_type="camera"):        
@@ -59,7 +64,7 @@ class CameraModule(Module):
             
         # Configure camera
         time.sleep(0.1)
-        self.configure_module()
+        self._configure_camera()
         time.sleep(0.1)
 
         # State flags
@@ -79,6 +84,36 @@ class CameraModule(Module):
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
     def configure_module(self):
+        """Override parent method configure module in event that module config changes"""
+        if self.is_streaming:
+            self.logger.info("Camera setttings changed, restarting stream to apply new configuration")
+            self._restarting_stream = True
+            self.stop_streaming()
+            time.sleep(1)
+            try:
+                self._configure_camera()
+                self.logger.info("Camera reconfigured successfully")
+            except Exception as e:
+                self.logger.error(f"Error restarting streaming: {e}")
+            
+            # Restart stream
+            try:
+                self.logger.info("Restarting stream with new settings")
+                self.start_streaming()
+                self.logger.info("Streaming restarted")
+            except Exception as e:
+                self.logger.error(f"Error restarting streaming: {e}")
+            
+            self._restarting_stream = False # Reset the "restarting stream" flag
+        elif not self.is_streaming:
+            self.logger.info("Camera settings changed but not streaming, going straight to applying new configuration")
+            try:
+                self._configure_camera()
+                self.logger.info("Camera reconfigured successfully (not streaming)")
+            except Exception as e:
+                self.logger.error(f"Error reconfiguring camera: {e}")
+
+    def _configure_camera(self):
         """Configure the camera with current settings"""
         try:
             self.logger.info("Configure camera called")
@@ -328,6 +363,7 @@ class CameraModule(Module):
         """Generate streaming frames for MJPEG stream"""
         import time
         self.logger.info("Starting to generate streaming frames")
+
         while not self.should_stop_streaming:
             try:
                 self.logger.debug("Capturing frame...")

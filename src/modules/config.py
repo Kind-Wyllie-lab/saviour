@@ -19,12 +19,12 @@ class Config:
     """Manages configuration for habitat modules"""
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {
-        "MODULE_CMD_PORT": "communication.command_socket_port",
-        "MODULE_STATUS_PORT": "communication.status_socket_port",
-        "CONTROLLER_USERNAME": "controller_username",
-        "CONTROLLER_PASSWORD": "controller_password",
-        "NAS_USERNAME": "nas_username",
-        "NAS_PASSWORD": "nas_password"
+        "MODULE_CMD_PORT": "_communication.command_socket_port",
+        "MODULE_STATUS_PORT": "_communication.status_socket_port",
+        "CONTROLLER_USERNAME": "_controller_username",
+        "CONTROLLER_PASSWORD": "_controller_password",
+        "NAS_USERNAME": "_nas_username",
+        "NAS_PASSWORD": "_nas_password"
     }
     
     def __init__(
@@ -57,6 +57,7 @@ class Config:
         self.logger.info(f"Module config loaded - {len(self.config)} parameters")
         self.save_active()
         self.logger.info(f"Config saved to {self.active_config_path}")
+        
 
     def _apply_env_override(self):
         """Override config values using environment variables"""
@@ -235,7 +236,7 @@ class Config:
             return False
 
         if _check_if_module_config_updated(key_path):
-            self.callbacks["on_module_config_change"]()
+            self.on_module_config_change()
 
         current[last] = value
         if persist:
@@ -259,7 +260,12 @@ class Config:
             updates: dict with new values (can be nested)
             persist: whether to save active_config after update
         """
+    
+        self.logger.info("Set_all called for config")
+        module_config_updated = False # Flag to track if we should notify that the module settings were updated
+
         def _recursive_update(target, source, parent_key=""):
+            nonlocal module_config_updated
             for k, v in source.items():
                 full_key = f"{parent_key}.{k}" if parent_key else k
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
@@ -269,8 +275,12 @@ class Config:
                     # Track module-specific changes
                     if hasattr(self, "module_config_keys") and full_key in self.module_config_keys:
                         self.logger.info(f"Module-specific config updated: {full_key}")
+                        module_config_updated = True
 
         _recursive_update(self.config, updates)
+
+        if module_config_updated == True:
+            self.on_module_config_change()
 
         if persist:
             self.save_active()

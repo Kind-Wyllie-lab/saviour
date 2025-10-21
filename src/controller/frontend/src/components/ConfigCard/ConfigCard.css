@@ -5,12 +5,43 @@
   border-radius: 6px;
   background: var(--card-bg-color);
   color: var(--text-color);
-  max-width: 400px;
+  max-width: 800px;
   display: flex;
   flex-direction: column;
   align-items: center;
   align-items: stretch;   /* <-- make children stretch horizontally */
   align-self: flex-start; /* <-- let card shrink to its content height */
+  box-shadow: 0 0 20px black;
+}
+
+.config-card.collapsed {
+flex: 0 1 auto;
+max-width: 350px;
+width: auto;
+}
+
+.config-card-body {
+display: flex;
+flex-direction: row;
+gap: 16px;
+justify-content: space-between;
+align-items: flex-start;
+}
+
+.config-form {
+flex: 1 1 400px;
+border: 1px solid var(--border-color);
+border-radius: 8px;
+padding: 10px;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: space-between;
+}
+
+.livestream-wrapper {
+flex: 1 1 auto;
+max-width: 600px;
 }
 
 .nested-fieldset {
@@ -25,13 +56,20 @@
 
 .form-field {
   display: flex;
+  justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
 }
 
 .form-field label {
+  flex: 0 0 40%;
   width: 180px;
   font-weight: 500;
+}
+
+.form-field input {
+  flex: 1 1 auto;
+  max-width: 100px;
 }
 
 .form-field input[type="text"],
@@ -51,6 +89,7 @@
 .save-button {
   padding: 4px 6px;
   border-radius: 4px;
+  max-width: 200px;
   border: none;
   background-color: var(--accent-color);
   color: white;

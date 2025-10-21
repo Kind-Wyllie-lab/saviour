@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from "react";
 import './ConfigCard.css';
+import LivestreamCard from "../LivestreamCard/LivestreamCard";
 
-function ConfigCard({ id, config }) {
-  const [formData, setFormData] = useState(config);
+function ConfigCard({ id, module }) {
+  const [formData, setFormData] = useState(module.config);
   const [collapsed, setCollapsed] = useState(false); // top-level collapse
   const [collapsedSections, setCollapsedSections] = useState({}); // per-section collapse
 
   // Keep formData synced if parent updates config
-  useEffect(() => setFormData(config), [config]);
+  useEffect(() => setFormData(module.config), [module.config]);
+
+  console.log(`Generating config card for ${id}:`, module.config);
 
   const handleChange = (path, e) => {
     const newData = { ...formData };
@@ -64,12 +67,12 @@ function ConfigCard({ id, config }) {
     import("../../socket").then(({ default: socket }) => {
       const formattedData = { editable: formData };
       console.log("Saving config for module", id, formattedData);
-      socket.emit("save_module_config", { id, config: formattedData });
+      socket.emit("save_module_config", { id: id, config: formattedData });
     });
   };
 
   return (
-    <div className="config-card">
+    <div className={`config-card ${collapsed ? "collapsed" : ""}`}>
       <div className="card-header">
         <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
           {id} {collapsed ? "(+)" : "(-)"}
@@ -78,8 +81,21 @@ function ConfigCard({ id, config }) {
 
       {!collapsed && (
         <>
-          <form>{renderFields(formData)}</form>
-          <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
+        <div className="config-card-body">
+          <div className="config-form">
+            <form>{renderFields(formData)}</form>
+            <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
+          </div>
+
+            {/* Render livestream only for camera modules */}
+          {module.type.includes("camera") && (
+            <div className="livestream-wrapper">
+              <LivestreamCard module={module} />
+            </div>
+          )}
+        </div>
+
+
         </>
       )}
     </div>

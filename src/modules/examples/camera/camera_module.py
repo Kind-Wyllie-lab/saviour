@@ -73,7 +73,7 @@ class CameraModule(Module):
         self.frame_times = []  # For storing frame timestamps
 
         # Update config 
-        self.config.load_additional("camera_config.json")
+        self.config.load_module_config("camera_config.json")
 
         # Set up camera-specific callbacks for the command handler
         self.camera_callbacks = {

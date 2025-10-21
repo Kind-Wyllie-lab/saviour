@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Camera Module Class
+SAVIOUR Camera Module 
 
 This class extends the base Module class to handle camera-specific functionality.
 
@@ -59,7 +59,7 @@ class CameraModule(Module):
             
         # Configure camera
         time.sleep(0.1)
-        self.configure_camera()
+        self.configure_module()
         time.sleep(0.1)
 
         # State flags
@@ -78,7 +78,7 @@ class CameraModule(Module):
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
-    def configure_camera(self):
+    def configure_module(self):
         """Configure the camera with current settings"""
         try:
             self.logger.info("Configure camera called")
@@ -132,67 +132,6 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
-
-    def set_config(self, new_config: dict, persist: bool) -> bool:
-        # Check if camera settings are being changed
-        camera_config_changed = False
-        if 'editable' in new_config and 'camera' in new_config['editable']:
-            current_camera_config = self.config.get("camera")
-            new_camera_config = new_config['editable']['camera']
-            
-            # Check if any camera settings are different
-            for key in ['fps', 'width', 'height', 'file_format']:
-                if key in new_camera_config and current_camera_config.get(key) != new_camera_config[key]:
-                    camera_config_changed = True
-                    self.logger.info("Camera config has changed")
-                    break
-        
-        # Apply the config first
-        success = super().set_config(new_config, persist)
-        if success:
-            # If camera settings changed and we're streaming, restart the stream
-            # TODO: Should this also restart recording? Not really, as we never want to change settings while recording, right? So maybe prevent this happening.
-            self.logger.info("Checking if camera config changed and currently streaming")
-            if camera_config_changed and self.is_streaming:
-                self.logger.info("Camera settings changed, restarting stream to apply new configuration")
-                
-                # Set restart flag to prevent incorrect status reports
-                self._restarting_stream = True
-                
-                # Stop streaming
-                self.stop_streaming()
-                
-                # Wait a moment for the stream to fully stop
-                time.sleep(1)
-                
-                # Configure camera with new settings
-                try:
-                    self.configure_camera()
-                    self.logger.info("Camera reconfigured successfully")
-                except Exception as e:
-                    self.logger.error(f"Error reconfiguring camera: {e}")
-                
-                # Restart streaming
-                try:
-                    self.logger.info("Restarting stream with new settings")
-                    self.start_streaming()
-                    self.logger.info("Streaming restarted with new camera settings")
-                except Exception as e:
-                    self.logger.error(f"Error restarting streaming: {e}")
-                
-                # Clear restart flag after restart is complete
-                self._restarting_stream = False
-            elif camera_config_changed and not self.is_streaming:
-                # Camera settings changed but we're not streaming, just reconfigure
-                self.logger.info("Camera config changed but not streaming")
-                try:
-                    self.configure_camera()
-                    self.logger.info("Camera reconfigured successfully (not streaming)")
-                except Exception as e:
-                    self.logger.error(f"Error reconfiguring camera: {e}")
-            else:
-                self.logger.info("Camera config not changed")
-        return success
 
     def _start_recording(self):
         """Implement camera-specific recording functionality"""

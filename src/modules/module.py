@@ -188,7 +188,8 @@ class Module(ABC):
             'controller_disconnected': self.controller_disconnected,
             'get_ptp_status': self.ptp.get_status,
             'get_recording_status': lambda: self.is_recording,
-            'get_streaming_status': lambda: self.is_streaming
+            'get_streaming_status': lambda: self.is_streaming,
+            "on_module_config_change": self.on_module_config_change
         }
 
         # Register helper methods with modules
@@ -221,6 +222,14 @@ class Module(ABC):
 
         # Track when module started for uptime calculation
         self.start_time = None
+
+    def on_module_config_change(self):
+        self.logger.info("Received notification that module config changed, calling configure_module()")
+        self.configure_module()
+
+    @abstractmethod
+    def configure_module(self):
+        self.logger.warning("No implementation provided for abstract method configure_module")
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -967,7 +976,7 @@ class Module(ABC):
         return {"config": self.config.get_all()}
 
     @command()
-    def set_config(self, new_config: dict, persist: bool = False) -> bool:
+    def set_config(self, new_config: dict, persist: bool = True) -> bool:
         """
         Set the entire configuration from a dictionary
         
@@ -985,16 +994,11 @@ class Module(ABC):
                 return False
             
             # Use the config manager's merge method to update the config
-            self.config._merge_configs(self.config.config, new_config)
-            
-            # Persist to file if requested
-            if persist:
-                return self.config.save_config()
-            
-            return True
+            self.config.set_all(new_config, persist=persist)
+            return {"result": "success"}
         except Exception as e:
             self.logger.error(f"Error setting all config: {e}")
-            return False
+            return {"result": f"Error setting all config: {e}"}
 
 
     def _get_required_disk_space_mb(self) -> float:

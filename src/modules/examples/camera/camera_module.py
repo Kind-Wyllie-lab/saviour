@@ -38,91 +38,10 @@ import json
 from flask import Flask, Response, request
 import cv2
 
-class CameraCommand(Command):
-    """Command handler specific to camera functionality"""
-    def __init__(self, module_id, module_type, config=None, start_time=None):
-        super().__init__(module_id, module_type, config, start_time)
-        self.logger.info("Initialised")
-
-    def handle_command(self, command: str):
-        """Handle camera-specific commands while preserving base functionality"""
-        self.logger.info("Checking for camera specific commands.")
-        
-        try:
-            # Parse command and parameters
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
-            
-            # Handle camera-specific commands
-            match cmd:
-                case "start_streaming":
-                    self._handle_start_streaming(params)
-                case "stop_streaming":
-                    self._handle_stop_streaming()
-                case _:
-                    # If not a camera-specific command, pass to parent class
-                    super().handle_command(command)
-                    
-        except Exception as e:
-            self._handle_error(e)
-
-    def _handle_start_streaming(self, params: list):
-        """Handle start_streaming command"""
-        self.logger.info("Command identified as start_streaming")
-        try:
-            # Default to localhost if no IP provided
-            receiver_ip = params[0] if params else None # TODO: No longer required
-            port = params[1] if len(params) > 1 else "10001" # TODO: No longer required with flask approach?
-            
-            if 'start_streaming' in self.callbacks:
-                self.callbacks['start_streaming'](receiver_ip, port)
-            else:
-                self.logger.error("(COMMAND HANDLER) No start_streaming callback provided")
-                self.callbacks["send_status"]({
-                    "type": "streaming_start_failed",
-                    "error": "Module not configured for streaming"
-                })
-        except Exception as e:
-            self.logger.error(f"(COMMAND HANDLER) Error starting stream: {str(e)}")
-            self.callbacks["send_status"]({
-                "type": "streaming_start_failed",
-                "error": str(e)
-            })
-
-    def _handle_stop_streaming(self):
-        """Handle stop_streaming command"""
-        self.logger.info("Command identified as stop_streaming")
-        if 'stop_streaming' in self.callbacks:
-            success = self.callbacks['stop_streaming']()
-            if success:
-                self.callbacks["send_status"]({
-                    "type": "streaming_stopped"
-                })
-            else:
-                self.callbacks["send_status"]({
-                    "type": "streaming_stop_failed",
-                    "error": "Failed to stop streaming"
-                })
-        else:
-            self.logger.error("(COMMAND HANDLER) No stop_streaming callback provided")
-            self.callbacks["send_status"]({
-                "type": "streaming_stop_failed",
-                "error": "Module not configured for streaming"
-            })
-
 class CameraModule(Module):
-    def __init__(self, module_type="camera", config=None, config_file_path=None):
-        # Initialize command handler before parent class
-        self.command = CameraCommand(
-            module_id=self.generate_module_id(module_type),
-            module_type=module_type,
-            config=None,  # Will be set by parent class
-            start_time=None  # Will be set during start()
-        )
-        
+    def __init__(self, module_type="camera"):        
         # Call the parent class constructor
-        super().__init__(module_type, config, config_file_path)
+        super().__init__(module_type)
     
         # Initialize camera
         self.picam2 = Picamera2()
@@ -145,7 +64,7 @@ class CameraModule(Module):
             
         # Configure camera
         time.sleep(0.1)
-        self.configure_camera()
+        self._configure_camera()
         time.sleep(0.1)
 
         # State flags
@@ -153,35 +72,48 @@ class CameraModule(Module):
         self.is_streaming = False
         self.frame_times = []  # For storing frame timestamps
 
+        # Update config 
+        self.config.load_module_config("camera_config.json")
+
         # Set up camera-specific callbacks for the command handler
-        # TODO: is this necessary? Already done in base class? We just want to append new camera-specific callbacks
         self.camera_callbacks = {
-            'get_streaming_status': lambda: self.is_streaming,
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming
         }
-        self.command.set_callbacks({
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp.get_status,
-            'get_streaming_status': lambda: self.is_streaming,
-            'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication.send_status(status),
-            'get_health': self.health.get_health,
-            'start_recording': self._start_recording,
-            'stop_recording': self._stop_recording,
-            'list_recordings': self.list_recordings,
-            'clear_recordings': self._clear_recordings,
-            'export_recordings': self.export_recordings,
-            'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.network.controller_ip,
-            'shutdown': self._shutdown,
-        })
-
+        self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
-    def configure_camera(self):
+    def configure_module(self):
+        """Override parent method configure module in event that module config changes"""
+        if self.is_streaming:
+            self.logger.info("Camera setttings changed, restarting stream to apply new configuration")
+            self._restarting_stream = True
+            self.stop_streaming()
+            time.sleep(1)
+            try:
+                self._configure_camera()
+                self.logger.info("Camera reconfigured successfully")
+            except Exception as e:
+                self.logger.error(f"Error restarting streaming: {e}")
+            
+            # Restart stream
+            try:
+                self.logger.info("Restarting stream with new settings")
+                self.start_streaming()
+                self.logger.info("Streaming restarted")
+            except Exception as e:
+                self.logger.error(f"Error restarting streaming: {e}")
+            
+            self._restarting_stream = False # Reset the "restarting stream" flag
+        elif not self.is_streaming:
+            self.logger.info("Camera settings changed but not streaming, going straight to applying new configuration")
+            try:
+                self._configure_camera()
+                self.logger.info("Camera reconfigured successfully (not streaming)")
+            except Exception as e:
+                self.logger.error(f"Error reconfiguring camera: {e}")
+
+    def _configure_camera(self):
         """Configure the camera with current settings"""
         try:
             self.logger.info("Configure camera called")
@@ -236,68 +168,7 @@ class CameraModule(Module):
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
 
-    def set_config(self, new_config: dict, persist: bool) -> bool:
-        # Check if camera settings are being changed
-        camera_config_changed = False
-        if 'editable' in new_config and 'camera' in new_config['editable']:
-            current_camera_config = self.config.get("camera")
-            new_camera_config = new_config['editable']['camera']
-            
-            # Check if any camera settings are different
-            for key in ['fps', 'width', 'height', 'file_format']:
-                if key in new_camera_config and current_camera_config.get(key) != new_camera_config[key]:
-                    camera_config_changed = True
-                    self.logger.info("Camera config has changed")
-                    break
-        
-        # Apply the config first
-        success = super().set_config(new_config, persist)
-        if success:
-            # If camera settings changed and we're streaming, restart the stream
-            # TODO: Should this also restart recording? Not really, as we never want to change settings while recording, right? So maybe prevent this happening.
-            self.logger.info("Checking if camera config changed and currently streaming")
-            if camera_config_changed and self.is_streaming:
-                self.logger.info("Camera settings changed, restarting stream to apply new configuration")
-                
-                # Set restart flag to prevent incorrect status reports
-                self._restarting_stream = True
-                
-                # Stop streaming
-                self.stop_streaming()
-                
-                # Wait a moment for the stream to fully stop
-                time.sleep(1)
-                
-                # Configure camera with new settings
-                try:
-                    self.configure_camera()
-                    self.logger.info("Camera reconfigured successfully")
-                except Exception as e:
-                    self.logger.error(f"Error reconfiguring camera: {e}")
-                
-                # Restart streaming
-                try:
-                    self.logger.info("Restarting stream with new settings")
-                    self.start_streaming()
-                    self.logger.info("Streaming restarted with new camera settings")
-                except Exception as e:
-                    self.logger.error(f"Error restarting streaming: {e}")
-                
-                # Clear restart flag after restart is complete
-                self._restarting_stream = False
-            elif camera_config_changed and not self.is_streaming:
-                # Camera settings changed but we're not streaming, just reconfigure
-                self.logger.info("Camera config changed but not streaming")
-                try:
-                    self.configure_camera()
-                    self.logger.info("Camera reconfigured successfully (not streaming)")
-                except Exception as e:
-                    self.logger.error(f"Error reconfiguring camera: {e}")
-            else:
-                self.logger.info("Camera config not changed")
-        return success
-
-    def start_recording(self):
+    def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
         filename = f"{self.current_filename}.{self.recording_filetype}"
@@ -371,7 +242,7 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
-    def stop_recording(self):
+    def _stop_recording(self):
         """Camera Specific implementation of stop recording"""
         try:
             self.logger.info("Attempting to stop camera specific recording")
@@ -492,6 +363,7 @@ class CameraModule(Module):
         """Generate streaming frames for MJPEG stream"""
         import time
         self.logger.info("Starting to generate streaming frames")
+
         while not self.should_stop_streaming:
             try:
                 self.logger.debug("Capturing frame...")

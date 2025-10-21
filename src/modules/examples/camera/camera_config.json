@@ -1,0 +1,16 @@
+{
+    "camera": {
+        "monochrome": false,
+        "width": 1080,
+        "height": 1080,
+        "fps": 30,
+        "text_scale": 2,
+        "text_thickness": 3,
+        "_codec": "h264",
+        "_profile": "high",
+        "_level": 4.2,
+        "_bitrate": 2000000,
+        "_file_format": "mp4"
+    }
+}
+

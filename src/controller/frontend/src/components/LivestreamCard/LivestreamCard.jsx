@@ -9,6 +9,7 @@ function LivestreamCard({ module }) {
   const [streamKey, setStreamKey] = useState(Date.now());
 
   // heartbeat watchdog
+/*
   useEffect(() => {
     const interval = setInterval(() => {
       if (Date.now() - lastFrameTime > 5000) {
@@ -19,7 +20,7 @@ function LivestreamCard({ module }) {
 
     return () => clearInterval(interval);
   }, [lastFrameTime]);
-
+*/
   return (
     <>
       <div className="livestream-card">

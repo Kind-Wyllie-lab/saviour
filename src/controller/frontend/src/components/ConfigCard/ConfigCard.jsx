@@ -10,7 +10,29 @@ function ConfigCard({ id, module }) {
   // Keep formData synced if parent updates config
   useEffect(() => setFormData(module.config), [module.config]);
 
-  console.log(`Generating config card for ${id}:`, module.config);
+  // Recursively remove private keys and prune empty objects
+  const filterPrivateKeys = (obj) => {
+    if (!obj || typeof obj !== "object") return obj;
+
+    const filtered = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (!key.startsWith("_")) {
+        const filteredValue = typeof value === "object" ? filterPrivateKeys(value) : value;
+        // Only include if not undefined, null, or empty object
+        if (
+          filteredValue !== undefined &&
+          filteredValue !== null &&
+          (typeof filteredValue !== "object" || Object.keys(filteredValue).length > 0)
+        ) {
+          filtered[key] = filteredValue;
+        }
+      }
+    }
+
+    // Return undefined if object became empty
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  };
+
 
   const handleChange = (path, e) => {
     const newData = { ...formData };
@@ -30,25 +52,30 @@ function ConfigCard({ id, module }) {
   const getValueFromPath = (path) => path.reduce((acc, key) => acc[key], formData);
 
   const renderFields = (obj, path = []) => {
-    return Object.entries(obj).map(([key, value]) => {
+    const filteredObj = filterPrivateKeys(obj);
+    if (!filteredObj) return null; // skip empty parents
+  
+    return Object.entries(filteredObj).map(([key, value]) => {
       const fieldPath = [...path, key];
       const fieldKey = fieldPath.join(".");
-
+  
       if (typeof value === "object" && value !== null) {
-        const collapsed = collapsedSections[fieldKey] ?? false;
+        const collapsedSection = collapsedSections[fieldKey] ?? false;
         return (
           <fieldset key={fieldKey} className="nested-fieldset">
             <legend
-              onClick={() => setCollapsedSections(prev => ({ ...prev, [fieldKey]: !collapsed }))}
+              onClick={() =>
+                setCollapsedSections(prev => ({ ...prev, [fieldKey]: !collapsedSection }))
+              }
               style={{ cursor: "pointer" }}
             >
-              {key} {collapsed ? "(+)" : "(-)"}
+              {key} {collapsedSection ? "(+)" : "(-)"}
             </legend>
-            {!collapsed && <div className="nested">{renderFields(value, fieldPath)}</div>}
+            {!collapsedSection && <div className="nested">{renderFields(value, fieldPath)}</div>}
           </fieldset>
         );
       }
-
+  
       return (
         <div key={fieldKey} className="form-field">
           <label>{key}:</label>
@@ -62,12 +89,14 @@ function ConfigCard({ id, module }) {
       );
     });
   };
+  
 
   const handleSave = () => {
     import("../../socket").then(({ default: socket }) => {
-      const formattedData = { editable: formData };
-      console.log("Saving config for module", id, formattedData);
-      socket.emit("save_module_config", { id: id, config: formattedData });
+      const editableData = filterPrivateKeys(formData); // only send editable keys
+      const wrappedData = { config: editableData };
+      console.log("Saving config for module", id, wrappedData);
+      socket.emit("save_module_config", { id: id, config: wrappedData });
     });
   };
 
@@ -80,23 +109,19 @@ function ConfigCard({ id, module }) {
       </div>
 
       {!collapsed && (
-        <>
         <div className="config-card-body">
           <div className="config-form">
             <form>{renderFields(formData)}</form>
             <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
           </div>
 
-            {/* Render livestream only for camera modules */}
+          {/* Render livestream only for camera modules */}
           {module.type.includes("camera") && (
             <div className="livestream-wrapper">
               <LivestreamCard module={module} />
             </div>
           )}
         </div>
-
-
-        </>
       )}
     </div>
   );

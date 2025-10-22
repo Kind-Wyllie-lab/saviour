@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import socket from "../../socket";
 import "./ExperimentMetadata.css";
 
-function ExperimentMetadata({ setExperimentName }) {
+function ExperimentMetadata( {experimentName} ) {
   const [metadata, setMetadata] = useState({
     experiment: "demo",
     rat_id: "001",
@@ -17,9 +17,9 @@ function ExperimentMetadata({ setExperimentName }) {
     socket.emit("get_experiment_metadata");
 
     const handleResponse = (data) => {
+      console.log("Received experiment_metadata_update from backend: ", data);
       if (data.status === "success") {
         setMetadata(data.metadata);
-        setExperimentName(generateExperimentName(data.metadata));
       }
     };
 
@@ -36,18 +36,8 @@ function ExperimentMetadata({ setExperimentName }) {
   const handleChange = (field, value) => {
     const updated = { ...metadata, [field]: value };
     setMetadata(updated);
-
-    // Update experiment name in Dashboard
-    setExperimentName(generateExperimentName(updated));
-
     // Send updated metadata to backend
     socket.emit("update_experiment_metadata", updated);
-  };
-
-  // Generate experiment name from metadata
-  const generateExperimentName = (data = metadata) => {
-    const { experiment, rat_id, strain, batch, stage, trial } = data;
-    return `${experiment}_${rat_id}_${strain}_${batch}_${stage}_t${trial}`;
   };
 
   return (
@@ -113,7 +103,7 @@ function ExperimentMetadata({ setExperimentName }) {
         />
       </div>
 
-      <div className="experiment-name-preview">{generateExperimentName()}</div>
+      <div className="experiment-name-preview">{experimentName}</div>
     </div>
   );
 }

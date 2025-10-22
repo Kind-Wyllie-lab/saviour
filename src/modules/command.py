@@ -35,7 +35,7 @@ class Command:
         self.callbacks = {} # Dict of callbacks to enable routing commands
         self.commands = {}
         
-    def set_callbacks(self, callbacks: Dict[str, Callable]):
+    def set_callbacks(self, callbacks: Dict[r, Callable]):
         """
         Set callbacks for data operations that can't be directly handled by the command handler
         
@@ -141,7 +141,7 @@ class Command:
                 self.logger.info(f"Executing without arguments")
                 result = handler()
             else:
-                result = handler(params) 
+                result = handler(**params) # Unpack params into arguments 
         
             # 4. Send response to controller
             response = {"type": cmd}

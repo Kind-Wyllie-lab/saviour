@@ -173,7 +173,7 @@ class Module(ABC):
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
             'get_config': self.get_config, # Gets the complete config from
-            'set_config': lambda new_config: self.set_config(new_config, persist=True), # Uses a dict to update the config manager
+            'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
         }
@@ -320,11 +320,12 @@ class Module(ABC):
         Args:
             experiment_name: Optional experiment name to prefix the filename
             duration: Optional duration parameter (not currently used)
-            experiment_folder: Optional experiment folder name for export
+            experiment_folder: Optional experiment folder name for exports
             controller_share_path: Optional controller share path for export
             
         Returns the filename if setup was successful, None otherwise.
         """
+        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}, experiment_folder {experiment_folder}, controller_share_path {controller_share_path}")
         # Check not already recording
         if self.is_recording:
             self.logger.info("Already recording")
@@ -977,25 +978,26 @@ class Module(ABC):
         return {"config": self.config.get_all()}
 
     @command()
-    def set_config(self, new_config: dict, persist: bool = True) -> bool:
+    def set_config(self, config: dict, persist: bool = True) -> bool:
         """
         Set the entire configuration from a dictionary
         
         Args:
-            new_config: Dictionary containing the new configuration
+            config: Dictionary containing the new configuration
             persist: Whether to persist the changes to the config file
             
         Returns:
             True if successful, False otherwise
         """
+        self.logger.info(f"Set config called with config {config} and persist {persist}")
         try:
-            # Validate that new_config is a dictionary
-            if not isinstance(new_config, dict):
-                self.logger.error(f"set_config called with non-dict argument: {type(new_config)}")
+            # Validate that config is a dictionary
+            if not isinstance(config, dict):
+                self.logger.error(f"set_config called with non-dict argument: {type(config)}")
                 return False
             
             # Use the config manager's merge method to update the config
-            self.config.set_all(new_config, persist=persist)
+            self.config.set_all(config, persist=persist)
             return {"result": "success"}
         except Exception as e:
             self.logger.error(f"Error setting all config: {e}")

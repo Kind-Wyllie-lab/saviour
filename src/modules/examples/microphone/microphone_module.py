@@ -90,14 +90,6 @@ class AudiomothCommand(Command):
 
 class AudiomothModule(Module):
     def __init__(self, module_type="microphone", config=None, config_file_path=None):
-        # Initialize command handler before parent class
-        self.command = AudiomothCommand(
-            module_id=self.generate_module_id(module_type),
-            module_type=module_type,
-            config=None,  # Will be set by parent class
-            start_time=None  # Will be set during start()
-        )
-        
         # Call the parent class constructor
         super().__init__(module_type, config, config_file_path)
     
@@ -114,33 +106,23 @@ class AudiomothModule(Module):
         self.latest_recording = None
         self.recording_start_time = None
 
+        # Update config 
+        self.config.load_module_config("microphone_config.json")
+
         # Set up audiomoth-specific callbacks for the command handler
-        # TODO: is this necessary? Already done in base class? We just want to append new audiomoth-specific callbacks
-        self.command.set_callbacks({
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp.get_status,
-            'get_streaming_status': lambda: self.is_streaming,
-            'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication.send_status(status),
-            'get_health': self.health.get_health,
-            'start_recording': self.start_recording,
-            'stop_recording': self.stop_recording,
-            'list_recordings': self.list_recordings,
-            'clear_recordings': self.clear_recordings,
-            'export_recordings': self.export_recordings,
-            'handle_update_audiomoth_settings': self.handle_update_audiomoth_settings,  # audiomoth specific
-            'get_latest_recording': self.get_latest_recording,  # audiomoth specific
-            'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming,
-            'get_controller_ip': self.network.controller_ip,
-            'shutdown': self._shutdown,
-        })
-        #self.command.set_callbacks({})
+        self.audiomoth_callbacks = {
+            'monitor': self.monitor
+        }
+        self.command.set_callbacks(self.audiomoth_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
     def configure_module(self):
         self.logger.info("No implementation yet for configure_module in audiomoth")
+
+    @command
+    def list_audiomoths(self):
+        """Returns dict containing list of audiomoths""" 
+        return {"audiomoths": self.audiomoths}
 
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()
@@ -220,7 +202,7 @@ class AudiomothModule(Module):
     def _start_recording(self, experiment_name: str = None, duration: str = "1", experiment_folder: str = None, controller_share_path: str = None) -> bool:
         """Start continuous audio recording"""
         self.logger.info("Executing audiomoth specific recording functionality...")
-        
+
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
 

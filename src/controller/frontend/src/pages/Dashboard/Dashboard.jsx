@@ -20,12 +20,13 @@ socket.on("disconnect", () => {
 
 function Dashboard() {
   const [modules, setModules] = useState({}); // Modules object returned from backend
-  const [experimentName, setExperimentName] = useState(""); // The experiment name 
+  const [experimentName, setExperimentName] = useState("loading..."); // The experiment name 
 
   useEffect(() => {
     console.log("Emitting get_modules");
     socket.emit("get_module_configs"); // Ask backend for module configs
     socket.emit("get_modules"); // Ask backend for modules
+    socket.emit("get_experiment_metadata");
 
     // Expecting data.modules like
     // { "camera_d610": { ip: "192.168.1.136", type: "camera", online: true } }
@@ -41,10 +42,29 @@ function Dashboard() {
       setModules(withDefaults);
     });
 
+    socket.on("experiment_metadata_response", (data) => {
+      setExperimentName(data.experiment_name);
+    });
+
     return () => {
       socket.off("modules_update"); // Unregister listener to prevent multiple listeners on component re-render or remount
+      socket.off("experiment_metadata_response");
       // socket.off("update_module_readiness"); // As above
     };
+  }, []);
+
+
+  useEffect(() => {
+    socket.on("experiment_metadata_updated", (data) => {
+      if (data.experiment_name) {
+        setExperimentName(data.experiment_name);
+      }
+    });
+
+    // On mount, request latest metadata
+    socket.emit("get_experiment_metadata");
+
+    return () => socket.off("experiment_metadata_updated");
   }, []);
 
   // Convert modujles object to array for easy rendering
@@ -84,7 +104,7 @@ function Dashboard() {
 
         <div className="sidebar-container">
           <section>
-            <ExperimentMetadata setExperimentName={setExperimentName} />
+            <ExperimentMetadata experimentName={experimentName} />
           </section>
           <section>
             <CommandsPanel modules={moduleList} experimentName={experimentName} />

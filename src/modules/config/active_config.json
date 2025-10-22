@@ -45,7 +45,7 @@
     "_nas_username": "sidbit,",
     "_nas_password": "RaspberryWonder1305",
     "camera": {
-        "monochrome": false,
+        "monochrome": true,
         "width": 1280,
         "height": 720,
         "fps": 30,

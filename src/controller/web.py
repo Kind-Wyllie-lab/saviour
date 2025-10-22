@@ -179,16 +179,16 @@ class Web:
                         # For streaming, we need client_ip and port
                         client_ip = params.get('client_ip')
                         port = params.get('port', 8080)  # Default to 8080 if not specified
-                        command = f"{command_type} client_ip={client_ip} port={port}"
+                        command = f"{command_type}"
+                        params = {"client_ip": client_ip, "port": port}
                     else:
-                        # For other commands, format as key=value pairs
-                        param_strings = [f"{k}={v}" for k, v in params.items()]
-                        command = f"{command_type} {' '.join(param_strings)}"
+                        # For other commands format as cmd/module_id command_type {params}
+                        command = command_type
                 
                 # Send command to module
                 if self.callbacks["send_command"]:
                     self.callbacks["send_command"](module_id, command, params)
-                    self.logger.info(f"Command sent successfully: {command} to module {module_id}")
+                    self.logger.info(f"Command sent successfully: {command} to module {module_id} with params {params}")
                     
                     # If this was a clear_recordings command, request updated list
                     if command_type == 'clear_recordings':

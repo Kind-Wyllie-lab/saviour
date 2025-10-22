@@ -516,7 +516,7 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/usr/local/src/saviour/src/modules/${MODULE_TYPE}/
+WorkingDirectory=/usr/local/src/saviour/src/modules/examples/${MODULE_TYPE}/
 ExecStart=/usr/local/src/saviour/env/bin/python ${MODULE_TYPE}_module.py
 Restart=always
 RestartSec=10

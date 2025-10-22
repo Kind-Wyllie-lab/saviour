@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Camera Module Class
+SAVIOUR System - Camera Module Class
 
 This class extends the base Module class to handle camera-specific functionality.
 

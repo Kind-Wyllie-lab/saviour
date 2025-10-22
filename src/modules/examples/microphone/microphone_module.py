@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Audiomoth Module Class
+SAVIOUR System - Audiomoth Module Class
 
 This class extends the base Module class to handle audiomoth-specific functionality.
 
@@ -9,7 +9,7 @@ Author: Andrew SG / Domagoj Anticic
 Created: 18/08/2025
 License: GPLv3
 
-# TODO: Consider using http.server instead of flask
+# TODO: Refactor to override abstract methods configure_module, _start_recording, _stop_recording
 """
 
 import datetime
@@ -23,14 +23,9 @@ from src.modules.command import Command
 import logging
 import numpy as np
 import threading
-import json
 import soundfile 
 import soundcard
 import re
-
-
-
-
 
 class AudiomothCommand(Command):
     """Command handler specific to audiomoth functionality"""
@@ -144,6 +139,9 @@ class AudiomothModule(Module):
         #self.command.set_callbacks({})
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
+    def configure_module(self):
+        self.logger.info("No implementation yet for configure_module in audiomoth")
+
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()
         for mic in self.mics:
@@ -213,20 +211,18 @@ class AudiomothModule(Module):
         pass
     
     def start_streaming(self):
+        # TODO: Could monitor stuff go here? It's basically streaming but for audio
         pass
 
     def stop_streaming(self):
         pass
 
-    def start_recording(self, experiment_name: str = None, duration: str = "1", experiment_folder: str = None, controller_share_path: str = None) -> bool:
-        """Start continuous video recording"""
+    def _start_recording(self, experiment_name: str = None, duration: str = "1", experiment_folder: str = None, controller_share_path: str = None) -> bool:
+        """Start continuous audio recording"""
+        self.logger.info("Executing audiomoth specific recording functionality...")
+        
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
-
-        # First call parent class to handle common recording setup
-        filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
-        if not filename:
-            return False
 
         try: 
             #if there are audiomoths connected
@@ -277,12 +273,8 @@ class AudiomothModule(Module):
                 })
             return False
 
-    def stop_recording(self) -> bool:
+    def _stop_recording(self) -> bool:
         """Stop continuous video recording"""
-        # First check if recording using parent class
-        if not super().stop_recording():
-            return False
-        
         try:
             # Stop recording with audiomoth-specific code
             pass

@@ -310,6 +310,12 @@ class Module(ABC):
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
+    def _create_safe_experiment_name(self, experiment_name):
+        # TODO: Tie this in with experiment filename creation in start_recording method.
+        safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_experiment_name = safe_experiment_name.replace(' ', '_')
+        return safe_experiment_name
+
     """Recording methods"""
     @command()
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
@@ -339,7 +345,7 @@ class Module(ABC):
         # Store experiment folder information for export
         self.current_experiment_folder = experiment_folder
         self.controller_share_path = controller_share_path
-        self.current_experiment_name = experiment_name
+        self.current_experiment_name = self._create_safe_experiment_name(experiment_name)
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

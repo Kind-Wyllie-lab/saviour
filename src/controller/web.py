@@ -49,7 +49,7 @@ class Web:
             'stage': 'habituation',
             'trial': '1'
         }
-        self.current_experiment_name = "" # To be constructed from metadata, or overriden
+        self.current_experiment_name = self._generate_experiment_name() # To be constructed from metadata, or overriden
 
         # Register routes and webhooks        
         self._register_routes() 
@@ -68,6 +68,29 @@ class Web:
         # Set up paths
         self.habitat_share_dir = Path("/home/pi/controller_share")
     
+    def _generate_experiment_name(self) -> str:
+        """Generate experiment name from metadata, skipping empty fields."""
+        md = self.experiment_metadata
+        parts = []
+
+        # Iterate through metadata keys in desired order
+        for key in ['experiment', 'rat_id', 'strain', 'batch', 'stage', 'trial']:
+            value = str(md.get(key, "")).strip()
+            if value:  # Only append non-empty strings
+                parts.append(value)
+
+        # Join non-empty parts with underscores
+        name = "_".join(parts)
+
+        # Append timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if name:  # Avoid leading underscore
+            name = f"{name}_{timestamp}"
+        else:
+            name = timestamp  # Only timestamp if metadata is empty
+
+        return name
+
     def register_callbacks(self, callbacks={}):
         """Register callbacks based on a dict.
         Should include:
@@ -279,11 +302,16 @@ class Web:
                 self.experiment_metadata['trial'] = data['trial']
             
             self.logger.info(f"Updated experiment metadata: {self.experiment_metadata}")
+
+            # Rebuild experiment name
+            self.current_experiment_name = self._generate_experiment_name()
+            self.logger.info(f"Generated new experiment name: {self.current_experiment_name}")
             
             # Send confirmation back to client
             self.socketio.emit('experiment_metadata_updated', {
                 'status': 'success',
-                'metadata': self.experiment_metadata
+                'metadata': self.experiment_metadata,
+                'experiment_name': self.current_experiment_name
             })
             self.logger.info(f"Sent experiment metadata update confirmation")
         
@@ -295,7 +323,8 @@ class Web:
             # Send current metadata to client
             self.socketio.emit('experiment_metadata_response', {
                 'status': 'success',
-                'metadata': self.experiment_metadata
+                'metadata': self.experiment_metadata,
+                'experiment_name': self.current_experiment_name
             })
             self.logger.info(f"Sent experiment metadata to client")
 

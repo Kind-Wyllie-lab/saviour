@@ -143,6 +143,8 @@ class Command:
             else:
                 result = handler(**params) # Unpack params into arguments 
 
+            self.logger.info(f"Command handler returned {result}")
+
             # 4. Send response to controller
             response = {"type": cmd}
             response.update(result)

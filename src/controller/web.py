@@ -82,13 +82,6 @@ class Web:
         # Join non-empty parts with underscores
         name = "_".join(parts)
 
-        # Append timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        if name:  # Avoid leading underscore
-            name = f"{name}_{timestamp}"
-        else:
-            name = timestamp  # Only timestamp if metadata is empty
-
         return name
 
     def register_callbacks(self, callbacks={}):

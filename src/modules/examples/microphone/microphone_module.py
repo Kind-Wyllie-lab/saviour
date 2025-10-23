@@ -83,7 +83,7 @@ class AudiomothModule(Module):
         sample_rate = self.config.get("microphone.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
         block_size = self.config.get("microphone.block_size", 1024 * 128)
-        file_duration = self.config.get("microphone.file_duration", 60)*60  # config in mins, convert to secs
+        file_duration = self.config.get("recording.file_duration", 60)*60  # config in mins, convert to secs
         frame_batches_per_file = file_duration * sample_rate // frame_num
 
         microphone = soundcard.get_microphone(microphone)

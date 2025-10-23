@@ -82,6 +82,9 @@ class Web:
         # Join non-empty parts with underscores
         name = "_".join(parts)
 
+        if name == "":
+            name = "NO_NAME"
+
         return name
 
     def register_callbacks(self, callbacks={}):

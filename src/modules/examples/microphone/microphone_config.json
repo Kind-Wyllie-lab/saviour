@@ -1,53 +1,30 @@
 {
     "microphone": {
-        "device_index": 0,
-        "type": "usb",
         "sample_rate": 192000,
-        "channels": 1,
-        "bit_depth": 16,
-        "chunk_size": 1024,
-        "gain": 1.0,
-        "noise_reduction": true,
-        "echo_cancellation": false,
-        "auto_gain_control": true,
-        "frame_num": 131072,
-        "block_size": 131072,
-        "file_duration": 1
+        "_frame_num": 131072,
+        "_block_size": 131072,
+        "file_duration": 1,
+        "_processing": {
+            "_apply_filter": false,
+            "_filter_type": "bandpass",
+            "_low_cutoff": 20,
+            "_high_cutoff": 20000,
+            "_fft_size": 1024,
+            "_window_type": "hann",
+            "_overlap": 0.5
+        },
+        "_trigger": {
+            "_sound_detection_enabled": false,
+            "_detection_threshold": 0.7,
+            "_min_duration_ms": 200,
+            "_cooldown_ms": 1000,
+            "_notification_enabled": true
+        }
     },
     "recording": {
-        "format": "flac",
-        "directory": "audio_recordings",
-        "max_length_seconds": 3600,
-        "continuous": false,
-        "segment_length_seconds": 60,
-        "compression": "none",
-        "vad_enabled": false,
-        "vad_threshold": 0.5,
-        "vad_silence_timeout_ms": 500
+        "_recording_filetype": "flac",
+        "segment_length_seconds": 600
     },
-    "streaming": {
-        "enabled": true,
-        "protocol": "websocket",
-        "port": 8080,
-        "buffer_size": 4096,
-        "quality": "medium"
-    },
-    "processing": {
-        "apply_filter": false,
-        "filter_type": "bandpass",
-        "low_cutoff": 20,
-        "high_cutoff": 20000,
-        "fft_size": 1024,
-        "window_type": "hann",
-        "overlap": 0.5
-    },
-    "trigger": {
-        "sound_detection_enabled": false,
-        "detection_threshold": 0.7,
-        "min_duration_ms": 200,
-        "cooldown_ms": 1000,
-        "notification_enabled": true
-    },
-    "recording_folder": "rec",
-    "auto_export": true
+    "_recording_folder": "rec",
+    "_auto_export": true
 } 

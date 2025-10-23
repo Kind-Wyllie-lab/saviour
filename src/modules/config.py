@@ -3,8 +3,9 @@
 """
 Module Config Manager
 
-Centralizes configuration management for habitat modules, including:
+Centralizes configuration management for SAVIOUR modules, including:
 - Loading configuration from environment variables, config files, and defaults
+- Builds active_config.json from base_config.json and {module}_config.json
 - Providing a consistent interface for accessing and modifying configuration values
 - Validating configuration values
 - Saving configuration changes

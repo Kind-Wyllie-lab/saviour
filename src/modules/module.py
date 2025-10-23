@@ -368,12 +368,18 @@ class Module(ABC):
         # Start generating health metadata to go with file
         self._start_recording_health_metadata()
 
+        self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
         if duration is not None:
             if duration > 0:
                 self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
 
         result = self._start_recording() # Call the start_recording method which handles the actual implementation
         self.logger.info(f"Child class _start_recording call returned {result}")
+
+        # Start auto stop thread if needed
+        if self._recording_thread:
+            self._recording_thread.start()
+
         self.is_recording = True
  
         return {"filename": self.current_filename}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
@@ -437,7 +443,7 @@ class Module(ABC):
             self.logger.info(f"Still recording, {remaining_time}s left")
             time.sleep(0.5) # Wait
         self.logger.info("Stopping recording")
-        self._stop_recording()
+        self.stop_recording()
 
     """Methods to record health metadata"""
     def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:

@@ -314,6 +314,7 @@ class Module(ABC):
         # TODO: Tie this in with experiment filename creation in start_recording method.
         safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_experiment_name = safe_experiment_name.replace(' ', '_')
+        self.logger.info(f"Generated safe experiment name {safe_experiment_name}")
         return safe_experiment_name
 
     """Recording methods"""
@@ -342,6 +343,10 @@ class Module(ABC):
                 })
             return None
         
+        # Empty session files
+        self.session_files = []
+        self.logger.info(f"Session files array emptied: {self.session_files}")
+
         # Store experiment folder information for export
         self.current_experiment_folder = experiment_folder
         self.controller_share_path = controller_share_path
@@ -369,10 +374,16 @@ class Module(ABC):
             if duration > 0:
                 self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
 
-        self._start_recording() # Call the start_recording method which handles the actual implementation
+        result = self._start_recording() # Call the start_recording method which handles the actual implementation
+        self.logger.info(f"Child class _start_recording call returned {result}")
         self.is_recording = True
  
-        return self.current_filename  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
+        return {"filename": self.current_filename}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
+    
+    def add_session_file(self, filename: str) -> None:
+        """Method to append a recording file to the current list of session files"""
+        self.session_files.append(filename)
+        self.logger.info(f"Session file {filename} added, new list {self.session_files}")
 
     @abstractmethod
     def _start_recording(self):
@@ -402,18 +413,19 @@ class Module(ABC):
             self._stop_recording_health_metadata()
             self.logger.info("Made it past stop_recording_health_metadata call")
 
-            self._get_session_files()
-            self.logger.info("Made it past _get_session_files call")
+            # self._get_session_files()
+            # self.logger.info("Made it past _get_session_files call")
 
             self.logger.info(f"Config says {self.config.get('auto_export')}")
             if self.config.get("auto_export") == True:
                 self._auto_export()
 
-            return True  # Just return True, let child class handle the rest
+            # return True  # Just return True, let child class handle the rest
+            return {"result": "Success"}
 
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")
-            return False
+            return {"result": "failure", "message": f"Error in stop_recording: {e}"}
 
     @abstractmethod
     def _stop_recording(self):
@@ -433,7 +445,7 @@ class Module(ABC):
     def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
         """Start a thread to record health metadata. Will continue until stopped."""
         if not filename:
-            filename = self.current_filename
+            filename = self.current_experiment_name
         self.health_stop_event.clear() # Clear the stop flag before starting
         self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
         self.health_recording_thread.start()
@@ -463,7 +475,8 @@ class Module(ABC):
         Saves to file.
         """
         interval = 5 # Interval in seconds # TODO: Take this from config
-        csv_filename = f"{experiment_name}_health_metadata.csv"
+        csv_filename = f"{self.recording_folder}/{experiment_name}_health_metadata.csv"
+        self.add_session_file(csv_filename)
         fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
         with open(csv_filename, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -476,18 +489,18 @@ class Module(ABC):
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
 
-    """Recorded file management"""
-    def _get_session_files(self):
-        # Find files that belong to the current recording session
-        self.session_files = []
-        self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
-        self.logger.info(f"Looking for recordings in {self.recording_folder}")
-        self.logger.info(f"Recordings are as follows: {os.listdir(self.recording_folder)}")
-        for filename in os.listdir(self.recording_folder):
-            self.logger.info(f"Examining file {filename} for auto export, trying to match {self.recording_session_id}")
-            if self.recording_session_id in filename:
-                self.session_files.append(filename)
-                self.logger.info(f"Found session file to export: {filename}")
+    # """Recorded file management"""
+    # def _get_session_files(self):
+    #     # Find files that belong to the current recording session
+    #     self.session_files = []
+    #     self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
+    #     self.logger.info(f"Looking for recordings in {self.recording_folder}")
+    #     self.logger.info(f"Recordings are as follows: {os.listdir(self.recording_folder)}")
+    #     for filename in os.listdir(self.recording_folder):
+    #         self.logger.info(f"Examining file {filename} for auto export, trying to match {self.recording_session_id}")
+    #         if self.recording_session_id in filename:
+    #             self.session_files.append(filename)
+    #             self.logger.info(f"Found session file to export: {filename}")
 
     def _auto_export(self):
         self.logger.info("Auto-export called")
@@ -604,7 +617,7 @@ class Module(ABC):
         Returns:
             dict with deleted_count and kept_count
         """
-        self.logger.info("Attempting to clear recordings")
+        self.logger.debug(f"Attempting to clear recordings: {filenames}")
         try:
             if not os.path.exists(self.recording_folder):
                 return {"deleted_count": 0, "kept_count": 0}
@@ -614,7 +627,11 @@ class Module(ABC):
                 deleted_count = 0
                 for single_filename in filenames:
                     try:
-                        filepath = os.path.join(self.recording_folder, single_filename)
+                        if single_filename.startswith(self.recording_folder):
+                            filepath = single_filename
+                        else:
+                            filepath = os.path.join(self.recording_folder, single_filename)
+                        self.logger.debug(f"Attempting to delete {filepath}")
                         if os.path.exists(filepath):
                             os.remove(filepath)
                             deleted_count += 1
@@ -628,7 +645,10 @@ class Module(ABC):
             # If specific filename is provided, delete just that file
             if filename:
                 try:
-                    filepath = os.path.join(self.recording_folder, filename)
+                    if filename.startswith(self.recording_folder):
+                        filepath = filename
+                    else:
+                        filepath = os.path.join(self.recording_folder, filename)
                     if os.path.exists(filepath):
                         os.remove(filepath)
                         return {"deleted_count": 1, "kept_count": 0}

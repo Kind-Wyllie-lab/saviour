@@ -18,7 +18,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
-from src.modules.module import Module
+from src.modules.module import Module, command
 from src.modules.command import Command
 import logging
 import numpy as np
@@ -27,71 +27,10 @@ import soundfile
 import soundcard
 import re
 
-class AudiomothCommand(Command):
-    """Command handler specific to audiomoth functionality"""
-    def __init__(self, module_id, module_type, config=None, start_time=None):
-        super().__init__(module_id, module_type, config, start_time)
-        self.logger.info("Initialised")
-
-    def handle_command(self, command: str):
-        """Handle audiomoth-specific commands while preserving base functionality"""
-        self.logger.info("Checking for audiomoth specific commands.")
-        
-        try:
-            # Parse command and parameters
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
-            
-            # Handle audiomoth-specific commands
-            match cmd:
-                case "monitor":
-                    self._handle_monitor() # For monitoring output, ensuring there is output
-                case _:
-                    # If not a audiomoth-specific command, pass to parent class
-                    super().handle_command(command)
-                    
-        except Exception as e:
-            self._handle_error(e)
-
-    def _handle_list_audiomoths(self):
-        self.logger.info("Command identified as list audiomoths")
-        try: 
-            self.callbacks["send_status"]({
-                "type": "list_audiomoths",
-                "audiomoths": self.audiomoths
-            })
-        except Exception as e:
-            self.logger.error(f"Error listing audiomoths: {str(e)}")
-            self.callbacks["send_status"]({
-                "type": "list_audiomoths",
-                # "type": "command_failed", # TODO: Refactor like this?
-                # "command": "list_audiomoths"
-                "error": str(e)
-            })
-
-    def _handle_monitor(self):
-        self.logger.info("Command identified as monitor")
-        try:
-            if 'monitor' in self.callbacks:
-                self.callbacks['monitor']()
-            else:
-                self.logger.error("No monitor callback provided")
-                self.callbacks["send_status"]({
-                    "type": "monitor_failed",
-                    "error": "Module not configured for monitor"
-                })
-        except Exception as e:
-            self.logger.error(f"Error starting monitor: {str(e)}")
-            self.callbacks["send_status"]({
-                "type": "monitor_start_failed",
-                "error": str(e)
-            })
-
 class AudiomothModule(Module):
-    def __init__(self, module_type="microphone", config=None, config_file_path=None):
+    def __init__(self, module_type="microphone"):
         # Call the parent class constructor
-        super().__init__(module_type, config, config_file_path)
+        super().__init__(module_type)
     
         # Initialize audiomoth
         self.mics = [] # An empty list for discovering all connected mics 
@@ -111,9 +50,10 @@ class AudiomothModule(Module):
 
         # Set up audiomoth-specific callbacks for the command handler
         self.audiomoth_callbacks = {
-            'monitor': self.monitor
+            'monitor': self.monitor,
+            'list_audiomoths': self.list_audiomoths
         }
-        self.command.set_callbacks(self.audiomoth_callbacks) # Append new camera callbacks
+        self.command.set_callbacks(self.audiomoth_callbacks) # Append new audiomoth callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
     def configure_module(self):
@@ -122,7 +62,13 @@ class AudiomothModule(Module):
     @command
     def list_audiomoths(self):
         """Returns dict containing list of audiomoths""" 
-        return {"audiomoths": self.audiomoths}
+        return {"result": "Success", "audiomoths": self.audiomoths}
+
+    @command
+    def monitor(self):
+        """Command method for monitoring the output of the audiomoth microphones"""
+        self.logger.warning("No implementation yet for monitor method")
+        return {"result": "Failure", "message": "No implementation for monitor method"}
 
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()
@@ -132,13 +78,7 @@ class AudiomothModule(Module):
                 self.audiomoths[serial] = mic.id
         self.logger.info(f"Found {len(self.audiomoths.items())} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
 
-    def _exp_name(self, experiment_name):
-        # TODO: Tie this in with experiment filename creation in start_recording method.
-        safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_experiment_name = safe_experiment_name.replace(' ', '_')
-        return safe_experiment_name
-
-    def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit, experiment_name):
+    def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit, experiment_name: str):
         self.logger.info(f"Starting recording thread for serial {serial}, unit {unit}")
         sample_rate = self.config.get("microphone.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
@@ -151,23 +91,26 @@ class AudiomothModule(Module):
         with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
             while self.is_recording:
                 # Get time of new file creation
-                mic_start_time = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S_%f")
+                mic_start_time = datetime.datetime.now().strftime("%H%M%S") # Add _%f to include microseconds
                 self.logger.info(
                     f"Created new recording file for {serial} at {mic_start_time}")
                 # Create new file
                 batch_counter = 0
-                # #TODO: Tie this in with experiment filename creation in start_recording method.
-                filename = f"{self.recording_folder}/{self._exp_name(experiment_name)}_{unit}_{file_counter}_{mic_start_time}.flac"
+                # TODO: Tie this in with experiment filename creation in start_recording method.
+                filename = f"{self.recording_folder}/{self.current_experiment_name}_{unit}_{file_counter}_{mic_start_time}.flac" 
+                self.add_session_file(filename)
                 # Run new file writing
                 with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1,
                                          subtype="PCM_16") as file:
                     while self.is_recording:
                         data = recorder.record(numframes=frame_num)
                         # from docs:
-                        """The data will be returned as a frames × channels float32 numpy array.
+                        """
+                        The data will be returned as a [frames x channels] float32 numpy array.
                         This function will wait until numframes frames have been recorded.
                         If numframes is given, it will return exactly `numframes` frames,
-                        and buffer the rest for later."""
+                        and buffer the rest for later.
+                        """
                         batch_counter += 1
                         #data += recorder.flush()
                         file.write(data)
@@ -176,18 +119,17 @@ class AudiomothModule(Module):
                             file_counter += 1
                             break
 
-    def _duration_process_stopper(self, duration):
-        duration_seconds = float(duration)*60
-        while True:
-            if time.time() >= self.recording_start_time + duration_seconds:
-                self.is_recording = False
-                return
-            time.sleep(0.5)
+    # def _duration_process_stopper(self, duration):
+    #     # TODO: This exists in base module class now which will call _stop_recording at the appropriate time. 
+    #     duration_seconds = float(duration)*60
+    #     while True:
+    #         if time.time() >= self.recording_start_time + duration_seconds:
+    #             self.is_recording = False
+    #             return
+    #         time.sleep(0.5)
 
         
 
-    def handle_update_audiomoth_settings(self):
-        pass
     
     def clear_recordings(self):
         pass
@@ -199,12 +141,12 @@ class AudiomothModule(Module):
     def stop_streaming(self):
         pass
 
-    def _start_recording(self, experiment_name: str = None, duration: str = "1", experiment_folder: str = None, controller_share_path: str = None) -> bool:
+    def _start_recording(self) -> bool:
         """Start continuous audio recording"""
         self.logger.info("Executing audiomoth specific recording functionality...")
 
         # Store experiment name for use in timestamps filename
-        self.current_experiment_name = experiment_name
+        self.logger.info(f"Recording will use {self.current_experiment_name} for filenames ")
 
         try: 
             #if there are audiomoths connected
@@ -219,6 +161,7 @@ class AudiomothModule(Module):
                         self.logger.info(f"Unit not specified, using audiomoth serial instead [{serial}]")
                     unit = serial
                     # create recording thread
+                    experiment_name = self.current_experiment_name
                     recording_thread = threading.Thread(target=self._record_microphone, args=(serial, mic, unit, experiment_name))
                     self.audiomoth_threads.append(recording_thread)
                     recording_thread.start()
@@ -226,8 +169,8 @@ class AudiomothModule(Module):
                     # join recording threads
                     #for thread in self.audiomoth_threads:
                     #    thread.join()
-                self.stopper_thread = threading.Thread(target=self._duration_process_stopper, args=(duration))
-                self.stopper_thread.start()
+                # self.stopper_thread = threading.Thread(target=self._duration_process_stopper, args=(duration))
+                # self.stopper_thread.start()
 
             else:
                 self.logger.info("No audiomoths detected, cannot record")
@@ -239,7 +182,7 @@ class AudiomothModule(Module):
 
                 self.communication.send_status({
                     "type": "recording_started",
-                    "filename": filename,
+                    "filename": "Multiple filenames exist for each microphone",
                     "recording": True,
                     "session_id": self.recording_session_id
                 })
@@ -256,28 +199,16 @@ class AudiomothModule(Module):
             return False
 
     def _stop_recording(self) -> bool:
-        """Stop continuous video recording"""
+        """Stop continuous recording with audiomoth-specific code"""
+        response = {}
         try:
-            # Stop recording with audiomoth-specific code
-            pass
+            # Stop capture thread
+            self.is_recording = False # This gets checked in each _record_microphone thread, so they should exit.
             
-            # Stop frame capture thread
-            self.is_recording = False
-            
-            # Calculate duration
+            # Calculate recording duration
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
-                
-                # Save timestamps with experiment name if available
-                if hasattr(self, 'current_experiment_name') and self.current_experiment_name:
-                    # Sanitize experiment name for filename (remove special characters)
-                    safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                    safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                    timestamps_file = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}_timestamps.txt"
-                else:
-                    timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
-                
-                np.savetxt(timestamps_file, self.frame_times)
+
                 
                 # Send status response after successful recording stop
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -286,14 +217,13 @@ class AudiomothModule(Module):
                         "filename": self.current_filename,
                         "session_id": self.recording_session_id,
                         "duration": duration,
-                        #"frame_count": len(self.frame_times),
                         "status": "success",
                         "recording": False,
-                        "message": f"Recording completed successfully" #with {len(self.frame_times)} frames"
+                        "message": f"Recording completed successfully"
                     })
-                
-                # Auto-export is now handled by child classes (e.g., APAaudiomoth)
-                # to use the new export manager methods
+
+                self.logger.info("Concluded audiomoth _stop_recording, waiting to exit")
+
                 return True
             else:
                 self.logger.error("Error: recording_start_time was None")

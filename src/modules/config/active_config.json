@@ -22,12 +22,26 @@
         "_post_record_seconds": 5,
         "_timestamp_overlay": true,
         "_timestamp_format": "%Y-%m-%d %H:%M:%S",
-        "_timestamp_position": "bottom-right"
+        "_timestamp_position": "bottom-right",
+        "format": "flac",
+        "directory": "audio_recordings",
+        "max_length_seconds": 3600,
+        "continuous": false,
+        "segment_length_seconds": 60,
+        "compression": "none",
+        "vad_enabled": false,
+        "vad_threshold": 0.5,
+        "vad_silence_timeout_ms": 500
     },
     "streaming": {
         "_enabled": true,
         "_port": 8554,
-        "_transport": "udp"
+        "_transport": "udp",
+        "enabled": true,
+        "protocol": "websocket",
+        "port": 8080,
+        "buffer_size": 4096,
+        "quality": "medium"
     },
     "_recording_folder": "rec",
     "_recording_filetype": "mp4",
@@ -44,17 +58,37 @@
     "_controller_password": "saviour,",
     "_nas_username": "sidbit,",
     "_nas_password": "RaspberryWonder1305",
-    "camera": {
-        "monochrome": true,
-        "width": 1280,
-        "height": 720,
-        "fps": 30,
-        "text_scale": 2,
-        "text_thickness": 3,
-        "_codec": "h264",
-        "_profile": "high",
-        "_level": 4.2,
-        "_bitrate": 2000000,
-        "_file_format": "mp4"
-    }
+    "microphone": {
+        "device_index": 0,
+        "type": "usb",
+        "sample_rate": 192000,
+        "channels": 1,
+        "bit_depth": 16,
+        "chunk_size": 1024,
+        "gain": 1,
+        "noise_reduction": true,
+        "echo_cancellation": false,
+        "auto_gain_control": true,
+        "frame_num": 131072,
+        "block_size": 131072,
+        "file_duration": 0.25
+    },
+    "processing": {
+        "apply_filter": false,
+        "filter_type": "bandpass",
+        "low_cutoff": 20,
+        "high_cutoff": 20000,
+        "fft_size": 1024,
+        "window_type": "hann",
+        "overlap": 0.5
+    },
+    "trigger": {
+        "sound_detection_enabled": false,
+        "detection_threshold": 0.7,
+        "min_duration_ms": 200,
+        "cooldown_ms": 1000,
+        "notification_enabled": true
+    },
+    "recording_folder": "rec",
+    "auto_export": true
 }

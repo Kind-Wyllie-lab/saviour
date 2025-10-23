@@ -172,6 +172,7 @@ class CameraModule(Module):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
         filename = f"{self.current_filename}.{self.recording_filetype}"
+        self.add_session_file(filename)
         try:
             # Start the camera if not already running
             if not self.picam2.started:
@@ -262,6 +263,7 @@ class CameraModule(Module):
                 else:
                     timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
                 
+                self.add_session_file(timestamps_file)
                 np.savetxt(timestamps_file, self.frame_times)
                 
                 # Send status response after successful recording stop

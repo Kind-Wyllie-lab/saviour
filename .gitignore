@@ -42,6 +42,7 @@ Thumbs.db
 
 # Project specific
 config/active_config.json 
+active_config.json
 
 # Brief
 brief/

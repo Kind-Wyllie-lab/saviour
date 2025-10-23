@@ -9,8 +9,10 @@
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2,
-        "_bitrate": 2000000,
-        "_file_format": "mp4"
+        "_bitrate": 2000000
+    },
+    "recording": {
+        "_recording_filetype": "mp4"
     }
 }
 

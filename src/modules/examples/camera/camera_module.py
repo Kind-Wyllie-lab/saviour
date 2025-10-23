@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Camera Module Class
+SAVIOUR System - Camera Module Class
 
 This class extends the base Module class to handle camera-specific functionality.
 
@@ -42,6 +42,9 @@ class CameraModule(Module):
     def __init__(self, module_type="camera"):        
         # Call the parent class constructor
         super().__init__(module_type)
+
+        # Update config 
+        self.config.load_module_config("camera_config.json")
     
         # Initialize camera
         self.picam2 = Picamera2()
@@ -71,9 +74,6 @@ class CameraModule(Module):
         self.is_recording = False
         self.is_streaming = False
         self.frame_times = []  # For storing frame timestamps
-
-        # Update config 
-        self.config.load_module_config("camera_config.json")
 
         # Set up camera-specific callbacks for the command handler
         self.camera_callbacks = {
@@ -171,7 +171,8 @@ class CameraModule(Module):
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
-        filename = f"{self.current_filename}.{self.recording_filetype}"
+        filename = f"{self.current_filename}.{self.config.get('recording.recording_filetype')}"
+        self.add_session_file(filename)
         try:
             # Start the camera if not already running
             if not self.picam2.started:
@@ -262,6 +263,7 @@ class CameraModule(Module):
                 else:
                     timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
                 
+                self.add_session_file(timestamps_file)
                 np.savetxt(timestamps_file, self.frame_times)
                 
                 # Send status response after successful recording stop

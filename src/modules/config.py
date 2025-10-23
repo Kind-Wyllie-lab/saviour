@@ -56,9 +56,6 @@ class Config:
 
         self._apply_env_override()
         self.logger.info(f"Module config loaded - {len(self.config)} parameters")
-        self.save_active()
-        self.logger.info(f"Config saved to {self.active_config_path}")
-        
 
     def _apply_env_override(self):
         """Override config values using environment variables"""
@@ -93,6 +90,8 @@ class Config:
         # Extract keys from config and flatten to dot notation for easy comparison
         self.module_config_keys = self._flatten_keys(module_config)
         
+        self.logger.info(f"Loading module config keys: {self.module_config_keys}")
+
         if os.path.exists(self.active_config_path):
             # Active config exists: fill missing keys only
             self.logger.info("Active config present — filling missing keys from module defaults")

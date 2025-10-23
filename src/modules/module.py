@@ -209,7 +209,7 @@ class Module(ABC):
 
         # Parameters from config
         self.recording_folder = self.config.get("recording.recording_folder")
-        self.recording_filetype = self.config.get("recording.recording_filetype") # Find the appropriate filetype for this module type, 
+        # self.recording_filetype = self.config.get("recording.recording_filetype") # Find the appropriate filetype for this module type, 
 
         # Control State flags
         self.is_running = False  # Start as False

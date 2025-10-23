@@ -177,6 +177,9 @@ class Web:
                         port = params.get('port', 8080)  # Default to 8080 if not specified
                         command = f"{command_type}"
                         params = {"client_ip": client_ip, "port": port}
+                    if command_type == 'start_recording':
+                        # Append timestamp
+                        params["experiment_name"] += ("_" + datetime.now().strftime('%Y%m%d_%H%M%S'))
                     else:
                         # For other commands format as cmd/module_id command_type {params}
                         command = command_type

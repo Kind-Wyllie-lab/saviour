@@ -181,7 +181,6 @@ class Module(ABC):
         self.helper_callbacks = { # Define a set of helper methods that allow modules to gain access to state
             'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
             'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
             'send_status': lambda status: self.communication.send_status(status),
             'handle_command': self.command.handle_command, 
             'when_controller_discovered': self.when_controller_discovered,
@@ -209,9 +208,8 @@ class Module(ABC):
         self.session_files = []
 
         # Parameters from config
-        self.samplerate = self.config.get("module.samplerate")
-        self.recording_folder = self.config.get("recording_folder")
-        self.recording_filetype = self.config.get("recording_filetype") # Find the appropriate filetype for this module type, 
+        self.recording_folder = self.config.get("recording.recording_folder")
+        self.recording_filetype = self.config.get("recording.recording_filetype") # Find the appropriate filetype for this module type, 
 
         # Control State flags
         self.is_running = False  # Start as False

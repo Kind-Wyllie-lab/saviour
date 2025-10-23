@@ -517,7 +517,7 @@ class Export:
                     self.logger.warning(f"Could not set permissions on experiment folder: {e}")
                 
                 # Create module-specific subfolder with timestamp
-                module_subfolder = f"{self.module_id}_{export_timestamp}"
+                module_subfolder = f"{self.module_id}"
                 export_folder = os.path.join(experiment_folder, module_subfolder)
                 
                 self.logger.info(f"Created experiment folder: {experiment_folder}")
@@ -529,30 +529,31 @@ class Export:
             os.makedirs(export_folder, exist_ok=True)
             self.logger.info(f"Created export folder: {export_folder}")
             
-            # Find files that belong to the current session
-            session_files = []
-            self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
-            self.logger.info(f"Looking for recordings in {recording_folder}")
-            self.logger.info(f"Recordings are as follows: {os.listdir(recording_folder)}")
-            for filename in os.listdir(recording_folder):
-                self.logger.info(f"Examining file {filename} for auto export, trying to match {recording_session_id}")
-                if recording_session_id in filename:
-                    session_files.append(filename)
-                    self.logger.info(f"Found session file to export: {filename}")
-            
-            if not session_files:
-                self.logger.warning("No session files found to export")
-                return True
+            session_files = session_files
+            self.logger.info(f"Will attempt to export {session_files}")
             
             # Export each session file
             exported_count = 0
             for filename in session_files:
                 try:
-                    source_path = os.path.join(recording_folder, filename)
-                    dest_path = os.path.join(export_folder, filename)
+                    self.logger.info(f"Exporting {filename}")
+                    # Determine absolute source path
+                    if os.path.isabs(filename):
+                        source_path = filename
+                    else:
+                        # If the file is relative to recording_folder, resolve properly
+                        # Prevent double-prefix like 'rec/rec/...'
+                        rel_path = os.path.relpath(filename, start=recording_folder)
+                        source_path = os.path.join(recording_folder, rel_path)
+
+                    # Destination: flat structure, just filename
+                    dest_filename = os.path.basename(filename)
+                    dest_path = os.path.join(export_folder, dest_filename)
+
                     shutil.copy2(source_path, dest_path)
-                    self.logger.info(f"Exported: {filename}")
+                    self.logger.info(f"Exported: {dest_filename}")
                     exported_count += 1
+
                 except Exception as e:
                     self.logger.error(f"Failed to export {filename}: {e}")
                     return False
@@ -571,7 +572,11 @@ class Export:
             if not manifest_filename:
                 self.logger.error("Failed to create export manifest")
                 return False
-            
+        
+            # This is a bit of a hack TECHNICAL DEBT - session_files is later used in clear_recordings so we should remove the "config_file" ref which is only used for export manifest
+            # TODO: Copy config.json into rec folder (freeze its state at start of recording), add it to session files, export with other session files, clear with other session files i.e. stop treating it specially 
+            session_files.remove("config_file")
+
             self.logger.info(f"Successfully exported {exported_count} session files to {export_folder}")
             self.logger.info(f"Created export manifest: {manifest_filename}")
             return True

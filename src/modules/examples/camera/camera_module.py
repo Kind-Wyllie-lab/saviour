@@ -171,7 +171,7 @@ class CameraModule(Module):
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
-        filename = f"{self.current_filename}.{self.config.get('recording.recording_filetype')}"
+        filename = f"{self.recording_folder}/{self.current_experiment_name}.{self.config.get('recording.recording_filetype')}"
         self.add_session_file(filename)
         try:
             # Start the camera if not already running
@@ -259,7 +259,7 @@ class CameraModule(Module):
                     # Sanitize experiment name for filename (remove special characters)
                     safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                     safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                    timestamps_file = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}_timestamps.txt"
+                    timestamps_file = f"{self.recording_folder}/{self.current_experiment_name}_timestamps.txt"
                 else:
                     timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
                 

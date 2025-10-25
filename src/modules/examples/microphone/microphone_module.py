@@ -91,7 +91,6 @@ class AudiomothModule(Module):
         start_time = datetime.datetime.now().strftime("%Y-%m-%d-H%M%S-%f")
         # TODO centralise timestamp naming - check if name sanitised before being passed here
         timestamps_file = f"{self.recording_folder}/{experiment_name}_{unit}_timestamps.txt"
-        self.logger.info(f"!!!! {self.recording_folder} !!!")
         self.add_session_file(timestamps_file)
         timestamps_writer = open(timestamps_file, 'w')
 

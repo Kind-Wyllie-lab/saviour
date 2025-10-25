@@ -9,6 +9,8 @@ Author: Andrew SG / Domagoj Anticic
 Created: 18/08/2025
 License: GPLv3
 
+Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicrophone_setup by Domagoj Anticic
+
 # TODO: Refactor to override abstract methods configure_module, _start_recording, _stop_recording
 """
 
@@ -85,19 +87,26 @@ class AudiomothModule(Module):
         block_size = self.config.get("microphone.block_size", 1024 * 128)
         file_duration = self.config.get("recording.file_duration", 60)*60  # config in mins, convert to secs
         frame_batches_per_file = file_duration * sample_rate // frame_num
+        
+        start_time = datetime.datetime.now().strftime("%Y-%m-%d-H%M%S-%f")
+        # TODO centralise timestamp naming - check if name sanitised before being passed here
+        timestamps_file = f"{self.recording_folder}/{experiment_name}_{unit}_timestamps.txt"
+        self.logger.info(f"!!!! {self.recording_folder} !!!")
+        self.add_session_file(timestamps_file)
+        timestamps_writer = open(timestamps_file, 'w')
 
         microphone = soundcard.get_microphone(microphone)
         file_counter = 0
         with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
             while self.is_recording:
                 # Get time of new file creation
-                mic_start_time = datetime.datetime.now().strftime("%H%M%S") # Add _%f to include microseconds
+                mic_start_time = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S-%f") # Add _%f to include microseconds
                 self.logger.info(
                     f"Created new recording file for {serial} at {mic_start_time}")
                 # Create new file
                 batch_counter = 0
                 # TODO: Tie this in with experiment filename creation in start_recording method.
-                filename = f"{self.recording_folder}/{self.current_experiment_name}_{unit}_{file_counter}_{mic_start_time}.flac" 
+                filename = f"{self.recording_folder}/{experiment_name}_{unit}_{file_counter}_{mic_start_time}.flac" 
                 self.add_session_file(filename)
                 # Run new file writing
                 with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1,
@@ -113,11 +122,14 @@ class AudiomothModule(Module):
                         """
                         batch_counter += 1
                         #data += recorder.flush()
+                        timestamps_writer.write(str(time.time()) + "\n")
                         file.write(data)
                         # If all frames written
                         if (batch_counter == frame_batches_per_file):
                             file_counter += 1
                             break
+
+        timestamps_writer.close()
 
     # def _duration_process_stopper(self, duration):
     #     # TODO: This exists in base module class now which will call _stop_recording at the appropriate time. 

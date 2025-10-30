@@ -269,7 +269,6 @@ class CameraModule(Module):
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
-                        "filename": self.current_filename,
                         "session_id": self.recording_session_id,
                         "duration": duration,
                         "frame_count": len(self.frame_times),

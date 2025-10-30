@@ -7,7 +7,6 @@ This class extends the base Module class to handle audiomoth-specific functional
 
 Author: Andrew SG / Domagoj Anticic
 Created: 18/08/2025
-License: GPLv3
 
 # TODO: Refactor to override abstract methods configure_module, _start_recording, _stop_recording
 """

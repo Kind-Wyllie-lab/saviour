@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Module Service Manager Class
+Module Network Manager
 
 This class is used to manage zeroconf service discovery and registration for modules.
 
 Author: Andrew SG
 Created: 15/05/2025
-License: GPLv3
 """
 
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery

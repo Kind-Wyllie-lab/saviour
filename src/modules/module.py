@@ -203,7 +203,7 @@ class Module(ABC):
         
         # Recording management
         self.recording_session_id = None
-        self.current_filename = None
+        self.current_filename_prefix = None
         self.session_files = []
 
         # Control State flags
@@ -303,8 +303,12 @@ class Module(ABC):
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
-    def _create_safe_experiment_name(self, experiment_name):
-        # TODO: Tie this in with experiment filename creation in start_recording method.
+    def _create_safe_experiment_name(self, experiment_name:str ) -> str:
+        """
+        Take an experiment name received from the frontend and put it in a file-safe format.
+        """
+        if not experiment_name:
+            return ""
         safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_experiment_name = safe_experiment_name.replace(' ', '_')
         self.logger.info(f"Generated safe experiment name {safe_experiment_name}")
@@ -313,7 +317,7 @@ class Module(ABC):
     """Recording methods"""
     @command()
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
-        #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
+        #TODO : Should this go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
         
@@ -347,16 +351,13 @@ class Module(ABC):
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{timestamp}_{self.module_id}"
+        self.recording_session_id = f"{self.module_id}"
         
         # Use experiment name in filename if provided
         if experiment_name:
-            # Sanitize experiment name for filename (remove special characters)
-            safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_experiment_name = safe_experiment_name.replace(' ', '_')
-            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}"
+            self.current_filename_prefix = f"{self.recording_folder}/{self.current_experiment_name}_{self.recording_session_id}"
         else:
-            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}"
+            self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
         
         os.makedirs(self.recording_folder, exist_ok=True)
 
@@ -377,7 +378,7 @@ class Module(ABC):
 
         self.is_recording = True
  
-        return {"filename": self.current_filename}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
+        return {"filename": self.current_filename_prefix}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
     
     def add_session_file(self, filename: str) -> None:
         """Method to append a recording file to the current list of session files"""
@@ -444,7 +445,7 @@ class Module(ABC):
     def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
         """Start a thread to record health metadata. Will continue until stopped."""
         if not filename:
-            filename = self.current_experiment_name
+            filename = self.current_filename_prefix
         self.health_stop_event.clear() # Clear the stop flag before starting
         self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
         self.health_recording_thread.start()
@@ -467,14 +468,14 @@ class Module(ABC):
         else:
             self.logger.warning("No active health recording thread was found to stop")
 
-    def _record_health_metadata(self, experiment_name: str):
+    def _record_health_metadata(self, filename_prefix: str):
         """
         Runs in a thread.
         Polls Health class for current health data.
         Saves to file.
         """
         interval = 5 # Interval in seconds # TODO: Take this from config
-        csv_filename = f"{self.recording_folder}/{experiment_name}_health_metadata.csv"
+        csv_filename = f"{filename_prefix}_health_metadata.csv"
         self.add_session_file(csv_filename)
         fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
         with open(csv_filename, "a", newline="") as f:
@@ -488,22 +489,9 @@ class Module(ABC):
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
 
-    # """Recorded file management"""
-    # def _get_session_files(self):
-    #     # Find files that belong to the current recording session
-    #     self.session_files = []
-    #     self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
-    #     self.logger.info(f"Looking for recordings in {self.recording_folder}")
-    #     self.logger.info(f"Recordings are as follows: {os.listdir(self.recording_folder)}")
-    #     for filename in os.listdir(self.recording_folder):
-    #         self.logger.info(f"Examining file {filename} for auto export, trying to match {self.recording_session_id}")
-    #         if self.recording_session_id in filename:
-    #             self.session_files.append(filename)
-    #             self.logger.info(f"Found session file to export: {filename}")
-
     def _auto_export(self):
         self.logger.info("Auto-export called")
-        if self.config.get("auto_export", True) and self.current_filename:
+        if self.config.get("auto_export", True):
             self.logger.info("Auto-export enabled, exporting recording using export manager")
             try:
                 # Use the export manager's method for consistency

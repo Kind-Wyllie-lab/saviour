@@ -173,13 +173,8 @@ class TTLModule(Module):
             self.is_recording = False
             
             # Save TTL events to file
-            if hasattr(self, 'current_experiment_name') and self.current_experiment_name:
-                # Sanitize experiment name for filename (remove special characters)
-                safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                events_file = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}_events.txt"
-            else:
-                events_file = f"{self.recording_folder}/{self.recording_session_id}_events.txt"
+            events_file = f"{self.current_filename_prefix}_ttl_events.txt"
+
             
             self.add_session_file(events_file)
             self._save_ttl_event_buffer_to_file(filename=events_file)
@@ -191,7 +186,6 @@ class TTLModule(Module):
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
-                        "filename": self.current_filename,
                         "session_id": self.recording_session_id,
                         "event_count": len(self.ttl_event_buffer),
                         "status": "success",
@@ -253,13 +247,23 @@ class TTLModule(Module):
         for event in self.ttl_event_buffer:
             self.logger.info(f"TTL event: {event}")
 
-    def _create_ttl_file(self):
-        """Create a CSV file to save TTL events"""
-        self.current_ttl_events_file = 
-        filename = self.current_filename
-
-        self.logger.info(f"Creating ttl file {filename}.csv")
-        try:
+    # def _create_ttl_file(self):
+    #     """Create the initial CSV file to save TTL events"""
+    #     self.current_ttl_events_filename = f"{self.current_filename_prefix}.csv"
+    #     filename = self.current_ttl_events_filename
+    #     self.logger.info(f"Creating ttl file {filename}")
+    #     try:
+    #         self._ttl_file_handle = open(self.current_events_file, "w", buffering=1)  # line-buffered
+    #         # Write header with metadata
+    #         f = self._ttl_file_handle
+    #         f.write("# TTL Event Recording\n")
+    #         f.write(f"# Session ID: {self.recording_session_id}\n")
+    #         f.write(f"# Recording Start: {self.recording_start_time}\n")
+    #         f.write("#\n")
+    #         f.write("Timestamp_Nanoseconds,Timestamp_Seconds,Timestamp_ISO,Pin_Number,Pin_State,Event_Type,Pin_Description\n")
+    #     except Exception as e:
+    #         self.logger.error(f"Failed to open TTL events file: {e}")
+    #         self._ttl_file_handle = None
 
 
 

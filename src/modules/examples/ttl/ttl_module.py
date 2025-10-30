@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Camera Module Class
+SAVIOUR System - TTL Module 
 
 This class extends the base Module class to handle TTL-specific functionality.
 
@@ -9,7 +9,6 @@ Assumes input pins are normally high and go low when triggered.
 
 Author: Andrew SG
 Created: 23/05/2025
-License: GPLv3
 """
 
 import os
@@ -49,108 +48,13 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-class TTLCommandHandler(Command):
-    """Command handler specific to TTL functionality"""
-    def __init__(self,module_id, module_type, config=None, start_time=None):
-        super().__init__(module_id, module_type, config, start_time)
-        self.logger.info("(TTL COMMAND HANDLER) Initialised")
-
-    def handle_command(self, command: str):
-        """Handle TTL-specific commands while preserving base functionality"""
-        # Handle TTL specific commands
-        try:
-            # Parse command and parameters
-            parts = command.split()
-            cmd = parts[0]
-            params = parts[1:] if len(parts) > 1 else []
-            
-            # Handle TTL-specific commands
-            match cmd:
-                case "update_pins":
-                    self._handle_update_pins(params)
-                case "get_pin_config":
-                    self._handle_get_pin_config()
-                case _:
-                    # If not a TTL-specific command, pass to parent class
-                    super().handle_command(command)
-                    
-        except Exception as e:
-            self._handle_error(e)
-    
-    def _handle_update_pins(self, params):
-        """Handle update_pins command"""
-        self.logger.info("(TTL HANDLER) Command identified as update_pins")
-        try:
-            if 'update_pins' in self.callbacks:
-                success = self.callbacks['update_pins'](params)
-                if not success:
-                    self.callbacks["send_status"]({
-                        "type": "update_pins_failed",
-                        "error": "Failed to update pins"
-                    })
-            else:
-                self.logger.error("(TTL HANDLER) No update_pins callback provided")
-                self.callbacks["send_status"]({
-                    "type": "update_pins_failed",
-                    "error": "Module not configured for updating pins"
-                })
-        except Exception as e:
-            self.logger.error(f"(TTL HANDLER) Error updating pins: {e}")
-            self.callbacks["send_status"]({
-                "type": "update_pins_failed",
-                "error": str(e)
-            })
-
-    def _handle_get_pin_config(self):
-        """Handle get_pin_config command"""
-        self.logger.info("(TTL HANDLER) Command identified as get_pin_config")
-        try:
-            if 'get_pin_config' in self.callbacks:
-                pin_config = self.callbacks['get_pin_config']()
-                if pin_config:
-                    self.callbacks["send_status"]({
-                        "type": "pin_config_retrieved",
-                        "pin_config": pin_config
-                    })
-                else:
-                    self.logger.error("(TTL HANDLER) No get_pin_config callback provided")
-                    self.callbacks["send_status"]({
-                        "type": "pin_config_retrieval_failed",
-                        "error": "Module not configured for retrieving pin configuration"
-                    })
-            else:
-                self.logger.error("(TTL HANDLER) No get_pin_config callback provided")
-                self.callbacks["send_status"]({
-                    "type": "pin_config_retrieval_failed",
-                    "error": "Module not configured for retrieving pin configuration"
-                })
-        except Exception as e:
-            self.logger.error(f"(TTL HANDLER) Error retrieving pin configuration: {e}")
-            self.callbacks["send_status"]({
-                "type": "pin_config_retrieval_failed",
-                "error": str(e)
-            })
-
 class TTLModule(Module):
-    def __init__(self, module_type="ttl", config="config/ttl_config.json", config_file_path=None):
+    def __init__(self, module_type="ttl"):
         # Call the parent class constructor first
-        super().__init__(module_type, config, config_file_path)
+        super().__init__(module_type)
         
-        # Initialize command handler after parent class
-        self.command = TTLCommandHandler(
-            module_id=self.module_id,
-            module_type=module_type,
-            config=self.config,
-            start_time=self.start_time
-        )
-        
-        # Set up callbacks
-        self.callbacks = {}
-        
-        # Set up export manager callbacks
-        self.export.set_callbacks({
-            'get_controller_ip': lambda: self.network.controller_ip
-        })
+        # Load TTL Config
+        self.config.load_module_config("ttl_config.json")
 
         # TTL specific variables
         self.ttl_input_pins = self.config.get("digital_inputs.pins")
@@ -170,7 +74,6 @@ class TTLModule(Module):
         self.assign_pins()
 
         # Recording variables
-        self.recording_folder = self.config.get("recording_folder")
         self.ttl_event_buffer = [] # Buffer to record TTL eventss - List of tuples (timestamp, pin, state)
         self.recording_start_time = None
         self.recording_stop_time = None
@@ -188,43 +91,23 @@ class TTLModule(Module):
 
         # State flags (matching camera module pattern)
         self.is_recording = False
-        self.is_streaming = False  # TTL doesn't stream, but keep for consistency
+        self.is_streaming = False
 
         # Set up TTL-specific callbacks for the command handler
-        self.command.set_callbacks({
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id),
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200),
-            'get_ptp_status': self.ptp.get_status,
-            'get_streaming_status': lambda: self.is_streaming,
-            'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication.send_status(status),
-            'get_health': self.health.get_health,
-            'start_recording': self.start_recording,
-            'stop_recording': self.stop_recording,
-            'list_recordings': super().list_recordings,
-            'clear_recordings': self._clear_recordings,
-            'export_recordings': self.export_recordings,
-            'update_pins': self.update_pins,
-            'get_pin_config': self.get_pin_config,
-            'get_controller_ip': lambda: self.network.controller_ip,
-            'shutdown': self._shutdown,
-        })
-
+        self.ttl_callbacks = {}
+        self.command.set_callbacks(self.ttl_callbacks) # Append new TTL callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
+
         self.logger.info(f"Initialized TTL module with {len(self.input_pins)} input pins and {len(self.output_pins)} output pins")
 
     def handle_command(self, command: str, **kwargs):
         return self.command.handle_command(command, **kwargs)
 
-    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> bool:
+    def _start_recording(self) -> bool:
         """Start TTL event recording"""
         # Store experiment name for use in timestamps filename
-        self.current_experiment_name = experiment_name
-        
-        # First call parent class to handle common recording setup
-        filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
-        if not filename:
-            return False
+        # filename = f"{self.recording_folder}/{self.current_experiment_name}.{self.config.get('recording.recording_filetype')}"
+        # self.add_session_file(filename)
         
         try:
             # Reset recording state
@@ -240,15 +123,11 @@ class TTLModule(Module):
             # Start monitoring all input pins
             self._start_recording_all_input_pins()
 
-            if duration > 0:
-                self.logger.info("Attempting to start recording thread")
-                self.recording_thread.start()
-
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_started",
-                    "filename": filename,
+                    # "filename": filename,
                     "recording": True,
                     "session_id": self.recording_session_id
                 })
@@ -256,7 +135,7 @@ class TTLModule(Module):
             return True
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error starting recording: {e}")
+            self.logger.error(f"Error starting recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_start_failed",
@@ -274,13 +153,11 @@ class TTLModule(Module):
         pin.when_released = self._handle_input_pin_high
         self.logger.info(f"Started monitoring output pin {pin.pin}")
 
-    def stop_recording(self) -> bool:
+    def _stop_recording(self) -> bool:
         """Stop TTL event recording"""
-        # First check if recording using parent class
-        if not super().stop_recording():
-            return False
-        
         try:
+            self.logger.info("Attempting to stop TTL specific recording")
+
             # Stop monitoring all input pins
             self.stop_recording_all_input_pins()
             
@@ -304,11 +181,11 @@ class TTLModule(Module):
             else:
                 events_file = f"{self.recording_folder}/{self.recording_session_id}_events.txt"
             
+            self.add_session_file(events_file)
             self._save_ttl_event_buffer_to_file(filename=events_file)
             
             # Calculate duration
             if self.recording_start_time is not None:
-                duration = time.time() - self.recording_start_time
                 
                 # Send status response after successful recording stop
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -316,18 +193,14 @@ class TTLModule(Module):
                         "type": "recording_stopped",
                         "filename": self.current_filename,
                         "session_id": self.recording_session_id,
-                        "duration": duration,
                         "event_count": len(self.ttl_event_buffer),
                         "status": "success",
                         "recording": False,
                         "message": f"Recording completed successfully with {len(self.ttl_event_buffer)} events"
                     })
-                
-                self._auto_export()
-
                 return True
             else:
-                self.logger.error("(MODULE) Error: recording_start_time was None")
+                self.logger.error("Error: recording_start_time was None")
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
@@ -337,7 +210,7 @@ class TTLModule(Module):
                 return False
             
         except Exception as e:
-            self.logger.error(f"(MODULE) Error stopping recording: {e}")
+            self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_stopped",
@@ -345,6 +218,10 @@ class TTLModule(Module):
                     "error": str(e)
                 })
             return False
+    
+    def configure_module(self):
+        self.logger.info(f"Something changed in TTL configuration")
+        self.assign_pins()
 
     def stop_recording_all_input_pins(self):
         self.logger.info(f"Stopping to record all input pins")
@@ -364,17 +241,17 @@ class TTLModule(Module):
     def _handle_input_pin_low(self, pin):
         """Handle input pin going low (pressed)"""
         self.ttl_event_buffer.append((time.time_ns(), pin.pin.number, "low"))
-        self.logger.info(f"(MODULE) Input pin {pin.pin} went low (pressed)")
+        self.logger.info(f"Input pin {pin.pin} went low (pressed)")
 
     def _handle_input_pin_high(self, pin):
         """Handle input pin going high (released)"""
         self.ttl_event_buffer.append((time.time_ns(), pin.pin.number, "high"))
-        self.logger.info(f"(MODULE) Input pin {pin.pin} went high (released)") 
+        self.logger.info(f"Input pin {pin.pin} went high (released)") 
 
     def _print_ttl_event_buffer(self):
-        self.logger.info(f"(MODULE) Logging TTL event buffer:")
+        self.logger.info(f"Logging TTL event buffer:")
         for event in self.ttl_event_buffer:
-            self.logger.info(f"(MODULE) TTL event: {event}")
+            self.logger.info(f"TTL event: {event}")
 
     def _save_ttl_event_buffer_to_file(self, filename="ttl_event_buffer.txt"):
         """Save TTL event buffer to file with Excel-friendly format"""
@@ -594,80 +471,6 @@ class TTLModule(Module):
             'config': self.pulse_generation_config.copy()
         }
 
-    def update_pins(self, params):
-        """Update pin configuration dynamically"""
-        try:
-            if not params:
-                self.logger.error("No pin configuration provided for update_pins")
-                return False
-            
-            # Parse the pin configuration from params
-            # Expected format: "pin_config={\"18\":{\"type\":\"output\",\"output_type\":\"experiment_clock\"}}"
-            pin_config_str = None
-            for param in params:
-                if param.startswith('pin_config='):
-                    pin_config_str = param.split('=', 1)[1]
-                    break
-            
-            if not pin_config_str:
-                self.logger.error("No pin_config parameter found in update_pins command")
-                return False
-            
-            # Parse JSON configuration
-            try:
-                pins_config = json.loads(pin_config_str)
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Invalid JSON in pin_config: {e}")
-                return False
-            
-            # Update the config manager with new pin configuration
-            self.config.set("pins", pins_config)
-            
-            # Reassign pins with new configuration
-            self.assign_pins()
-            
-            self.logger.info(f"Successfully updated pin configuration: {pins_config}")
-            
-            # Send status response
-            self.communication.send_status({
-                "type": "pins_updated",
-                "pins_config": pins_config,
-                "input_pins": self.ttl_input_pins,
-                "output_pins": self.ttl_output_pins
-            })
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error updating pins: {e}")
-            self.communication.send_status({
-                "type": "pins_update_failed",
-                "error": str(e)
-            })
-            return False
-
-    def get_pin_config(self):
-        """Get current pin configuration"""
-        try:
-            pins_config = self.config.get("pins", {})
-            return {
-                "pins_config": pins_config,
-                "input_pins": self.ttl_input_pins,
-                "output_pins": self.ttl_output_pins,
-                "input_pin_count": len(self.input_pins),
-                "output_pin_count": len(self.output_pins)
-            }
-        except Exception as e:
-            self.logger.error(f"Error getting pin config: {e}")
-            return {
-                "error": str(e),
-                "input_pins": self.ttl_input_pins,
-                "output_pins": self.ttl_output_pins
-            }
-
-    def when_controller_discovered(self, controller_ip: str, controller_port: int):
-        super().when_controller_discovered(controller_ip, controller_port)
-
     def assign_pins(self):
         """Assign pins based on configuration from config file"""
         try:
@@ -679,8 +482,6 @@ class TTLModule(Module):
             
             if not pins_config:
                 self.logger.warning("No pin configuration found in config file")
-                # Fall back to old method if no config
-                self._assign_pins_legacy()
                 return
             
             self.logger.info(f"Assigning pins from config: {pins_config}")
@@ -701,7 +502,7 @@ class TTLModule(Module):
             for pin_number, pin_config in pins_config.items():
                 try:
                     pin_number = int(pin_number)
-                    pin_type = pin_config.get("type", "input")
+                    pin_type = pin_config.get("mode")
                     
                     # Store pin configuration
                     self.pin_configs[pin_number] = pin_config
@@ -725,29 +526,38 @@ class TTLModule(Module):
                             except Exception as e2:
                                 self.logger.error(f"Failed to assign input pin {pin_number} after retry: {e2}")
                         
-                    elif pin_type == "output":
+                    elif pin_type == "pseudorandom":
                         # Create output pin (LED object) with proper error handling
                         try:
                             pin_obj = gpiozero.LED(pin_number)
                             self.output_pins.append(pin_obj)
                             output_pins_assigned.append(pin_number)
+                            # For pseudorandom, start in low state
+                            pin_obj.off()
+                            self.pseudorandom_pins.append(pin_number)
+                            self.logger.info(f"Assigned output pin {pin_number} as pseudorandom (initial state: LOW)")
+                        except Exception as e:
+                            self.logger.error(f"Failed to assign output pin {pin_number}: {e}")
+                            # Try to clean up and retry once
+                            self._cleanup_gpio()
+                            try:
+                                pin_obj = gpiozero.LED(pin_number)
+                                self.output_pins.append(pin_obj)
+                                output_pins_assigned.append(pin_number)
+                                pin_obj.off()
+                                self.logger.info(f"Successfully assigned output pin {pin_number} after retry")
+                            except Exception as e2:
+                                self.logger.error(f"Failed to assign output pin {pin_number} after retry: {e2}")
                             
-                            # Set initial state based on output type
-                            output_type = pin_config.get("output_type", "standard")
-                            if output_type == "experiment_clock":
-                                # For experiment clock, start in low state (will go high when recording starts)
-                                pin_obj.off()
-                                self.experiment_clock_pins.append(pin_number)
-                                self.logger.info(f"Assigned output pin {pin_number} as experiment_clock (initial state: LOW)")
-                            elif output_type == "pseudorandom":
-                                # For pseudorandom, start in low state
-                                pin_obj.off()
-                                self.pseudorandom_pins.append(pin_number)
-                                self.logger.info(f"Assigned output pin {pin_number} as pseudorandom (initial state: LOW)")
-                            else:
-                                # Standard output, start in low state
-                                pin_obj.off()
-                                self.logger.info(f"Assigned output pin {pin_number} as standard (initial state: LOW)")
+                    elif pin_type == "experiment_clock":
+                        try:
+                            pin_obj = gpiozero.LED(pin_number)
+                            self.output_pins.append(pin_obj)
+                            output_pins_assigned.append(pin_number)
+                            # For experiment clock, start in low state (will go high when recording starts)
+                            pin_obj.off()
+                            self.experiment_clock_pins.append(pin_number)
+                            self.logger.info(f"Assigned output pin {pin_number} as experiment_clock (initial state: LOW)")
                         except Exception as e:
                             self.logger.error(f"Failed to assign output pin {pin_number}: {e}")
                             # Try to clean up and retry once
@@ -777,50 +587,24 @@ class TTLModule(Module):
             
         except Exception as e:
             self.logger.error(f"Error in assign_pins: {e}")
-            # Fall back to legacy method
-            self._assign_pins_legacy()
     
     def _cleanup_gpio(self):
         """Clean up GPIO resources to prevent conflicts"""
         try:
             # Close existing pin factory
-            gpiozero.Device.pin_factory.close()
-            # Small delay to ensure cleanup
-            time.sleep(0.1)
+            # gpiozero.Device.pin_factory.close()
+            # Clean up any gpiozero objects
+            for pin_list in [getattr(self, 'input_pins', []), getattr(self, 'output_pins', [])]:
+                for pin in pin_list:
+                    try:
+                        pin.close()
+                    except Exception as e:
+                        self.logger.debug(f"Failed to close pin {pin}: {e}")
+            self.input_pins.clear()
+            self.output_pins.clear()
+            time.sleep(0.1) # Small delay to ensure cleanup
         except Exception as e:
             self.logger.debug(f"GPIO cleanup error (non-critical): {e}")
-    
-    def _assign_pins_legacy(self):
-        """Legacy pin assignment - fallback when no config file is available"""
-        self.logger.info("Using legacy pin assignment")
-        
-        # Clean up GPIO first
-        self._cleanup_gpio()
-        
-        # Handle None values from config
-        if self.ttl_input_pins is None:
-            self.ttl_input_pins = []
-        if self.ttl_output_pins is None:
-            self.ttl_output_pins = []
-        
-        # Assign input pins
-        for pin in self.ttl_input_pins:
-            try:
-                pin_obj = gpiozero.Button(pin, bounce_time=0, pull_up=True)
-                self.input_pins.append(pin_obj)
-                self.logger.info(f"Legacy: Assigned input pin {pin}")
-            except Exception as e:
-                self.logger.error(f"Legacy: Failed to assign input pin {pin}: {e}")
-        
-        # Assign output pins
-        for pin in self.ttl_output_pins:
-            try:
-                pin_obj = gpiozero.LED(pin)
-                pin_obj.off()  # Start in low state
-                self.output_pins.append(pin_obj)
-                self.logger.info(f"Legacy: Assigned output pin {pin} (initial state: LOW)")
-            except Exception as e:
-                self.logger.error(f"Legacy: Failed to assign output pin {pin}: {e}")
 
     def _start_pin_generators(self):
         """Start experiment clock and pseudorandom generators for all configured pins"""
@@ -872,11 +656,9 @@ class TTLModule(Module):
         try:
             # Get pin configuration
             pin_config = self.pin_configs.get(pin_number, {})
-            duty_cycle_str = pin_config.get("duty_cycle", "50%")
-            self.logger.info(f"Duty cycle for experiment clock {duty_cycle_str} from config")
+            duty_cycle = pin_config.get("duty_cycle", 0.5)
+            self.logger.info(f"Duty cycle for experiment clock {duty_cycle} from config")
 
-            # Parse duty cycle (e.g., "75%" -> 0.75)
-            duty_cycle = float(duty_cycle_str.replace("%", "")) / 100.0
             period = 1.0  # 1 second period
             
             # Find the pin object

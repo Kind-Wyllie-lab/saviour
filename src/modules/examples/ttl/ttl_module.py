@@ -253,6 +253,16 @@ class TTLModule(Module):
         for event in self.ttl_event_buffer:
             self.logger.info(f"TTL event: {event}")
 
+    def _create_ttl_file(self):
+        """Create a CSV file to save TTL events"""
+        self.current_ttl_events_file = 
+        filename = self.current_filename
+
+        self.logger.info(f"Creating ttl file {filename}.csv")
+        try:
+
+
+
     def _save_ttl_event_buffer_to_file(self, filename="ttl_event_buffer.txt"):
         """Save TTL event buffer to file with Excel-friendly format"""
         try:

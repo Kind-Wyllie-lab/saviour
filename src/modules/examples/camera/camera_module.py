@@ -12,7 +12,6 @@ For a good discussion of getting frame timestamps and syncing with precallbacks,
 
 Author: Andrew SG
 Created: 17/03/2025
-License: GPLv3
 
 # TODO: Consider using http.server instead of flask
 """

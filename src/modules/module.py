@@ -80,7 +80,6 @@ class Module(ABC):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
-        self.recording_folder = "rec"  # Default recording folder
         self._recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
         self.health_recording_thread = None # A thread to record health on
@@ -89,12 +88,6 @@ class Module(ABC):
         # Setup logging first
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
-        
-        # Create recording folder if it doesn't exist
-        if not os.path.exists(self.recording_folder):
-            os.makedirs(self.recording_folder, exist_ok=True)
-            self.logger.info(f"Created recording folder: {self.recording_folder}")
-
 
         # Add file handler if none exists
         if not self.logger.handlers:
@@ -138,6 +131,12 @@ class Module(ABC):
         self.logger.info(f"Initialising managers")
         self.logger.info(f"Initialising config manager")
         self.config = Config()
+        # Parameters from config
+        self.recording_folder = self.config.get("recording.recording_folder", "rec")
+        self.logger.info(f"Recording folder = {self.recording_folder}")
+        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
+            os.makedirs(self.recording_folder, exist_ok=True)
+            self.logger.info(f"Created recording folder: {self.recording_folder}")
         self.export = Export(
             module_id=self.module_id,
             recording_folder=self.recording_folder,
@@ -206,10 +205,6 @@ class Module(ABC):
         self.recording_session_id = None
         self.current_filename = None
         self.session_files = []
-
-        # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder")
-        # self.recording_filetype = self.config.get("recording.recording_filetype") # Find the appropriate filetype for this module type, 
 
         # Control State flags
         self.is_running = False  # Start as False
@@ -1099,14 +1094,25 @@ class Module(ABC):
             # Check 2: Recording folder exists and is writable
             if ready:
                 try:
+                    self.logger.info(f"Checking can write to {self.recording_folder}")
                     if not os.path.exists(self.recording_folder):
                         os.makedirs(self.recording_folder, exist_ok=True)
+                    self.logger.info("Created folder OK")
                     # Test write access
                     test_file = os.path.join(self.recording_folder, '.test_write')
+                    self.logger.info(f"Going to write to test file {test_file}")
                     with open(test_file, 'w') as f:
+                        self.logger.info(f"Opened test file {f}")
                         f.write('test')
+                    self.logger.info("Removing test file")
                     os.remove(test_file)
                     checks['recording_folder_writable'] = True
+                except PermissionError as e:
+                    print(f"Permission error: {e}")
+                    checks['recording_folder_writable'] = False
+                except OSError as e:
+                    print(f"OSError during write/delete test: {e}")
+                    checks['recording_folder_writable'] = False
                 except Exception as e:
                     checks['recording_folder_writable'] = False
                     ready = False

@@ -57,8 +57,7 @@ class TTLModule(Module):
         self.config.load_module_config("ttl_config.json")
 
         # TTL specific variables
-        self.ttl_input_pins = self.config.get("digital_inputs.pins")
-        self.ttl_output_pins = self.config.get("digital_outputs.pins")
+        self._ttl_file_handle = None # The open .csv file for storing events
 
         # Initialize GPIO
         self.output_pins = []
@@ -247,23 +246,23 @@ class TTLModule(Module):
         for event in self.ttl_event_buffer:
             self.logger.info(f"TTL event: {event}")
 
-    # def _create_ttl_file(self):
-    #     """Create the initial CSV file to save TTL events"""
-    #     self.current_ttl_events_filename = f"{self.current_filename_prefix}.csv"
-    #     filename = self.current_ttl_events_filename
-    #     self.logger.info(f"Creating ttl file {filename}")
-    #     try:
-    #         self._ttl_file_handle = open(self.current_events_file, "w", buffering=1)  # line-buffered
-    #         # Write header with metadata
-    #         f = self._ttl_file_handle
-    #         f.write("# TTL Event Recording\n")
-    #         f.write(f"# Session ID: {self.recording_session_id}\n")
-    #         f.write(f"# Recording Start: {self.recording_start_time}\n")
-    #         f.write("#\n")
-    #         f.write("Timestamp_Nanoseconds,Timestamp_Seconds,Timestamp_ISO,Pin_Number,Pin_State,Event_Type,Pin_Description\n")
-    #     except Exception as e:
-    #         self.logger.error(f"Failed to open TTL events file: {e}")
-    #         self._ttl_file_handle = None
+    def _create_ttl_file(self):
+        """Create the initial CSV file to save TTL events"""
+        self.current_ttl_events_filename = f"{self.current_filename_prefix}.csv"
+        filename = self.current_ttl_events_filename
+        self.logger.info(f"Creating ttl file {filename}")
+        try:
+            self._ttl_file_handle = open(self.current_events_file, "w", buffering=1)  # line-buffered
+            # Write header with metadata
+            f = self._ttl_file_handle
+            f.write("# TTL Event Recording\n")
+            f.write(f"# Session ID: {self.recording_session_id}\n")
+            f.write(f"# Recording Start: {self.recording_start_time}\n")
+            f.write("#\n")
+            f.write("Timestamp_Nanoseconds,Timestamp_Seconds,Timestamp_ISO,Pin_Number,Pin_State,Event_Type,Pin_Description\n")
+        except Exception as e:
+            self.logger.error(f"Failed to open TTL events file: {e}")
+            self._ttl_file_handle = None
 
 
 

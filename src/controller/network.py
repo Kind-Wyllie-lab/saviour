@@ -11,21 +11,12 @@ from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module dis
 import os
 import socket
 import uuid
-from dataclasses import dataclass
 from typing import Dict, Any, Optional
 import logging
 import threading
 import time
 
-@dataclass
-class Module:
-    """Dataclass to represent a module in the habitat system - used by zeroconf to discover modules"""
-    id: str
-    name: str
-    type: str
-    ip: str
-    port: int
-    properties: Dict[str, Any]
+from models import Module # Import the dataclass for Modules
 
 class Network():
     def __init__(self, config_manager=None):
@@ -266,30 +257,33 @@ class Network():
         """Add a service to the list of discovered modules"""
         self.logger.info(f"Discovered module: {name}")
         info = zeroconf.get_service_info(service_type, name)
-        if info:
-            module = Module(
-                id=str(info.properties.get(b'id', b'unknown').decode()),
-                name=name,
-                type=info.properties.get(b'type', b'unknown').decode(),
-                ip=socket.inet_ntoa(info.addresses[0]),
-                port=info.port,
-                properties=info.properties
-            )
-            
-            if self._validate_discovered_module(module) == True:
-                self.discovered_modules.append(module)
-                self.logger.info(f"Added new module: {module}")
-            
-            self.logger.info(f"New module list: {self.discovered_modules}")
-            
-            # Update tracking information
-            current_time = time.time()
-            self.module_discovery_times[module.id] = current_time
-            self.module_last_seen[module.id] = current_time
-            
-            # Call the callback if it exists
-            self.logger.info(f"Calling module discovery callback")
-            self.notify_module_update(self.discovered_modules)
+        if not info:
+            self.logger.warning("add_service was called with no service info") 
+            return
+
+        module = Module(
+            id = info.properties.get(b'id', b'unknown').decode(),
+            name = info.properties.get(b'id', b'unknown').decode(),
+            zeroconf_name = name,
+            type = info.properties.get(b'type', b'unknown').decode(),
+            ip = socket.inet_ntoa(info.addresses[0]),
+            port = info.port,
+        )
+        
+        if self._validate_discovered_module(module) == True:
+            self.discovered_modules.append(module)
+            self.logger.info(f"Added new module: {module}")
+        
+        self.logger.info(f"New module list: {self.discovered_modules}")
+        
+        # Update tracking information
+        current_time = time.time()
+        self.module_discovery_times[module.id] = current_time
+        self.module_last_seen[module.id] = current_time
+        
+        # Call the callback if it exists
+        self.logger.info(f"Calling module discovery callback")
+        self.notify_module_update(self.discovered_modules)
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""

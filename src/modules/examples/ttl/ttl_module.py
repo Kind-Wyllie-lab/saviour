@@ -24,6 +24,7 @@ import gpiozero
 import datetime
 import json
 from typing import Dict, Any, Optional, Callable
+from dataclasses import dataclass
 
 # Add GPIO cleanup at module level
 import atexit
@@ -47,6 +48,13 @@ def signal_handler(signum, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
+
+@dataclass
+class TTLEvent:
+    """Class for representing a TTL event"""
+    pin: int
+    mode: str
+
 
 class TTLModule(Module):
     def __init__(self, module_type="ttl"):
@@ -105,8 +113,6 @@ class TTLModule(Module):
     def _start_recording(self) -> bool:
         """Start TTL event recording"""
         # Store experiment name for use in timestamps filename
-        # filename = f"{self.recording_folder}/{self.current_experiment_name}.{self.config.get('recording.recording_filetype')}"
-        # self.add_session_file(filename)
         
         try:
             # Reset recording state
@@ -269,6 +275,7 @@ class TTLModule(Module):
     def _save_ttl_event_buffer_to_file(self, filename="ttl_event_buffer.txt"):
         """Save TTL event buffer to file with Excel-friendly format"""
         try:
+            self.logger.info("Saving TTL event buffer to file.")
             with open(filename, "w") as f:
                 # Write header with metadata
                 f.write("# TTL Event Recording\n")
@@ -279,53 +286,32 @@ class TTLModule(Module):
                 f.write("#\n")
                 
                 # Write CSV header for Excel compatibility (no comment prefix)
-                f.write("Timestamp_Nanoseconds,Timestamp_Seconds,Timestamp_ISO,Pin_Number,Pin_State,Event_Type,Pin_Description\n")
-                
+                # f.write("Timestamp_Nanoseconds,Timestamp_Seconds,Timestamp_ISO,Pin_Number,Pin_State,Event_Type,Pin_Description\n")
+                f.write("Timestamp_nanoseconds, pin_number, pin_mode, pin_state, pin_description\n")
+
                 # Write events in CSV format
                 for event in self.ttl_event_buffer:
                     timestamp_ns, pin_number, state = event
-                    timestamp_s = timestamp_ns / 1e9
-                    
-                    # Convert to ISO format for human readability
-                    timestamp_iso = datetime.datetime.fromtimestamp(timestamp_s).isoformat()
                     
                     # Normalize pin number (remove 'GPIO' prefix if present)
                     if isinstance(pin_number, str) and pin_number.startswith('GPIO'):
                         pin_number = pin_number[4:]  # Remove 'GPIO' prefix
                     
-                    # Determine event type and description based on pin configuration
-                    event_type = "unknown"
-                    pin_description = "Unknown pin"
-                    
-                    if str(pin_number) in self.pin_configs:
-                        pin_config = self.pin_configs[str(pin_number)]
+                    # Determine pin mode and description based on pin configuration
+                    pin_description = 'unknown'
+                    pin_mode = "unknown"
+
+                    self.logger.info(f"About to check pin configs {self.pin_configs}")
+                    self.logger.info(f"Config for {pin_number}: {self.pin_configs[pin_number]}")
+
+                    if pin_number in self.pin_configs:
+                        pin_config = self.pin_configs[pin_number]
+                        self.logger.info(f"Pin {pin_number} has config {pin_config}")
+                        pin_mode = pin_config.get('mode', "Unknown")
                         pin_description = pin_config.get('description', 'No description')
                         
-                        if pin_config.get('type') == 'input':
-                            event_type = "input"
-                        elif pin_config.get('type') == 'output':
-                            output_type = pin_config.get('output_type', 'standard')
-                            event_type = output_type
-                    else:
-                        # Fallback for legacy pins
-                        if pin_number in self.experiment_clock_pins:
-                            event_type = "experiment_clock"
-                            pin_description = "Experiment clock pin"
-                        elif pin_number in self.pseudorandom_pins:
-                            event_type = "pseudorandom"
-                            pin_description = "Pseudorandom pin"
-                        else:
-                            # Check if it's an input pin
-                            for pin in self.input_pins:
-                                if pin.pin.number == pin_number:
-                                    event_type = "input"
-                                    pin_description = "Input pin"
-                                    break
-                            if event_type == "unknown":
-                                event_type = "output"
-                                pin_description = "Output pin"
                     
-                    f.write(f"{timestamp_ns},{timestamp_s:.6f},{timestamp_iso},{pin_number},{state},{event_type},{pin_description}\n")
+                    f.write(f"{timestamp_ns},{pin_number},{pin_mode},{state},{pin_description}\n")
                 
             self.logger.info(f"Saved {len(self.ttl_event_buffer)} TTL events to {filename}")
             

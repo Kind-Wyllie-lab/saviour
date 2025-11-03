@@ -47,33 +47,36 @@ function CommandsPanel({ modules, experimentName }) {
   const anyRecording = modules.some((m) => m.status === "RECORDING");
 
   return (
-    <div className="commands-panel">
-      <button className="start-button" onClick={handleStartRecording} disabled={!allModulesReady || anyRecording}>
-        Start Recording
-      </button>
-      <button className="stop-button" onClick={handleStopRecording} disabled={!anyRecording}>
-        Stop Recording
-      </button>
-      <button className="ready-button" onClick={handleCheckReady} disabled={allModulesReady || anyRecording}>Check Ready</button>
-      {showDurationModal && (
-        <div className="modal-backdrop">
-          <div className="modal">
-            <h3>Experiment Duration (seconds)</h3>
-            <input
-              type="number"
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              min={0}
-            />
-            <div className="modal-buttons">
-              <button onClick={confirmStartRecording}>Start</button>
-              <button onClick={() => setShowDurationModal(false)}>Cancel</button>
+    <>
+      <h2>Commands</h2>
+      <div className="commands-panel">
+        <button className="start-button" onClick={handleStartRecording} disabled={!allModulesReady || anyRecording}>
+          Start Recording
+        </button>
+        <button className="stop-button" onClick={handleStopRecording} disabled={!anyRecording}>
+          Stop Recording
+        </button>
+        <button className="ready-button" onClick={handleCheckReady} disabled={allModulesReady || anyRecording}>Check Ready</button>
+        {showDurationModal && (
+          <div className="modal-backdrop">
+            <div className="modal">
+              <h3>Experiment Duration (seconds)</h3>
+              <input
+                type="number"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                min={0}
+              />
+              <div className="modal-buttons">
+                <button onClick={confirmStartRecording}>Start</button>
+                <button onClick={() => setShowDurationModal(false)}>Cancel</button>
+              </div>
+              <p>0 = infinite duration</p>
             </div>
-            <p>0 = infinite duration</p>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 }
   

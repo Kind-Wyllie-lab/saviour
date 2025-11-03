@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
 // import './ConfigCard.css';
-import LivestreamCard from "../LivestreamCard/LivestreamCard";
+import LivestreamCard from "../../LivestreamCard/LivestreamCard";
 
 function GenericConfigCard({ id, module }) {
-  const [formData, setFormData] = useState(module.config);
+  const [formData, setFormData] = useState(module.config); // Component level config state
   const [collapsed, setCollapsed] = useState(false); // top-level collapse
   const [collapsedSections, setCollapsedSections] = useState({}); // per-section collapse
 
@@ -92,7 +92,7 @@ function GenericConfigCard({ id, module }) {
   
 
   const handleSave = () => {
-    import("../../socket").then(({ default: socket }) => {
+    import("../../../socket").then(({ default: socket }) => {
       const editableData = filterPrivateKeys(formData); // only send editable keys
       const wrappedData = { config: editableData };
       console.log("Saving config for module", id, wrappedData);

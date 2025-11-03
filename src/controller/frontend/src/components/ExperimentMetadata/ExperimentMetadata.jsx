@@ -41,71 +41,74 @@ function ExperimentMetadata( {experimentName} ) {
   };
 
   return (
-    <div className="experiment-metadata-container">
+    <>
       <h2>Experiment Metadata</h2>
-      <div className="metadata-form-row">
-        <label htmlFor="experiment">Experiment</label>
-        <input
-          id="experiment"
-          value={metadata.experiment}
-          onChange={(e) => handleChange("experiment", e.target.value)}
-        />
-      </div>
+      <div className="experiment-metadata-container">
+        <div className="metadata-form-row">
+          <label htmlFor="experiment">Experiment</label>
+          <input
+            id="experiment"
+            value={metadata.experiment}
+            onChange={(e) => handleChange("experiment", e.target.value)}
+          />
+        </div>
 
-      <div className="metadata-form-row">
-        <label htmlFor="rat-id">Rat ID</label>
-        <input
-          id="rat-id"
-          value={metadata.rat_id}
-          onChange={(e) => handleChange("rat_id", e.target.value)}
-        />
-      </div>
+        <div className="metadata-form-row">
+          <label htmlFor="rat-id">Rat ID</label>
+          <input
+            id="rat-id"
+            value={metadata.rat_id}
+            onChange={(e) => handleChange("rat_id", e.target.value)}
+          />
+        </div>
 
-      <div className="metadata-form-row">
-        <label htmlFor="strain">Strain</label>
-        <input
-          id="strain"
-          value={metadata.strain}
-          onChange={(e) => handleChange("strain", e.target.value)}
-        />
-      </div>
+        <div className="metadata-form-row">
+          <label htmlFor="strain">Strain</label>
+          <input
+            id="strain"
+            value={metadata.strain}
+            onChange={(e) => handleChange("strain", e.target.value)}
+          />
+        </div>
 
-      <div className="metadata-form-row">
-        <label htmlFor="batch">Batch</label>
-        <input
-          id="batch"
-          value={metadata.batch}
-          onChange={(e) => handleChange("batch", e.target.value)}
-        />
-      </div>
+        <div className="metadata-form-row">
+          <label htmlFor="batch">Batch</label>
+          <input
+            id="batch"
+            value={metadata.batch}
+            onChange={(e) => handleChange("batch", e.target.value)}
+          />
+        </div>
 
-      <div className="metadata-form-row">
-        <label htmlFor="stage">Stage</label>
-        <select
-          id="stage"
-          value={metadata.stage}
-          onChange={(e) => handleChange("stage", e.target.value)}
-        >
-          <option value=""></option>
-          <option value="habituation">habituation</option>
-          <option value="training">training</option>
-          <option value="testing">testing</option>
-          <option value="probe">probe</option> */
-          <option value="conflict">conflict</option>
-        </select>
-      </div>
+        <div className="metadata-form-row">
+          <label htmlFor="stage">Stage</label>
+          <select
+            id="stage"
+            value={metadata.stage}
+            onChange={(e) => handleChange("stage", e.target.value)}
+          >
+            <option value=""></option>
+            <option value="habituation">habituation</option>
+            <option value="training">training</option>
+            <option value="testing">testing</option>
+            <option value="probe">probe</option> */
+            <option value="conflict">conflict</option>
+          </select>
+        </div>
 
-      <div className="metadata-form-row">
-        <label htmlFor="trial">Trial</label>
-        <input
-          id="trial"
-          value={metadata.trial}
-          onChange={(e) => handleChange("trial", e.target.value)}
-        />
-      </div>
+        <div className="metadata-form-row">
+          <label htmlFor="trial">Trial</label>
+          <input
+            id="trial"
+            value={metadata.trial}
+            onChange={(e) => handleChange("trial", e.target.value)}
+          />
+        </div>
 
-      <div className="experiment-name-preview">{experimentName}</div>
-    </div>
+        <div className="experiment-name-preview">{experimentName}</div>
+      </div>
+    </>
+
   );
 }
 

@@ -48,7 +48,7 @@ function CommandsPanel({ modules, experimentName }) {
       <div className="commands-panel">
         {/* Target selection dropdown */}
         <div className="target-select">
-          <label>Target Module:</label>
+          <label>Target Module(s):</label>
           <select
             value={targetModule}
             onChange={(e) => setTargetModule(e.target.value)}

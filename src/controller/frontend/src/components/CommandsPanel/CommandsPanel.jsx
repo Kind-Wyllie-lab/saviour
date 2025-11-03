@@ -5,6 +5,7 @@ import "./CommandsPanel.css";
 function CommandsPanel({ modules, experimentName }) {
   const [showDurationModal, setShowDurationModal] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [targetModule, setTargetModule] = useState("all"); // default target is "All"
   
 
   const handleStartRecording = () => {
@@ -14,7 +15,7 @@ function CommandsPanel({ modules, experimentName }) {
   const confirmStartRecording = () => {
     socket.emit("send_command", {
       type: "start_recording",
-      module_id: "all",
+      module_id: targetModule,
       params: { experiment_name: experimentName, duration: Number(duration) },
     });
     setShowDurationModal(false);
@@ -31,14 +32,14 @@ function CommandsPanel({ modules, experimentName }) {
   const handleStopRecording = () => {
     socket.emit("send_command", { 
       type: "stop_recording",
-      module_id: "all"
+      module_id: targetModule
     }); 
   };
 
   const handleCheckReady = () => {
     socket.emit("send_command", { 
       type: "validate_readiness",
-      module_id: "all"
+      module_id: targetModule
     });
   };
 
@@ -50,6 +51,15 @@ function CommandsPanel({ modules, experimentName }) {
     <>
       <h2>Commands</h2>
       <div className="commands-panel">
+        <div className="target-selector">
+          <label>Target:</label>
+          <select value={targetModule} onChange={(e) => setTargetModule(e.target.value)}>
+            <option value="all">All</option>
+            {modules.map((m) => (
+              <option key={m.id} value={m.id}>{m.id}</option>
+            ))}
+          </select>
+        </div>
         <button className="start-button" onClick={handleStartRecording} disabled={!allModulesReady || anyRecording}>
           Start Recording
         </button>

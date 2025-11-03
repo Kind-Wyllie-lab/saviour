@@ -477,7 +477,7 @@ class TTLModule(Module):
             self._cleanup_gpio()
             
             # Get pin configuration from config
-            pins_config = self.config.get("pins", {})
+            pins_config = self.config.get("ttl.pins", {})
             
             if not pins_config:
                 self.logger.warning("No pin configuration found in config file")

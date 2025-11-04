@@ -58,7 +58,6 @@ from src.controller.modules import Modules
 # Habitat Controller Class
 class Controller:
     """Main controller class for the habitat system"""
-    
     def __init__(self, config_file_path: str = None):
         """Initialize the controller with default values
 
@@ -156,6 +155,7 @@ class Controller:
         # Register callbacks
         self.register_callbacks()
     
+
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""
         self.logger.info("Registering callbacks")
@@ -188,10 +188,14 @@ class Controller:
 
         self.modules.push_module_update_to_frontend = self.web.push_module_update
     
+
     def _remove_module(self, module_id: str):
+        self.logger.info(f"Removing {module_id}")
         self.modules.remove_module(module_id)
         self.health.remove_module(module_id)
+        self.logger.info(f"New list: {self.modules.get_modules().keys()}")
         self.communication.send_command(module_id, "shutdown", {})
+
 
     def network_notify_module_update(self, discovered_modules: dict):
         """Observer callback for when network manager detects a module update
@@ -199,6 +203,7 @@ class Controller:
         """
         self.modules.network_notify_module_update(discovered_modules)
         self.health.network_notify_module_update(discovered_modules)
+    
     
     def network_notify_module_id_change(self, old_id: str, new_id: str):
         """Observer callback for when network manager detects a module ID change
@@ -211,11 +216,13 @@ class Controller:
             self.module_config[new_id] = self.module_config.pop(old_id)
             self.logger.info(f"Updated module_config key from {old_id} to {new_id}")
 
+
     def _get_modules_for_frontend(self): # From APA
         """Get list of online modules from health monitor instead of service manager, append additional information"""
         modules = self.modules.get_modules()
         self.logger.info(f"get modules returning {modules}")
         return modules
+
 
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
@@ -254,11 +261,13 @@ class Controller:
                         # self.module_config[module_id] = config_data
                         self.logger.info(f"Stored full config for {module_id}")
                 case 'set_config':
-                    self.logger.info(f"Set config response received from {module_id}: {status_data}")
+                    self.logger.info(f"Set config response received from {module_id}")
                     # If the set_config was successful, we should refresh the config
-                    if status_data.get('status') == 'success':
-                        # Request updated config from this module
-                        self.communication.send_command(module_id, "get_config", {})
+                    if status_data.get('result') == 'success':
+                        if not status_data.get('config'):
+                            self.communication.send_command(module_id, "get_config", {})
+                        else:
+                            self.modules.update_module_config(module_id, status_data.get('config'))
                     else:
                         self.logger.error(f"Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
                 case 'recording_started':
@@ -280,6 +289,7 @@ class Controller:
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
 
+
     def on_module_status_change(self, module_id: str, status: str):
         """Callback for when module status changes (online/offline)
         
@@ -296,6 +306,7 @@ class Controller:
         self.logger.info(f"Module {module_id} status is: {status}, online status: {online}")
 
         self.modules.notify_module_online_update(module_id, online)
+
 
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
@@ -342,6 +353,7 @@ class Controller:
         except Exception as e:
             self.logger.error(f"Error stopping controller: {e}")
             return False
+
 
     # Main methods
     def start(self) -> bool:
@@ -397,6 +409,7 @@ class Controller:
         
         return True
         
+
     def get_config(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value
@@ -410,6 +423,7 @@ class Controller:
         """
         return self.config.get(key, default)
         
+
     def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
         """
         Set a configuration value
@@ -429,6 +443,7 @@ class Controller:
 
         # Update in config manager
         return self.config.set(key, value, persist) 
+
 
     def on_module_discovered(self, module):
         """Callback for when a new module is discovered"""
@@ -453,15 +468,18 @@ class Controller:
             self.web.notify_module_update()
             self.module_config[module.id] = {}
 
+
     def on_module_removed(self, module):
         """Callback for when a module network is removed"""
         self.web.notify_module_update()
+
 
     def get_module_configs(self):
         """Get the module configuration data for online modules only"""
         # Request config from all modules - refresh the config stored on controller
         self.logger.info(f"Sending get_config command to all modules")
         self.communication.send_command("all", "get_config", {})
+
 
     def get_samba_info(self):
         """Get Samba share information from configuration"""
@@ -489,6 +507,7 @@ class Controller:
                 'share_path': '\\\\192.168.1.1\\controller_share',
                 'controller_ip': '192.168.1.1'
             }
+
 
 if __name__ == "__main__":
     controller = Controller(config_file_path="config.json")

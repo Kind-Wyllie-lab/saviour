@@ -12,7 +12,6 @@ For a good discussion of getting frame timestamps and syncing with precallbacks,
 
 Author: Andrew SG
 Created: 17/03/2025
-License: GPLv3
 
 # TODO: Consider using http.server instead of flask
 """
@@ -270,7 +269,6 @@ class CameraModule(Module):
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
-                        "filename": self.current_filename,
                         "session_id": self.recording_session_id,
                         "duration": duration,
                         "frame_count": len(self.frame_times),

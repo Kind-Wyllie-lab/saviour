@@ -1,0 +1,130 @@
+.ttl-card {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    margin: 10px 0;
+    background: var(--card-bg-color);
+    color: var(--text-color);
+    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+  }
+  
+  .ttl-card h3 {
+    margin: 0 0 10px 0;
+    font-size: 1.2rem;
+  }
+  
+  .add-pin-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  
+  .add-pin-row input[type="number"] {
+    flex: 1;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
+  }
+  
+  .add-pin-row button {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: none;
+    background: var(--accent-color);
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  
+  .add-pin-row button:hover {
+    background: darken(var(--accent-color), 10%);
+  }
+  
+  .pin-card {
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .pin-card h4 {
+    margin: 0;
+    font-size: 1rem;
+  }
+  
+  .pin-card label {
+    font-weight: 500;
+    margin-right: 8px;
+  }
+  
+  .pin-card input[type="text"],
+  .pin-card input[type="number"] {
+    flex: 1;
+    max-width: 100px;
+    padding: 4px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
+  }
+  
+  .pin-card select {
+    flex: 1;
+    max-width: 150px;
+    padding: 4px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
+  }
+  
+  .pin-card button {
+    align-self: flex-start;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: none;
+    background: var(--accent-color);
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    max-width: 120px;
+    transition: background 0.2s;
+  }
+  
+  .pin-card button:hover {
+    background: darken(var(--accent-color), 10%);
+  }
+  
+  .ttl-card > button {
+    margin-top: 10px;
+    align-self: flex-start;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+    background: var(--accent-color);
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    max-width: 200px;
+  }
+  
+  .ttl-card > button:hover {
+    background: darken(var(--accent-color), 10%);
+  }
+  
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  

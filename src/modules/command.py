@@ -8,7 +8,6 @@ providing a central place for command parsing and execution.
 
 Author: Andrew SG
 Created: 16/05/2025         
-License: GPLv3
 """
 
 import time

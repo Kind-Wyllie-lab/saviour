@@ -12,6 +12,7 @@ Author: Andrew SG
 Created: ?
 """
 
+
 import logging
 import time
 from flask import Flask, render_template, jsonify, request, send_from_directory
@@ -22,8 +23,8 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-
 from config import Config
+
 
 class Web:
     def __init__(self, config: Config):
@@ -68,6 +69,7 @@ class Web:
         # Set up paths
         self.habitat_share_dir = Path("/home/pi/controller_share")
     
+    
     def _generate_experiment_name(self) -> str:
         """Generate experiment name from metadata, skipping empty fields."""
         md = self.experiment_metadata
@@ -87,6 +89,7 @@ class Web:
 
         return name
 
+
     def register_callbacks(self, callbacks={}):
         """Register callbacks based on a dict.
         Should include:
@@ -96,6 +99,7 @@ class Web:
             "get_module_health"
         """
         self.callbacks.update(callbacks)
+
 
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""
@@ -108,9 +112,11 @@ class Web:
             self.socketio.emit('module_update', {"modules": modules})
             self.logger.info(f"Sent module update to all clients")
 
+
     def push_module_update(self, modules: dict):
-        self.logger.info(f"Pushing update module list to frontend: {modules}")
+        self.logger.info(f"Pushing update module list to frontend: {modules.keys()}")
         self.socketio.emit('modules_update', modules)
+
 
     def _register_routes(self):      
         # Serve React app
@@ -126,6 +132,7 @@ class Web:
                 return send_from_directory(static_folder, path)
 
             return send_from_directory(self.app.static_folder, "index.html")
+
 
     def _register_socketio_events(self):
         # WebSocket event handlers - for use by the web interface
@@ -285,7 +292,7 @@ class Web:
         def handle_update_experiment_metadata(data):
             """Handle experiment metadata updates from frontend"""
             self.logger.info(f"Received experiment metadata update: {data}")
-            
+
             # Update stored metadata
             if 'experiment' in data:
                 self.experiment_metadata['experiment'] = data['experiment']
@@ -313,7 +320,7 @@ class Web:
                 'experiment_name': self.current_experiment_name
             })
             self.logger.info(f"Sent experiment metadata update confirmation")
-        
+
         @self.socketio.on('get_experiment_metadata')
         def handle_get_experiment_metadata(data=None):
             """Handle request for experiment metadata from frontend"""
@@ -337,7 +344,7 @@ class Web:
                 self.callbacks["get_module_configs"]()
             else:
                 self.logger.warning(f"get_module_configs callback not available")
-            
+
         @self.socketio.on('save_module_config')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
@@ -352,7 +359,6 @@ class Web:
                 self.callbacks["send_command"](data['id'], command, params)
             else:
                 self.logger.error("No 'send command' callback registered")
-
 
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():
@@ -389,7 +395,7 @@ class Web:
                     'module_health': {},
                     'error': str(e)
                 })
-        
+
         """ Debug """
         @self.socketio.on('get_debug_data')
         def handle_get_debug_info():
@@ -419,12 +425,11 @@ class Web:
             self.logger.info(f"Received request to remove module: {module['id']}")
             self.callbacks["remove_module"](module['id'])
 
-        
 
-    
     def update_modules(self, modules: list):
         """Update the list of modules from the controller service manager"""
         self._modules = modules
+
 
     def update_module_readiness(self, module_id: str, ready_status: dict):
         """Update module readiness state and broadcast to all clients"""
@@ -448,6 +453,8 @@ class Web:
             'checks': ready_status.get('checks', {}),
             'error': ready_status.get('error')
         })
+
+
     def start(self):
         """Start the web interface in a separate thread"""
         if not self._running:
@@ -460,9 +467,11 @@ class Web:
             self.web_thread.start()
             return self.web_thread
 
+
     def _run_server(self):
         """Internal method to run the Flask server"""
         self.socketio.run(self.app, host='0.0.0.0', port=self.port, debug=False, allow_unsafe_werkzeug=True)
+
 
     def stop(self):
         """Stop the web interface"""
@@ -470,11 +479,13 @@ class Web:
             self._running = False
             self.socketio.stop()
 
+
     def list_modules(self):
         """List all discovered modules"""
         self.logger.info("Listing modules")
         modules = self.callbacks["get_modules"]()
         return jsonify({"modules": modules})
+
 
     def get_exported_recordings(self):
         """Get list of exported recordings from controller share and NAS directories"""
@@ -497,6 +508,7 @@ class Web:
         recordings.extend(nas_recordings)
         
         return recordings
+
 
     def get_nas_recordings(self):
         """Get list of exported recordings from NAS"""
@@ -570,6 +582,7 @@ class Web:
         self.logger.info(f"Found {len(recordings)} NAS recordings")
         return recordings
 
+
     def mount_nas(self):
         """Mount the NAS share"""
         try:
@@ -610,6 +623,7 @@ class Web:
         except Exception as e:
             self.logger.error(f"NAS mount failed: {str(e)}")
             return False
+
 
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
@@ -660,9 +674,11 @@ class Web:
         except Exception as e:
             self.logger.error(f"Error handling module status: {str(e)}")
 
+
     def _register_rest_api_routes(self):
-        
-        # REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
+        """
+        REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
+        """
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
             self.logger.info(f"/api/list_modules endpoint called. Listing modules")

@@ -80,7 +80,8 @@ class Module(ABC):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
-        self.recording_folder = "rec"  # Default recording folder
+        self.description = "No description" # A human readable description to be overridden by child classes
+
         self._recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
         self.health_recording_thread = None # A thread to record health on
@@ -89,12 +90,6 @@ class Module(ABC):
         # Setup logging first
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
-        
-        # Create recording folder if it doesn't exist
-        if not os.path.exists(self.recording_folder):
-            os.makedirs(self.recording_folder, exist_ok=True)
-            self.logger.info(f"Created recording folder: {self.recording_folder}")
-
 
         # Add file handler if none exists
         if not self.logger.handlers:
@@ -138,6 +133,12 @@ class Module(ABC):
         self.logger.info(f"Initialising managers")
         self.logger.info(f"Initialising config manager")
         self.config = Config()
+        # Parameters from config
+        self.recording_folder = self.config.get("recording.recording_folder", "rec")
+        self.logger.info(f"Recording folder = {self.recording_folder}")
+        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
+            os.makedirs(self.recording_folder, exist_ok=True)
+            self.logger.info(f"Created recording folder: {self.recording_folder}")
         self.export = Export(
             module_id=self.module_id,
             recording_folder=self.recording_folder,
@@ -204,12 +205,8 @@ class Module(ABC):
         
         # Recording management
         self.recording_session_id = None
-        self.current_filename = None
+        self.current_filename_prefix = None
         self.session_files = []
-
-        # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder")
-        # self.recording_filetype = self.config.get("recording.recording_filetype") # Find the appropriate filetype for this module type, 
 
         # Control State flags
         self.is_running = False  # Start as False
@@ -228,7 +225,13 @@ class Module(ABC):
 
     @abstractmethod
     def configure_module(self):
+        """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
+    
+    # @abstractmethod
+    def register_description(self) -> str:
+        """Register a description of the module - to be implemented by subcclasses"""
+        return "No description registered"
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -308,8 +311,12 @@ class Module(ABC):
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
-    def _create_safe_experiment_name(self, experiment_name):
-        # TODO: Tie this in with experiment filename creation in start_recording method.
+    def _create_safe_experiment_name(self, experiment_name:str ) -> str:
+        """
+        Take an experiment name received from the frontend and put it in a file-safe format.
+        """
+        if not experiment_name:
+            return ""
         safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_experiment_name = safe_experiment_name.replace(' ', '_')
         self.logger.info(f"Generated safe experiment name {safe_experiment_name}")
@@ -318,7 +325,7 @@ class Module(ABC):
     """Recording methods"""
     @command()
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
-        #TODO : This should go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
+        #TODO : Should this go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
         
@@ -352,16 +359,13 @@ class Module(ABC):
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{timestamp}_{self.module_id}"
+        self.recording_session_id = f"{self.module_id}"
         
         # Use experiment name in filename if provided
         if experiment_name:
-            # Sanitize experiment name for filename (remove special characters)
-            safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_experiment_name = safe_experiment_name.replace(' ', '_')
-            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}"
+            self.current_filename_prefix = f"{self.recording_folder}/{self.current_experiment_name}_{self.recording_session_id}"
         else:
-            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}"
+            self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
         
         os.makedirs(self.recording_folder, exist_ok=True)
 
@@ -382,7 +386,7 @@ class Module(ABC):
 
         self.is_recording = True
  
-        return {"filename": self.current_filename}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
+        return {"filename": self.current_filename_prefix}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
     
     def add_session_file(self, filename: str) -> None:
         """Method to append a recording file to the current list of session files"""
@@ -449,7 +453,7 @@ class Module(ABC):
     def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
         """Start a thread to record health metadata. Will continue until stopped."""
         if not filename:
-            filename = self.current_experiment_name
+            filename = self.current_filename_prefix
         self.health_stop_event.clear() # Clear the stop flag before starting
         self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
         self.health_recording_thread.start()
@@ -472,14 +476,14 @@ class Module(ABC):
         else:
             self.logger.warning("No active health recording thread was found to stop")
 
-    def _record_health_metadata(self, experiment_name: str):
+    def _record_health_metadata(self, filename_prefix: str):
         """
         Runs in a thread.
         Polls Health class for current health data.
         Saves to file.
         """
         interval = 5 # Interval in seconds # TODO: Take this from config
-        csv_filename = f"{self.recording_folder}/{experiment_name}_health_metadata.csv"
+        csv_filename = f"{filename_prefix}_health_metadata.csv"
         self.add_session_file(csv_filename)
         fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
         with open(csv_filename, "a", newline="") as f:
@@ -493,22 +497,9 @@ class Module(ABC):
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
 
-    # """Recorded file management"""
-    # def _get_session_files(self):
-    #     # Find files that belong to the current recording session
-    #     self.session_files = []
-    #     self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
-    #     self.logger.info(f"Looking for recordings in {self.recording_folder}")
-    #     self.logger.info(f"Recordings are as follows: {os.listdir(self.recording_folder)}")
-    #     for filename in os.listdir(self.recording_folder):
-    #         self.logger.info(f"Examining file {filename} for auto export, trying to match {self.recording_session_id}")
-    #         if self.recording_session_id in filename:
-    #             self.session_files.append(filename)
-    #             self.logger.info(f"Found session file to export: {filename}")
-
     def _auto_export(self):
         self.logger.info("Auto-export called")
-        if self.config.get("auto_export", True) and self.current_filename:
+        if self.config.get("auto_export", True):
             self.logger.info("Auto-export enabled, exporting recording using export manager")
             try:
                 # Use the export manager's method for consistency
@@ -1099,14 +1090,25 @@ class Module(ABC):
             # Check 2: Recording folder exists and is writable
             if ready:
                 try:
+                    self.logger.info(f"Checking can write to {self.recording_folder}")
                     if not os.path.exists(self.recording_folder):
                         os.makedirs(self.recording_folder, exist_ok=True)
+                    self.logger.info("Created folder OK")
                     # Test write access
                     test_file = os.path.join(self.recording_folder, '.test_write')
+                    self.logger.info(f"Going to write to test file {test_file}")
                     with open(test_file, 'w') as f:
+                        self.logger.info(f"Opened test file {f}")
                         f.write('test')
+                    self.logger.info("Removing test file")
                     os.remove(test_file)
                     checks['recording_folder_writable'] = True
+                except PermissionError as e:
+                    print(f"Permission error: {e}")
+                    checks['recording_folder_writable'] = False
+                except OSError as e:
+                    print(f"OSError during write/delete test: {e}")
+                    checks['recording_folder_writable'] = False
                 except Exception as e:
                     checks['recording_folder_writable'] = False
                     ready = False

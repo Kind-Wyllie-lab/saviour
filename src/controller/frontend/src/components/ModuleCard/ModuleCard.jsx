@@ -22,6 +22,28 @@ function ModuleCard({ module }) {
         setShowOptionsModal(false);
     };
 
+    const handleCheckReady = () => {
+        console.log("Sending check_ready command")
+        socket.emit("send_command", { 
+          type: "validate_readiness",
+          module_id: module.id
+        });
+    };
+
+    const handleStopRecording = () => {
+        console.log("Sending stop_recording command")
+        socket.emit("send_command", { 
+          type: "stop_recording",
+          module_id: "all"
+        }); 
+    };
+
+    const handleStartRecording = () => {
+        // setShowDurationModal(true); // open modal first
+        console.log("No implementation for start recording here");
+    };
+    
+
     return (
         <div className="module-container">
             <div className={`module-card ${borderClass}`} onClick={() => {if (!showOptionsModal) setShowOptionsModal(true)}}>
@@ -42,9 +64,16 @@ function ModuleCard({ module }) {
             {showOptionsModal && (
                     <div className="modal-backdrop" onClick={() => setShowOptionsModal(false)}>
                         <div className="modal" onClick={(e) => e.stopPropagation()}> 
-                            <h3>Options - {module.id}</h3>
+                            <h3>Options - {module.id} ({module.status})</h3>
                             <div className="modal-buttons">
                                 <button onClick={removeModule}>Remove Module</button>
+                                <button onClick={handleCheckReady}>Check Ready</button>
+                                { module.status === "RECORDING" && (
+                                    <button onClick={handleStopRecording}>Stop Recording</button>
+                                )}
+                                { module.status === "READY" && (
+                                    <button onClick={handleStartRecording}>Start Recording</button>
+                                )}
                                 <button onClick={() => setShowOptionsModal(false)}>Cancel</button>
                             </div>
                         </div>

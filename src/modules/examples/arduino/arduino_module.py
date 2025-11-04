@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Arduino Module Class
+Saviour System - Arduino Module Class
 
 This class extends the base Module class to handle a module interfacing one or more Arduinos.
 
 Author: Andrew SG
 Created: 24/07/2025
-License: GPLv3
 """
 
 import datetime

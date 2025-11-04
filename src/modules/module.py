@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat System - Base Module Class
+SAVIOUR System - Base Module Class
 
 This is the base class for all peripheral modules in the Habitat system.
 
 Author: Andrew SG
 Created: 17/03/2025
-License: GPLv3
 """
 
 import sys
@@ -22,6 +21,8 @@ import uuid
 import threading
 from typing import Dict, Any, Optional, Union
 import datetime
+import csv
+from abc import ABC, abstractmethod 
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -49,7 +50,20 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 
-class Module:
+def command(name=None):
+    """
+    Decorator to mark a method as a command.
+    Can be used as @command() or @command(name="foo")
+    Commands should return a dict response.
+
+    """
+    def decorator(func):
+        func._is_command = True
+        func._cmd_name = name or func.__name__
+        return func
+    return decorator
+
+class Module(ABC):
     """
     Base class for all modules in the Habitat Controller.
 
@@ -62,22 +76,20 @@ class Module:
         config (dict): Configuration parameters for the module
 
     """
-    def __init__(self, module_type: str, config: dict = None, config_path: str = None):
+    def __init__(self, module_type: str):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
-        self.config_path = config_path
-        self.recording_folder = "rec"  # Default recording folder
+        self.description = "No description" # A human readable description to be overridden by child classes
+
+        self._recording_thread = None # A thread to automatically stop recording if a duration is given
+        self.recording_start_time = None # When a recording was started
+        self.health_recording_thread = None # A thread to record health on
+        self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
         
         # Setup logging first
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
-        
-        # Create recording folder if it doesn't exist
-        if not os.path.exists(self.recording_folder):
-            os.makedirs(self.recording_folder, exist_ok=True)
-            self.logger.info(f"Created recording folder: {self.recording_folder}")
-
 
         # Add file handler if none exists
         if not self.logger.handlers:
@@ -120,7 +132,13 @@ class Module:
         # Managers
         self.logger.info(f"Initialising managers")
         self.logger.info(f"Initialising config manager")
-        self.config = Config(self.module_type, self.config_path)
+        self.config = Config()
+        # Parameters from config
+        self.recording_folder = self.config.get("recording.recording_folder", "rec")
+        self.logger.info(f"Recording folder = {self.recording_folder}")
+        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
+            os.makedirs(self.recording_folder, exist_ok=True)
+            self.logger.info(f"Created recording folder: {self.recording_folder}")
         self.export = Export(
             module_id=self.module_id,
             recording_folder=self.recording_folder,
@@ -140,27 +158,14 @@ class Module:
             role=PTPRole.SLAVE)
         if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
             self.logger.info(f"Initialising command handler")
-            self.command = Command(
-                self.module_id,
-                self.module_type,
-                config=self.config,
-                start_time=None # Will be set during start()
-            )
+            self.command = Command(config=self.config)
 
         self.logger.info(f"Initialising network manager")
 
         self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type)
 
-        # Register Callbacks
-        self.callbacks = { # Define a universal set of callbacks
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
-            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
-            'get_samplerate': lambda: self.config.get("module.samplerate", 200), # Use a lambda function to get it fresh from the config manager every time
-            'get_ptp_status': self.ptp.get_status, # Use a lambda function to get status fresh from ptp manager everytime
+        self.command_callbacks = { # A registry of commands that the module can respond to
             'restart_ptp': self.ptp.restart, # Restart PTP services
-            'get_streaming_status': lambda: self.is_streaming,
-            'get_recording_status': lambda: self.is_recording,
-            'send_status': lambda status: self.communication.send_status(status),
             'get_health': self.health.get_health,
             'start_recording': self.start_recording,
             'stop_recording': self.stop_recording,
@@ -168,30 +173,40 @@ class Module:
             'clear_recordings': self._clear_recordings,
             'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
-            'handle_command': self.command.handle_command, 
-            'get_config': self.config.get_all, # Gets the complete config from
-            'set_config': lambda new_config: self.set_config(new_config, persist=True), # Uses a dict to update the config manager
+            'get_config': self.get_config, # Gets the complete config from
+            'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
-            'get_log_file_path': self.get_log_file_path, # Get current log file path
             'shutdown': self._shutdown,
-            'when_controller_discovered': self.when_controller_discovered,
-            'controller_disconnected': self.controller_disconnected
         }
-        self.network.set_callbacks(self.callbacks)
-        self.health.set_callbacks(self.callbacks)
-        self.communication.set_callbacks(self.callbacks)
-        self.command.set_callbacks(self.callbacks)
-        self.export.set_callbacks(self.callbacks)
+
+        self.helper_callbacks = { # Define a set of helper methods that allow modules to gain access to state
+            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
+            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
+            'send_status': lambda status: self.communication.send_status(status),
+            'handle_command': self.command.handle_command, 
+            'when_controller_discovered': self.when_controller_discovered,
+            'controller_disconnected': self.controller_disconnected,
+            'get_ptp_status': self.ptp.get_status,
+            'get_recording_status': lambda: self.is_recording,
+            'get_streaming_status': lambda: self.is_streaming,
+            "on_module_config_change": self.on_module_config_change
+        }
+
+        # Register helper methods with modules
+        self.network.set_callbacks(self.helper_callbacks)
+        self.health.set_callbacks(self.helper_callbacks)
+        self.communication.set_callbacks(self.helper_callbacks)
+        self.command.set_callbacks(self.helper_callbacks)
+        self.export.set_callbacks(self.helper_callbacks)
+        self.config.on_module_config_change = self.on_module_config_change
+    
+        # Register commands with command router
+        self.command.set_commands(self.command_callbacks)
         
         # Recording management
         self.recording_session_id = None
-        self.current_filename = None
+        self.current_filename_prefix = None
         self.session_files = []
-
-        # Parameters from config
-        self.samplerate = self.config.get("module.samplerate")
-        self.recording_folder = self.config.get("recording_folder")
-        self.recording_filetype = self.config.get("recording_filetype") # Find the appropriate filetype for this module type, 
 
         # Control State flags
         self.is_running = False  # Start as False
@@ -203,6 +218,20 @@ class Module:
 
         # Track when module started for uptime calculation
         self.start_time = None
+
+    def on_module_config_change(self):
+        self.logger.info("Received notification that module config changed, calling configure_module()")
+        self.configure_module()
+
+    @abstractmethod
+    def configure_module(self):
+        """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
+        self.logger.warning("No implementation provided for abstract method configure_module")
+    
+    # @abstractmethod
+    def register_description(self) -> str:
+        """Register a description of the module - to be implemented by subcclasses"""
+        return "No description registered"
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -265,7 +294,7 @@ class Module:
         # Stop recording if active
         if self.is_recording:
             self.logger.info("Stopping recording due to controller disconnect")
-            self.stop_recording()
+            self._stop_recording()
         
         # Stop PTP services
         self.ptp.stop()
@@ -282,19 +311,33 @@ class Module:
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
-    # Recording functions
+    def _create_safe_experiment_name(self, experiment_name:str ) -> str:
+        """
+        Take an experiment name received from the frontend and put it in a file-safe format.
+        """
+        if not experiment_name:
+            return ""
+        safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_experiment_name = safe_experiment_name.replace(' ', '_')
+        self.logger.info(f"Generated safe experiment name {safe_experiment_name}")
+        return safe_experiment_name
+
+    """Recording methods"""
+    @command()
     def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
+        #TODO : Should this go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
         
         Args:
             experiment_name: Optional experiment name to prefix the filename
             duration: Optional duration parameter (not currently used)
-            experiment_folder: Optional experiment folder name for export
+            experiment_folder: Optional experiment folder name for exports
             controller_share_path: Optional controller share path for export
             
         Returns the filename if setup was successful, None otherwise.
         """
+        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}, experiment_folder {experiment_folder}, controller_share_path {controller_share_path}")
         # Check not already recording
         if self.is_recording:
             self.logger.info("Already recording")
@@ -305,29 +348,57 @@ class Module:
                 })
             return None
         
+        # Empty session files
+        self.session_files = []
+        self.logger.info(f"Session files array emptied: {self.session_files}")
+
         # Store experiment folder information for export
         self.current_experiment_folder = experiment_folder
         self.controller_share_path = controller_share_path
+        self.current_experiment_name = self._create_safe_experiment_name(experiment_name)
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{timestamp}_{self.module_id}"
+        self.recording_session_id = f"{self.module_id}"
         
         # Use experiment name in filename if provided
         if experiment_name:
-            # Sanitize experiment name for filename (remove special characters)
-            safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_experiment_name = safe_experiment_name.replace(' ', '_')
-            self.current_filename = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}.{self.recording_filetype}"
+            self.current_filename_prefix = f"{self.recording_folder}/{self.current_experiment_name}_{self.recording_session_id}"
         else:
-            self.current_filename = f"{self.recording_folder}/{self.recording_session_id}.{self.recording_filetype}"
+            self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
         
         os.makedirs(self.recording_folder, exist_ok=True)
 
-        # TODO: Start generating health metadata to go with file
-        
-        return self.current_filename  # Just return filename, let child class handle status
+        # Start generating health metadata to go with file
+        self._start_recording_health_metadata()
 
+        self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
+        if duration is not None:
+            if duration > 0:
+                self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
+
+        result = self._start_recording() # Call the start_recording method which handles the actual implementation
+        self.logger.info(f"Child class _start_recording call returned {result}")
+
+        # Start auto stop thread if needed
+        if self._recording_thread:
+            self._recording_thread.start()
+
+        self.is_recording = True
+ 
+        return {"filename": self.current_filename_prefix}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
+    
+    def add_session_file(self, filename: str) -> None:
+        """Method to append a recording file to the current list of session files"""
+        self.session_files.append(filename)
+        self.logger.info(f"Session file {filename} added, new list {self.session_files}")
+
+    @abstractmethod
+    def _start_recording(self):
+        """To be implemented by subclasses"""
+        pass
+
+    @command()
     def stop_recording(self) -> bool:
         """
         Stop recording. Should be extended with module-specific implementation.
@@ -342,29 +413,93 @@ class Module:
                     "error": "Not recording"
                 })
                 return False
-            
-            # Get session files
-            self._get_session_files()
+
+            self._stop_recording() # Specific implementation of stop_recording
+            self.is_recording = False
+            self.logger.info("Made it past stop_recording call")
+
+            self._stop_recording_health_metadata()
+            self.logger.info("Made it past stop_recording_health_metadata call")
+
+            # self._get_session_files()
+            # self.logger.info("Made it past _get_session_files call")
+
+            self.logger.info(f"Config says {self.config.get('auto_export')}")
+            if self.config.get("auto_export") == True:
+                self._auto_export()
+
+            # return True  # Just return True, let child class handle the rest
+            return {"result": "Success"}
 
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")
-            return False
-        return True  # Just return True, let child class handle the rest
+            return {"result": "failure", "message": f"Error in stop_recording: {e}"}
 
-    def _get_session_files(self):
-        # Find files that belong to the current recording session
-        self.session_files = []
-        self.logger.info(f"About to check for session files, program running in {os.getcwd()}")
-        self.logger.info(f"Looking for recordings in {self.recording_folder}")
-        self.logger.info(f"Recordings are as follows: {os.listdir(self.recording_folder)}")
-        for filename in os.listdir(self.recording_folder):
-            self.logger.info(f"Examining file {filename} for auto export, trying to match {self.recording_session_id}")
-            if self.recording_session_id in filename:
-                self.session_files.append(filename)
-                self.logger.info(f"Found session file to export: {filename}")
+    @abstractmethod
+    def _stop_recording(self):
+        """To be implemented by subclasses"""
+        pass
+    
+    def _auto_stop_recording(self, duration: int):
+        self.logger.info(f"Starting thread to stop recording after {duration}s")
+        while ((time.time() - self.recording_start_time) < duration):
+            remaining_time = duration - (time.time() - self.recording_start_time)
+            self.logger.info(f"Still recording, {remaining_time}s left")
+            time.sleep(0.5) # Wait
+        self.logger.info("Stopping recording")
+        self.stop_recording()
+
+    """Methods to record health metadata"""
+    def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
+        """Start a thread to record health metadata. Will continue until stopped."""
+        if not filename:
+            filename = self.current_filename_prefix
+        self.health_stop_event.clear() # Clear the stop flag before starting
+        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
+        self.health_recording_thread.start()
+        if not self.health_recording_thread:
+            self.logger.error("Failed to start health recording thread")
+        else:
+            self.logger.info("Health recording thread started")
+
+    def _stop_recording_health_metadata(self) -> None:
+        """Stop an existing health_recording_thread"""
+        self.logger.info("Inside stop_recording_health_metadata call")
+        if self.health_recording_thread and self.health_recording_thread.is_alive():
+            self.logger.info("Signalling health recording thread to stop")
+            self.health_stop_event.set()
+            self.health_recording_thread.join(timeout=5)
+            if self.health_recording_thread.is_alive():
+                self.logger.warning("Health recording thread did not terminate cleanly")
+            else:
+                self.logger.info("Health recording thread stopped")
+        else:
+            self.logger.warning("No active health recording thread was found to stop")
+
+    def _record_health_metadata(self, filename_prefix: str):
+        """
+        Runs in a thread.
+        Polls Health class for current health data.
+        Saves to file.
+        """
+        interval = 5 # Interval in seconds # TODO: Take this from config
+        csv_filename = f"{filename_prefix}_health_metadata.csv"
+        self.add_session_file(csv_filename)
+        fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
+        with open(csv_filename, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            while not self.health_stop_event.is_set():
+                data = self.health.get_health()
+                writer.writerow(data)
+                f.flush() # Ensure each line is written
+                # Wait for either a stop signal or timeout
+                if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
+                    break
 
     def _auto_export(self):
-        if self.config.get("auto_export", True) and self.current_filename:
+        self.logger.info("Auto-export called")
+        if self.config.get("auto_export", True):
             self.logger.info("Auto-export enabled, exporting recording using export manager")
             try:
                 # Use the export manager's method for consistency
@@ -438,6 +573,7 @@ class Module:
             # Don't re-raise the exception - return empty list instead
             return []
 
+    @command()
     def list_recordings(self):
         """List all recorded files with metadata and send to controller"""
         try:
@@ -476,7 +612,7 @@ class Module:
         Returns:
             dict with deleted_count and kept_count
         """
-        self.logger.info("Attempting to clear recordings")
+        self.logger.debug(f"Attempting to clear recordings: {filenames}")
         try:
             if not os.path.exists(self.recording_folder):
                 return {"deleted_count": 0, "kept_count": 0}
@@ -486,7 +622,11 @@ class Module:
                 deleted_count = 0
                 for single_filename in filenames:
                     try:
-                        filepath = os.path.join(self.recording_folder, single_filename)
+                        if single_filename.startswith(self.recording_folder):
+                            filepath = single_filename
+                        else:
+                            filepath = os.path.join(self.recording_folder, single_filename)
+                        self.logger.debug(f"Attempting to delete {filepath}")
                         if os.path.exists(filepath):
                             os.remove(filepath)
                             deleted_count += 1
@@ -500,7 +640,10 @@ class Module:
             # If specific filename is provided, delete just that file
             if filename:
                 try:
-                    filepath = os.path.join(self.recording_folder, filename)
+                    if filename.startswith(self.recording_folder):
+                        filepath = filename
+                    else:
+                        filepath = os.path.join(self.recording_folder, filename)
                     if os.path.exists(filepath):
                         os.remove(filepath)
                         return {"deleted_count": 1, "kept_count": 0}
@@ -731,7 +874,7 @@ class Module:
                 self.ptp.start()
 
             # Start sending heartbeats
-            time.sleep(0.1)
+            time.sleep(1)
             self.health.start_heartbeats()
         
         return True
@@ -850,34 +993,36 @@ class Module:
         except Exception as e:
             self.logger.error(f"Error during shutdown: {e}")
 
-    def set_config(self, new_config: dict, persist: bool = False) -> bool:
+    """Config Methods"""
+    @command()
+    def get_config(self):
+        return {"config": self.config.get_all()}
+
+    @command()
+    def set_config(self, config: dict, persist: bool = True) -> bool:
         """
         Set the entire configuration from a dictionary
         
         Args:
-            new_config: Dictionary containing the new configuration
+            config: Dictionary containing the new configuration
             persist: Whether to persist the changes to the config file
             
         Returns:
             True if successful, False otherwise
         """
+        self.logger.info(f"Set config called with config {config} and persist {persist}")
         try:
-            # Validate that new_config is a dictionary
-            if not isinstance(new_config, dict):
-                self.logger.error(f"set_config called with non-dict argument: {type(new_config)}")
+            # Validate that config is a dictionary
+            if not isinstance(config, dict):
+                self.logger.error(f"set_config called with non-dict argument: {type(config)}")
                 return False
             
             # Use the config manager's merge method to update the config
-            self.config._merge_configs(self.config.config, new_config)
-            
-            # Persist to file if requested
-            if persist:
-                return self.config.save_config()
-            
-            return True
+            self.config.set_all(config, persist=persist)
+            return {"result": "success", "config": self.config.get_all()}
         except Exception as e:
             self.logger.error(f"Error setting all config: {e}")
-            return False
+            return {"result": f"Error setting all config: {e}"}
 
 
     def _get_required_disk_space_mb(self) -> float:
@@ -945,14 +1090,25 @@ class Module:
             # Check 2: Recording folder exists and is writable
             if ready:
                 try:
+                    self.logger.info(f"Checking can write to {self.recording_folder}")
                     if not os.path.exists(self.recording_folder):
                         os.makedirs(self.recording_folder, exist_ok=True)
+                    self.logger.info("Created folder OK")
                     # Test write access
                     test_file = os.path.join(self.recording_folder, '.test_write')
+                    self.logger.info(f"Going to write to test file {test_file}")
                     with open(test_file, 'w') as f:
+                        self.logger.info(f"Opened test file {f}")
                         f.write('test')
+                    self.logger.info("Removing test file")
                     os.remove(test_file)
                     checks['recording_folder_writable'] = True
+                except PermissionError as e:
+                    print(f"Permission error: {e}")
+                    checks['recording_folder_writable'] = False
+                except OSError as e:
+                    print(f"OSError during write/delete test: {e}")
+                    checks['recording_folder_writable'] = False
                 except Exception as e:
                     checks['recording_folder_writable'] = False
                     ready = False
@@ -1045,18 +1201,16 @@ class Module:
 
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""
-        mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix
+        # mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix (old method, led to MAC changing)
+        mac = self.get_mac_address("eth0")
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
 
-    def get_log_file_path(self) -> str:
-        """Get the current log file path if file logging is enabled"""
+    def get_mac_address(self, interface="eth0"):
+        """Retreive mac address on specified interface, default eth0."""
         try:
-            if self.config.get("logging.to_file", True):
-                log_dir = self.config.get("logging.directory", "/var/log/habitat")
-                log_filename = f"{self.module_type}_{self.module_id}.log"
-                return os.path.join(log_dir, log_filename)
-            else:
-                return "File logging disabled"
-        except Exception as e:
-            return f"Error getting log path: {e}"
+            with open(f"/sys/class/net/{interface}/address") as f:
+                return f.read().strip().replace(":", "")
+        except FileNotFoundError:
+            return None
+

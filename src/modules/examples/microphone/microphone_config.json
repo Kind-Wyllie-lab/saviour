@@ -1,0 +1,30 @@
+{
+    "microphone": {
+        "sample_rate": 192000,
+        "_frame_num": 131072,
+        "_block_size": 131072,
+        "file_duration": 1,
+        "_processing": {
+            "_apply_filter": false,
+            "_filter_type": "bandpass",
+            "_low_cutoff": 20,
+            "_high_cutoff": 20000,
+            "_fft_size": 1024,
+            "_window_type": "hann",
+            "_overlap": 0.5
+        },
+        "_trigger": {
+            "_sound_detection_enabled": false,
+            "_detection_threshold": 0.7,
+            "_min_duration_ms": 200,
+            "_cooldown_ms": 1000,
+            "_notification_enabled": true
+        }
+    },
+    "recording": {
+        "_recording_filetype": "flac",
+        "segment_length_seconds": 600
+    },
+    "_recording_folder": "rec",
+    "_auto_export": true
+} 

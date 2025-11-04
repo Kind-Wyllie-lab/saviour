@@ -98,9 +98,9 @@ class Config:
         """
         self.logger = logging.getLogger(__name__)
         self.config_file_path = config_file_path or os.path.join(os.path.dirname(__file__), "config.json")
-        self.logger.info(f"(CONFIG MANAGER) Controller config file path set to: {self.config_file_path}")
+        self.logger.info(f"Controller config file path set to: {self.config_file_path}")
         self.config = self._load_config()
-        self.logger.info(f"(CONFIG MANAGER) Controller config loaded: {self.config}")
+        self.logger.info(f"Controller config loaded: {self.config}")
         
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -148,9 +148,9 @@ class Config:
                 
                 # Recursively merge file config into config
                 self._merge_configs(config, file_config)
-                self.logger.info(f"(CONFIG MANAGER) Loaded configuration from {self.config_file_path}")
+                self.logger.info(f"Loaded configuration from {self.config_file_path}")
             except Exception as e:
-                self.logger.error(f"(CONFIG MANAGER) Error loading config file: {e}")
+                self.logger.error(f"Error loading config file: {e}")
         
         return config
     
@@ -293,10 +293,10 @@ class Config:
             with open(self.config_file_path, 'w') as f:
                 json.dump(self.config, f, indent=4)
             
-            self.logger.info(f"(CONFIG MANAGER) Configuration saved to {self.config_file_path}")
+            self.logger.info(f"Configuration saved to {self.config_file_path}")
             return True
         except Exception as e:
-            self.logger.error(f"(CONFIG MANAGER) Error saving configuration: {e}")
+            self.logger.error(f"Error saving configuration: {e}")
             return False
     
     def get_all(self) -> Dict[str, Any]:
@@ -327,13 +327,13 @@ class Config:
             # Check required database settings if database section exists
             if "database" in self.config:
                 if not self.get("database.url"):
-                    self.logger.warning("(CONFIG MANAGER) Missing database URL in configuration")
+                    self.logger.warning("Missing database URL in configuration")
                 if not self.get("database.key"):
-                    self.logger.warning("(CONFIG MANAGER) Missing database API key in configuration")
+                    self.logger.warning("Missing database API key in configuration")
             
             # More validation as needed
             
             return True
         except Exception as e:
-            self.logger.error(f"(CONFIG MANAGER) Configuration validation error: {e}")
+            self.logger.error(f"Configuration validation error: {e}")
             return False 

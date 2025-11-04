@@ -692,7 +692,7 @@ class TTLModule(Module):
                 
                 # High phase
                 pin_obj.on()
-                self._write_ttl_event(time.time_ns(), pin_number, "high")
+                self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
                 time.sleep(high_time)
                 
                 # Check if still recording
@@ -701,7 +701,7 @@ class TTLModule(Module):
                 
                 # Low phase
                 pin_obj.off()
-                self._write_ttl_event(time.time_ns(), pin_number, "low")
+                self._write_ttl_event(time.time_ns(), pin_number, TTLValue.LOW)
                 time.sleep(low_time)
                 
         except Exception as e:

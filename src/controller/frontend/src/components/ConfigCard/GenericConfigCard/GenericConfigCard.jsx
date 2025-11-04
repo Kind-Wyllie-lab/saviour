@@ -4,7 +4,7 @@ import LivestreamCard from "../../LivestreamCard/LivestreamCard";
 
 function GenericConfigCard({ id, module }) {
   const [formData, setFormData] = useState(module.config); // Component level config state
-  const [collapsed, setCollapsed] = useState(true); // top-level collapse
+  const [collapsed, setCollapsed] = useState(false); // top-level collapse
   const [collapsedSections, setCollapsedSections] = useState({}); // per-section collapse
 
   // Keep formData synced if parent updates config

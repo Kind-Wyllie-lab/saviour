@@ -674,7 +674,11 @@ if [ "$DEVICE_ROLE" = "module" ]; then
             default.clock.allowed-rates = [ 96000 192000 384000]
         }
 EOF
-        systemctl --user restart pipewire pipewire-pulse wireplumber
+        sudo -u pi pkill -9 pipewire
+        sudo -u pi pkill -9 wireplumber
+	#sudo -u pi pkill -9 pipewire-pulse
+	sudo -u pi pipewire &
+	sudo -u pi wireplumber &
     fi
 fi
 # Enable camera interface if not already enabled

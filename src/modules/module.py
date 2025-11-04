@@ -80,6 +80,8 @@ class Module(ABC):
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
+        self.description = "No description" # A human readable description to be overridden by child classes
+
         self._recording_thread = None # A thread to automatically stop recording if a duration is given
         self.recording_start_time = None # When a recording was started
         self.health_recording_thread = None # A thread to record health on
@@ -223,7 +225,13 @@ class Module(ABC):
 
     @abstractmethod
     def configure_module(self):
+        """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
+    
+    # @abstractmethod
+    def register_description(self) -> str:
+        """Register a description of the module - to be implemented by subcclasses"""
+        return "No description registered"
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""

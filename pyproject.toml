@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["hatchling", "setuptools>=80", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "saviour"
@@ -48,9 +48,6 @@ dependencies = [
     "soundfile>=0.13.1",
 ]
 
-[tool.hatch.version]
-path = "src/__init__.py"
-
 [tool.hatch.build]
 exclude = [
     "src/controller/frontend/node_modules",
@@ -58,6 +55,9 @@ exclude = [
     "src/controller/frontend/dist",
     "src/controller/frontend/build",
 ]
+
+[tool.hatch.version]
+path = "src/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
@@ -69,8 +69,7 @@ dev = [
 ]
 
 [tool.setuptools_scm]
-version_scheme = "guess-next-dev"
-local_scheme = "node-and-date"
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -4,13 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "saviour"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Modular Synchronised Data Capture System for behavioral testing labs"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE.txt" }
 authors = [
-    { name = "Andrew Scott-George", email = "ascottg@ed.ac.uk" }
+    { name = "Andrew Scott-George", email = "ascottg@ed.ac.uk" },
+    { name = "Domagoj Anticic", email = "d.anticic@sms.ed.ac.uk" },
+    { name = "Patrick Spooner", email = "p.a.spooner@ed.ac.uk" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -46,6 +48,17 @@ dependencies = [
     "soundfile>=0.13.1",
 ]
 
+[tool.hatch.version]
+path = "src/__init__.py"
+
+[tool.hatch.build]
+exclude = [
+    "src/controller/frontend/node_modules",
+    "src/controller/frontend/.next",
+    "src/controller/frontend/dist",
+    "src/controller/frontend/build",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
@@ -54,6 +67,10 @@ dev = [
     "pytest>=8.3.5",
     "pytest-mock>=3.14.0",
 ]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

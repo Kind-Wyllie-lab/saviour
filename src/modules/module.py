@@ -1019,7 +1019,7 @@ class Module(ABC):
             
             # Use the config manager's merge method to update the config
             self.config.set_all(config, persist=persist)
-            return {"result": "success"}
+            return {"result": "success", "config": self.config.get_all()}
         except Exception as e:
             self.logger.error(f"Error setting all config: {e}")
             return {"result": f"Error setting all config: {e}"}

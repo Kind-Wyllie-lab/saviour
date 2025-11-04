@@ -74,9 +74,6 @@ class Controller:
 
         Args:
             config_file_path: Path to the config file
-            
-        Returns:
-            None
         """
 
         # Setup logging
@@ -231,6 +228,7 @@ class Controller:
             match status_type:
                 case 'heartbeat':
                     self.logger.info(f"Heartbeat received from {module_id}")
+                    self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
                 case 'ptp_status':
                     self.logger.info(f"PTP status received from {module_id}: {status_data}")
@@ -241,6 +239,7 @@ class Controller:
                     self.logger.info(f"Command acknowledged by {module_id}: {status_data['command']}")
                 case 'status':
                     self.logger.info(f"{module_id} sent status type message likely response to get status command")
+                    self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
                 case 'get_config':
                     self.logger.info(f"Config dict received from {module_id}")

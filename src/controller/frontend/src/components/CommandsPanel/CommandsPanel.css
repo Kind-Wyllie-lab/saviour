@@ -70,3 +70,36 @@
   gap: 10px;
   margin-top: 10px;
 }
+
+.target-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.target-select label {
+  font-weight: 500;
+  min-width: 100px;
+}
+
+.target-select select {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* Optional: hover and focus styling for select */
+.target-select select:hover {
+  border-color: var(--accent-color);
+}
+
+.target-select select:focus {
+  outline: none;
+  box-shadow: 0 0 4px var(--accent-color);
+}

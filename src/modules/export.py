@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MOSDACS System - Module Export Manager
+Module Export Manager
 
 This class is used to send files to either a controller or NAS running a samba server.
 
 Author: Andrew SG
 Created: 12/06/2025
-License: GPLv3
 """
 
 import os

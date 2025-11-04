@@ -7,7 +7,6 @@ This class extends the base Module class to handle audiomoth-specific functional
 
 Author: Andrew SG / Domagoj Anticic
 Created: 18/08/2025
-License: GPLv3
 
 Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicrophone_setup by Domagoj Anticic
 

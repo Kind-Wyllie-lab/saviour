@@ -268,7 +268,7 @@ class PTP:
             self.logger.warning("PTP offsets not yet available, skipping check")
             return
         if self.latest_phc2sys_freq > 100000 or self.latest_phc2sys_offset > 5000:
-            if _check_if_should_restart():
+            if self._check_if_should_restart():
                 self.logger.warning(f"PTP phc2sys offsets too high ({self.latest_phc2sys_freq}, {self.latest_phc2sys_offset}), resetting PTP")
                 self.ptp_restart_retries += 1
                 self.last_ptp_restart_time = time.time()

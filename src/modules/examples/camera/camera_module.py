@@ -17,18 +17,11 @@ Created: 17/03/2025
 """
 
 import datetime
-import subprocess
-import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+import os
 import time
-from src.modules.module import Module
-from src.modules.command import Command
 import logging
 import numpy as np
-import base64
-import signal
-import shutil
 import threading
 from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
@@ -36,6 +29,10 @@ from picamera2.outputs import PyavOutput, FfmpegOutput
 import json
 from flask import Flask, Response, request
 import cv2
+
+# Import SAVIOUR dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from src.modules.module import Module
 
 class CameraModule(Module):
     def __init__(self, module_type="camera"):        

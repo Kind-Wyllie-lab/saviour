@@ -13,11 +13,8 @@ Created: 23/05/2025
 
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
 import random
-from src.modules.module import Module
-from src.modules.command import Command
 import logging
 import threading
 import gpiozero
@@ -26,10 +23,13 @@ import json
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
-
-# Add GPIO cleanup at module level
-import atexit
+import atexit # Add GPIO cleanup at module level
 import signal
+
+# Import SAVIOUR dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from modules.module import Module, command
+
 
 # Global GPIO cleanup function
 def cleanup_gpio():

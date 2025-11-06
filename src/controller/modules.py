@@ -43,9 +43,9 @@ class Modules:
             if status_data['recording'] == False:
                 self.logger.info(f"{module_id} says it is not recording")
                 self.logger.info(f"Module status in our terms is {self.modules[module_id].status}")
-                #  and self.modules[module_id].status == ModuleStatus.RECORDING:
-                # Module has switched from recording to not recording without emitting a stop_recording message
-                self.modules[module_id].status = ModuleStatus.NOT_READY # Return to not ready state
+                if self.modules[module_id].status == ModuleStatus.RECORDING:
+                    # Module has switched from recording to not recording without emitting a stop_recording message
+                    self.modules[module_id].status = ModuleStatus.NOT_READY
             if status_data['recording'] == True and self.modules[module_id].status != ModuleStatus.RECORDING:
                 # Module says it's recording but our state doesn't reflect this - update our state
                 self.modules[module_id].status = ModuleStatus.RECORDING

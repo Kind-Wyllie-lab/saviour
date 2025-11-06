@@ -235,7 +235,7 @@ class Config:
             self.logger.warning(f"Attempt to modify read-only config key: {key_path}")
             return False
 
-        if _check_if_module_config_updated(key_path):
+        if self._check_if_module_config_updated(key_path):
             self.on_module_config_change()
 
         current[last] = value

@@ -317,7 +317,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down...")
-        ttl.stop()
+        arduino.stop()
 
 if __name__ == '__main__':
     main()

@@ -343,7 +343,7 @@ class Network():
         return modules
     
     def get_own_ip(self):
-        if ip_is_valid:
+        if self.ip_is_valid:
             return self.ip
         else:
             self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")

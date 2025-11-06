@@ -11,6 +11,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from modules.ptp import PTP, PTPRole
 
+def create_ptp4l_line(n:int = 5):
+    """Create n fake ptp4l lines"""
+    
+
 def test_ptp4l_parsing():
     with patch("os.geteuid", return_value=0):
         """Test ptp4l log parsing with actual log format."""
@@ -24,20 +28,31 @@ def test_ptp4l_parsing():
         ptp_manager = PTP(role=PTPRole.SLAVE)
         
         # Test lines from actual ptp4l logs
+        test_values = [
+            [215, 46728],
+            [-35, -45809],
+            [-100, 218764],
+            [-35, -153196],
+            [-156, -154457]
+        ]
         test_lines = [
-            "[3777.974] master offset        215 s2 freq -154110 path delay      4521",
-            "ptp4l[3778.974]: master offset        -35 s2 freq -154295 path delay      4554",
-            "[3778.974] master offset        -35 s2 freq -154295 path delay      4554",
-            "[3779.974] master offset       -100 s2 freq -154371 path delay      4603",
-            "ptp4l[3780.975]: master offset       -156 s2 freq -154457 path delay      4610"
+            f"[3777.974] master offset        {test_values[0][0]} s2 freq {test_values[0][1]} path delay      4521",
+            f"ptp4l[3778.974]: master offset        {test_values[1][0]} s2 freq {test_values[1][1]} path delay      4554",
+            f"[3778.974] master offset        {test_values[2][0]} s2 freq {test_values[2][1]} path delay      4554",
+            f"[3779.974] master offset       {test_values[3][0]} s2 freq {test_values[3][1]} path delay      4603",
+            f"ptp4l[3780.975]: master offset       {test_values[4][0]} s2 freq {test_values[4][1]} path delay      4610"
         ]
         
         print("\nParsing ptp4l test lines:")
         for i, line in enumerate(test_lines):
             print(f"\nLine {i+1}: {line}")
             ptp_manager._parse_ptp4l_line(line)
-            print(f"  Latest offset: {ptp_manager.latest_ptp4l_offset}")
-            print(f"  Latest freq: {ptp_manager.latest_ptp4l_freq}")
+
+            assert ptp_manager.latest_ptp4l_offset == test_values[i][0]
+            print(f"  Latest offset: {ptp_manager.latest_ptp4l_offset} as expected.")
+            assert ptp_manager.latest_ptp4l_freq == test_values[i][1]
+            print(f"  Latest freq: {ptp_manager.latest_ptp4l_freq} as expected.")
+        
 
 def test_phc2sys_parsing():
     """Test phc2sys log parsing with actual log format."""

@@ -32,7 +32,7 @@ import cv2
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from src.modules.module import Module
+from modules.module import Module
 
 class CameraModule(Module):
     def __init__(self, module_type="camera"):        

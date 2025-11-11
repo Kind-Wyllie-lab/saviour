@@ -1,9 +1,9 @@
-// src/pages/Dashboard.js
+// src/pages/APADashboard.js
 import React, { useEffect, useState } from "react";
 import socket from "../../socket";
 
 // Styling and components
-import "./Dashboard.css";
+import "./APADashboard.css";
 import ModuleCard from "../../components/ModuleCard/ModuleCard";
 import ModuleGrid from "../../components/ModuleGrid/ModuleGrid"
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
@@ -19,16 +19,16 @@ socket.on("disconnect", () => {
   console.log("Disconnected from backend");
 });
 
-function Dashboard() {
+function APADashboard() {
   const [modules, setModules] = useState({}); // Modules object returned from backend
   const [experimentName, setExperimentName] = useState(""); // The experiment name 
 
   useEffect(() => {
     console.log("Emitting get_modules");
     socket.emit("get_modules"); // Ask backend for modules
-
-    console.log("Emitting get_module_configs");
     socket.emit("get_module_configs"); // Ask backend for module configs
+    socket.emit("get_modules"); // Ask backend for modules
+    socket.emit("get_experiment_metadata");
 
     // Expecting data.modules like
     // { "camera_d610": { ip: "192.168.1.136", type: "camera", online: true } }
@@ -44,10 +44,28 @@ function Dashboard() {
       setModules(withDefaults);
     });
 
+    socket.on("experiment_metadata_response", (data) => {
+      setExperimentName(data.experiment_name);
+    });
+
     return () => {
       socket.off("modules_update"); // Unregister listener to prevent multiple listeners on component re-render or remount
+      socket.off("experiment_metadata_response");
       // socket.off("update_module_readiness"); // As above
     };
+  }, []);
+
+  useEffect(() => {
+    socket.on("experiment_metadata_updated", (data) => {
+      if (data.experiment_name) {
+        setExperimentName(data.experiment_name);
+      }
+    });
+
+    // On mount, request latest metadata
+    socket.emit("get_experiment_metadata");
+
+    return () => socket.off("experiment_metadata_updated");
   }, []);
 
   // Convert modujles object to array for easy rendering
@@ -66,7 +84,7 @@ function Dashboard() {
         {/* left side */}
         <div className="sidebar-container">
           <section>
-            <ExperimentMetadata setExperimentName={setExperimentName} />
+            <ExperimentMetadata experimentName={experimentName} />
           </section>
           <section>
             <CommandsPanel modules={moduleList} experimentName={experimentName} />
@@ -76,7 +94,7 @@ function Dashboard() {
           </section>
         </div>    
         {/* right side */}
-        <div className="dashboard-container">
+        <div className="APADashboard-container">
           <section>
             {apaCameraModules.length > 0 ? (
               <APALivestreamCard key={apaCameraModules[0].id} module={apaCameraModules[0]} />
@@ -90,4 +108,4 @@ function Dashboard() {
   );
 }
 
-export default Dashboard;
+export default APADashboard;

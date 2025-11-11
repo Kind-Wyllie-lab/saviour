@@ -13,6 +13,9 @@ This should tell us whether a module is "online" or ModuleStatus.OFFLINE
 - Maybe it should also check the health of the communication socket? Health class could send something and see if it gets an ACK.
 This should also report module status - NOT READY, READY, RECORDING, FAULT etc.
 Controller can then run get_modules() here for a neatly packaged dict of modules which can be passed to frontend.
+
+Author: Andrew SG
+Created: ?
 """
 
 

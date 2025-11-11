@@ -9,6 +9,9 @@ Handles health monitoring for all modules in the habitat system, including:
 - Online/offline status detection
 - Health data processing
 - Historical health data tracking
+
+Author: Andrew SG
+Created: ?
 """
 
 import time

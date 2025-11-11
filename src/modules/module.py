@@ -219,8 +219,8 @@ class Module(ABC):
         # Track when module started for uptime calculation
         self.start_time = None
 
-    def on_module_config_change(self):
-        self.logger.info("Received notification that module config changed, calling configure_module()")
+    def on_module_config_change(self, updated_keys: Optional[list[str]]):
+        self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
         self.configure_module()
 
     @abstractmethod

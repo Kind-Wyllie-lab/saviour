@@ -23,6 +23,9 @@ import threading
 from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import PyavOutput, FfmpegOutput
+from picamera2.devices import IMX500
+from picamera2.devices.imx500 import (NetworkIntrinsics, postprocess_nanodet_detection)
+from functools import lru_cache
 import json
 from flask import Flask, Response, request
 import cv2
@@ -31,16 +34,33 @@ import cv2
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module
 
-class CameraModule(Module):
-    def __init__(self, module_type="camera"):        
+class Detection:
+    def __init__(self, category, conf, box):
+        """Create a Detection object, recording the bounding box, category and confidence."""
+        self.category = category
+        self.conf = conf
+        self.box = box
+
+class APACameraModule(Module):
+    def __init__(self, module_type="apa_camera"):        
         # Call the parent class constructor
         super().__init__(module_type)
 
         # Update config 
-        self.config.load_module_config("camera_config.json")
+        self.config.load_module_config("apa_camera_config.json")
     
+        # IMX500 AI Camera Setup
+        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
+        self.intrinsics = self.imx500.network_intrinsics
+        if not self.intrinsics:
+            self.intrinsics = NetworkIntrinsics()
+            self.intrinsics.task = "object detection"
+        elif self.intrinsics.task != "object detection":
+            self.logger.warning("Network is not an object detection task")
+        self._last_detections = None
+
         # Initialize camera
-        self.picam2 = Picamera2()
+        self.picam2 = Picamera2(self.imx500.camera_num)
         self.height = None
         self.width = None
         self.fps = None
@@ -76,15 +96,20 @@ class CameraModule(Module):
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
+        self._configure_mask_and_shock_zone()
+        self._configure_object_detection()
+
     def configure_module(self):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
-            self.logger.info("Camera setttings changed, restarting stream to apply new configuration")
+            self.logger.info("Camera settings changed, restarting stream to apply new configuration")
+            self._configure_mask_and_shock_zone()
             self._restarting_stream = True
             self.stop_streaming()
             time.sleep(1)
             try:
                 self._configure_camera()
+                self._configure_object_detection()
                 self.logger.info("Camera reconfigured successfully")
             except Exception as e:
                 self.logger.error(f"Error restarting streaming: {e}")
@@ -105,6 +130,12 @@ class CameraModule(Module):
                 self.logger.info("Camera reconfigured successfully (not streaming)")
             except Exception as e:
                 self.logger.error(f"Error reconfiguring camera: {e}")
+
+    def _configure_object_detection(self):
+        """Reconfigure object detection settings"""
+        self.threshold = self.config.get("object_detection.threshold") # Confidence to signify a detection TODO: Take from config
+        self.iou = 0.65 # IOU threshold
+        self.max_detections = self.config.get("object_detection.max_detections")
 
     def _configure_camera(self):
         """Configure the camera with current settings"""
@@ -143,7 +174,7 @@ class CameraModule(Module):
             self.picam2.configure(config)
 
             # Apply callback
-            self.picam2.pre_callback = self._get_and_apply_frame_timestamp
+            self.picam2.pre_callback = self._frame_precallback
             
             # Create encoders with current settings
             bitrate = self.config.get("camera.bitrate", 10000000)
@@ -483,9 +514,321 @@ class CameraModule(Module):
             self.logger.error(f"Error stopping module: {e}")
             return False
 
+    """APA Camera Methods - Mask, Shock Zone, Neural Net"""
+    def _configure_mask_and_shock_zone(self):
+        """Reconfigure mask and shock zone settings after config update"""
+        try:
+            # Update mask configuration
+            self.mask_radius = self.config.get("mask.mask_radius")
+            self.mask_center_x = None  # Will be set to image center
+            self.mask_center_y = None  # Will be set to image center
+            self.mask_center_x_offset = self.config.get("mask.mask_center_x_offset")
+            if self.mask_center_x_offset is None:
+                self.mask_center_x_offset = 0
+            self.mask_center_y_offset = self.config.get("mask.mask_center_y_offset")
+            if self.mask_center_y_offset is None:
+                self.mask_center_y_offset = 0
+            self.mask_enabled = self.config.get("mask.mask_enabled")
+            
+            # Update shock zone configuration
+            self.shock_zone_enabled = self.config.get("shock_zone.shock_zone_enabled")
+            self.shock_zone_display = self.config.get("shock_zone.shock_zone_display")
+            self.shock_zone_angle_span = self.config.get("shock_zone.shock_zone_angle_span_deg")
+            self.shock_zone_start_angle = self.config.get("shock_zone.shock_zone_start_angle_deg") - 90
+            self.shock_zone_inner_offset = self.config.get("shock_zone.shock_zone_inner_offset")
+            self.shock_zone_color = self.config.get("shock_zone.shock_zone_color")
+            if isinstance(self.shock_zone_color, dict): 
+                self.shock_zone_color = list(self.config.get("shock_zone.shock_zone_color").values())
+            self.logger.info(f"Shock zone color: {self.shock_zone_color}")
+            self.shock_zone_thickness = self.config.get("shock_zone.shock_zone_line_thickness")
+            
+            self.logger.info("Mask and shock zone configuration updated")
+        except Exception as e:
+            self.logger.error(f"Error updating mask and shock zone configuration: {e}")
+
+    def _apply_mask(self, m: MappedArray) -> None:
+        """
+        Apply (circular) mask to stream
+        
+        Args:
+            m: the image frame to apply the mask to 
+
+        Returns:
+
+        """
+        # Get image dimensions
+        image_shape = m.array.shape[:2]
+    
+        # Set mask center to image center if not specified
+        if self.mask_center_x is None:
+            x_offset = self.mask_center_x_offset if self.mask_center_x_offset is not None else 0
+            self.mask_center_x = int(image_shape[1]/2) + x_offset
+        if self.mask_center_y is None:
+            y_offset = self.mask_center_y_offset if self.mask_center_y_offset is not None else 0
+            self.mask_center_y = int(image_shape[0]/2) + y_offset
+        
+        # Step 1: Apply circular mask if enabled
+        if self.mask_enabled and self.mask_radius is not None:
+            # Calculate radius with safety checks
+            calculated_radius = int(0.5 * self.mask_radius * image_shape[1])
+            if calculated_radius > 0:  # Only apply mask if radius is valid
+                # Create a circular mask (white circle on black background)
+                mask = np.zeros(image_shape, dtype="uint8")
+                cv2.circle(mask, center=(self.mask_center_x, self.mask_center_y), 
+                            radius=calculated_radius, color=255, thickness=-1)
+                
+                # Apply mask to original image to show only content within the circle
+                masked_image = cv2.bitwise_and(m.array, m.array, mask=mask)
+                
+                # Replace the original image with the masked version
+                m.array[:] = masked_image
+
+    def _apply_grayscale(self, m: MappedArray) -> None:
+        """
+        Convert an image to grayscale.
+
+        Args:
+            m: The image to apply the filter to.
+        """
+        # Convert BGR to grayscale
+        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+        # Convert back to BGR for consistency with other processing
+        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    
+    def _apply_timestamp(self, m: MappedArray) -> None:
+        """
+        Apply timestmap to image.
+
+        Args:
+            m: The image to overlay the timestamp on.
+        """
+        timestamp = time.strftime("%Y-%m-%d %X")
+        cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (50, 255, 50), 2)
+
+    
+    def _apply_shock_zone(self, m: MappedArray) -> None:
+        """
+        Overlay shock zone on image.
+
+        Args:
+            m: The image to overlay the shock zone on.
+        """
+        # Get image dimensions
+        image_shape = m.array.shape[:2]
+
+        if self.shock_zone_display and self.mask_radius is not None:
+            # Shock zone parameters with safety checks
+            outer_radius = int(0.5 * self.mask_radius * image_shape[1])
+            if outer_radius <= 0:
+                return  # Skip shock zone if radius is invalid
+                
+            inner_offset = int(self.shock_zone_inner_offset * outer_radius)
+            if inner_offset < 0:
+                inner_offset = 0
+            
+            # Calculate angles (in degrees)
+            # Start angle should be middle 
+            start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5) 
+            end_angle = start_angle + self.shock_zone_angle_span
+            
+            # Convert angles to radians for calculations
+            start_rad = np.radians(start_angle)
+            end_rad = np.radians(end_angle)
+            
+            # Calculate points for the outer arc with bounds checking
+            start_x = int(self.mask_center_x + outer_radius * np.cos(start_rad))
+            start_y = int(self.mask_center_y + outer_radius * np.sin(start_rad))
+            end_x = int(self.mask_center_x + outer_radius * np.cos(end_rad))
+            end_y = int(self.mask_center_y + outer_radius * np.sin(end_rad))
+            
+            # Calculate points for the inner arc with bounds checking
+            inner_start_x = int(self.mask_center_x + inner_offset * np.cos(start_rad))
+            inner_start_y = int(self.mask_center_y + inner_offset * np.sin(start_rad))
+            inner_end_x = int(self.mask_center_x + inner_offset * np.cos(end_rad))
+            inner_end_y = int(self.mask_center_y + inner_offset * np.sin(end_rad))
+            
+            # Draw the shock zone shape
+            color = self.shock_zone_color
+            thickness = max(1, self.shock_zone_thickness)  # Ensure thickness is at least 1
+            
+            # 1. Draw the outer arc
+            cv2.ellipse(m.array, 
+                        center=(self.mask_center_x, self.mask_center_y),
+                        axes=(outer_radius, outer_radius),
+                        angle=0,
+                        startAngle=start_angle,
+                        endAngle=end_angle,
+                        color=color,
+                        thickness=thickness)
+            
+            # 2. Draw the inner arc
+            cv2.ellipse(m.array,
+                        center=(self.mask_center_x, self.mask_center_y),
+                        axes=(inner_offset, inner_offset),
+                        angle=0,
+                        startAngle=start_angle,
+                        endAngle=end_angle,
+                        color=color,
+                        thickness=thickness)
+            
+            # 3. Draw the two diagonal connecting lines
+            cv2.line(m.array, 
+                    pt1=(start_x, start_y), 
+                    pt2=(inner_start_x, inner_start_y), 
+                    color=color, 
+                    thickness=thickness)
+            
+            cv2.line(m.array, 
+                    pt1=(end_x, end_y), 
+                    pt2=(inner_end_x, inner_end_y), 
+                    color=color, 
+                    thickness=thickness)
+        
+    @lru_cache
+    def _get_labels(self):
+        """
+        Get labels of detected objects.
+        
+        Returns:
+            labels: List of labels for loaded neural net.
+        """
+        labels = self.intrinsics.labels
+        if self.intrinsics.ignore_dash_labels:
+            labels = [label for label in labels if label and label != "-"]
+        return labels
+
+    def _draw_detections(self, m: MappedArray) -> None:
+        """
+        Draw detected objects on the image.
+
+        Args:
+            m: The current image to draw detections on.
+        """
+        detections = self._last_detections
+        if detections is None:
+            return
+        labels = self._get_labels()
+        for detection in detections:
+            x, y, w, h = detection.box
+            label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
+
+            # Calculate text size and position
+            (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            text_x = x + 5
+            text_y = y + 15
+
+            # Create a copy of the array to draw the background with opacity
+            overlay = m.array.copy()
+
+            # Draw the background rectangle on the overlay
+            cv2.rectangle(overlay,
+                          (text_x, text_y - text_height),
+                          (text_x + text_width, text_y + baseline),
+                          (255, 255, 255),  # Background color (white)
+                          cv2.FILLED)
+
+            alpha = 0.30
+            cv2.addWeighted(overlay, alpha, m.array, 1 - alpha, 0, m.array)
+
+            # Draw text on top of the background
+            cv2.putText(m.array, label, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+
+            # Draw detection box
+            cv2.rectangle(m.array, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
+
+        if self.intrinsics.preserve_aspect_ratio:
+            b_x, b_y, b_w, b_h =self.imx500.get_roi_scaled(request)
+            color = (255, 0, 0)  # red
+            cv2.putText(m.array, "ROI", (b_x + 5, b_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            cv2.rectangle(m.array, (b_x, b_y), (b_x + b_w, b_y + b_h), (255, 0, 0, 0))
+    
+    def _parse_detections(self, metadata: dict):
+        """Parse the output tensor into a number of detected objects, scaled to the ISP output."""
+        last_detections = []
+        bbox_normalization = self.intrinsics.bbox_normalization
+        bbox_order = self.intrinsics.bbox_order
+        np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+
+        input_w, input_h = self.imx500.get_input_size()
+        if np_outputs is None:
+            return last_detections
+        if self.intrinsics.postprocess == "nanodet":
+            boxes, scores, classes = \
+                postprocess_nanodet_detection(outputs=np_outputs[0], conf=self.threshold, iou_thres=self.iou,
+                                              max_out_dets=self.max_detections)[0]
+            from picamera2.devices.imx500.postprocess import scale_boxes
+            boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+        else:
+            boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+            if bbox_normalization:
+                boxes = boxes / input_h
+
+            if bbox_order == "xy":
+                boxes = boxes[:, [1, 0, 3, 2]]
+            boxes = np.array_split(boxes, 4, axis=1)
+            boxes = zip(*boxes)
+
+        last_detections = [
+            Detection(category, score, self.imx500.convert_inference_coords(box, metadata, self.picam2))
+            for box, score, category in zip(boxes, scores, classes)
+            if score > self.threshold
+        ]
+        return last_detections
+
+    def _frame_precallback(self, req):
+        """Combined callback that applies mask, shock zone overlay, timestamps, and grayscale conversion"""
+        try:
+            # First, capture frame metadata for timestamps
+            metadata = req.get_metadata()
+            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+            if frame_wall_clock != 'No data':
+                self.frame_times.append(frame_wall_clock)
+
+            # Detect objects
+            if self.config.get("object_detection.enabled"):
+                try:
+                    self._last_detections = self._parse_detections(metadata)
+                except Exception as e:
+                    self.logger.error(f"Error executing _parse_detections: {e}")
+                    self._last_detections = None
+
+            # Apply mask to main stream
+            with MappedArray(req, 'main') as m:
+                if self.config.get("camera.monochrome") is True:
+                    self._apply_grayscale(m)
+
+                self._apply_mask(m)
+
+                if self.config.get("object_detection.enabled"):
+                    self._draw_detections(m)
+            
+            # Apply mask and shock zone to lores stream
+            with MappedArray(req, 'lores') as m:
+                # Step 0: Convert to grayscale if monochrome is enabled
+                if self.config.get("camera.monochrome") is True:
+                    self._apply_grayscale(m)
+
+                # Step 1: Apply circular mask if enabled
+                self._apply_mask(m)
+                
+                # Step 2: Apply shock zone overlay if enabled
+                self._apply_shock_zone(m)
+
+                # Add timestamp
+                self._apply_timestamp(m)
+
+                # Detect objects
+                if self.config.get("object_detection.enabled"):
+                    self._draw_detections(m)
+                
+        except Exception as e:
+            # Log the error but don't crash the stream
+            self.logger.error(f"Error in _apply_mask_shock_zone_and_timestamp: {e}")
+            # Continue without applying mask/shock zone for this frame
 
 def main():
-    camera = CameraModule()
+    camera = APACameraModule()
     camera.start()
 
     # Keep running until interrupted

@@ -661,7 +661,12 @@ EOF
 	sudo -u pi pipewire &
 	sudo -u pi wireplumber &
     fi
+    if [ "$MODULE_TYPE" = "apa_camera" ]; then
+        sudo apt install imx500-all
+    fi
 fi
+
+
 # Enable camera interface if not already enabled
 if ! grep -q "camera_auto_detect=1" /boot/config.txt; then
     log_message "Enabling camera interface..."

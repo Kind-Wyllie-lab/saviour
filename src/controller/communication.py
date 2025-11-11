@@ -8,6 +8,9 @@ the controller and modules, including:
 - Command publishing to modules
 - Status/data subscription from modules
 - Message routing and handling
+
+Author: Andrew SG
+Created: ?
 """
 
 import zmq

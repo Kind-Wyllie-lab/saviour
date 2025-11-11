@@ -4,6 +4,9 @@
 Controller Database Manager
 
 Handles all database interactions, currently using supabase.
+
+Author: Andrew SG
+Created: ?
 """
 
 import os

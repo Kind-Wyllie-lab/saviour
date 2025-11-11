@@ -8,6 +8,9 @@ Handles module data buffering and management, including:
 - Buffer size monitoring
 - Data retrieval operations
 - Data pruning/cleanup
+
+Author: Andrew SG
+Created: ?
 """
 
 import time

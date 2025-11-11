@@ -5,6 +5,8 @@ Controller Network Manager
 
 The network manager is responsible for discovering, registering and unregistering zeroconf services (modules) with the controller, as well as discovering controller's own ip.
 
+Author: Andrew SG
+Created: ?
 """
 
 from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery

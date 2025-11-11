@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Habitat Controller - Modular Synchronised Data Capture
+SAVIOUR Controller modified for the APA rig
 
 This script serves as the main controller for the habitat system, providing:
 - Precise time synchronisation (PTP master) for all connected modules
@@ -10,7 +10,7 @@ This script serves as the main controller for the habitat system, providing:
 - Data collection and packaging in NWB format
 
 Author: Andrew SG
-Created: 17/03/2025
+Created: 11/11/2025
 """
 
 import sys

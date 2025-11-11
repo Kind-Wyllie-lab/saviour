@@ -1,8 +1,7 @@
 #!/usr/env/bin bash
 # setup.sh
-# Install system dependencies and set up virtual environment for the saviour system
+# Install system dependencies and set up virtual environment for the APA saviour system 
 # Usage: bash setup.sh
-#working
 
 set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
 trap 'rc=$?; echo "setup.sh failed with exit code $rc at line $LINENO"' ERR
@@ -47,8 +46,8 @@ EOF
 ask_user_role() {
     log_section "Device Role Configuration"
     echo "Please specify the role of this device:"
-    echo "1) Controller - Master device that coordinates other modules"
-    echo "2) Module - Slave device that connects to a controller"
+    echo "1) Controller - Central device that coordinates other modules and presents a GUI"
+    echo "2) Module - Peripheral device that connects to a controller and executes received commands"
     echo ""
     
     while true; do
@@ -229,26 +228,26 @@ EOF
 
     # Configure ptp4l based on device role
     if [ "$DEVICE_ROLE" = "controller" ]; then
-        log_message "Configuring ptp4l as MASTER (controller)..."
+        log_message "Configuring ptp4l as timeTransmitter (controller)..."
         sudo sed -i 's|ExecStart=/usr/sbin/ptp4l -i eth0 -s -m|ExecStart=/usr/sbin/ptp4l -i eth0 -m -l 6|' /etc/systemd/system/ptp4l.service
-        log_message "Configuring phc2sys for MASTER mode..."
+        log_message "Configuring phc2sys for timeTransmitter mode..."
         sudo sed -i 's|ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m|ExecStart=/usr/sbin/phc2sys -a -r -r|' /etc/systemd/system/phc2sys.service
         log_message "Controller PTP configuration:"
-        log_message "  - ptp4l: Master mode (-m flag, log level 6)"
+        log_message "  - ptp4l: timeTransmitter mode (-m flag, log level 6)"
         log_message "  - phc2sys: Autoconfiguration with system clock sync (-a -r -r)"
         echo "Controller PTP configuration:"
-        echo "  - ptp4l: Master mode (-m flag, log level 6)"
+        echo "  - ptp4l: timeTransmitter mode (-m flag, log level 6)"
         echo "  - phc2sys: Autoconfiguration with system clock sync (-a -r -r)"
     else
-        log_message "Configuring ptp4l as SLAVE (module)..."
+        log_message "Configuring ptp4l as timeReceiver (module)..."
         sudo sed -i 's|ExecStart=/usr/sbin/ptp4l -i eth0 -s -m|ExecStart=/usr/sbin/ptp4l -i eth0 -s -m|' /etc/systemd/system/ptp4l.service
-        log_message "Configuring phc2sys for SLAVE mode..."
+        log_message "Configuring phc2sys for timeReceiver mode..."
         sudo sed -i 's|ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m|ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m|' /etc/systemd/system/phc2sys.service
         log_message "Module PTP configuration:"
-        log_message "  - ptp4l: Slave mode (-s -m flags)"
+        log_message "  - ptp4l: timeReceiver mode (-s -m flags)"
         log_message "  - phc2sys: Manual configuration with PTP hardware clock (-s /dev/ptp0 -w -m)"
         echo "Module PTP configuration:"
-        echo "  - ptp4l: Slave mode (-s -m flags)"
+        echo "  - ptp4l: timeReceiver mode (-s -m flags)"
         echo "  - phc2sys: Manual configuration with PTP hardware clock (-s /dev/ptp0 -w -m)"
     fi
 
@@ -775,7 +774,7 @@ SUMMARY_CONTENT=""
 
 if [ "$DEVICE_ROLE" = "controller" ]; then
     SUMMARY_CONTENT="Device Role: CONTROLLER
-PTP Configuration: MASTER mode
+PTP Configuration: timeTransmitter mode
 
 === NTP Configuration for PTP Coexistence ===
 NTP configured for PTP coexistence with reduced frequency:
@@ -836,8 +835,8 @@ Controller service control commands:
 else
     SUMMARY_CONTENT="Device Role: MODULE
 Module Type: ${MODULE_TYPE^^}
-PTP Configuration: SLAVE mode
-This module will synchronize to the controller's PTP master.
+PTP Configuration: timeReceiver mode
+This module will synchronize to the controller's PTP timeTransmitter.
 
 === Module Service Setup ===
 Saviour ${MODULE_TYPE} module service configured and enabled at boot.
@@ -895,7 +894,7 @@ echo ""
 if [ "$DEVICE_ROLE" = "controller" ]; then
     echo "=== Controller Configuration Summary ==="
     echo "Device Role: CONTROLLER"
-    echo "PTP Configuration: MASTER mode"
+    echo "PTP Configuration: timeTransmitter mode"
     echo ""
     echo "=== NTP Configuration for PTP Coexistence ==="
     echo "NTP configured for PTP coexistence with reduced frequency:"
@@ -957,8 +956,8 @@ else
     echo "=== Module Configuration Summary ==="
     echo "Device Role: MODULE"
     echo "Module Type: ${MODULE_TYPE^^}"
-    echo "PTP Configuration: SLAVE mode"
-    echo "This module will synchronize to the controller's PTP master."
+    echo "PTP Configuration: timeReceiver mode"
+    echo "This module will synchronize to the controller's PTP timeTransmitter."
     echo ""
     echo "=== Module Service Setup ==="
     echo "Saviour ${MODULE_TYPE} module service configured and enabled at boot."

@@ -10,6 +10,9 @@ trap 'rc=$?; echo "setup.sh failed with exit code $rc at line $LINENO"' ERR
 LOG_FILE="system_setup.log"
 SUMMARY_FILE="system_setup_summary.txt"
 
+# Get working directory 
+DIR=`pwd`
+
 # Function to log messages
 log_message() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
@@ -77,48 +80,27 @@ ask_module_type() {
     if [ "$DEVICE_ROLE" = "module" ]; then
         log_section "Module Type Configuration"
         echo "Please specify the type of module:"
-        echo "1) Camera - Video recording and streaming module"
-        echo "2) Microphone - Audio recording module"
-        echo "3) RFID - RFID reader module"
-        echo "4) TTL - TTL signal module"
-        echo "5) Generic - Generic module template"
+        echo "1) APA CAMERA - Top mounted camera module that tracks rat location"
+        echo "2) APA RIG - Arduino module that drives rig motor and shock generator"
         echo ""
         
         while true; do
             read -p "Enter your choice (1-5): " choice
             case $choice in
                 1)
-                    MODULE_TYPE="camera"
-                    log_message "Module type configured as CAMERA"
-                    echo "Module type configured as CAMERA"
+                    MODULE_TYPE="apa_camera"
+                    log_message "Module type configured as APA CAMERA"
+                    echo "Module type configured as APA CAMERA"
                     break
                     ;;
                 2)
-                    MODULE_TYPE="microphone"
-                    log_message "Module type configured as MICROPHONE"
-                    echo "Module type configured as MICROPHONE"
-                    break
-                    ;;
-                3)
-                    MODULE_TYPE="rfid"
-                    log_message "Module type configured as RFID"
-                    echo "Module type configured as RFID"
-                    break
-                    ;;
-                4)
-                    MODULE_TYPE="ttl"
-                    log_message "Module type configured as TTL"
-                    echo "Module type configured as TTL"
-                    break
-                    ;;
-                5)
-                    MODULE_TYPE="generic"
-                    log_message "Module type configured as GENERIC"
-                    echo "Module type configured as GENERIC"
+                    MODULE_TYPE="apa_arduino"
+                    log_message "Module type configured as APA RIG"
+                    echo "Module type configured as APA RIG"
                     break
                     ;;
                 *)
-                    echo "Invalid choice. Please enter 1-5."
+                    echo "Invalid choice. Please enter 1-2."
                     ;;
             esac
         done
@@ -515,15 +497,15 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/usr/local/src/saviour/src/modules/examples/${MODULE_TYPE}/
-ExecStart=/usr/local/src/saviour/env/bin/python ${MODULE_TYPE}_module.py
+WorkingDirectory=${DIR}/src/modules/examples/${MODULE_TYPE}/
+ExecStart=${DIR}/env/bin/python ${MODULE_TYPE}_module.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PYTHONPATH=/usr/local/src/saviour/src
+Environment=PYTHONPATH=${DIR}/src
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse/"
 
@@ -567,15 +549,15 @@ Wants=network.target ptp4l.service phc2sys.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/usr/local/src/saviour/src/controller/
-ExecStart=/usr/local/src/saviour/env/bin/python controller.py
+WorkingDirectory=${DIR}/src/controller/
+ExecStart=${DIR}/env/bin/python controller.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-Environment=PYTHONPATH=/usr/local/src/saviour/src
+Environment=PYTHONPATH=${DIR}/src
 
 [Install]
 WantedBy=multi-user.target

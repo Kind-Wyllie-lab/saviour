@@ -4,18 +4,18 @@ import socket from "../../socket";
 import { Link } from "react-router-dom";
 
 // Style imports
-import './Header.css';
+import './APAHeader.css';
 import UoELogo from './uofe_logo_alpha.png';
 import SIDBLogo from './sidb_logo_alpha.png';
 
-function APAHeader() {
+function Header() {
     return (
         <header className="main-header">
             <div className="header-content">
                 <div className="logo-container">
                     <img src={UoELogo} alt="UoE Logo" className="logo" />
                     <img src={SIDBLogo} alt="SIDB Logo" className="logo" />
-                    <h1>SAVIOUR</h1>
+                    <h1>Active Place Avoidance</h1>
                 </div>
                 <nav className="main-nav">
                     <ul>
@@ -30,4 +30,4 @@ function APAHeader() {
     );
 }
 
-export default APAHeader;
+export default Header;

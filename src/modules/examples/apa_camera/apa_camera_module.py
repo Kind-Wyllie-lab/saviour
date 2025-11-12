@@ -51,7 +51,9 @@ class APACameraModule(Module):
         self.config.load_module_config("apa_camera_config.json")
     
         # IMX500 AI Camera Setup
-        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
+        # self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
+        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_nanodet_plus_416x416.rpk ")
+        
         self.intrinsics = self.imx500.network_intrinsics
         if not self.intrinsics:
             self.intrinsics = NetworkIntrinsics()
@@ -70,6 +72,16 @@ class APACameraModule(Module):
         # Get camera modes
         self.camera_modes = self.picam2.sensor_modes
         time.sleep(0.1)
+
+        # Shock zone
+        self.inner_offset = None
+        self.outer_radius = None
+        self.start_angle = None
+        self.end_angle = None
+
+        # Rat Tracking
+        self.last_cx = None
+        self.last_cy = None
     
         # Streaming variables
         self.streaming_app = Flask(__name__)
@@ -145,7 +157,7 @@ class APACameraModule(Module):
     def _configure_object_detection(self):
         """Reconfigure object detection settings"""
         self.threshold = self.config.get("object_detection.threshold") # Confidence to signify a detection TODO: Take from config
-        self.iou = 0.65 # IOU threshold
+        self.iou = self.config.get("object_detection.iou_threshold") # IOU threshold
         self.max_detections = self.config.get("object_detection.max_detections")
 
     def _configure_camera(self):
@@ -274,7 +286,7 @@ class APACameraModule(Module):
                         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                         # Convert back to BGR for consistency with other processing
                         m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale", 2), (50,255,50), self.config.get("camera.text_thickness", 1)) # TODO: Make origin reference lores dimensions.
+                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale"), (50,255,50), self.config.get("camera.text_thickness")) # TODO: Make origin reference lores dimensions.
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
@@ -629,34 +641,34 @@ class APACameraModule(Module):
 
         if self.shock_zone_display and self.mask_radius is not None:
             # Shock zone parameters with safety checks
-            outer_radius = int(0.5 * self.mask_radius * image_shape[1])
-            if outer_radius <= 0:
+            self.outer_radius = int(0.5 * self.mask_radius * image_shape[1])
+            if self.outer_radius <= 0:
                 return  # Skip shock zone if radius is invalid
                 
-            inner_offset = int(self.shock_zone_inner_offset * outer_radius)
-            if inner_offset < 0:
-                inner_offset = 0
+            self.inner_offset = int(self.shock_zone_inner_offset * self.outer_radius)
+            if self.inner_offset < 0:
+                self.inner_offset = 0
             
             # Calculate angles (in degrees)
             # Start angle should be middle 
-            start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5) 
-            end_angle = start_angle + self.shock_zone_angle_span
+            self.start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5) 
+            self.end_angle = self.start_angle + self.shock_zone_angle_span
             
             # Convert angles to radians for calculations
-            start_rad = np.radians(start_angle)
-            end_rad = np.radians(end_angle)
+            start_rad = np.radians(self.start_angle)
+            end_rad = np.radians(self.end_angle)
             
             # Calculate points for the outer arc with bounds checking
-            start_x = int(self.mask_center_x + outer_radius * np.cos(start_rad))
-            start_y = int(self.mask_center_y + outer_radius * np.sin(start_rad))
-            end_x = int(self.mask_center_x + outer_radius * np.cos(end_rad))
-            end_y = int(self.mask_center_y + outer_radius * np.sin(end_rad))
+            start_x = int(self.mask_center_x + self.outer_radius * np.cos(start_rad))
+            start_y = int(self.mask_center_y + self.outer_radius * np.sin(start_rad))
+            end_x = int(self.mask_center_x + self.outer_radius * np.cos(end_rad))
+            end_y = int(self.mask_center_y + self.outer_radius * np.sin(end_rad))
             
             # Calculate points for the inner arc with bounds checking
-            inner_start_x = int(self.mask_center_x + inner_offset * np.cos(start_rad))
-            inner_start_y = int(self.mask_center_y + inner_offset * np.sin(start_rad))
-            inner_end_x = int(self.mask_center_x + inner_offset * np.cos(end_rad))
-            inner_end_y = int(self.mask_center_y + inner_offset * np.sin(end_rad))
+            inner_start_x = int(self.mask_center_x + self.inner_offset * np.cos(start_rad))
+            inner_start_y = int(self.mask_center_y + self.inner_offset * np.sin(start_rad))
+            inner_end_x = int(self.mask_center_x + self.inner_offset * np.cos(end_rad))
+            inner_end_y = int(self.mask_center_y + self.inner_offset * np.sin(end_rad))
             
             # Draw the shock zone shape
             color = self.shock_zone_color
@@ -665,20 +677,20 @@ class APACameraModule(Module):
             # 1. Draw the outer arc
             cv2.ellipse(m.array, 
                         center=(self.mask_center_x, self.mask_center_y),
-                        axes=(outer_radius, outer_radius),
+                        axes=(self.outer_radius, self.outer_radius),
                         angle=0,
-                        startAngle=start_angle,
-                        endAngle=end_angle,
+                        startAngle=self.start_angle,
+                        endAngle=self.end_angle,
                         color=color,
                         thickness=thickness)
             
             # 2. Draw the inner arc
             cv2.ellipse(m.array,
                         center=(self.mask_center_x, self.mask_center_y),
-                        axes=(inner_offset, inner_offset),
+                        axes=(self.inner_offset, self.inner_offset),
                         angle=0,
-                        startAngle=start_angle,
-                        endAngle=end_angle,
+                        startAngle=self.start_angle,
+                        endAngle=self.end_angle,
                         color=color,
                         thickness=thickness)
             
@@ -707,6 +719,7 @@ class APACameraModule(Module):
         if self.intrinsics.ignore_dash_labels:
             labels = [label for label in labels if label and label != "-"]
         return labels
+ 
 
     def _draw_detections(self, m: MappedArray) -> None:
         """
@@ -718,35 +731,47 @@ class APACameraModule(Module):
         detections = self._last_detections
         if detections is None:
             return
+
         labels = self._get_labels()
+
         for detection in detections:
             x, y, w, h = detection.box
             label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
 
-            # Calculate text size and position
-            (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            text_x = x + 5
-            text_y = y + 15
+            # Compute center of the bounding box
+            cx = int(x + w / 2)
+            cy = int(y + h / 2)
 
-            # Create a copy of the array to draw the background with opacity
-            overlay = m.array.copy()
+            alpha = 0.5  # 0–1, higher = more responsive, lower = smoother
+            if self.last_cx == None:
+                self.last_cx = cx
+            if self.last_cy == None:
+                self.last_cy = cy
+            cx = int(alpha * cx + (1 - alpha) * self.last_cx)
+            cx = int(alpha * cy + (1 - alpha) * self.last_cy)
+            self.last_cx = cx
+            self.last_cy = cy
 
-            # Draw the background rectangle on the overlay
-            cv2.rectangle(overlay,
-                          (text_x, text_y - text_height),
-                          (text_x + text_width, text_y + baseline),
-                          (255, 255, 255),  # Background color (white)
-                          cv2.FILLED)
+            # Draw a small filled circle at the center
+            center_in_zone = self._is_in_shock_zone(cx, cy)
+            if center_in_zone:
+                cv2.circle(m.array, (cx, cy), 5, (0, 0, 255), -1)  # Red dot = inside zone
+                cv2.putText(
+                    m.array,
+                    "OBJECT IN SHOCK ZONE",
+                    (50, 100),  # position (x, y)
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2.0,        # font scale
+                    (0, 0, 255),# color (red)
+                    4,          # thickness
+                    cv2.LINE_AA # anti-aliased text
+                )
+            else:
+                cv2.circle(m.array, (cx, cy), 5, (0, 255, 0), -1)  # Green dot = outside zone
 
-            alpha = 0.30
-            cv2.addWeighted(overlay, alpha, m.array, 1 - alpha, 0, m.array)
-
-            # Draw text on top of the background
-            cv2.putText(m.array, label, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-
-            # Draw detection box
-            cv2.rectangle(m.array, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
+            # Optionally draw the label near the center
+            cv2.putText(m.array, label, (cx + 10, cy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
         if self.intrinsics.preserve_aspect_ratio:
             b_x, b_y, b_w, b_h =self.imx500.get_roi_scaled(request)
@@ -786,6 +811,29 @@ class APACameraModule(Module):
             if score > self.threshold
         ]
         return last_detections
+
+    def _is_in_shock_zone(self, cx, cy) -> bool:
+        """
+        Args:
+
+        """
+        # Compute distance from center
+        dx = cx - self.mask_center_x
+        dy = cy - self.mask_center_y
+        r = np.hypot(dx, dy)
+        
+        # Compute angle (convert to degrees, ensure [0,360))
+        theta = (np.degrees(np.arctan2(dy, dx)) + 360) % 360
+
+        # Check radial and angular bounds
+        within_radius = self.inner_offset <= r <= self.outer_radius
+        if self.start_angle < self.end_angle:
+            within_angle = self.start_angle <= theta <= self.end_angle
+        else:
+            # Handles wrap-around (e.g., start=350°, end=10°)
+            within_angle = theta >= self.start_angle or theta <= self.end_angle
+
+        return within_radius and within_angle
 
     def _frame_precallback(self, req):
         """Combined callback that applies mask, shock zone overlay, timestamps, and grayscale conversion"""
@@ -835,7 +883,7 @@ class APACameraModule(Module):
                 
         except Exception as e:
             # Log the error but don't crash the stream
-            self.logger.error(f"Error in _apply_mask_shock_zone_and_timestamp: {e}")
+            self.logger.error(f"Error in _frame_precallback: {e}")
             # Continue without applying mask/shock zone for this frame
 
 def main():

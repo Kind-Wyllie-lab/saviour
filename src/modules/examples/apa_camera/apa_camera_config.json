@@ -14,6 +14,7 @@
     "object_detection": {
         "enabled": true,
         "threshold": 0.55,
+        "iou_threshold": 0.9,
         "max_detections": 2
     },
     "mask": {

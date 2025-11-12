@@ -725,68 +725,55 @@ class APACameraModule(Module):
  
 
     def _draw_detections(self, m: MappedArray) -> None:
-        """
-        Draw detected objects on the image.
-
-        Args:
-            m: The current image to draw detections on.
-        """
-        if not self._detections:
-            detections = self._last_detections
+        """Draw a single smoothed detection to reduce flicker."""
+        # Take the last non-None detection from buffer
+        for det in reversed(self._detection_buffer):
+            if det is not None:
+                stable_det = det
+                break
         else:
-            detections = self._detections
-        if detections is None:
+            stable_det = None
+
+        if stable_det is None:
             return
 
+        x, y, w, h = stable_det.box
+        cx = int(x + w / 2)
+        cy = int(y + h / 2)
+
+        # Simple smoothing using last frame
+        alpha = 0.5
+        if self.last_cx is None: self.last_cx = cx
+        if self.last_cy is None: self.last_cy = cy
+        if self.config.get("object_detection.coordinate_smoothing"):
+            cx = int(alpha * cx + (1 - alpha) * self.last_cx)
+            cy = int(alpha * cy + (1 - alpha) * self.last_cy)
+        self.last_cx = cx
+        self.last_cy = cy
+
+        # Draw center dot
+        center_in_zone = self._is_in_shock_zone(cx, cy)
+        color = (0, 0, 255) if center_in_zone else (0, 255, 0)
+        cv2.circle(m.array, (cx, cy), 5, color, -1)
+
+        # Shock zone warning text
+        if center_in_zone:
+            cv2.putText(
+                m.array,
+                "OBJECT IN SHOCK ZONE",
+                (50, 100),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                2.0,
+                (0, 0, 255),
+                4,
+                cv2.LINE_AA
+            )
+
+        # Draw label
         labels = self._get_labels()
-
-        for detection in detections:
-            x, y, w, h = detection.box
-            label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
-
-            # Compute center of the bounding box
-            cx = int(x + w / 2)
-            cy = int(y + h / 2)
-
-            alpha = 0.5  # 0–1, higher = more responsive, lower = smoother
-            if self.last_cx == None:
-                self.last_cx = cx
-            if self.last_cy == None:
-                self.last_cy = cy
-
-            if self.config.get("object_detection.coordinate_smoothing"):
-                cx = int(alpha * cx + (1 - alpha) * self.last_cx)
-                cy = int(alpha * cy + (1 - alpha) * self.last_cy)
-
-            self.last_cx = cx
-            self.last_cy = cy
-
-            # Draw a small filled circle at the center
-            center_in_zone = self._is_in_shock_zone(cx, cy)
-            if center_in_zone:
-                cv2.circle(m.array, (cx, cy), 5, (0, 0, 255), -1)  # Red dot = inside zone
-                cv2.putText(
-                    m.array,
-                    "OBJECT IN SHOCK ZONE",
-                    (50, 100),  # position (x, y)
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    2.0,        # font scale
-                    (0, 0, 255),# color (red)
-                    4,          # thickness
-                    cv2.LINE_AA # anti-aliased text
-                )
-            else:
-                cv2.circle(m.array, (cx, cy), 5, (0, 255, 0), -1)  # Green dot = outside zone
-
-            # Optionally draw the label near the center
-            cv2.putText(m.array, label, (cx + 10, cy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-        if self.intrinsics.preserve_aspect_ratio:
-            b_x, b_y, b_w, b_h =self.imx500.get_roi_scaled(request)
-            color = (255, 0, 0)  # red
-            cv2.putText(m.array, "ROI", (b_x + 5, b_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-            cv2.rectangle(m.array, (b_x, b_y), (b_x + b_w, b_y + b_h), (255, 0, 0, 0))
+        label = f"{labels[int(stable_det.category)]} ({stable_det.conf:.2f})"
+        cv2.putText(m.array, label, (cx + 10, cy - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
     
     def _parse_detections(self, metadata: dict):
         """Parse the output tensor into a number of detected objects, scaled to the ISP output."""
@@ -856,10 +843,17 @@ class APACameraModule(Module):
             # Detect objects
             if self.config.get("object_detection.enabled"):
                 try:
-                    self._detections = self._parse_detections(metadata)
+                    current_detections = self._parse_detections(metadata)
                 except Exception as e:
                     self.logger.error(f"Error executing _parse_detections: {e}")
-                    self._detections = None
+                    current_detections = []
+
+                # Pick the detection with highest confidence
+                if current_detections:
+                    best_det = max(current_detections, key=lambda d: d.conf)
+                    self._detection_buffer.append(best_det)
+                else:
+                    self._detection_buffer.append(None)  # no detection this frame
 
             # Apply mask to main stream
             with MappedArray(req, 'main') as m:

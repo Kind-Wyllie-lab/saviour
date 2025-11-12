@@ -15,7 +15,8 @@
         "enabled": true,
         "threshold": 0.55,
         "iou_threshold": 0.9,
-        "max_detections": 2
+        "max_detections": 2,
+        "coordinate_smoothing": false
     },
     "mask": {
         "mask_radius": 0.65,

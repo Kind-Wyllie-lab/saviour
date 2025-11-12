@@ -30,6 +30,7 @@ import json
 from flask import Flask, Response, request
 import cv2
 from typing import Optional, Dict
+from collections import deque
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -52,7 +53,7 @@ class APACameraModule(Module):
     
         # IMX500 AI Camera Setup
         # self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
-        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_nanodet_plus_416x416.rpk ")
+        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_nanodet_plus_416x416_pp.rpk")
         
         self.intrinsics = self.imx500.network_intrinsics
         if not self.intrinsics:
@@ -60,6 +61,8 @@ class APACameraModule(Module):
             self.intrinsics.task = "object detection"
         elif self.intrinsics.task != "object detection":
             self.logger.warning("Network is not an object detection task")
+        self._detection_buffer = deque(maxlen=3) # Last 3 frames
+        self._detections = None
         self._last_detections = None
 
         # Initialize camera
@@ -728,7 +731,10 @@ class APACameraModule(Module):
         Args:
             m: The current image to draw detections on.
         """
-        detections = self._last_detections
+        if not self._detections:
+            detections = self._last_detections
+        else:
+            detections = self._detections
         if detections is None:
             return
 
@@ -747,8 +753,11 @@ class APACameraModule(Module):
                 self.last_cx = cx
             if self.last_cy == None:
                 self.last_cy = cy
-            cx = int(alpha * cx + (1 - alpha) * self.last_cx)
-            cx = int(alpha * cy + (1 - alpha) * self.last_cy)
+
+            if self.config.get("object_detection.coordinate_smoothing"):
+                cx = int(alpha * cx + (1 - alpha) * self.last_cx)
+                cy = int(alpha * cy + (1 - alpha) * self.last_cy)
+
             self.last_cx = cx
             self.last_cy = cy
 
@@ -847,10 +856,10 @@ class APACameraModule(Module):
             # Detect objects
             if self.config.get("object_detection.enabled"):
                 try:
-                    self._last_detections = self._parse_detections(metadata)
+                    self._detections = self._parse_detections(metadata)
                 except Exception as e:
                     self.logger.error(f"Error executing _parse_detections: {e}")
-                    self._last_detections = None
+                    self._detections = None
 
             # Apply mask to main stream
             with MappedArray(req, 'main') as m:

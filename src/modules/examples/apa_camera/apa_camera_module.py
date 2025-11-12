@@ -741,8 +741,8 @@ class APACameraModule(Module):
         if stable_det is None:
             return
 
-        det = stable_det
-        # det = self._last_known_det
+        # det = stable_det
+        det = self._last_known_det
         x, y, w, h = det.box
         cx = int(x + w / 2)
         cy = int(y + h / 2)
@@ -858,8 +858,14 @@ class APACameraModule(Module):
 
                 # Pick the detection with highest confidence
                 if current_detections:
-                    best_det = max(current_detections, key=lambda d: d.conf)
-                    self._last_known_det = best_det
+                    labels = self._get_labels()
+                    filtered_detections = [
+                        det for det in current_detections
+                        if labels[int(det.category)] == "person"
+                    ]
+                    if filtered_detections:
+                        best_det = max(filtered_detections, key=lambda d: d.conf)
+                        self._last_known_det = best_det
                     self._detection_buffer.append(best_det)
                 else:
                     self._detection_buffer.append(None)  # no detection this frame

@@ -29,6 +29,7 @@ from functools import lru_cache
 import json
 from flask import Flask, Response, request
 import cv2
+from typing import Optional, Dict
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -99,28 +100,38 @@ class APACameraModule(Module):
         self._configure_mask_and_shock_zone()
         self._configure_object_detection()
 
-    def configure_module(self):
+    def configure_module(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
             self.logger.info("Camera settings changed, restarting stream to apply new configuration")
             self._configure_mask_and_shock_zone()
-            self._restarting_stream = True
-            self.stop_streaming()
-            time.sleep(1)
-            try:
-                self._configure_camera()
-                self._configure_object_detection()
-                self.logger.info("Camera reconfigured successfully")
-            except Exception as e:
-                self.logger.error(f"Error restarting streaming: {e}")
+            self._configure_object_detection()
+            restart_keys = [
+                "camera.fps",
+                "camera.width",
+                "camera.height"
+            ]
+            self._restarting_stream = False
+            for key in updated_keys:
+                if key in restart_keys:
+                    self._restarting_stream = True
             
-            # Restart stream
-            try:
-                self.logger.info("Restarting stream with new settings")
-                self.start_streaming()
-                self.logger.info("Streaming restarted")
-            except Exception as e:
-                self.logger.error(f"Error restarting streaming: {e}")
+            if self._restarting_stream == True:
+                self.stop_streaming()
+                time.sleep(1)
+                try:
+                    self._configure_camera()
+                    self.logger.info("Camera reconfigured successfully")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
+                
+                # Restart stream
+                try:
+                    self.logger.info("Restarting stream with new settings")
+                    self.start_streaming()
+                    self.logger.info("Streaming restarted")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
             
             self._restarting_stream = False # Reset the "restarting stream" flag
         elif not self.is_streaming:

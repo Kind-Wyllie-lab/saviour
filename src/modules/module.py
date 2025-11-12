@@ -221,10 +221,10 @@ class Module(ABC):
 
     def on_module_config_change(self, updated_keys: Optional[list[str]]):
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
-        self.configure_module()
+        self.configure_module(updated_keys)
 
     @abstractmethod
-    def configure_module(self):
+    def configure_module(self, updated_keys: Optional[list[str]]):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
     

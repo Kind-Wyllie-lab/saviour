@@ -94,7 +94,7 @@ function APADashboard() {
           </section>
         </div>    
         {/* right side */}
-        <div className="APADashboard-container">
+        <div className="dashboard-container">
           <section>
             {apaCameraModules.length > 0 ? (
               <APALivestreamCard key={apaCameraModules[0].id} module={apaCameraModules[0]} />

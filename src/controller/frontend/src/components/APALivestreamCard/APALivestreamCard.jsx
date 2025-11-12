@@ -2,24 +2,11 @@ import React, { useState, useEffect } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
 import "./APALivestreamCard.css";
 
-function LivestreamCard({ module }) {
+function APALivestreamCard({ module }) {
   const [showStream, setShowStream] = useState(true); // Show placeholder vs stream
   const [fullscreen, setFullscreen] = useState(false); // Track fullscreen
   const [lastFrameTime, setLastFrameTime] = useState(Date.now());
   const [streamKey, setStreamKey] = useState(Date.now());
-
-  // heartbeat watchdog
-  // Seems to be broken right now
-  // useEffect(() => {
-  //   const interval = setInterval(() => {
-  //     if (Date.now() - lastFrameTime > 5000) {
-  //       console.log("Stream frozen, forcing reconnect...");
-  //       setStreamKey(Date.now()); // refresh stream src with new query param
-  //     }
-  //   }, 2000);
-
-  //   return () => clearInterval(interval);
-  // }, [lastFrameTime]);
 
   return (
     <>
@@ -64,4 +51,4 @@ function LivestreamCard({ module }) {
   );
 }
 
-export default LivestreamCard;
+export default APALivestreamCard;

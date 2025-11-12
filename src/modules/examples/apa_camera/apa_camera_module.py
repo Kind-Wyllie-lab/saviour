@@ -64,6 +64,7 @@ class APACameraModule(Module):
         self._detection_buffer = deque(maxlen=3) # Last 3 frames
         self._detections = None
         self._last_detections = None
+        self._last_known_det = None  # store last detected object
 
         # Initialize camera
         self.picam2 = Picamera2(self.imx500.camera_num)
@@ -726,6 +727,9 @@ class APACameraModule(Module):
 
     def _draw_detections(self, m: MappedArray) -> None:
         """Draw a single smoothed detection to reduce flicker."""
+        if self._last_known_det is None:
+            return  # nothing ever detected
+
         # Take the last non-None detection from buffer
         for det in reversed(self._detection_buffer):
             if det is not None:
@@ -737,7 +741,9 @@ class APACameraModule(Module):
         if stable_det is None:
             return
 
-        x, y, w, h = stable_det.box
+        det = stable_det
+        # det = self._last_known_det
+        x, y, w, h = det.box
         cx = int(x + w / 2)
         cy = int(y + h / 2)
 
@@ -771,7 +777,7 @@ class APACameraModule(Module):
 
         # Draw label
         labels = self._get_labels()
-        label = f"{labels[int(stable_det.category)]} ({stable_det.conf:.2f})"
+        label = f"{labels[int(det.category)]} ({det.conf:.2f})"
         cv2.putText(m.array, label, (cx + 10, cy - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
     
@@ -813,6 +819,8 @@ class APACameraModule(Module):
         Args:
 
         """
+        if self.inner_offset is None or self.outer_radius is None:
+            return False  # skip shock zone check until initialized
         # Compute distance from center
         dx = cx - self.mask_center_x
         dy = cy - self.mask_center_y
@@ -851,6 +859,7 @@ class APACameraModule(Module):
                 # Pick the detection with highest confidence
                 if current_detections:
                     best_det = max(current_detections, key=lambda d: d.conf)
+                    self._last_known_det = best_det
                     self._detection_buffer.append(best_det)
                 else:
                     self._detection_buffer.append(None)  # no detection this frame

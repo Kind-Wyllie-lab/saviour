@@ -46,6 +46,9 @@ dependencies = [
     "opencv-python>=4.0.0",
     "SoundCard>=0.4.4",
     "soundfile>=0.13.1",
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "ultralytics>=8.3.0"
 ]
 
 [tool.hatch.build]

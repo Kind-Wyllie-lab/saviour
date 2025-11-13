@@ -53,7 +53,9 @@ class APACameraModule(Module):
     
         # IMX500 AI Camera Setup
         # self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
-        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_nanodet_plus_416x416_pp.rpk")
+        filename = "imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
+        # filename = "ratnet.rpk"
+        self.imx500 = IMX500(f"/usr/share/imx500-models/{filename}")
         
         self.intrinsics = self.imx500.network_intrinsics
         if not self.intrinsics:
@@ -727,92 +729,186 @@ class APACameraModule(Module):
 
     def _draw_detections(self, m: MappedArray) -> None:
         """Draw a single smoothed detection to reduce flicker."""
-        if self._last_known_det is None:
-            return  # nothing ever detected
+        try:
+            if self._last_known_det is None:
+                return  # nothing ever detected
 
-        # Take the last non-None detection from buffer
-        for det in reversed(self._detection_buffer):
-            if det is not None:
-                stable_det = det
-                break
-        else:
-            stable_det = None
+            # Take the last non-None detection from buffer
+            # for det in reversed(self._detection_buffer):
+            #     if det is not None:
+            #         stable_det = det
+            #         break
+            # else:
+            #     stable_det = None
 
-        if stable_det is None:
-            return
+            # if stable_det is None:
+            #     return
 
-        # det = stable_det
-        det = self._last_known_det
-        x, y, w, h = det.box
-        cx = int(x + w / 2)
-        cy = int(y + h / 2)
+            # det = stable_det
+            det = self._last_known_det
 
-        # Simple smoothing using last frame
-        alpha = 0.5
-        if self.last_cx is None: self.last_cx = cx
-        if self.last_cy is None: self.last_cy = cy
-        if self.config.get("object_detection.coordinate_smoothing"):
-            cx = int(alpha * cx + (1 - alpha) * self.last_cx)
-            cy = int(alpha * cy + (1 - alpha) * self.last_cy)
-        self.last_cx = cx
-        self.last_cy = cy
+            if self._validate_detection(det) == False:
+                self.logger.error("Rejecting invalid detection")
+                return
+                
+            self.logger.debug(f"Valid det with type {type(det)}, box {det.box}, category {det.category}")
+            x, y, w, h = det.box
+            cx = int(x + w / 2)
+            cy = int(y + h / 2)
 
-        # Draw center dot
-        center_in_zone = self._is_in_shock_zone(cx, cy)
-        color = (0, 0, 255) if center_in_zone else (0, 255, 0)
-        cv2.circle(m.array, (cx, cy), 5, color, -1)
+            # Simple smoothing using last frame
+            alpha = 0.5
+            if self.last_cx is None: self.last_cx = cx
+            if self.last_cy is None: self.last_cy = cy
+            if self.config.get("object_detection.coordinate_smoothing"):
+                cx = int(alpha * cx + (1 - alpha) * self.last_cx)
+                cy = int(alpha * cy + (1 - alpha) * self.last_cy)
+            self.last_cx = cx
+            self.last_cy = cy
 
-        # Shock zone warning text
-        if center_in_zone:
-            cv2.putText(
-                m.array,
-                "OBJECT IN SHOCK ZONE",
-                (50, 100),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                2.0,
-                (0, 0, 255),
-                4,
-                cv2.LINE_AA
-            )
+            # Draw center dot
+            center_in_zone = self._is_in_shock_zone(cx, cy)
+            color = (0, 0, 255) if center_in_zone else (0, 255, 0)
+            cv2.circle(m.array, (cx, cy), 5, color, -1)
 
-        # Draw label
-        labels = self._get_labels()
-        label = f"{labels[int(det.category)]} ({det.conf:.2f})"
-        cv2.putText(m.array, label, (cx + 10, cy - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # Shock zone warning text
+            if center_in_zone:
+                cv2.putText(
+                    m.array,
+                    "OBJECT IN SHOCK ZONE",
+                    (50, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2.0,
+                    (0, 0, 255),
+                    4,
+                    cv2.LINE_AA
+                )
+
+            # Draw label
+            labels = self._get_labels()
+            label = f"{labels[int(det.category)]} ({det.conf:.2f})"
+            cv2.putText(m.array, label, (cx + 10, cy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        except Exception as e:
+            self.logger.error(f"Error in _draw_detections: {e}")
     
+    def _validate_detection(self, det: Detection) -> bool:
+        """
+        Check if a detection is valid.
+        """
+        x, y, w, h = det.box
+        if det is None:
+            self.logger.error("Nonetype det")
+            return False
+        if det.category is None:
+            self.logger.error("Nonetype det.category")
+        if w <= 0 or h <= 0:
+            self.logger.warning(f"Invalid detection box: {det.box}")
+            return False
+
+    # def _parse_detections(self, metadata: dict):
+    #     """Parse the output tensor into Detection objects, scaled to the ISP output."""
+    #     try:
+    #         last_detections = []
+    #         bbox_normalization = self.intrinsics.bbox_normalization
+    #         bbox_order = self.intrinsics.bbox_order
+
+    #         np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+    #         input_w, input_h = self.imx500.get_input_size()
+
+    #         if np_outputs is None:
+    #             self.logger.warning("IMX500 outputs are None")
+    #             return last_detections
+
+    #         self.logger.debug(f"Raw network outputs: {np_outputs}")
+
+    #         if self.intrinsics.postprocess == "nanodet":
+    #             boxes, scores, classes = postprocess_nanodet_detection(
+    #                 outputs=np_outputs[0],
+    #                 conf=self.threshold,
+    #                 iou_thres=self.iou,
+    #                 max_out_dets=self.max_detections
+    #             )[0]
+
+    #             from picamera2.devices.imx500.postprocess import scale_boxes
+    #             boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+    #             self.logger.debug(f"Scaled Nanodet boxes: {boxes}")
+
+    #         else:
+    #             # Standard SSD-style outputs
+    #             boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+    #             self.logger.debug(f"Initial boxes: {boxes}, scores: {scores}, classes: {classes}")
+
+    #             if bbox_normalization:
+    #                 boxes = boxes / input_h
+    #                 self.logger.debug(f"Normalized boxes: {boxes}")
+
+    #             if bbox_order == "xy":
+    #                 boxes = boxes[:, [1, 0, 3, 2]]
+    #                 self.logger.debug(f"Reordered boxes (xy): {boxes}")
+
+    #             # Convert to list of tuples (x1,y1,x2,y2)
+    #             boxes = [tuple(b) for b in boxes]
+
+    #         # Filter invalid boxes before creating Detection objects
+    #         for box, score, category in zip(boxes, scores, classes):
+    #             if score <= self.threshold:
+    #                 continue
+    #             x1, y1, x2, y2 = box
+    #             w, h = max(x2 - x1, 0), max(y2 - y1, 0)
+    #             if w == 0 or h == 0:
+    #                 self.logger.warning(f"Skipping zero-size box: {box}, score: {score}")
+    #                 continue
+
+    #             conv_box = self.imx500.convert_inference_coords(box, metadata, self.picam2)
+    #             self.logger.debug(f"Converted box: {conv_box}, score: {score}, category: {category}")
+
+    #             last_detections.append(Detection(category, score, conv_box))
+
+    #         self.logger.debug(f"Parsed {len(last_detections)} valid detections")
+    #         return last_detections
+
+    #     except Exception as e:
+    #         self.logger.error(f"Error in _parse_detections: {e}")
+    #         return []
+
+
     def _parse_detections(self, metadata: dict):
         """Parse the output tensor into a number of detected objects, scaled to the ISP output."""
-        last_detections = []
-        bbox_normalization = self.intrinsics.bbox_normalization
-        bbox_order = self.intrinsics.bbox_order
-        np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+        try:
+            last_detections = []
+            bbox_normalization = self.intrinsics.bbox_normalization
+            bbox_order = self.intrinsics.bbox_order
+            np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
 
-        input_w, input_h = self.imx500.get_input_size()
-        if np_outputs is None:
+            input_w, input_h = self.imx500.get_input_size()
+            if np_outputs is None:
+                # self.logger.warning("Invalid IMX500 output tensors")
+                return last_detections
+            if self.intrinsics.postprocess == "nanodet":
+                boxes, scores, classes = \
+                    postprocess_nanodet_detection(outputs=np_outputs[0], conf=self.threshold, iou_thres=self.iou,
+                                                max_out_dets=self.max_detections)[0]
+                from picamera2.devices.imx500.postprocess import scale_boxes
+                boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+            else:
+                boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+                if bbox_normalization:
+                    boxes = boxes / input_h
+
+                if bbox_order == "xy":
+                    boxes = boxes[:, [1, 0, 3, 2]]
+                boxes = np.array_split(boxes, 4, axis=1)
+                boxes = zip(*boxes)
+
+            last_detections = [
+                Detection(category, score, self.imx500.convert_inference_coords(box, metadata, self.picam2))
+                for box, score, category in zip(boxes, scores, classes)
+                if score > self.threshold
+            ]
             return last_detections
-        if self.intrinsics.postprocess == "nanodet":
-            boxes, scores, classes = \
-                postprocess_nanodet_detection(outputs=np_outputs[0], conf=self.threshold, iou_thres=self.iou,
-                                              max_out_dets=self.max_detections)[0]
-            from picamera2.devices.imx500.postprocess import scale_boxes
-            boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
-        else:
-            boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
-            if bbox_normalization:
-                boxes = boxes / input_h
-
-            if bbox_order == "xy":
-                boxes = boxes[:, [1, 0, 3, 2]]
-            boxes = np.array_split(boxes, 4, axis=1)
-            boxes = zip(*boxes)
-
-        last_detections = [
-            Detection(category, score, self.imx500.convert_inference_coords(box, metadata, self.picam2))
-            for box, score, category in zip(boxes, scores, classes)
-            if score > self.threshold
-        ]
-        return last_detections
+        except Exception as e:
+            self.logger.error(f"Error in _parse_detections: {e}")
 
     def _is_in_shock_zone(self, cx, cy) -> bool:
         """
@@ -858,14 +954,8 @@ class APACameraModule(Module):
 
                 # Pick the detection with highest confidence
                 if current_detections:
-                    labels = self._get_labels()
-                    filtered_detections = [
-                        det for det in current_detections
-                        if labels[int(det.category)] == "person"
-                    ]
-                    if filtered_detections:
-                        best_det = max(filtered_detections, key=lambda d: d.conf)
-                        self._last_known_det = best_det
+                    best_det = max(current_detections, key=lambda d: d.conf)
+                    self._last_known_det = best_det
                     self._detection_buffer.append(best_det)
                 else:
                     self._detection_buffer.append(None)  # no detection this frame

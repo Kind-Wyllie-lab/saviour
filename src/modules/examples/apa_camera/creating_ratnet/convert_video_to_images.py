@@ -13,7 +13,7 @@ import time
 parser = argparse.ArgumentParser()
 parser.add_argument('-i', '--input_file', type=str, required=True, help="The input video to be converted")
 parser.add_argument('--max_files', type=int, default=200, help="The maximum amount of images to be created")
-parser.add_argument('--interval', type=int, default=1000, help="Amount of frames to use")
+parser.add_argument('--interval', type=int, default=10, help="Amount of frames to use")
 args = parser.parse_args()
 # Inputs
 # video_name = "2024-10-24 15-53-23_1805_ORLTM_sample_trim.ts"
@@ -88,7 +88,7 @@ while True:
     if frame_idx % interval == 0: 
         n_files += 1
         print(f"Generating file {n_files} of {total_files}")
-        cv2.imwrite(f'{save_path}/frame{frame_idx:04d}.jpg', frame)
+        cv2.imwrite(f'{save_path}/{video_name}_frame{frame_idx:04d}.jpg', frame)
     frame_idx += 1
 
 t1 = time.time()

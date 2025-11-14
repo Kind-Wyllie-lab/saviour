@@ -1,0 +1,30 @@
+{
+    "arduino": {
+        "baudrate": {"value": 115200, "editable": "False"},
+        "motor_controller": {
+            "max_motor_speed": {"value": 400, "editable": "False", "min": 0, "max": 400},
+            "min_motor_speed": {"value": -400, "editable": "False", "min": 0, "max": -400},
+            "manual_motor_speed_for_2rpm": {"value": 95, "editable": "False", "min": 0, "max": 400},
+            "motor_speed_rpm": {"value": 2, "editable": "True", "units": "RPM", "min": 0, "max": 2},
+            "motor_speed_delay": 2,
+            "encoder_pin": "A2"
+        },
+        "shock_controller": {
+            "max_current": 5.1,
+            "current_step": 0.2,
+            "weak_shock": {
+                "name": "weak_shock",
+                "current": 0.2,
+                "duration": 0.5,
+                "intershock_latency": 1,
+                "entrance_latency": 1.5,
+                "outside_latency": 0.1
+            }
+        }
+    },
+    "recording_folder": "rec",
+    "auto_export": true,
+    "controller_share_path": "controller_share",
+    "controller_username": "pi",
+    "controller_password": "apa"
+}

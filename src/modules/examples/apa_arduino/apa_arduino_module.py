@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module
+from modules.module import Module, command, check
 from arduino_manager import ArduinoManager
 
 # class APACommand(Command):
@@ -330,6 +330,15 @@ class APAModule(Module):
         self.recording_start_time = None
         self.data_sampling_rate = 1  # Hz - how often to sample motor data
 
+        self.module_checks = [
+            self._check_arduino_managers,
+            self._check_motor,
+            self._check_shocker,
+            self._check_shock_grid_fault,
+            self._check_motor_comms,
+            self._check_shocker_comms
+        ]
+
         self.apa_arduino_callbacks = {
 
         }
@@ -421,169 +430,79 @@ class APAModule(Module):
             self.arduino_manager.cleanup()
         self.logger.info("APA system shutdown complete")
 
-    def validate_readiness(self) -> dict:
-        """Validate APA Arduino module readiness including shock system"""
-        # First call parent validation
-        parent_result = super().validate_readiness()
-        
-        if not parent_result.get('ready', False):
-            return parent_result
-        
-        # Add APA-specific validations
-        apa_checks = {}
-        
+
+    """Self Check"""
+    def _perform_module_specific_checks(self) -> tuple[bool, str]:
+        self.logger.info(f"Performing {self.module_type} specific checks")
+        for check in self.module_checks:
+            self.logger.info(f"Running {check.__name__}")
+            result, message = check()
+            if result == False:
+                self.logger.info(f"A check failed: {check.__name__}, {message}")
+                return False, message
+                break # Exit loop on first failed check
+        if result == False:
+            return result, message
+        else:
+            return True, "No implementation yet..."
+
+    @check()
+    def _check_arduino_managers(self) -> tuple[bool, str]:
+        if not hasattr(self, 'arduino_manager') or not self.arduino_manager:
+            return False, "No arduino manager found"
+        else:
+            return True, "Arduino manager found"
+
+    @check()
+    def _check_motor(self) -> tuple[bool, str]:
+        if not self.arduino_manager.motor:
+            return False, "No motor found"
+        else:
+            return True, "Motor connected"
+    
+    @check()
+    def _check_shocker(self) -> tuple[bool, str]:
+        if not self.arduino_manager.shock:
+            return False, "No motor found"
+        else:
+            return True, "Motor connected" 
+
+    @check()
+    def _check_shock_grid_fault(self) -> tuple[bool, str]:
         try:
-            # Check if Arduino managers are available
-            if not hasattr(self, 'arduino_manager') or not self.arduino_manager:
-                apa_checks['arduino_manager'] = False
-                parent_result['checks']['arduino_manager'] = {
-                    'status': 'error',
-                    'message': 'Arduino manager not initialized'
-                }
+            status, message = self.arduino_manager.shock.test_grid_fault()
+            if status == "OK":
+                return True, "No grid fault detected"
             else:
-                apa_checks['arduino_manager'] = True
-                parent_result['checks']['arduino_manager'] = {
-                    'status': 'success',
-                    'message': 'Arduino manager available'
-                }
-            
-            # Check motor controller availability
-            if not self.arduino_manager.motor:
-                apa_checks['motor_controller'] = False
-                parent_result['checks']['motor_controller'] = {
-                    'status': 'error',
-                    'message': 'Motor controller not found'
-                }
-            else:
-                apa_checks['motor_controller'] = True
-                parent_result['checks']['motor_controller'] = {
-                    'status': 'success',
-                    'message': 'Motor controller available'
-                }
-            
-            # Check shock controller availability
-            if not self.arduino_manager.shock:
-                apa_checks['shock_controller'] = False
-                parent_result['checks']['shock_controller'] = {
-                    'status': 'error',
-                    'message': 'Shock controller not found'
-                }
-            else:
-                apa_checks['shock_controller'] = True
-                parent_result['checks']['shock_controller'] = {
-                    'status': 'success',
-                    'message': 'Shock controller available'
-                }
-            
-            # Test grid fault detection if shock controller is available
-            if self.arduino_manager.shock:
-                try:
-                    status, message = self.arduino_manager.shock.test_grid_fault()
-                    if status == "OK":
-                        apa_checks['grid_fault_test'] = True
-                        parent_result['checks']['grid_fault_test'] = {
-                            'status': 'success',
-                            'message': 'Grid fault test passed'
-                        }
-                    elif "Grid fault detected" in message:
-                        apa_checks['grid_fault_test'] = False
-                        parent_result['checks']['grid_fault_test'] = {
-                            'status': 'error',
-                            'message': 'Grid fault detected - clean grid before experiment'
-                        }
-                    else:
-                        apa_checks['grid_fault_test'] = False
-                        parent_result['checks']['grid_fault_test'] = {
-                            'status': 'error',
-                            'message': f'Grid fault test failed: {message}'
-                        }
-                except Exception as e:
-                    apa_checks['grid_fault_test'] = False
-                    parent_result['checks']['grid_fault_test'] = {
-                        'status': 'error',
-                        'message': f'Grid fault test error: {str(e)}'
-                    }
-            
-            # Test motor controller communication
-            if self.arduino_manager.motor:
-                try:
-                    status, message = self.arduino_manager.motor.read_encoder()
-                    if status == "OK":
-                        apa_checks['motor_communication'] = True
-                        parent_result['checks']['motor_communication'] = {
-                            'status': 'success',
-                            'message': f'Motor communication OK: {message}'
-                        }
-                    else:
-                        apa_checks['motor_communication'] = False
-                        parent_result['checks']['motor_communication'] = {
-                            'status': 'error',
-                            'message': f'Motor communication failed: {message}'
-                        }
-                except Exception as e:
-                    apa_checks['motor_communication'] = False
-                    parent_result['checks']['motor_communication'] = {
-                        'status': 'error',
-                        'message': f'Motor communication error: {str(e)}'
-                    }
-            
-            # Test shock controller communication
-            if self.arduino_manager.shock:
-                try:
-                    status, message = self.arduino_manager.shock.get_verification_stats()
-                    if status == "OK":
-                        apa_checks['shock_communication'] = True
-                        parent_result['checks']['shock_communication'] = {
-                            'status': 'success',
-                            'message': f'Shock communication OK: {message}'
-                        }
-                    else:
-                        apa_checks['shock_communication'] = False
-                        parent_result['checks']['shock_communication'] = {
-                            'status': 'error',
-                            'message': f'Shock communication failed: {message}'
-                        }
-                except Exception as e:
-                    apa_checks['shock_communication'] = False
-                    parent_result['checks']['shock_communication'] = {
-                        'status': 'error',
-                        'message': f'Shock communication error: {str(e)}'
-                    }
-            
-            # Check if all APA-specific checks passed
-            all_apa_checks_passed = all(apa_checks.values())
-            
-            mock_pass = True # PLEASE, DELETE THIS. DEBUG TO FORCE PASS A READY CHECKS
+                return False, message
 
-            if all_apa_checks_passed:
-                parent_result['ready'] = True
-                parent_result['message'] = 'APA Arduino module ready for recording'
-            else:
-                parent_result['ready'] = False
-                failed_checks = [check for check, passed in apa_checks.items() if not passed]
-                parent_result['message'] = f'APA Arduino module not ready. Failed checks: {", ".join(failed_checks)}'
-                if mock_pass == True:
-                    parent_result['ready'] = True
-                    parent_result['message'] = f'(MOCK PASS ENABLED, FROCING READY STATUS=TRUE) APA Arduino module not ready. Failed checks: {", ".join(failed_checks)}'
-
-            # Add APA-specific summary
-            parent_result['apa_checks'] = apa_checks
-            parent_result['apa_summary'] = {
-                'total_checks': len(apa_checks),
-                'passed_checks': sum(apa_checks.values()),
-                'failed_checks': len(apa_checks) - sum(apa_checks.values())
-            }
-            
         except Exception as e:
-            self.logger.error(f"Error in validate_readiness: {e}")
-            parent_result['ready'] = False
-            parent_result['message'] = f'Error during readiness validation: {str(e)}'
-            parent_result['checks']['apa_validation_error'] = {
-                'status': 'error',
-                'message': str(e)
-            }
-        
-        return parent_result
+            return False, f"Error checking grid fault: {e}"
+
+
+    @check()
+    def _check_motor_comms(self) -> tuple[bool, str]:
+        try:
+            status, message = self.arduino_manager.motor.read_encoder()
+            if status == "OK":
+                return True, message
+            else:
+                return False, message
+        except Exception as e:
+            return False,  f"Motor communication error: {str(e)}"
+
+
+    @check()
+    def _check_shocker_comms(self) -> tuple[bool, str]:
+        try:
+            status, message = self.arduino_manager.shock.get_verification_stats()
+            if status == "OK":
+                return True, message
+            else:
+                return False, message
+        except Exception as e:
+            return False,  f"Motor communication error: {str(e)}"
+            
 
     def _start_recording(self):
         """Start APA recording - motor rotation and data collection"""      

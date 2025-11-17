@@ -264,6 +264,41 @@ void parseCommand(String command, String param, String msgId) {
   // command = command.toUpperCase();
 
   // =============================================================================
+  // DEBUG COMMANDS
+  // =============================================================================
+  if (command == "READ_PIN") {
+    // Handle reading a digital pin
+    if (param == "NONE") {
+      sendMessage(MSG_ERROR, msgId, "No param given");
+    } else {
+      int pin = param.toInt(); // Convert the param to a pin to read
+      int state = digitalRead(pin); // Read teh pin
+      sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + "=" + String(state)).c_str());
+    }
+  }
+
+  if (command == "SET_PIN_HIGH") {
+    if (param == "NONE") {
+      sendMessage(MSG_ERROR, msgId, "No param given");
+    } else {
+      int pin = param.toInt();
+      digitalWrite(pin, HIGH);
+      sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + "SET TO HIGH").c_str());
+    }
+  }
+
+  if (command == "SET_PIN_LOW") {
+    if (param == "NONE") {
+      sendMessage(MSG_ERROR, msgId, "No param given");
+    } else {
+      int pin = param.toInt();
+      digitalWrite(pin, LOW);
+      sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + " SET TO LOW").c_str());
+    }
+  }
+
+
+  // =============================================================================
   // CURRENT CONTROL COMMANDS
   // =============================================================================
 

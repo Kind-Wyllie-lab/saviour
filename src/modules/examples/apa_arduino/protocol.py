@@ -99,7 +99,7 @@ class Protocol:
                 if not matches:
                     continue
                 cmd = matches[0] 
-                self.logger.info(cmd)
+                # self.logger.info(cmd)
 
                 if self.checksum == True:
                     if '|' not in cmd:
@@ -161,6 +161,9 @@ class Protocol:
                 # self.logger.info(f"DATA received for msg_id: {msg_content} sequence {msg_sequence}")
                 rpm, position = msg_content.rsplit(',', 1)
                 self.received_data[msg_sequence[1:]] = {"rpm": rpm, "position": position, "time": time.time(), "msg_id": msg_id}
+            case "SUCCESS":
+                self.logger.info(f"Success response for msg {msg_id}: {msg_content}")
+                # Optionally store it somewhere for later use
 
         return parsed_message
 

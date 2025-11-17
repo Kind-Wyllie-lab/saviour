@@ -463,9 +463,9 @@ class APAModule(Module):
     @check()
     def _check_shocker(self) -> tuple[bool, str]:
         if not self.arduino_manager.shock:
-            return False, "No motor found"
+            return False, "No shocker found"
         else:
-            return True, "Motor connected" 
+            return True, "Shocker connected" 
 
     @check()
     def _check_shock_grid_fault(self) -> tuple[bool, str]:

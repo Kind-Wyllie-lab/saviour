@@ -1141,7 +1141,6 @@ class Module(ABC):
     def _check_ptp(self) -> tuple[bool, str]:
         try:
             ptp_status = self.ptp.get_status()
-            self.logger.info(f"Received PTP status {ptp_status}")
             # Check if PTP offset is reasonable (configurable threshold)
             max_offset_us = self._get_ptp_offset_threshold_us()
             if 'last_offset' in ptp_status and abs(ptp_status['last_offset']) > max_offset_us:

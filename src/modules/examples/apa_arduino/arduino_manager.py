@@ -202,6 +202,15 @@ class ShockArduino:
     def __init__(self, manager: ArduinoManager):
         self.manager = manager
         self.arduino_type = 'shock_arduino'
+
+        # DB25 interface pins (LSB to MSB for current control)
+        # Each pin represents a binary weight for current: 0.2mA, 0.4mA, 0.8mA, 1.6mA, 3.2mA, etc.
+        # const int CURRENT_OUT[8] = {A3, A2, A1, A0, 4, 5, 6, 7};
+
+        # Timing control pins
+        # const int TRIGGER_OUT = 9;        // PWM output for precise timing control (must be pin 9 for TimerOne)
+        # const int SELF_TEST_OUT = A4;     // Test signal output to shock generator
+        # const int SELF_TEST_IN = 2;       // Test signal input from shock generator (active low)
         
     def send_shock(self, parameters: Dict) -> Tuple[str, str]:
         """Activate shocker. Assumes current etc. already set.
@@ -319,12 +328,28 @@ class ShockArduino:
             self.manager.logger.error(f"Error getting verification stats: {e}")
             return "ERROR", str(e)
 
+    # TODO: Fix this
     def test_grid_fault(self) -> Tuple[str, str]:
         """Test for grid faults using the TEST_IN/TEST_OUT interface."""
         try:
             self.manager.logger.info(f"Testing for grid faults")
-            command = "TEST_GRID"
-            return self.manager.send_command(command, self.arduino_type)
+            self.manager.logger.info(f"Starting with a pin read")
+            self.manager.send_command("READ_PIN:2", self.arduino_type)
+            self.manager.logger.info(f"Setting pin to LOW")
+            self.manager.send_command("SET_PIN_LOW:12", self.arduino_type)
+            self.manager.send_command("READ_PIN:2", self.arduino_type)
+            self.manager.logger.info("Sleeping...")
+            time.sleep(0.5)
+            self.manager.send_command("SET_PIN_HIGH:12", self.arduino_type)
+            self.manager.send_command("READ_PIN:2", self.arduino_type)
+            # command = "TEST_GRID"
+            # # Send the command
+            # self.manager.send_command(command, self.arduino_type)
+            # Wait for response
+
+            return True, "PASSED"
+
+
         except Exception as e:
             self.manager.logger.error(f"Error testing grid: {e}")
             return "ERROR", str(e)

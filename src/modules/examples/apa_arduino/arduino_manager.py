@@ -97,13 +97,28 @@ class ArduinoManager:
         self.connected_arduinos[identity] = protocol
         self._initialize_arduino(identity) # Initialize the discovered arduino
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
+    
+    # def handle_success(self, identity: str, msg_id: int, msg_content: str) -> None:
+    #     """
+    #     Callback to handle a successful command response from an arduino.
+    #     """
+    #     self.logger.info(f"{msg_id}: {msg_content} received from {identity}")
             
-    def send_command(self, command: str, arduino_type: str) -> Tuple[str, str]:
+    def send_command(self, command: str, arduino_type: str):
         """Send a command to a specific arduino and wait for response."""
         self.logger.info(f"Sending {command} to {arduino_type}")
         if arduino_type not in self.connected_arduinos:
             raise ArduinoError(f"No connection for {arduino_type}")
-        self.connected_arduinos[arduino_type].send_command(command)
+        resp = self.connected_arduinos[arduino_type].send_command(command)
+        self.logger.info(f"Sent command and got response: {resp}")
+        return resp
+
+    def read_pin(self, pin: int, arduino_type: str):
+        self.logger.info(f"Reading pin {pin} on {arduino_type}")
+        if arduino_type not in self.connected_arduinos:
+            raise ArduinoError(f"No connection for {arduino_type}")
+        resp = self.connected_arduinos[arduino_type].read_pin(pin)
+        return resp
         
     def cleanup(self):
         """Close all serial connections."""
@@ -334,14 +349,21 @@ class ShockArduino:
         try:
             self.manager.logger.info(f"Testing for grid faults")
             self.manager.logger.info(f"Starting with a pin read")
-            self.manager.send_command("READ_PIN:2", self.arduino_type)
-            self.manager.logger.info(f"Setting pin to LOW")
-            self.manager.send_command("SET_PIN_LOW:12", self.arduino_type)
-            self.manager.send_command("READ_PIN:2", self.arduino_type)
-            self.manager.logger.info("Sleeping...")
-            time.sleep(0.5)
-            self.manager.send_command("SET_PIN_HIGH:12", self.arduino_type)
-            self.manager.send_command("READ_PIN:2", self.arduino_type)
+            resp = self.manager.read_pin(2, self.arduino_type)
+            if resp:
+                self.manager.logger.info(f"Got response: {resp}")
+            else:
+                self.manager.logger.info(f"Got no response")
+            # time.sleep(0.2)
+            # self.manager.logger.info(f"Setting pin to LOW")
+            # self.manager.send_command("SET_PIN_LOW:12", self.arduino_type)
+            # time.sleep(0.2)
+            # self.manager.send_command("READ_PIN:2", self.arduino_type)
+            # self.manager.logger.info("Sleeping...")
+            # time.sleep(4)
+            # self.manager.send_command("SET_PIN_HIGH:12", self.arduino_type)
+            # time.sleep(0.2)
+            # self.manager.send_command("READ_PIN:2", self.arduino_type)
             # command = "TEST_GRID"
             # # Send the command
             # self.manager.send_command(command, self.arduino_type)

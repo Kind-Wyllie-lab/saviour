@@ -119,6 +119,20 @@ class ArduinoManager:
             raise ArduinoError(f"No connection for {arduino_type}")
         resp = self.connected_arduinos[arduino_type].read_pin(pin)
         return resp
+
+    def set_pin_high(self, pin:int, arduino_type: str):
+        self.logger.info(f"Setting {pin} high on {arduino_type}")
+        if arduino_type not in self.connected_arduinos:
+            raise ArduinoError(f"No connection for {arduino_type}")
+        resp = self.connected_arduinos[arduino_type].set_pin_high(pin)
+        return resp
+    
+    def set_pin_low(self, pin:int, arduino_type: str):
+        self.logger.info(f"Setting {pin} low on {arduino_type}")
+        if arduino_type not in self.connected_arduinos:
+            raise ArduinoError(f"No connection for {arduino_type}")
+        resp = self.connected_arduinos[arduino_type].set_pin_low(pin)
+        return resp
         
     def cleanup(self):
         """Close all serial connections."""
@@ -345,29 +359,54 @@ class ShockArduino:
 
     # TODO: Fix this
     def test_grid_fault(self) -> Tuple[str, str]:
+        try:
+            self.manager.logger.info(f"Testing for grid faults")
+            resp = self.manager.send_command("TEST_GRID", self.arduino_type)
+            content = resp.get("content")
+            self.manager.logger.info(f"Response for TEST_GRID: {content}")
+            if content == "PASSED":
+                return True, "No grid fault detected"
+            else:
+                return False, "Grid test failed"
+        except Exception as e:
+            self.manager.logger.error(f"Error testing grid: {e}")
+            return "ERROR", str(e)
+
+    def test_grid_fault_manually(self) -> Tuple[str, str]:
         """Test for grid faults using the TEST_IN/TEST_OUT interface."""
         try:
             self.manager.logger.info(f"Testing for grid faults")
             self.manager.logger.info(f"Starting with a pin read")
-            resp = self.manager.read_pin(2, self.arduino_type)
-            if resp:
-                self.manager.logger.info(f"Got response: {resp}")
-            else:
-                self.manager.logger.info(f"Got no response")
-            # time.sleep(0.2)
-            # self.manager.logger.info(f"Setting pin to LOW")
-            # self.manager.send_command("SET_PIN_LOW:12", self.arduino_type)
-            # time.sleep(0.2)
-            # self.manager.send_command("READ_PIN:2", self.arduino_type)
-            # self.manager.logger.info("Sleeping...")
-            # time.sleep(4)
-            # self.manager.send_command("SET_PIN_HIGH:12", self.arduino_type)
-            # time.sleep(0.2)
-            # self.manager.send_command("READ_PIN:2", self.arduino_type)
-            # command = "TEST_GRID"
-            # # Send the command
-            # self.manager.send_command(command, self.arduino_type)
-            # Wait for response
+            TEST_OUT = 12
+            TEST_IN = 2
+            delay = 0.005
+
+            # Step 1: Assert TEST_IN is 1 at start
+            time.sleep(delay)
+            resp = self.manager.read_pin(TEST_IN, self.arduino_type)
+            if resp == 0:
+                return False, "TEST_IN is active while TEST_OUT is inactive"
+            
+            # Step 2: Set TEST_OUT to 0 (ACTIVE LOW)
+            time.sleep(delay)
+            resp = self.manager.set_pin_low(TEST_OUT, self.arduino_type)
+            # Check if failed...
+
+            # Step 3: Wait, and assert TEST_IN is now LOW
+            time.sleep(delay)
+            resp = self.manager.read_pin(TEST_IN, self.arduino_type)
+            if resp == 1:
+                return False, "TEST_IN is still HIGH while TEST_OUT is LOW"
+
+            # Step 4: Set TEST_OUT back to 1 (end test)
+            time.sleep(delay)
+            resp = self.manager.set_pin_high(TEST_OUT, self.arduino_type)
+
+            # Step 5: Verify TEST_IN is now back to 1
+            time.sleep(delay)
+            resp = self.manager.read_pin(TEST_IN, self.arduino_type)
+            if resp == 0:
+                return False, "TEST_IN has not returned to 1"
 
             return True, "PASSED"
 

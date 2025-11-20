@@ -177,7 +177,7 @@ class Protocol:
                 self.received_data[msg_sequence[1:]] = {"rpm": rpm, "position": position, "time": time.time(), "msg_id": msg_id}
 
             case "SUCCESS":
-                self.logger.info(f"Success response for msg {msg_id}: {msg_content}")
+                self.logger.debug(f"Success response for msg {msg_id}: {msg_content}")
 
                 with self.future_lock:
                     future = self.response_futures.get(msg_id)
@@ -241,9 +241,8 @@ class Protocol:
         future = {"event": threading.Event(), "response": None}
         with self.future_lock:
             self.response_futures[self.msg_id] = future
-            self.logger.info(f"Send command registered future for {self.msg_id}")
+            self.logger.debug(f"Send command registered future for {payload}")
 
-        self.logger.info(f"W")
         self.conn.write(msg.encode())
         self.sent_messages[self.msg_id] =  {"command": command, "sent_time": time.time(), "retries": 0}
         self.unacknowledged_messages[self.msg_id] = {"command": command, "sent_time": time.time(), "retries": 0}
@@ -333,20 +332,43 @@ class Protocol:
 
 
     def read_pin(self, pin: int) -> Optional[int]:
-        command = f"READ_PIN:{int}"
+        command = f"READ_PIN:{pin}"
         try:
             response = self.send_command(command)
             if response is None:
                 self.logger.warning(f"read_pin timed out for pin {pin} on {self.identity}")
                 return None
-            
-            key, val = response.split("=")
+            val = response.get("content").split("=")[1]
             return int(val)
         except Exception as e:
             self.logger.error(f"Error reading pin {pin}: {e}")
             return None
             
+    
+    def set_pin_low(self, pin:int):
+        command = f"SET_PIN_LOW:{pin}"
+        try:
+            response = self.send_command(command)
+            if response is None:
+                self.logger.warning(f"set_pin_low timed out for pin {pin} on {self.identity}")
+                return None
+            return response
+        except Exception as e:
+            self.logger.error(f"Error reading pin {pin}: {e}")
+            return None
 
+
+    def set_pin_high(self, pin:int):
+        command = f"SET_PIN_HIGH:{pin}"
+        try:
+            response = self.send_command(command)
+            if response is None:
+                self.logger.warning(f"set_pin_high timed out for pin {pin} on {self.identity}")
+                return None
+            return response
+        except Exception as e:
+            self.logger.error(f"Error reading pin {pin}: {e}")
+            return None
 
 def main():
     p = Protocol(port=args.port, baud=args.baud)

@@ -54,7 +54,7 @@ const int CURRENT_OUT[8] = {A3, A2, A1, A0, 4, 5, 6, 7};
 
 // Timing control pins
 const int TRIGGER_OUT = 9;        // PWM output for precise timing control (must be pin 9 for TimerOne)
-const int SELF_TEST_OUT = A4;     // Test signal output to shock generator
+const int SELF_TEST_OUT = 12;     // Test signal output to shock generator
 const int SELF_TEST_IN = 2;       // Test signal input from shock generator (active low)
 
 // =============================================================================
@@ -282,6 +282,7 @@ void parseCommand(String command, String param, String msgId) {
       sendMessage(MSG_ERROR, msgId, "No param given");
     } else {
       int pin = param.toInt();
+      pinMode(pin, OUTPUT);
       digitalWrite(pin, HIGH);
       sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + "SET TO HIGH").c_str());
     }
@@ -292,9 +293,31 @@ void parseCommand(String command, String param, String msgId) {
       sendMessage(MSG_ERROR, msgId, "No param given");
     } else {
       int pin = param.toInt();
+      pinMode(pin, OUTPUT);
       digitalWrite(pin, LOW);
       sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + " SET TO LOW").c_str());
     }
+  }
+
+  if(command == "TEST_GRID"){
+      // Step 0: Assert TEST IN is HIGH at start
+      digitalWrite(SELF_TEST_OUT, HIGH); // Ensure self test out is inactvie
+      delay(20);
+      bool pass = digitalRead(SELF_TEST_IN) == HIGH;
+      // Step 1: Initiate test by setting TEST_OUT LOW
+      digitalWrite(SELF_TEST_OUT, LOW);
+      delay(200);
+      // Step 2: Assert TEST_IN is now low
+      pass &= digitalRead(SELF_TEST_IN) == LOW;
+      delay(20);
+
+      // Step 3: Clean up by reverting TEST OUT to HIGH
+      digitalWrite(SELF_TEST_OUT, HIGH);
+      delay(20);
+      pass &= digitalRead(SELF_TEST_IN) == HIGH;
+      delay(20);
+      
+      sendMessage(MSG_SUCCESS, msgId, pass ? "PASSED" : "FAILED");
   }
 
 
@@ -428,10 +451,10 @@ void parseCommand(String command, String param, String msgId) {
     sendMessage(MSG_SUCCESS, msgId, getStatus().c_str());
   }
 
-  else {
-    String errorMessage = "No logic for " + command + " " + param;
-    sendMessage(MSG_ERROR, msgId, errorMessage);
-  }
+  // else {
+  //   String errorMessage = "No logic for " + command + " " + param;
+  //   sendMessage(MSG_ERROR, msgId, errorMessage);
+  // }
 }
 
 /**

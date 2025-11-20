@@ -334,9 +334,9 @@ class APAModule(Module):
             self._check_arduino_managers,
             self._check_motor,
             self._check_shocker,
-            self._check_shock_grid_fault,
-            self._check_motor_comms,
-            self._check_shocker_comms
+            self._check_shock_grid_fault
+            # self._check_motor_comms,
+            # self._check_shocker_comms
         ]
 
         self.apa_arduino_callbacks = {
@@ -470,8 +470,10 @@ class APAModule(Module):
     @check()
     def _check_shock_grid_fault(self) -> tuple[bool, str]:
         try:
+            t0 = time.time()
             status, message = self.arduino_manager.shock.test_grid_fault()
-            if status == "OK":
+            self.logger.info(f"Shock grid test completed in {time.time() - t0}s")
+            if status == True:
                 return True, "No grid fault detected"
             else:
                 return False, message

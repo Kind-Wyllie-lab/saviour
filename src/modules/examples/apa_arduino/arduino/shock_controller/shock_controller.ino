@@ -70,6 +70,7 @@ const char MSG_ERROR [] = "ERROR";
 // Command types
 const char MSG_IDENTITY [] = "IDENTITY";
 const char MSG_DATA [] = "DATA";
+const char MSG_SHOCK [] = "SHOCK_ACTIVE";
 
 // Messaging Protocol
 const char START_MARKER = '<';
@@ -600,7 +601,7 @@ void checkSelfTestInput() {
       shockBeingDelivered = true;
       verifiedShockCounter++; // Increment verified shocks counter
       String message = "Shock delivery verified, verified_pulses=" + String(verifiedShockCounter);
-      sendMessage("SUCCESS", MSG_ID_UNSOLICITED, message);
+      sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, message);
 
     } else {
       if (digitalRead(SELF_TEST_IN) == HIGH) {  // Active low input

@@ -241,7 +241,7 @@ class ShockArduino:
         # const int SELF_TEST_OUT = A4;     // Test signal output to shock generator
         # const int SELF_TEST_IN = 2;       // Test signal input from shock generator (active low)
         
-    def send_shock(self, parameters: Dict) -> Tuple[str, str]:
+    def send_shock(self, parameters: Optional[Dict] = None) -> Tuple[str, str]:
         """Activate shocker. Assumes current etc. already set.
         """
         self.manager.logger.info("Send shock called")
@@ -318,21 +318,24 @@ class ShockArduino:
         """Set the default shock parameters.
         These must be set prior to sending shocks.
         """
-        parameters = self.manager.config.get("arduino.shock_parameters")
-        parameters.update(self.manager.config.get("editable.arduino.shock_parameters"))
-        self.manager.logger.info(f"Setting parameters to {parameters}")
-        # Parse and adjust wording to match expected by arduino
-        parameters_formatted = {}
-        parameters_formatted["current"] = parameters["current_(mA)"] 
-        parameters_formatted["time_on"] = parameters["pulse_duration_(s)"] 
-        parameters_formatted["time_off"] = parameters["pulse_gap_(s)"]
-        parameters_formatted["pulses"] = parameters["max_shocks"] 
-        self.manager.logger.info(f"Formatted parameters: {parameters_formatted}")
-        # Set individual parameters
-        for key, value in parameters_formatted.items():
-            if key in ["current", "time_on", "time_off", "pulses"]:
-                self.manager.send_command(f"{key.upper()}:{value}", self.arduino_type)
-        return "OK", "Parameters set"
+        parameters = self.manager.config.get("arduino.shocker")
+        if parameters:
+            self.manager.logger.info(f"Setting shock parameters to {parameters}")
+            # Parse and adjust wording to match expected by arduino
+            parameters_formatted = {}
+            parameters_formatted["current"] = parameters["current"] # Convert float Amps to milliamps
+            parameters_formatted["time_on"] = parameters["duration"] 
+            parameters_formatted["time_off"] = parameters["intershock_latency"]
+            parameters_formatted["pulses"] = parameters["_max_shocks"] # Should be 50
+            self.manager.logger.info(f"Formatted parameters: {parameters_formatted}")
+            # Set individual parameters
+            for key, value in parameters_formatted.items():
+                if key in ["current", "time_on", "time_off", "pulses"]:
+                    self.manager.send_command(f"{key.upper()}:{value}", self.arduino_type)
+            return "OK", "Parameters set"
+        else:
+            self.manager.logger.info("No parameters given to set_parameters")
+            return "ERROR", "No parameters found"
         
     def stop(self) -> Tuple[str, str]:
         """Stop any ongoing shocks."""

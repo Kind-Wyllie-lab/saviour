@@ -317,7 +317,7 @@ class APAModule(Module):
         super().__init__(module_type)
 
         # Update config 
-        self.config.load_module_config("apa_camera_config.json")
+        self.config.load_module_config("apa_arduino_config.json")
 
         self.arduino_manager = ArduinoManager(config=self.config)
 
@@ -339,14 +339,19 @@ class APAModule(Module):
             # self._check_shocker_comms
         ]
 
-        self.apa_arduino_callbacks = {
-
+        self.apa_arduino_commands = {
+            "activate_shock": self._activate_shock,
+            "deactivate_shock": self._safe_stop_shock
         }
 
-        self.command.set_callbacks(self.apa_arduino_callbacks)
+        self.command.set_commands(self.apa_arduino_commands)
     
+    def _activate_shock(self):
+        result = self.arduino_manager.shock.send_shock()
+        return result
+
     # Create fault-tolerant wrapper functions for Arduino operations
-    def safe_stop_shock(self):
+    def _safe_stop_shock(self):
         self.logger.info(f"safe_stop_shock called, is_recording: {self.is_recording}")
         
         if self.arduino_manager and self.arduino_manager.shock:

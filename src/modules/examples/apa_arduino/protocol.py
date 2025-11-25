@@ -177,7 +177,7 @@ class Protocol:
                 self.received_data[msg_sequence[1:]] = {"rpm": rpm, "position": position, "time": time.time(), "msg_id": msg_id}
 
             case "SUCCESS":
-                self.logger.debug(f"Success response for msg {msg_id}: {msg_content}")
+                self.logger.info(f"Success response for msg {msg_id}: {msg_content}")
 
                 with self.future_lock:
                     future = self.response_futures.get(msg_id)
@@ -238,9 +238,9 @@ class Protocol:
         msg = f"<{payload}|{chk:02x}>"
         self.logger.debug(f"Sending command: {msg}")
 
-        future = {"event": threading.Event(), "response": None}
+        future = {"event": threading.Event(), "response": None} # Create a dict with a threading Event (used to make send_command wait for response) and a response which will later be filled in
         with self.future_lock:
-            self.response_futures[self.msg_id] = future
+            self.response_futures[self.msg_id] = future # Add this future dict instance to our dict of them
             self.logger.debug(f"Send command registered future for {payload}")
 
         self.conn.write(msg.encode())

@@ -51,6 +51,7 @@ class Command:
             raise ValueError(f"Missing required callbacks: {missing_callbacks}")
             
         self.callbacks.update(callbacks)
+        self.logger.info(f"Command handler callbacks: {self.callbacks}")
 
     def set_commands(self, commands: Dict[str, Callable]):
         """
@@ -60,6 +61,7 @@ class Command:
             commands: Dictionary of commands
         """
         self.commands.update(commands)
+        self.logger.info(f"Command handler callbacks: {self.commands}")
         
     def _parse_command(self, command: str):
         """

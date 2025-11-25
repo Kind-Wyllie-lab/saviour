@@ -63,6 +63,18 @@ def command(name=None):
         return func
     return decorator
 
+def check(name=None):
+    """
+    Decorator to mark a method as a ready check.
+    Can be used as @command() or @command(name="foo")
+    Commands should return a tuple response: bool for whether succeeded, str message describing the result.
+    """
+    def decorator(func):
+        func._is_check = True
+        func._cmd_name = name or func.__name__
+        return func
+    return decorator
+
 class Module(ABC):
     """
     Base class for all modules in the Habitat Controller.
@@ -216,15 +228,29 @@ class Module(ABC):
         self.is_ready = False  # Flag to indicate if module is ready for recording
         self.last_readiness_check = None  # Timestamp of last readiness check 
 
+        # Ready checks
+        self.checks = [
+            self._check_running,
+            self._check_readwrite,
+            self._check_diskspace,
+            self._check_ptp,
+            self._check_recording
+        ]
+
+        # To be overriden by module?
+        self.module_checks = []
+
+        self.logger.info(f"Registered these readiness checks: {self.checks}")
+
         # Track when module started for uptime calculation
         self.start_time = None
 
     def on_module_config_change(self, updated_keys: Optional[list[str]]):
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
-        self.configure_module()
+        self.configure_module(updated_keys)
 
     @abstractmethod
-    def configure_module(self):
+    def configure_module(self, updated_keys: Optional[list[str]]):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
     
@@ -1035,6 +1061,7 @@ class Module(ABC):
         """
         return self.config.get("module.required_disk_space_mb", 100.0)
     
+
     def _get_ptp_offset_threshold_us(self) -> float:
         """
         Get the maximum acceptable PTP offset in microseconds.
@@ -1043,8 +1070,11 @@ class Module(ABC):
         Returns:
             float: Maximum acceptable PTP offset in microseconds (default: 1000μs = 1ms)
         """
-        return self.config.get("module.ptp_offset_threshold_us", 1000.0)
+        return self.config.get("module.ptp_offset_threshold_us", 1000000.0)
     
+
+    """Ready to record checks"""
+    @abstractmethod
     def _perform_module_specific_checks(self, checks: dict) -> tuple[bool, str]:
         """
         Perform module-specific readiness checks.
@@ -1059,146 +1089,109 @@ class Module(ABC):
         # Base implementation - no module-specific checks
         return True, None
     
-    def validate_readiness(self) -> dict:
-        """
-        Validate that the module is ready for recording.
-        
-        This base implementation performs common checks that all modules should pass.
-        Subclasses should override _perform_module_specific_checks() to add module-specific validation.
-        
-        Returns:
-            dict: {
-                'ready': bool,
-                'timestamp': float,
-                'checks': dict,  # Detailed results of each check
-                'error': str     # Error message if not ready (optional)
-            }
-        """
-        self.logger.info(f"Performing readiness validation for {self.module_type} module")
-        
-        checks = {}
-        ready = True
-        error_msg = None
-        
-        try:
-            # Check 1: Module is running
-            checks['module_running'] = self.is_running
-            if not self.is_running:
-                ready = False
-                error_msg = "Module is not running"
-            
-            # Check 2: Recording folder exists and is writable
-            if ready:
-                try:
-                    self.logger.info(f"Checking can write to {self.recording_folder}")
-                    if not os.path.exists(self.recording_folder):
-                        os.makedirs(self.recording_folder, exist_ok=True)
-                    self.logger.info("Created folder OK")
-                    # Test write access
-                    test_file = os.path.join(self.recording_folder, '.test_write')
-                    self.logger.info(f"Going to write to test file {test_file}")
-                    with open(test_file, 'w') as f:
-                        self.logger.info(f"Opened test file {f}")
-                        f.write('test')
-                    self.logger.info("Removing test file")
-                    os.remove(test_file)
-                    checks['recording_folder_writable'] = True
-                except PermissionError as e:
-                    print(f"Permission error: {e}")
-                    checks['recording_folder_writable'] = False
-                except OSError as e:
-                    print(f"OSError during write/delete test: {e}")
-                    checks['recording_folder_writable'] = False
-                except Exception as e:
-                    checks['recording_folder_writable'] = False
-                    ready = False
-                    error_msg = f"Recording folder not writable: {str(e)}"
-            
-            # Check 3: Sufficient disk space (configurable requirement)
-            if ready:
-                try:
-                    statvfs = os.statvfs(self.recording_folder)
-                    free_bytes = statvfs.f_frsize * statvfs.f_bavail
-                    free_mb = free_bytes / (1024 * 1024)
-                    required_mb = self._get_required_disk_space_mb()
-                    
-                    checks['disk_space_mb'] = free_mb
-                    checks['required_disk_space_mb'] = required_mb
-                    checks['sufficient_disk_space'] = free_mb >= required_mb
-                    
-                    if free_mb < required_mb:
-                        ready = False
-                        error_msg = f"Insufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
-                except Exception as e:
-                    checks['sufficient_disk_space'] = False
-                    ready = False
-                    error_msg = f"Cannot check disk space: {str(e)}"
-            
-            # Check 4: PTP time synchronization is working (configurable threshold)
-            # TODO: Improve this check - don't think it's currently working
-            if ready:
-                try:
-                    ptp_status = self.ptp.get_status()
-                    checks['ptp_status'] = ptp_status
-                    
-                    # Check if PTP offset is reasonable (configurable threshold)
-                    max_offset_us = self._get_ptp_offset_threshold_us()
-                    if 'offset' in ptp_status and abs(ptp_status['offset']) > max_offset_us:
-                        checks['ptp_synchronized'] = False
-                        ready = False
-                        error_msg = f"PTP not synchronized: offset {ptp_status['offset']}μs (max: {max_offset_us}μs)"
-                    else:
-                        checks['ptp_synchronized'] = True
-                except Exception as e:
-                    checks['ptp_synchronized'] = False
-                    ready = False
-                    error_msg = f"PTP check failed: {str(e)}"
-            
-            # Check 5: Not currently recording
-            checks['not_recording'] = not self.is_recording
-            if self.is_recording:
-                ready = False
-                error_msg = "Module is currently recording"
-            
-            # Check 6: Module-specific checks
-            if ready:
-                module_ready, module_error = self._perform_module_specific_checks(checks)
-                if not module_ready:
-                    ready = False
-                    error_msg = module_error
-            
-            # Update module state
-            self.is_ready = ready
-            self.last_readiness_check = time.time()
-            
-            result = {
-                'ready': ready,
-                'timestamp': self.last_readiness_check,
-                'checks': checks
-            }
-            
-            if error_msg:
-                result['error'] = error_msg
-            
-            # Log the result
-            if ready:
-                self.logger.info(f"Readiness validation PASSED for {self.module_type} module")
-            else:
-                self.logger.warning(f"Readiness validation FAILED for {self.module_type} module: {error_msg}")
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Error during readiness validation: {e}")
-            self.is_ready = False
-            self.last_readiness_check = time.time()
-            return {
-                'ready': False,
-                'timestamp': self.last_readiness_check,
-                'checks': checks,
-                'error': f"Validation exception: {str(e)}"
-            }
 
+    @check()
+    def _check_running(self) -> tuple[bool, str]:
+        if not self.is_running:
+            return False, "Module is not running"
+        else:
+            return True, "Module is running"
+
+
+    @check()
+    def _check_readwrite(self) -> tuple[bool, str]:
+        try:
+            self.logger.debug(f"Checking can write to {self.recording_folder}")
+            if not os.path.exists(self.recording_folder):
+                os.makedirs(self.recording_folder, exist_ok=True)
+            self.logger.debug("Created folder OK")
+            # Test write access
+            test_file = os.path.join(self.recording_folder, '.test_write')
+            self.logger.debug(f"Going to write to test file {test_file}")
+            with open(test_file, 'w') as f:
+                self.logger.debug(f"Opened test file {f}")
+                f.write('test')
+            self.logger.debug("Removing test file")
+            os.remove(test_file)
+            return True, "Recording folder writable"
+        except PermissionError as e:
+            return False, f"Permission error: {e}"
+        except OSError as e:
+            return False, f"OSError during write/delete test: {e}"
+        except Exception as e:
+            return False, f"Recording folder not writable: {e}"
+
+
+    @check()
+    def _check_diskspace(self) -> tuple[bool, str]:
+        try:
+            statvfs = os.statvfs(self.recording_folder)
+            free_bytes = statvfs.f_frsize * statvfs.f_bavail
+            free_mb = free_bytes / (1024 * 1024)
+            required_mb = self._get_required_disk_space_mb()
+            if free_mb > required_mb:
+                return True, f"Sufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
+            if free_mb < required_mb:
+                return False, f"Insufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
+        except Exception as e:
+            return False, f"Cannot check disk space: {str(e)}"
+
+
+    @check()
+    def _check_ptp(self) -> tuple[bool, str]:
+        try:
+            ptp_status = self.ptp.get_status()
+            # Check if PTP offset is reasonable (configurable threshold)
+            max_offset_us = self._get_ptp_offset_threshold_us()
+            if 'last_offset' in ptp_status and abs(ptp_status['last_offset']) > max_offset_us:
+               return False, f"PTP not synchronized: offset {ptp_status['last_offset']}μs (max: {max_offset_us}μs)"
+            else:
+                return True, f"PTP synchronised to {ptp_status['last_offset']}μs"
+        except Exception as e:
+            return False, f"PTP check failed: {e}"
+
+
+    @check()
+    def _check_recording(self) -> tuple[bool, str]:
+        if self.is_recording:
+            return False, "Module is currently recording"
+        else: 
+            return True, "Module not currently recording"
+
+
+    def _run_checks(self):
+        self.logger.info("Running checks...")
+        checks = {}
+        for check in self.checks:
+            self.logger.info(f"Running {check.__name__}")
+            result, message = check()
+            checks[check.__name__] = result, message
+            if result == False:
+                self.logger.info(f"A check failed: {check.__name__}, {message}")
+                return False, message
+                break # Exit loop on first failed check
+        
+        result, message = self._perform_module_specific_checks()
+        if result == False:
+            return result, message
+
+        return True, "All tests passed" # Everything passed    
+        
+
+    def validate_readiness(self) -> dict:
+        try:
+            result, message = self._run_checks()
+        except Exception as e:
+            result, message = False, f"Error running readiness checks: {e}"
+        return {
+            'ready': result,
+            'timestamp': time.time(),
+            'message': message
+        }
+
+
+
+    """Helper functions"""
     def generate_module_id(self, module_type: str) -> str:
         """Generate a module ID based on the module type and the MAC address"""
         # mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix (old method, led to MAC changing)

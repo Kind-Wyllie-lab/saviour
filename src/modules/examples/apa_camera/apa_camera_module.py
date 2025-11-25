@@ -29,6 +29,10 @@ from functools import lru_cache
 import json
 from flask import Flask, Response, request
 import cv2
+from typing import Optional, Dict
+from collections import deque
+from ultralytics import YOLO
+import onnxruntime as ort
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -41,6 +45,7 @@ class Detection:
         self.conf = conf
         self.box = box
 
+
 class APACameraModule(Module):
     def __init__(self, module_type="apa_camera"):        
         # Call the parent class constructor
@@ -49,18 +54,27 @@ class APACameraModule(Module):
         # Update config 
         self.config.load_module_config("apa_camera_config.json")
     
+        # Basic model setup
+        self.model = YOLO("ratnet.pt")
+
         # IMX500 AI Camera Setup
-        self.imx500 = IMX500("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
+        imx500_model = "imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
+        self.imx500 = IMX500(f"/usr/share/imx500-models/{imx500_model}")
         self.intrinsics = self.imx500.network_intrinsics
         if not self.intrinsics:
             self.intrinsics = NetworkIntrinsics()
             self.intrinsics.task = "object detection"
         elif self.intrinsics.task != "object detection":
             self.logger.warning("Network is not an object detection task")
+
+        # Object detection state
+        self._detection_buffer = deque(maxlen=3) # Last 3 frames
+        self._detections = None
         self._last_detections = None
+        self._last_known_det = None  # store last detected object
 
         # Initialize camera
-        self.picam2 = Picamera2(self.imx500.camera_num)
+        self.picam2 = Picamera2()
         self.height = None
         self.width = None
         self.fps = None
@@ -69,6 +83,16 @@ class APACameraModule(Module):
         # Get camera modes
         self.camera_modes = self.picam2.sensor_modes
         time.sleep(0.1)
+
+        # Shock zone
+        self.inner_offset = None
+        self.outer_radius = None
+        self.start_angle = None
+        self.end_angle = None
+
+        # Rat Tracking
+        self.last_cx = None
+        self.last_cy = None
     
         # Streaming variables
         self.streaming_app = Flask(__name__)
@@ -99,28 +123,39 @@ class APACameraModule(Module):
         self._configure_mask_and_shock_zone()
         self._configure_object_detection()
 
-    def configure_module(self):
+
+    def configure_module(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
             self.logger.info("Camera settings changed, restarting stream to apply new configuration")
             self._configure_mask_and_shock_zone()
-            self._restarting_stream = True
-            self.stop_streaming()
-            time.sleep(1)
-            try:
-                self._configure_camera()
-                self._configure_object_detection()
-                self.logger.info("Camera reconfigured successfully")
-            except Exception as e:
-                self.logger.error(f"Error restarting streaming: {e}")
+            self._configure_object_detection()
+            restart_keys = [
+                "camera.fps",
+                "camera.width",
+                "camera.height"
+            ]
+            self._restarting_stream = False
+            for key in updated_keys:
+                if key in restart_keys:
+                    self._restarting_stream = True
             
-            # Restart stream
-            try:
-                self.logger.info("Restarting stream with new settings")
-                self.start_streaming()
-                self.logger.info("Streaming restarted")
-            except Exception as e:
-                self.logger.error(f"Error restarting streaming: {e}")
+            if self._restarting_stream == True:
+                self.stop_streaming()
+                time.sleep(1)
+                try:
+                    self._configure_camera()
+                    self.logger.info("Camera reconfigured successfully")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
+                
+                # Restart stream
+                try:
+                    self.logger.info("Restarting stream with new settings")
+                    self.start_streaming()
+                    self.logger.info("Streaming restarted")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
             
             self._restarting_stream = False # Reset the "restarting stream" flag
         elif not self.is_streaming:
@@ -131,11 +166,13 @@ class APACameraModule(Module):
             except Exception as e:
                 self.logger.error(f"Error reconfiguring camera: {e}")
 
+
     def _configure_object_detection(self):
         """Reconfigure object detection settings"""
         self.threshold = self.config.get("object_detection.threshold") # Confidence to signify a detection TODO: Take from config
-        self.iou = 0.65 # IOU threshold
+        self.iou = self.config.get("object_detection.iou_threshold") # IOU threshold
         self.max_detections = self.config.get("object_detection.max_detections")
+
 
     def _configure_camera(self):
         """Configure the camera with current settings"""
@@ -192,6 +229,7 @@ class APACameraModule(Module):
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
 
+
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
@@ -232,6 +270,7 @@ class APACameraModule(Module):
                 })
             return False
 
+
     def _get_frame_timestamp(self, req):
         try:
             metadata = req.get_metadata()
@@ -240,6 +279,7 @@ class APACameraModule(Module):
                 self.frame_times.append(frame_wall_clock)
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+
 
     def _get_and_apply_frame_timestamp(self, req):
         try:
@@ -263,9 +303,10 @@ class APACameraModule(Module):
                         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                         # Convert back to BGR for consistency with other processing
                         m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale", 2), (50,255,50), self.config.get("camera.text_thickness", 1)) # TODO: Make origin reference lores dimensions.
+                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale"), (50,255,50), self.config.get("camera.text_thickness")) # TODO: Make origin reference lores dimensions.
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+
 
     def _stop_recording(self):
         """Camera Specific implementation of stop recording"""
@@ -324,6 +365,7 @@ class APACameraModule(Module):
                 })
             return False
 
+
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         """Start streaming video to the specified receiver using Flask to send MJPEG"""
         try:
@@ -372,6 +414,7 @@ class APACameraModule(Module):
             })
             return False
 
+
     def run_streaming_server(self, port=8080):
         """Run the flask server to stream upon"""
         try:
@@ -383,6 +426,7 @@ class APACameraModule(Module):
             self.logger.error(f"Error running streaming server: {e}")
             self.is_streaming = False
             self.streaming_server = None
+
 
     def generate_streaming_frames(self):
         """Generate streaming frames for MJPEG stream"""
@@ -415,6 +459,7 @@ class APACameraModule(Module):
                 time.sleep(0.1)
         self.logger.info("Stopped generating streaming frames")
 
+
     def register_routes(self):
         """Register Flask routes"""
         @self.streaming_app.route('/')
@@ -434,6 +479,7 @@ class APACameraModule(Module):
                 raise RuntimeError('Not running with the Werkzeug Server')
             func()
             return 'Server shutting down...'
+
 
     def stop_streaming(self) -> bool:
         """Stop streaming video"""
@@ -480,8 +526,10 @@ class APACameraModule(Module):
             })
             return False
     
+
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         super().when_controller_discovered(controller_ip, controller_port)
+
 
     def start(self) -> bool:
         """Start the camera module - including streaming"""
@@ -500,6 +548,7 @@ class APACameraModule(Module):
             self.logger.error(f"Error starting module: {e}")
             return False
 
+
     def stop(self) -> bool:
         """Stop the module and cleanup"""
         try:
@@ -513,6 +562,7 @@ class APACameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
             return False
+
 
     """APA Camera Methods - Mask, Shock Zone, Neural Net"""
     def _configure_mask_and_shock_zone(self):
@@ -545,6 +595,7 @@ class APACameraModule(Module):
             self.logger.info("Mask and shock zone configuration updated")
         except Exception as e:
             self.logger.error(f"Error updating mask and shock zone configuration: {e}")
+
 
     def _apply_mask(self, m: MappedArray) -> None:
         """
@@ -583,6 +634,7 @@ class APACameraModule(Module):
                 # Replace the original image with the masked version
                 m.array[:] = masked_image
 
+
     def _apply_grayscale(self, m: MappedArray) -> None:
         """
         Convert an image to grayscale.
@@ -595,6 +647,7 @@ class APACameraModule(Module):
         # Convert back to BGR for consistency with other processing
         m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     
+
     def _apply_timestamp(self, m: MappedArray) -> None:
         """
         Apply timestmap to image.
@@ -618,34 +671,34 @@ class APACameraModule(Module):
 
         if self.shock_zone_display and self.mask_radius is not None:
             # Shock zone parameters with safety checks
-            outer_radius = int(0.5 * self.mask_radius * image_shape[1])
-            if outer_radius <= 0:
+            self.outer_radius = int(0.5 * self.mask_radius * image_shape[1])
+            if self.outer_radius <= 0:
                 return  # Skip shock zone if radius is invalid
                 
-            inner_offset = int(self.shock_zone_inner_offset * outer_radius)
-            if inner_offset < 0:
-                inner_offset = 0
+            self.inner_offset = int(self.shock_zone_inner_offset * self.outer_radius)
+            if self.inner_offset < 0:
+                self.inner_offset = 0
             
             # Calculate angles (in degrees)
             # Start angle should be middle 
-            start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5) 
-            end_angle = start_angle + self.shock_zone_angle_span
+            self.start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5) 
+            self.end_angle = self.start_angle + self.shock_zone_angle_span
             
             # Convert angles to radians for calculations
-            start_rad = np.radians(start_angle)
-            end_rad = np.radians(end_angle)
+            start_rad = np.radians(self.start_angle)
+            end_rad = np.radians(self.end_angle)
             
             # Calculate points for the outer arc with bounds checking
-            start_x = int(self.mask_center_x + outer_radius * np.cos(start_rad))
-            start_y = int(self.mask_center_y + outer_radius * np.sin(start_rad))
-            end_x = int(self.mask_center_x + outer_radius * np.cos(end_rad))
-            end_y = int(self.mask_center_y + outer_radius * np.sin(end_rad))
+            start_x = int(self.mask_center_x + self.outer_radius * np.cos(start_rad))
+            start_y = int(self.mask_center_y + self.outer_radius * np.sin(start_rad))
+            end_x = int(self.mask_center_x + self.outer_radius * np.cos(end_rad))
+            end_y = int(self.mask_center_y + self.outer_radius * np.sin(end_rad))
             
             # Calculate points for the inner arc with bounds checking
-            inner_start_x = int(self.mask_center_x + inner_offset * np.cos(start_rad))
-            inner_start_y = int(self.mask_center_y + inner_offset * np.sin(start_rad))
-            inner_end_x = int(self.mask_center_x + inner_offset * np.cos(end_rad))
-            inner_end_y = int(self.mask_center_y + inner_offset * np.sin(end_rad))
+            inner_start_x = int(self.mask_center_x + self.inner_offset * np.cos(start_rad))
+            inner_start_y = int(self.mask_center_y + self.inner_offset * np.sin(start_rad))
+            inner_end_x = int(self.mask_center_x + self.inner_offset * np.cos(end_rad))
+            inner_end_y = int(self.mask_center_y + self.inner_offset * np.sin(end_rad))
             
             # Draw the shock zone shape
             color = self.shock_zone_color
@@ -654,20 +707,20 @@ class APACameraModule(Module):
             # 1. Draw the outer arc
             cv2.ellipse(m.array, 
                         center=(self.mask_center_x, self.mask_center_y),
-                        axes=(outer_radius, outer_radius),
+                        axes=(self.outer_radius, self.outer_radius),
                         angle=0,
-                        startAngle=start_angle,
-                        endAngle=end_angle,
+                        startAngle=self.start_angle,
+                        endAngle=self.end_angle,
                         color=color,
                         thickness=thickness)
             
             # 2. Draw the inner arc
             cv2.ellipse(m.array,
                         center=(self.mask_center_x, self.mask_center_y),
-                        axes=(inner_offset, inner_offset),
+                        axes=(self.inner_offset, self.inner_offset),
                         angle=0,
-                        startAngle=start_angle,
-                        endAngle=end_angle,
+                        startAngle=self.start_angle,
+                        endAngle=self.end_angle,
                         color=color,
                         thickness=thickness)
             
@@ -683,7 +736,61 @@ class APACameraModule(Module):
                     pt2=(inner_end_x, inner_end_y), 
                     color=color, 
                     thickness=thickness)
-        
+ 
+    """IMX500 Methods"""
+    def _parse_detections(self, metadata: dict):
+        """Parse the output tensor into a number of detected objects, scaled to the ISP output."""
+        try:
+            last_detections = []
+            bbox_normalization = self.intrinsics.bbox_normalization
+            bbox_order = self.intrinsics.bbox_order
+            np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+
+            input_w, input_h = self.imx500.get_input_size()
+            if np_outputs is None:
+                # self.logger.warning("Invalid IMX500 output tensors")
+                return last_detections
+            if self.intrinsics.postprocess == "nanodet":
+                boxes, scores, classes = \
+                    postprocess_nanodet_detection(outputs=np_outputs[0], conf=self.threshold, iou_thres=self.iou,
+                                                max_out_dets=self.max_detections)[0]
+                from picamera2.devices.imx500.postprocess import scale_boxes
+                boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+            else:
+                boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+                if bbox_normalization:
+                    boxes = boxes / input_h
+
+                if bbox_order == "xy":
+                    boxes = boxes[:, [1, 0, 3, 2]]
+                boxes = np.array_split(boxes, 4, axis=1)
+                boxes = zip(*boxes)
+
+            last_detections = [
+                Detection(category, score, self.imx500.convert_inference_coords(box, metadata, self.picam2))
+                for box, score, category in zip(boxes, scores, classes)
+                if score > self.threshold
+            ]
+            return last_detections
+        except Exception as e:
+            self.logger.error(f"Error in _parse_detections: {e}")
+
+
+    def _validate_detection(self, det: Detection) -> bool:
+        """
+        Check if a detection is valid.
+        """
+        x, y, w, h = det.box
+        if det is None:
+            self.logger.error("Nonetype det")
+            return False
+        if det.category is None:
+            self.logger.error("Nonetype det.category")
+        if w <= 0 or h <= 0:
+            self.logger.warning(f"Invalid detection box: {det.box}")
+            return False
+
+
     @lru_cache
     def _get_labels(self):
         """
@@ -697,101 +804,134 @@ class APACameraModule(Module):
             labels = [label for label in labels if label and label != "-"]
         return labels
 
+
     def _draw_detections(self, m: MappedArray) -> None:
-        """
-        Draw detected objects on the image.
+        """Draw a single smoothed detection to reduce flicker."""
+        try:
+            if self._last_known_det is None:
+                return  # nothing ever detected
 
-        Args:
-            m: The current image to draw detections on.
-        """
-        detections = self._last_detections
-        if detections is None:
-            return
-        labels = self._get_labels()
-        for detection in detections:
-            x, y, w, h = detection.box
-            label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
+            det = self._last_known_det
 
-            # Calculate text size and position
-            (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            text_x = x + 5
-            text_y = y + 15
+            if self._validate_detection(det) == False:
+                self.logger.error("Rejecting invalid detection")
+                return
+                
+            self.logger.debug(f"Valid det with type {type(det)}, box {det.box}, category {det.category}")
+            x, y, w, h = det.box
+            cx = int(x + w / 2)
+            cy = int(y + h / 2)
 
-            # Create a copy of the array to draw the background with opacity
-            overlay = m.array.copy()
+            # Simple smoothing using last frame
+            alpha = 0.5
+            if self.last_cx is None: self.last_cx = cx
+            if self.last_cy is None: self.last_cy = cy
+            if self.config.get("object_detection.coordinate_smoothing"):
+                cx = int(alpha * cx + (1 - alpha) * self.last_cx)
+                cy = int(alpha * cy + (1 - alpha) * self.last_cy)
+            self.last_cx = cx
+            self.last_cy = cy
 
-            # Draw the background rectangle on the overlay
-            cv2.rectangle(overlay,
-                          (text_x, text_y - text_height),
-                          (text_x + text_width, text_y + baseline),
-                          (255, 255, 255),  # Background color (white)
-                          cv2.FILLED)
+            # Draw center dot
+            center_in_zone = self._is_in_shock_zone(cx, cy)
+            color = (0, 0, 255) if center_in_zone else (0, 255, 0)
+            cv2.circle(m.array, (cx, cy), 5, color, -1)
 
-            alpha = 0.30
-            cv2.addWeighted(overlay, alpha, m.array, 1 - alpha, 0, m.array)
+            # Shock zone warning text
+            if center_in_zone:
+                cv2.putText(
+                    m.array,
+                    "OBJECT IN SHOCK ZONE",
+                    (50, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2.0,
+                    (0, 0, 255),
+                    4,
+                    cv2.LINE_AA
+                )
 
-            # Draw text on top of the background
-            cv2.putText(m.array, label, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-
-            # Draw detection box
-            cv2.rectangle(m.array, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
-
-        if self.intrinsics.preserve_aspect_ratio:
-            b_x, b_y, b_w, b_h =self.imx500.get_roi_scaled(request)
-            color = (255, 0, 0)  # red
-            cv2.putText(m.array, "ROI", (b_x + 5, b_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-            cv2.rectangle(m.array, (b_x, b_y), (b_x + b_w, b_y + b_h), (255, 0, 0, 0))
+            # Draw label
+            labels = self._get_labels()
+            label = f"{labels[int(det.category)]} ({det.conf:.2f})"
+            cv2.putText(m.array, label, (cx + 10, cy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        except Exception as e:
+            self.logger.error(f"Error in _draw_detections: {e}")
     
-    def _parse_detections(self, metadata: dict):
-        """Parse the output tensor into a number of detected objects, scaled to the ISP output."""
-        last_detections = []
-        bbox_normalization = self.intrinsics.bbox_normalization
-        bbox_order = self.intrinsics.bbox_order
-        np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+    """Method Agnostic Object Detection Methods"""
+    def _detect_objects(self, m: MappedArray):
+        """
+        Run inference on image
+        """
+        frame = m.array  # numpy HxWxC (likely RGB888)
 
-        input_w, input_h = self.imx500.get_input_size()
-        if np_outputs is None:
-            return last_detections
-        if self.intrinsics.postprocess == "nanodet":
-            boxes, scores, classes = \
-                postprocess_nanodet_detection(outputs=np_outputs[0], conf=self.threshold, iou_thres=self.iou,
-                                              max_out_dets=self.max_detections)[0]
-            from picamera2.devices.imx500.postprocess import scale_boxes
-            boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+        # Safety: enforce uint8 3-channel
+        if frame.dtype != np.uint8:
+            frame = frame.astype(np.uint8)
+
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError(f"Unexpected frame shape: {frame.shape}")
+
+        pass
+
+
+    """APA Logic for detected Rat"""
+    def _is_in_shock_zone(self, cx, cy) -> bool:
+        """
+        Args:
+
+        """
+        if self.inner_offset is None or self.outer_radius is None:
+            return False  # skip shock zone check until initialized
+        # Compute distance from center
+        dx = cx - self.mask_center_x
+        dy = cy - self.mask_center_y
+        r = np.hypot(dx, dy)
+        
+        # Compute angle (convert to degrees, ensure [0,360))
+        theta = (np.degrees(np.arctan2(dy, dx)) + 360) % 360
+
+        # Check radial and angular bounds
+        within_radius = self.inner_offset <= r <= self.outer_radius
+        if self.start_angle < self.end_angle:
+            within_angle = self.start_angle <= theta <= self.end_angle
         else:
-            boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
-            if bbox_normalization:
-                boxes = boxes / input_h
+            # Handles wrap-around (e.g., start=350°, end=10°)
+            within_angle = theta >= self.start_angle or theta <= self.end_angle
 
-            if bbox_order == "xy":
-                boxes = boxes[:, [1, 0, 3, 2]]
-            boxes = np.array_split(boxes, 4, axis=1)
-            boxes = zip(*boxes)
+        return within_radius and within_angle
 
-        last_detections = [
-            Detection(category, score, self.imx500.convert_inference_coords(box, metadata, self.picam2))
-            for box, score, category in zip(boxes, scores, classes)
-            if score > self.threshold
-        ]
-        return last_detections
+
+    """General Camera Methods"""
+    def _save_frame_timestamp(self, metadata: dict) -> None:
+        """Save frame timestamp from metadata"""
+        frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+        if frame_wall_clock != 'No data':
+            self.frame_times.append(frame_wall_clock)
+
 
     def _frame_precallback(self, req):
         """Combined callback that applies mask, shock zone overlay, timestamps, and grayscale conversion"""
         try:
             # First, capture frame metadata for timestamps
             metadata = req.get_metadata()
-            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-            if frame_wall_clock != 'No data':
-                self.frame_times.append(frame_wall_clock)
+            self._save_frame_timestamp(metadata)
 
             # Detect objects
             if self.config.get("object_detection.enabled"):
                 try:
-                    self._last_detections = self._parse_detections(metadata)
+                    current_detections = self._parse_detections(metadata)
                 except Exception as e:
                     self.logger.error(f"Error executing _parse_detections: {e}")
-                    self._last_detections = None
+                    current_detections = []
+
+                # Pick the detection with highest confidence
+                if current_detections:
+                    best_det = max(current_detections, key=lambda d: d.conf)
+                    self._last_known_det = best_det
+                    self._detection_buffer.append(best_det)
+                else:
+                    self._detection_buffer.append(None)  # no detection this frame
 
             # Apply mask to main stream
             with MappedArray(req, 'main') as m:
@@ -801,6 +941,7 @@ class APACameraModule(Module):
                 self._apply_mask(m)
 
                 if self.config.get("object_detection.enabled"):
+                    self._detect_objects(m)
                     self._draw_detections(m)
             
             # Apply mask and shock zone to lores stream
@@ -824,8 +965,9 @@ class APACameraModule(Module):
                 
         except Exception as e:
             # Log the error but don't crash the stream
-            self.logger.error(f"Error in _apply_mask_shock_zone_and_timestamp: {e}")
+            self.logger.error(f"Error in _frame_precallback: {e}")
             # Continue without applying mask/shock zone for this frame
+
 
 def main():
     camera = APACameraModule()
@@ -841,4 +983,108 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+"""Some ideas for refactoring AI below"""
+
+class YoloDetector():
+    def __init__(self):
+        self.model = YOLO("ratnet.pt")
+    
+    def detect_object(self, frame: np.ndarray) -> None:
+        result = model(frame)
+
+
+class IMX500Detector():
+    def __init__(self):
+        imx500_model = "imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
+        self.imx500 = IMX500(f"/usr/share/imx500-models/{imx500_model}")
+        self.intrinsics = self.imx500.network_intrinsics
+        if not self.intrinsics:
+            self.intrinsics = NetworkIntrinsics()
+            self.intrinsics.task = "object detection"
+        elif self.intrinsics.task != "object detection":
+            self.logger.warning("Network is not an object detection task")
+    
+
+    @lru_cache
+    def _get_labels(self):
+        """
+        Get labels of detected objects.
+        
+        Returns:
+            labels: List of labels for loaded neural net.
+        """
+        labels = self.intrinsics.labels
+        if self.intrinsics.ignore_dash_labels:
+            labels = [label for label in labels if label and label != "-"]
+        return labels
+
+    def _detect_objects(self, metadata: dict):
+        """Parse the output tensor into a number of detected objects, scaled to the ISP output."""
+        try:
+            last_detections = []
+            bbox_normalization = self.intrinsics.bbox_normalization
+            bbox_order = self.intrinsics.bbox_order
+            np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+
+            input_w, input_h = self.imx500.get_input_size()
+            if np_outputs is None:
+                # self.logger.warning("Invalid IMX500 output tensors")
+                return last_detections
+            if self.intrinsics.postprocess == "nanodet":
+                boxes, scores, classes = \
+                    postprocess_nanodet_detection(outputs=np_outputs[0], conf=self.threshold, iou_thres=self.iou,
+                                                max_out_dets=self.max_detections)[0]
+                from picamera2.devices.imx500.postprocess import scale_boxes
+                boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+            else:
+                boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+                if bbox_normalization:
+                    boxes = boxes / input_h
+
+                if bbox_order == "xy":
+                    boxes = boxes[:, [1, 0, 3, 2]]
+                boxes = np.array_split(boxes, 4, axis=1)
+                boxes = zip(*boxes)
+
+            last_detections = [
+                Detection(category, score, self.imx500.convert_inference_coords(box, metadata, self.picam2))
+                for box, score, category in zip(boxes, scores, classes)
+                if score > self.threshold
+            ]
+            return last_detections
+        except Exception as e:
+            self.logger.error(f"Error in _parse_detections: {e}")
+
+
+class YoloONNXDetector():
+    def __init__(self):
+        # ONNX Setup
+        self.opts = ort.SessionOptions()
+        self.opts.intra_op_num_threads = 5
+        self.opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(
+            "ratnet.onnx",
+            sess_options=self.opts,
+            providers=["CPUExecutionProvider"]
+        )
+        self.input_name = self.session.get_inputs()[0].name
+        self.input_width = 640
+        self.input_height = 640
+
+    def _preprocess(self, frame: np.ndarray):
+        # Resize → normalize → CHW → NCHW
+        img = cv2.resize(frame, (self.input_width, self.input_height))
+        inp = img.astype(np.float32) / 255.0
+        inp = np.transpose(inp, (2, 0, 1))[None, :, :, :]  # (1,3,H,W)
+        return inp
+
+    def detect_objects(self, frame: np.ndarray): 
+        inp = self._preprocess(frame)
+        t0 = time.time()
+        outputs = self.session.run(None, {self.input_name: inp})
+        dt = (time.time() - t0) * 1000
+        self.logger.info(f"Inference time: {dt:.1f} ms")
+        return outputs
+
 

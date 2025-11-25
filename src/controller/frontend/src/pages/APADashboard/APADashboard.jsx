@@ -9,6 +9,7 @@ import ModuleGrid from "../../components/ModuleGrid/ModuleGrid"
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
 import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
+import APACommands from "../../components/APACommands/APACommands";
 
 // Check websocket connection
 socket.on("connect", () => {
@@ -88,6 +89,9 @@ function APADashboard() {
           </section>
           <section>
             <CommandsPanel modules={moduleList} experimentName={experimentName} />
+          </section>
+          <section>
+            <APACommands modules={moduleList} />
           </section>
           <section>
             <ModuleGrid modules = {moduleList} />

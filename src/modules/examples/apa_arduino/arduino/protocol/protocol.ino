@@ -56,6 +56,8 @@ void listen() {
     if (incoming.startsWith("<")) {
       incoming.remove(0, 1); // drop '<'
 
+      
+
       int sep = incoming.lastIndexOf('|');
       if (sep > 0) {
         String payload = incoming.substring(0, sep);

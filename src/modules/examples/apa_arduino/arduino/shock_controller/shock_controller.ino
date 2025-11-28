@@ -265,7 +265,7 @@ void parseCommand(String payload) {
     param = payload.substring(firstSep + 1); 
   }
 
-  sendMessage(cmd, param);
+  // sendMessage(cmd, param); // Is this the ack?
   handleCommand(cmd, param);
 }
 
@@ -302,6 +302,10 @@ void handleCommand(String command, String param) {
       digitalWrite(pin, HIGH);
 //      sendMessage(MSG_SUCCESS,  ("PIN" + String(pin) + "SET TO HIGH").c_str()); // No need for response at the moment
     }
+  }
+
+  if (command == MSG_IDENTITY) {
+    sendMessage(MSG_IDENTITY, SYSTEM_ID);
   }
 
   if (command == MSG_SET_PIN_LOW) {

@@ -2,7 +2,6 @@
 Python/computer side implementation of a serial protocol for communicating with an Arduino.
 Features:
 - Message delimiters <MESSAGE>
-- Checksum
 - Message format: <
 """
 import serial
@@ -45,12 +44,12 @@ class Protocol:
         
         # Protocol
         self.msg_id: int = 1
-        self.checksum: bool = True
         self.last_ack: str = ""
-        self.ack_timeout: int = 2 # Time to wait for ack in seconds
+        self.ack_timeout: int = 100 # Time to wait for ack in seconds
         self.sent_messages: dict = {}
         self.unacknowledged_messages: dict = {} # A dcit of msg_ids and commands that are still to be acked
         self.abandoned_messages: dict = {}
+        self.messages: dict = {} # Dict to store sent messages 
         self.delay: float = 0.01 # Amount of time to delay after sending a message
         self.retry_limit: int = 3 # Amount of times to retry if no ACK
         self.identity: str = "" # Identity of connected Arduino
@@ -67,22 +66,12 @@ class Protocol:
 
         # Response handling
         self.response_futures = {} # msg_id 0> {"event": threading.Event(), "response": None}
-        self.future_lock = threading.Lock()
+        self.lock = threading.Lock()
         self.on_success: Callable = on_success
 
         # Config
         self.cli_enabled: bool = False 
 
-    def spam(self):
-        """
-        Function to send some spam - ten messages with a tiny delay.
-        """
-        spams = 10
-        i = 0
-        while i < spams:
-            self.send_command(f"SPAM{i}")
-            i+=1
-            time.sleep(self.delay)
 
     def record(self, delay: float = 0.01, duration: float = 2):
         """
@@ -92,6 +81,7 @@ class Protocol:
         while time.time() - start < duration:
             self.send_command("GET_DATA")
             time.sleep(delay)
+
 
     def listen(self):
         """
@@ -107,60 +97,42 @@ class Protocol:
                 cmd = matches[0] 
                 # self.logger.info(cmd)
 
-                if self.checksum == True:
-                    if '|' not in cmd:
-                        self.logger.info(f"Malformed (no checksum): {cmd}")
-                        continue
+                payload = cmd
 
-                    payload, chk_str = cmd.rsplit('|', 1)
-
-                    # Verify checksum
-                    try:
-                        chk_recv = int(chk_str, 16) # Hex string to int
-                    except ValueError:
-                        self.logger.info(f"Bad checksum format: {chk_str}")
-
-                    chk_calc = self.compute_checksum(payload)
-
-                    if chk_calc != chk_recv:
-                        self.logger.info(f"Checksum mismatch: got {chk_recv:02X}, expected {chk_calc:02X}")
-                        # Send NACK
-                        continue
-                    
-                    # self.logger.info(f"Received from {port}: {payload}")
-
-                    self.parse_message(payload)
+                self.parse_message(payload)
                 
             except Exception as e:
                 self.logger.info(f"Error: {e}")
+    
+    def mark_message_acked(self, msg_id: int) -> None:
+        """Update that message has been acked."""
+        if msg_id in self.unacknowledged_messages.keys(): # Check that we were waiting for an ACK
+            del self.unacknowledged_messages[msg_id]
+            self.messages[msg_id]["ack_time"] = time.time()
+        else:
+            self.logger.warning(f"{msg_id} received ACK but was not in unacknowledged messages")
 
     def parse_message(self, payload: str) -> Dict:
         """
         Takes a verified message from the arduino in the form of a str. 
         Parses message for type, msg_id, msg_content (params, basically), sequence
         """
-        # global last_ack
         parts = payload.rsplit(":")
         msg_type = parts[0]
         msg_id = int(parts[1][1:]) # Find the message ID
         msg_content = parts[2] # Content of the message e.g. "RPM=2.0, POSITION=180.27" or "Could not start motor"
         msg_sequence = parts[3][1:] # Sequence given by arduino to arrange arrived packets
         parsed_message = {"type": parts[0], "msg_id": msg_id}
+        self.logger.info(f"Message received from {self.identity}: {msg_type}, {msg_content}")
         match parsed_message["type"]:
             case "ACK": # If this is an acknowledgement message
-                with threading.Lock():
-                    self.last_ack = "" # Reset last ack
-                    if msg_id in self.unacknowledged_messages.keys(): # Check that we were waiting for an ACK
-                        del self.unacknowledged_messages[msg_id] # Remove this message from unacknowledged messages list
-                        # self.logger.info(f"ACK received for M{msg_id}")
-                    for part in parts[2:]:
-                        self.last_ack += f"{part}:"
-                    self.last_ack = self.last_ack[:-1]
+                # with self.lock:
+                self.mark_message_acked(msg_id)
 
             case "ERROR": # If an error message
                 self.logger.warning(f"Error message: {msg_content}")
-                with self.future_lock:
-                    future = self.response_futures.get(msg_id)
+                # with self.lock:
+                future = self.response_futures.get(msg_id)
                 if future:
                     future["response"] = {"type": "ERROR", "msg_id": msg_id, "content": msg_content}
                     future["event"].set()
@@ -177,26 +149,16 @@ class Protocol:
                 self.received_data[msg_sequence[1:]] = {"rpm": rpm, "position": position, "time": time.time(), "msg_id": msg_id}
 
             case "SUCCESS":
-                self.logger.info(f"Success response for msg {msg_id}: {msg_content}")
+                # self.logger.info(f"Success response for msg {msg_id}: {msg_content}")
 
-                with self.future_lock:
-                    future = self.response_futures.get(msg_id)
+                # with self.lock:
+                future = self.response_futures.get(msg_id)
 
                 if future:
                     future["response"] = {"type": "SUCCESS", "msg_id": msg_id, "content": msg_content}
                     future["event"].set()
 
         return parsed_message
-
-    def compute_checksum(self, payload: str) -> int:
-        """
-        Take a formatted payload (delimiters and checksum stripped) and return calculated checksum.
-        Checksum is a bitwise XOR. For each char in the payload, calculate its unicode value, then perform bitwise XOR on it.
-        """
-        chk = 0
-        for c in payload:
-            chk ^= ord(c)
-        return chk
 
     def command_line_interface(self):
         """
@@ -212,9 +174,6 @@ class Protocol:
                 case "k":
                     self.logger.info(f"Non acked: {self.unacknowledged_messages}")
                     continue
-                case "j": 
-                    self.spam()
-                    continue
                 case "l":
                     self.logger.info(f"Sent {self.sent_messages}")
                     continue
@@ -226,7 +185,7 @@ class Protocol:
                     continue
             self.send_command(command)
 
-    def send_command(self, command: str, timeout: int=5) -> str:
+    def send_command(self, command: str, timeout: int=10) -> str:
         """
         Takes a command in the format CMD:PARAM and sends it to the arduino.
         Uses global variales msg_id and delay.
@@ -234,18 +193,24 @@ class Protocol:
         # global msg_id, delay
         msg_id = self.msg_id # Catch if i type it wrong # TODO: Change this
         payload = f"M{self.msg_id}:{command}"
-        chk = self.compute_checksum(payload)
-        msg = f"<{payload}|{chk:02x}>"
-        self.logger.debug(f"Sending command: {msg}")
+        msg = f"<{payload}>"
 
         future = {"event": threading.Event(), "response": None} # Create a dict with a threading Event (used to make send_command wait for response) and a response which will later be filled in
-        with self.future_lock:
-            self.response_futures[self.msg_id] = future # Add this future dict instance to our dict of them
-            self.logger.debug(f"Send command registered future for {payload}")
+        # with self.lock:
+        self.response_futures[self.msg_id] = future # Add this future dict instance to our dict of them
+        self.logger.debug(f"Send command registered future for {payload}")
 
+        self.logger.info(f"Sending command: {msg}")
         self.conn.write(msg.encode())
         self.sent_messages[self.msg_id] =  {"command": command, "sent_time": time.time(), "retries": 0}
         self.unacknowledged_messages[self.msg_id] = {"command": command, "sent_time": time.time(), "retries": 0}
+        self.messages[self.msg_id] = {
+            "command": command,
+            "sent_time": time.time(),
+            "status": "WAITING",
+            "ack_time": None,
+            "resposne_time": None
+        }
         self.msg_id += 1
 
         # Wait for SUCCESS / ERROR
@@ -255,12 +220,12 @@ class Protocol:
             self.logger.warning(f"send_command wait failed for {self.msg_id}: {e}")
             success = False
          
-        with self.future_lock:
-            resp = future.get("response")
-            try:
-                del self.response_futures[self.msg_id]
-            except KeyError:
-                pass
+        # with self.lock:
+        resp = future.get("response")
+        try:
+            del self.response_futures[self.msg_id]
+        except KeyError:
+            pass
 
         if not success:
             return None
@@ -269,16 +234,12 @@ class Protocol:
 
 
     def resend_command(self, command, msg_id, retries):
-        # global delay
         payload = f"M{msg_id}:{command}"
-        chk = self.compute_checksum(payload)
-        msg = f"<{payload}|{chk:02x}>"
-        # self.logger.info(f"Sending command: {msg}")
+        msg = f"<{payload}>"
+        self.logger.info(f"Resending command: {msg}")
         self.conn.write(msg.encode())
         self.sent_messages[msg_id] =  {"command": command, "sent_time": time.time(), "retries": 0}
         self.unacknowledged_messages[msg_id] = {"command": command, "sent_time": time.time(), "retries": retries+1}
-        time.sleep(self.delay)
-        # self.logger.info(f"Updated unacknowledged messages: {unacknowledged_messages}")
 
 
     def monitor_commands(self):
@@ -286,36 +247,23 @@ class Protocol:
         Check if ACKs received for each message and if not retry sending message with exponential delay
         """
         while True:
-            with threading.Lock():
-                for msg_id in list(self.unacknowledged_messages.keys()):
-                    msg_data = self.unacknowledged_messages.get(msg_id) # Get the data incase it gets acked
-                    if not msg_data:
-                        # It got acked while looping
-                        continue
-                    if (time.time() - msg_data["sent_time"]) > (2**msg_data["retries"] * self.ack_timeout): # Exponential growth in retry duration
-                        if msg_data["retries"] < self.retry_limit:
-                            # self.logger.info(f"No ACK received in {self.ack_timeout}s, retrying")
-                            self.resend_command(msg_data["command"], msg_id, msg_data["retries"])
-                        else:
-                            self.logger.warning(f"Have attempted {self.retry_limit} retries, abandonding msg M{msg_id}")
-                            self.abandoned_messages[msg_id] = msg_data
-                            del self.unacknowledged_messages[msg_id]
+            # with self.lock:
+            for msg_id in list(self.unacknowledged_messages.keys()):
+                msg_data = self.unacknowledged_messages.get(msg_id) # Get the data incase it gets acked
+                if not msg_data:
+                    # It got acked while looping
+                    continue
+                if (time.time() - msg_data["sent_time"]) > (2**msg_data["retries"] * self.ack_timeout): # Exponential growth in retry duration
+                    if msg_data["retries"] < self.retry_limit:
+                        # self.logger.info(f"No ACK received in {self.ack_timeout}s, retrying")
+                        self.resend_command(msg_data["command"], msg_id, msg_data["retries"])
                     else:
-                        # Keep waiting for ack to come
-                        continue
-
-
-    def setup(self):
-        self.send_command("TIME_ON:0.5")
-        time.sleep(0.2)
-        self.send_command("CURRENT:0.1")
-        time.sleep(0.2)
-        self.send_command("TIME_OFF:1.0")
-        time.sleep(0.2)
-        self.send_command("PULSES:50")
-        time.sleep(0.2)
-        self.send_command("RESET_PULSE_COUNTER")
-        time.sleep(0.2)
+                        self.logger.warning(f"Have attempted {self.retry_limit} retries, abandonding msg M{msg_id}")
+                        self.abandoned_messages[msg_id] = msg_data
+                        del self.unacknowledged_messages[msg_id]
+                else:
+                    # Keep waiting for ack to come
+                    continue
 
 
     def start(self):

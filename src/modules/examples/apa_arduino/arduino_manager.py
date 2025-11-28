@@ -49,11 +49,11 @@ class ArduinoManager:
     def _initialize_arduino(self, arduino_type: str) -> None:
         """Initialize the specified arduino"""
         self.logger.info(f"Initializing {arduino_type}")
-        if arduino_type.lower() == "motor_arduino": # TODO: Use an ENUM for type? Maybe rename it arduino_role as well?
-            self.motor = MotorArduino(self)
-            self.motor.stop_motor() # Start with motor off
-            if self.config.get("arduino.flip_direction"):
-                self.motor.flip_motor(self.config.get("arduino.flip_direction"))
+        # if arduino_type.lower() == "motor_arduino": # TODO: Use an ENUM for type? Maybe rename it arduino_role as well?
+        #     self.motor = MotorArduino(self)
+        #     self.motor.stop_motor() # Start with motor off
+        #     if self.config.get("arduino.flip_direction"):
+        #         self.motor.flip_motor(self.config.get("arduino.flip_direction"))
                 
         if arduino_type.lower() == "shock_arduino": 
             self.shock = ShockArduino(self)

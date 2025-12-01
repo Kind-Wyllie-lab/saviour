@@ -11,8 +11,8 @@ import re
 import threading
 from collections import deque
 
-# port = "/dev/ttyACM1"
-port = "COM3"
+port = "/dev/ttyACM1"
+# port = "COM3"
 baud = 115200
 
 stop_flag = threading.Event()
@@ -98,7 +98,7 @@ def listen():
 
             handle_command(msg_type, msg)
         except Exception as e:
-            print(f"Fuckin exception: {e}")
+            print(f"Exception: {e}")
 
 
 def handle_command(cmd: str, param: str) -> None:

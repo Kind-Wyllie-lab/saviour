@@ -26,6 +26,7 @@ class ArduinoError(Exception):
     """Custom exception for Arduino communication errors."""
     pass
 
+
 class ArduinoManager:
     """Central manager for handling multiple Arduino arduinos."""
     def __init__(self, config: Config):
@@ -46,18 +47,20 @@ class ArduinoManager:
         # Find all arduinos
         self._find_arduino_ports()
 
+
     def _initialize_arduino(self, arduino_type: str) -> None:
         """Initialize the specified arduino"""
         self.logger.info(f"Initializing {arduino_type}")
-        # if arduino_type.lower() == "motor_arduino": # TODO: Use an ENUM for type? Maybe rename it arduino_role as well?
-        #     self.motor = MotorArduino(self)
-        #     self.motor.stop_motor() # Start with motor off
-        #     if self.config.get("arduino.flip_direction"):
-        #         self.motor.flip_motor(self.config.get("arduino.flip_direction"))
+        if arduino_type.lower() == "motor": # TODO: Use an ENUM for type? Maybe rename it arduino_role as well?
+            self.motor = MotorArduino(self)
+            self.motor.stop_motor() # Start with motor off
+            if self.config.get("arduino.flip_direction"):
+                self.motor.flip_motor(self.config.get("arduino.flip_direction"))
                 
-        if arduino_type.lower() == "shock_arduino": 
+        if arduino_type.lower() == "shock": 
             self.shock = ShockArduino(self)
             self.shock.set_parameters() # Set initial shock parameters
+
 
     def _find_arduino_ports(self):
         self.logger.info("Searching for connected Arduino.")
@@ -69,10 +72,12 @@ class ArduinoManager:
         for port_info in available_ports:
             self._test_port_identity(port_info)
 
+
     def _get_available_ports(self) -> list:
         """Return the available serial ports."""
         return list(serial.tools.list_ports.comports())
                 
+
     def _validate_available_ports(self, ports: list) -> list:
         """Remove any ports that do not begin with /dev/ttyACM"""
         for port in ports:
@@ -82,10 +87,12 @@ class ArduinoManager:
                 ports.remove(port)
         return ports
 
+
     def _test_port_identity(self, port_info) -> None:
         """Create a protocol object to find identity of arduino"""
         self.logger.info(f"Checking {port_info} for an Arduino")
         test_protocol = Protocol(port=port_info.device, on_identity=self.handle_identity).start()
+
 
     def handle_identity(self, protocol: Protocol, identity: str) -> None:
         """
@@ -97,12 +104,7 @@ class ArduinoManager:
         self.connected_arduinos[identity] = protocol
         self._initialize_arduino(identity) # Initialize the discovered arduino
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
-    
-    # def handle_success(self, identity: str, msg_id: int, msg_content: str) -> None:
-    #     """
-    #     Callback to handle a successful command response from an arduino.
-    #     """
-    #     self.logger.info(f"{msg_id}: {msg_content} received from {identity}")
+
             
     def send_command(self, command: str, arduino_type: str):
         """Send a command to a specific arduino and wait for response."""
@@ -111,27 +113,6 @@ class ArduinoManager:
             raise ArduinoError(f"No connection for {arduino_type}")
         resp = self.connected_arduinos[arduino_type].send_command(command)
         self.logger.info(f"Sent command and got response: {resp}")
-        return resp
-
-    def read_pin(self, pin: int, arduino_type: str):
-        self.logger.info(f"Reading pin {pin} on {arduino_type}")
-        if arduino_type not in self.connected_arduinos:
-            raise ArduinoError(f"No connection for {arduino_type}")
-        resp = self.connected_arduinos[arduino_type].read_pin(pin)
-        return resp
-
-    def set_pin_high(self, pin:int, arduino_type: str):
-        self.logger.info(f"Setting {pin} high on {arduino_type}")
-        if arduino_type not in self.connected_arduinos:
-            raise ArduinoError(f"No connection for {arduino_type}")
-        resp = self.connected_arduinos[arduino_type].set_pin_high(pin)
-        return resp
-    
-    def set_pin_low(self, pin:int, arduino_type: str):
-        self.logger.info(f"Setting {pin} low on {arduino_type}")
-        if arduino_type not in self.connected_arduinos:
-            raise ArduinoError(f"No connection for {arduino_type}")
-        resp = self.connected_arduinos[arduino_type].set_pin_low(pin)
         return resp
         
     def cleanup(self):

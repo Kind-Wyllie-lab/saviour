@@ -51,6 +51,7 @@ const int MAX_SPEED = 400;           // Maximum motor speed (0-400), can be nega
 const int SPEED_DELAY = 1;           // Delay between speed steps (ms)
 const int PID_SPEED_LIMIT = 135;     // Maximum speed for PID control (corresponds to ~2 RPM)
 int lastSpeed = 0;                   // Last commanded motor speed
+float targetSpeed = 0;
 
 // =============================================================================
 // PID CONTROL SYSTEM
@@ -125,26 +126,30 @@ const char MSG_SUCCESS [] = "SUCCESS";
 const char MSG_ERROR [] = "ERROR";
 
 // Command types
-const char MSG_IDENTITY [] = "IDENTITY";
-const char MSG_DATA [] = "DATA";
+const char MSG_IDENTITY [] = "I";
+const char MSG_DATA [] = "D";
+const char MSG_SET_PIN_HIGH [] = "H";
+const char MSG_SET_PIN_LOW [] = "L";
+
+// Motor commands
+const char MSG_SET_SPEED [] = "S";
+const char MSG_START_MOTOR [] = "M";
+const char MSG_STOP_MOTOR [] = "N";
 
 // Messaging Protocol
 const char START_MARKER = '<';
 const char END_MARKER = '>';
-const char MSG_ID_UNSOLICITED [] = "M0"; // Message ID for unsolicited messages
-const char SYSTEM_ID [] = "MOTOR_ARDUINO";
-int seqId = 0;
-
+const char SYSTEM_ID [] = "SHOCK";
+bool acknowledgeMessages = false;
 
 // =============================================================================
 // FUNCTION PROTOTYPES
 // =============================================================================
 
 // Communication functions
-String makeMessage(String payload);
 String getStatus();
-void sendMessage(String type, String msgId, String message);
-void parseCommand(String command, String arg, String msgId);
+void sendMessage(String type, String message);
+void parseCommand(String command, String arg);
 void listen();
 
 // Motor Control
@@ -319,7 +324,7 @@ void setSpeedSmoothly(int speed, bool sendResponseFlag) {
   // Skip if speed is already at target
     if (speed == lastSpeed) {
     if (sendResponseFlag) {
-        sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, "Speed already at target");
+        sendMessage(MSG_SUCCESS,  "Speed already at target");
     }
         return;
     }
@@ -334,7 +339,7 @@ void setSpeedSmoothly(int speed, bool sendResponseFlag) {
     md.disableDrivers(); // Put drivers to sleep when stopped
     lastSpeed = 0;
     if (sendResponseFlag) {
-      sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, "Motor stopped");
+      sendMessage(MSG_SUCCESS,  "Motor stopped");
     }
     return;
   }
@@ -360,7 +365,7 @@ void setSpeedSmoothly(int speed, bool sendResponseFlag) {
     lastSpeed = speed;
   if (sendResponseFlag) {
     String responseMsg = "Speed set to " + String(speed);
-    sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, responseMsg.c_str());
+    sendMessage(MSG_SUCCESS,  responseMsg.c_str());
   }
 }
 
@@ -527,221 +532,46 @@ float calculateRPM() {
  *
  */
 void listen() {
-  // --- Listen for incoming messages ---
   if (Serial.available()) {
-    String incoming = Serial.readStringUntil('>');  // read until '>'
+    String incoming = Serial.readStringUntil('>'); // Read until >
     if (incoming.startsWith("<")) {
-      incoming.remove(0, 1); // drop '<'
+      incoming.remove(0, 1); // Drop <
+      String payload = incoming; // Drop >
 
-      int sep = incoming.lastIndexOf('|');
-      if (sep > 0) {
-        String payload = incoming.substring(0, sep);
-        String chkStr = incoming.substring(sep + 1);
-
-        // compute checksum
-        uint8_t chk = 0;
-        for (size_t i = 0; i < payload.length(); i++) {
-          chk ^= payload[i];
-        }
-
-        // parse hex checksum
-        uint8_t chkRecv = (uint8_t) strtol(chkStr.c_str(), NULL, 16);
-
-        if (chk == chkRecv) {
-          Serial.println(makeMessage("ACK:" + payload)); // Send acknowledgement
-
-          // Split by ':'
-          // Example command: <M1:HELLO:2|0c>
-          int firstSep = payload.indexOf(':'); // Index of the first : that preceeds command
-          if (firstSep > 0) {
-            String msgId = payload.substring(0, firstSep); // e.g. M25
-            String rest = payload.substring(firstSep + 1); // e.g. SET_SPEED: 2.0
-            int secondSep = rest.indexOf(':');
-            String command;
-            String arg;
-            command = rest.substring(0, secondSep);
-            arg = rest.substring(secondSep+1);
-            if (command == arg) {  
-              arg = "NONE";
-            }
-            parseCommand(command.c_str(), arg.c_str(), msgId);
-          }
-
-        } else { // Failed checksum
-          sendMessage(MSG_ERROR, MSG_ID_UNSOLICITED, ("CHK_FAIL" + String(payload)).c_str());
-        }
+      // Send acknowledgement
+      if (acknowledgeMessages == true) {
+        sendMessage(MSG_ACK, payload);
       }
+
+      // Process command
+      parseCommand(payload);
     }
   }
 }
 
-/** 
- * Parse a received serial command 
+
+/**
+ * Parse a command payload into cmd and param, then pass it to command handler function
  *
  */
-void parseCommand(String command, String param, String msgId) {
-  // =============================================================================
-  // PARSE COMMAND
-  // =============================================================================
-  // command = command.toUpperCase();
-
-  // =============================================================================
-  // SPEED CONTROL COMMANDS
-  // =============================================================================
-
-  // sendMessage("DEBUG", msgId, ("Command=" + String(command) + ", Param=" + String(param)).c_str());
-
-  if (command == "SET_SPEED") {
-    // Handle set current
-    if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
-    } else {
-      float rpmSetpoint = param.toDouble();
-      if (rpmSetpoint > 0) {
-        // Enable PID control with new setpoint
-        pidEnabled = true;
-        // Re-enable motor drivers (they may have been disabled during stop)
-        md.enableDrivers();
-        delay(1); // Required delay when bringing drivers out of sleep mode
-        // Only reset PID terms if this is a new setpoint (not just re-enabling)
-        if (abs(rpmSetpoint - rpmCurrent) > 0.5) {
-          integral = 0;
-          rpmErrorLast = 0;
-          lastPidTime = millis(); // Reset PID timing
-        }
-        String responseMsg = "PID enabled, target RPM: " + String(rpmSetpoint, 2);
-        sendMessage(MSG_SUCCESS, msgId, responseMsg.c_str());
-      } else {
-        // Disable PID and stop motor
-        pidEnabled = false;
-        setSpeedSmoothly(0);
-        sendMessage(MSG_SUCCESS, msgId, "PID disabled, motor stopping");
-        }
-    }
+void parseCommand(String payload) {
+  int firstSep = payload.indexOf(':'); // Index of the first : that preceeds command
+  String cmd;
+  String param;
+  if (firstSep < 0) {
+    cmd = payload;
+    param = "";
+  }
+  else {
+    cmd = payload.substring(0, firstSep); // e.g. MSG_WRITE
+    param = payload.substring(firstSep + 1); 
   }
 
-
-  // =============================================================================
-  // MOTOR CONFIGURATION COMMANDS
-  // =============================================================================
-  
-  else if (command == "FLIP_MOTOR") {
-  // Flip motor direction
-    if (param == "NONE") {
-      flipMotor(1);
-      sendMessage(MSG_SUCCESS, msgId, "Motor Flipped (1)");
-    } else {
-      bool flip_direction = param.toInt();
-      flipMotor(flip_direction);
-      sendMessage(MSG_SUCCESS, msgId, ("Motor flipped (" + String(flip_direction) + ")").c_str());
-    }
-  }
-
-  // =============================================================================
-  // STATUS AND MONITORING COMMANDS
-  // =============================================================================
-
-  else if (command == "READ_ENCODER") {
-    // Return current encoder position and RPM
-    String response = "Raw:" + String(encoderReading) + 
-                     ",Position:" + String(encoderPosition, 2) + "deg" +
-                     ",RPM:" + String(rpmCurrent, 2);
-    sendMessage(MSG_SUCCESS, msgId, response.c_str());
-      }
-  
-  else if (command == "PID_STATUS") {
-    // Return current PID status and values for debugging
-    String response = "SetpointRPM:" + String(rpmSetpoint, 2) + 
-                     ",CurrentRPM:" + String(rpmCurrent, 2) + 
-                     ",ErrorRPM:" + String(rpmError, 2) + 
-                     ",Integral:" + String(integral, 2) +
-                     ",Output:" + String(output, 2) + 
-                     ",TargetSpeed:" + String(static_cast<int>(output)) +
-                     ",Enabled:" + String(pidEnabled ? "true" : "false");
-    sendMessage(MSG_SUCCESS, msgId, response.c_str());
-  }
-
-  // =============================================================================
-  // CONFIGURATION COMMANDS
-  // =============================================================================
-  
-  else if (command == "SET_PID") {
-    // Configure PID gains: SET_PID:Kp:Ki:Kd
-    // TODO: Replace with use of param
-    if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
-    } else {
-      int firstComma = param.indexOf(',');
-      int secondComma = param.indexOf(',', firstComma + 1);
-      if (firstComma > 0 && secondComma > 0) {
-        Kp = param.substring(0, firstComma).toDouble();
-        Ki = param.substring(firstComma + 1, secondComma).toDouble();
-        Kd = param.substring(secondComma + 1).toDouble();
-        sendMessage(MSG_SUCCESS, msgId, ("Kp=" + String(Kp) + ", Ki=" + String(Ki) + ", Kd=" + String(Kd)).c_str());
-      } else {
-        sendMessage(MSG_ERROR, msgId, "Invalid PID format. Use: SET_PID:Kp,Ki,Kd");
-      }
-    }
-  }
-
-  // =============================================================================
-  // TESTING COMMANDS
-  // =============================================================================
-  
-  else if (command == "SET_SPEED_MANUAL") {
-    // Manually set motor speed (disables PID control)
-    if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
-    } else {
-      int manualSpeed = param.toInt();
-      pidEnabled = false;
-      setSpeedSmoothly(manualSpeed);
-      String responseMsg = "Manual motor speed set to: " + String(manualSpeed);
-      sendMessage(MSG_SUCCESS, msgId, responseMsg.c_str());
-    }
-  }
-
-  // =============================================================================
-  // SYSTEM COMMANDS
-  // =============================================================================
-  
-  else if (command == "CLEANUP") {
-    // Stop motor and disable drivers
-    cleanup();
-  }
-  
-  else if (command == "RESET_PID") {
-    // Reset PID state for debugging
-    integral = 0;
-    rpmErrorLast = 0;
-    lastPidTime = millis();
-    sendMessage(MSG_SUCCESS, msgId, "PID state reset");
-  }
-  
-  else if (command == "STOP_TEST_DEBUG") {
-    // Stop test mode debug output (deprecated, now use DEBUG_MODE:0)
-    debugMode = false;
-    sendMessage(MSG_SUCCESS, msgId, "Debug mode disabled");
-  }
-  
-  else if (command == "DEBUG_MODE") {
-    // Enable or disable debug output
-    int mode = param.toInt();
-    debugMode = (mode != 0);
-    String responseMsg = String("Debug mode ") + (debugMode ? "enabled" : "disabled");
-    sendMessage(MSG_SUCCESS, msgId, responseMsg.c_str());
-  }
-  
-
-  // ===========================================================#==================
-  // STATUS AND MONITORING COMMANDS
-  // =============================================================================
-  
-    else {
-      String errorMessage = "No logic for " + command + " " + param;
-      sendMessage(MSG_ERROR, msgId, errorMessage);
-    }
+  // sendMessage(cmd, param); // Is this the ack?
+  handleCommand(cmd, param);
 }
+
+
 
 /**
  * Send a formatted response message over serial
@@ -750,31 +580,11 @@ void parseCommand(String command, String param, String msgId) {
  * @param msgId Message ID for tracking - originates from received command
  * @param message Message text e.g. status, error description, data payload
  */
-void sendMessage(String type, String msgId, String message){
-  String payload = type + ":" + msgId + ":" + message;
-  Serial.println(makeMessage(payload));
+void sendMessage(String type, String message){
+  String payload = "<" + type + ":" + message + ">";
+  Serial.println(payload);
 }
 
-
-/**
- * Make a formatted message with checksum
- * 
- * @param payload Message payload (without start/end markers or checksum)
- * @return Formatted message string with start/end markers and checksum
- */
-String makeMessage(String payload) {
-  String sequencePayload = payload + ":S" + seqId;
-  uint8_t chk = 0;
-  for (size_t i = 0; i < sequencePayload.length(); i++) {
-    chk ^= sequencePayload[i];   // XOR checksum
-  }
-
-  char buf[5];
-  sprintf(buf, "%02X", chk);   // hex string (2 chars)
-  String msg = "<" + sequencePayload + "|" + String(buf) + ">";
-  seqId += 1;
-  return msg;
-}
 
 /**
  * Clean up motor controller and stop motor
@@ -786,7 +596,14 @@ void cleanup() {
   md.setM1Speed(0);  // Stop the motor (full brake)
   md.disableDrivers(); // Put the MOSFET drivers into sleep mode
   delay(500); // Allow time for motor to stop
-  sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, "Cleanup complete");
+  sendMessage(MSG_SUCCESS,  "Cleanup complete");
+}
+
+// STATE
+void sendState() {
+  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition);
+  sendMessage(MSG_DATA, stateMessage);
+  lastSentState = millis();
 }
 
 // =============================================================================
@@ -822,7 +639,7 @@ void setup() {
   }
 
   // Send identity and ready message to host
-  sendMessage(MSG_IDENTITY, MSG_ID_UNSOLICITED, SYSTEM_ID); // Send identity on startup
+  sendMessage(MSG_IDENTITY, SYSTEM_ID); // Send identity on startup
 }
 
 /**
@@ -868,152 +685,8 @@ void loop() {
   
   // Process incoming serial commands
   listen();
-}
 
-// /**
-//  * Process incoming serial commands
-//  * 
-//  * @param command The command string to process
-//  */
-// void processCommand(String command) {
-//   // =============================================================================
-//   // SPEED CONTROL COMMANDS
-//   // =============================================================================
-  
-//       if (command.startsWith("SET_SPEED:")) {
-//     // Set target RPM for PID control
-//     String speedStr = command.substring(10); // Skip "SET_SPEED:"
-//     speedStr.trim();
-//     rpmSetpoint = speedStr.toDouble();
-    
-//     if (rpmSetpoint > 0) {
-//       // Enable PID control with new setpoint
-//       pidEnabled = true;
-//       // Re-enable motor drivers (they may have been disabled during stop)
-//       md.enableDrivers();
-//       delay(1); // Required delay when bringing drivers out of sleep mode
-//       // Only reset PID terms if this is a new setpoint (not just re-enabling)
-//       if (abs(rpmSetpoint - rpmCurrent) > 0.5) {
-//         integral = 0;
-//         rpmErrorLast = 0;
-//         lastPidTime = millis(); // Reset PID timing
-//       }
-//       String responseMsg = "PID enabled, target RPM: " + String(rpmSetpoint, 2);
-//       sendResponse("OK", responseMsg.c_str());
-//     } else {
-//       // Disable PID and stop motor
-//       pidEnabled = false;
-//       setSpeedSmoothly(0);
-//       sendResponse("OK", "PID disabled, motor stopped");
-//       }
-//   }
-  
-//   // =============================================================================
-//   // MOTOR CONFIGURATION COMMANDS
-//   // =============================================================================
-  
-//       else if (command.startsWith("FLIP_MOTOR:")) {
-//     // Flip motor direction
-//         bool flip_direction = command.substring(11).toInt();
-//         flipMotor(flip_direction);
-//         sendResponse("OK", "Motor flipped");
-//       }
-  
-//   // =============================================================================
-//   // STATUS AND MONITORING COMMANDS
-//   // =============================================================================
-  
-//   else if (command.startsWith("READ_ENCODER")) {
-//     // Return current encoder position and RPM
-//     String response = "Raw:" + String(encoderReading) + 
-//                      ",Position:" + String(encoderPosition, 2) + "deg" +
-//                      ",RPM:" + String(rpmCurrent, 2);
-//     sendResponse("OK", response.c_str());
-//       }
-  
-//   else if (command.startsWith("PID_STATUS")) {
-//     // Return current PID status and values for debugging
-//     String response = "SetpointRPM:" + String(rpmSetpoint, 2) + 
-//                      ",CurrentRPM:" + String(rpmCurrent, 2) + 
-//                      ",ErrorRPM:" + String(rpmError, 2) + 
-//                      ",Integral:" + String(integral, 2) +
-//                      ",Output:" + String(output, 2) + 
-//                      ",TargetSpeed:" + String(static_cast<int>(output)) +
-//                      ",Enabled:" + String(pidEnabled ? "true" : "false");
-//     sendResponse("OK", response.c_str());
-//   }
-  
-//   // =============================================================================
-//   // CONFIGURATION COMMANDS
-//   // =============================================================================
-  
-//   else if (command.startsWith("SET_PID:")) {
-//     // Configure PID gains: SET_PID:Kp:Ki:Kd
-//     int firstColon = command.indexOf(':', 8);
-//     int secondColon = command.indexOf(':', firstColon + 1);
-//     if (firstColon > 0 && secondColon > 0) {
-//       Kp = command.substring(8, firstColon).toDouble();
-//       Ki = command.substring(firstColon + 1, secondColon).toDouble();
-//       Kd = command.substring(secondColon + 1).toDouble();
-//       String responseMsg = "PID gains set - Kp:" + String(Kp, 2) + 
-//                           " Ki:" + String(Ki, 2) + " Kd:" + String(Kd, 2);
-//       sendResponse("OK", responseMsg.c_str());
-//     } else {
-//       sendResponse("ERROR", "Invalid PID format. Use: SET_PID:Kp:Ki:Kd");
-//     }
-//   }
-  
-//   // =============================================================================
-//   // TESTING COMMANDS
-//   // =============================================================================
-  
-//   else if (command.startsWith("SET_SPEED_MANUAL:")) {
-//     // Manually set motor speed (disables PID control)
-//     String speedStr = command.substring(17);
-//     int manualSpeed = speedStr.toInt();
-//     pidEnabled = false;
-//     setSpeedSmoothly(manualSpeed);
-//     String responseMsg = "Manual motor speed set to: " + String(manualSpeed);
-//     sendResponse("OK", responseMsg.c_str());
-//   }
-  
-//   // =============================================================================
-//   // SYSTEM COMMANDS
-//   // =============================================================================
-  
-//   else if (command.startsWith("CLEANUP:")) {
-//     // Stop motor and disable drivers
-//     cleanup();
-//   }
-  
-//   else if (command.startsWith("RESET_PID")) {
-//     // Reset PID state for debugging
-//     integral = 0;
-//     rpmErrorLast = 0;
-//     lastPidTime = millis();
-//     sendResponse("OK", "PID state reset");
-//   }
-  
-//   else if (command.startsWith("STOP_TEST_DEBUG")) {
-//     // Stop test mode debug output (deprecated, now use DEBUG_MODE:0)
-//     debugMode = false;
-//     sendResponse("OK", "Debug mode disabled");
-//   }
-  
-//   else if (command.startsWith("DEBUG_MODE:")) {
-//     // Enable or disable debug output
-//     int mode = command.substring(11).toInt();
-//     debugMode = (mode != 0);
-//     String responseMsg = String("Debug mode ") + (debugMode ? "enabled" : "disabled");
-//     sendResponse("OK", responseMsg.c_str());
-//   }
-  
-//   // =============================================================================
-//   // ERROR HANDLING
-//   // =============================================================================
-  
-//   else {
-//     // Unknown command
-//     sendResponse("ERROR", "Unknown command");
-//   }
-// }
+  if(millis() - lastSentState > sendStatePeriod) {
+    sendState(); // Send RPM and position across serial
+  }
+}

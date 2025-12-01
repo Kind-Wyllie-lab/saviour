@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(
     prog="arduino_comms_test",
     description="To test arduino comms protocol"
 )
-parser.add_argument('-p', '--port', default="/dev/ttyACM1")
+parser.add_argument('-p', '--port', default="/dev/ttyACM0")
 parser.add_argument('-b', '--baud', default=115200)
 args = parser.parse_args()
 
@@ -146,7 +146,7 @@ class Motor:
     def handle_command(self, cmd: str, param: str) -> None:
         match cmd:
             case "D":
-                self.interpret_shock(param)
+                self.interpret_state(param)
             case _:
                 print(f"No logic for {cmd}")
 
@@ -156,10 +156,12 @@ class Motor:
 
 
     """Motor specific commands"""
-    def interpret_state(self, system_state: list) -> None:
+    def interpret_state(self, system_state) -> None:
         # Interpret data sent back from motor
+        print(f"Interpret state received {system_state} with type {type(system_state)}")
 
     def set_speed(self, speed: float) -> None:
+        pass
 
 
 class Shocker:
@@ -340,7 +342,8 @@ def handle_identity(protocol_instance: Protocol, identity_str: str) -> None:
         s = Shocker(protocol_instance)
         s.start()
     if identity_str == "motor":
-        pass
+        m = Motor(protocol_instance)
+        m.start()
 
         
 

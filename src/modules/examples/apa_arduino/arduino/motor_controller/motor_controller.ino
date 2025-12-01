@@ -139,7 +139,7 @@ const char MSG_STOP_MOTOR [] = "N";
 // Messaging Protocol
 const char START_MARKER = '<';
 const char END_MARKER = '>';
-const char SYSTEM_ID [] = "SHOCK";
+const char SYSTEM_ID [] = "MOTOR";
 bool acknowledgeMessages = false;
 
 // =============================================================================
@@ -151,6 +151,11 @@ String getStatus();
 void sendMessage(String type, String message);
 void parseCommand(String command, String arg);
 void listen();
+
+// State
+void sendState();
+int lastSentState = 0;
+int sendStatePeriod = 50;
 
 // Motor Control
 void applyPID();

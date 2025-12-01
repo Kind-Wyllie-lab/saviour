@@ -51,8 +51,6 @@ class APAModule(Module):
             self._check_motor,
             self._check_shocker,
             self._check_shock_grid_fault
-            # self._check_motor_comms,
-            # self._check_shocker_comms
         ]
 
         self.apa_arduino_commands = {

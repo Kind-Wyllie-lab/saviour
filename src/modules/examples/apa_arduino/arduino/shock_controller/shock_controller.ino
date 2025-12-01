@@ -131,7 +131,6 @@ bool shockBeingDelivered = false;     // Shock currently being delivered (from s
 // =============================================================================
 
 // Communication functions
-String makeMessage(String payload);
 String getStatus();
 void sendMessage(String type, String message);
 void parseCommand(String command, String arg);
@@ -252,6 +251,10 @@ void listen() {
   }
 }
 
+/**
+ * Parse a command payload into cmd and param, then pass it to command handler function
+ *
+ */
 void parseCommand(String payload) {
   int firstSep = payload.indexOf(':'); // Index of the first : that preceeds command
   String cmd;
@@ -483,35 +486,11 @@ void handleCommand(String command, String param) {
  * @param type Message type ("ACK", "NACK", MSG_SUCCESS, "FAIL", "IDENTITY", "READY" )
  * @param message Message text e.g. status, error description, data payload
  */
-//void sendMessage(String type, String message){
-//  String payload = type + ":" + message;
-//  Serial.println(makeMessage(payload));
-//}
-
 void sendMessage(String type, String message) {
   String payload = "<" + type + ":" + message + ">";
   Serial.println(payload);
 }
 
-/**
- * Make a formatted message with checksum
- * 
- * @param payload Message payload (without start/end markers or checksum)
- * @return Formatted message string with start/end markers and checksum
- */
-//String makeMessage(String payload) {
-//  String sequencePayload = payload + ":S" + seqId;
-//  uint8_t chk = 0;
-//  for (size_t i = 0; i < sequencePayload.length(); i++) {
-//    chk ^= sequencePayload[i];   // XOR checksum
-//  }
-//
-//  char buf[5];
-//  sprintf(buf, "%02X", chk);   // hex string (2 chars)
-//  String msg = "<" + sequencePayload + "|" + String(buf) + ">";
-//  seqId += 1;
-//  return msg;
-//}
 
 /**
  * Get current system status as a formatted string
@@ -705,22 +684,6 @@ void loop() {
     readState();
     sendState();
   }
-  
-//  // Fault detection: Alert if shock is triggered but not delivered
-//  static unsigned long lastFaultCheck = 0;
-//  static bool faultReported = false;
-//  
-//  if (activatedState && current > 0 && !shockBeingDelivered) {
-//    // Check if we've been waiting too long for a shock to be delivered
-//    if (millis() - lastFaultCheck > 5000 && !faultReported) { // 5 second timeout
-//      sendMessage("WARNING", "Shock triggered but not delivered - check hardware connections");
-//      faultReported = true;
-//    }
-//  } else {
-//    // Reset fault detection when shock is delivered or sequence stops
-//    lastFaultCheck = millis();
-//    faultReported = false;
-//  }
 }
 
 // =============================================================================

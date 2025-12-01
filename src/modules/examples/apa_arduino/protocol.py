@@ -11,6 +11,7 @@ import json
 import re
 import argparse
 from typing import Dict, Callable, Optional
+from collections import deque
 import logging
 
 parser = argparse.ArgumentParser(
@@ -21,15 +22,28 @@ parser.add_argument('-p', '--port', default="/dev/ttyACM0")
 parser.add_argument('-b', '--baud', default=115200)
 args = parser.parse_args()
 
+# PROTOCOL
+MSG_IDENTITY = "I"
+MSG_DATA = "D"
+MSG_WRITE_PIN_HIGH = "H"
+MSG_WRITE_PIN_LOW = "L"
+MSG_CURRENT = "C"
+MSG_TIME_ON = "T"
+MSG_TIME_OFF = "Y"
 
+PIN_MAP = [17, 16, 15, 14, 4, 5, 6, 7, 12, 2, 9] 
+SHOCK_VALS = [0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56] # Mapping for the shocker
+SHOCK_PINS = [17, 16, 15, 14, 4, 5, 6, 7]
+SELF_TEST_OUT = 12
+SELF_TEST_IN = 2
+TRIGGER_OUT = 9
 
 class Protocol:
     def __init__(
         self, 
         port: str, 
         baud: int = 115200, 
-        on_identity: Optional[Callable["Protocol", str]] = None,
-        on_success: Optional[Callable[[str, int, str], None]] = None # Optional callback for when a SUCCESS message received - takes identity, msg_id and msg_content as args.
+        on_identity: Optional[Callable["Protocol", str]] = None
     ) -> None:
         """
         Initialize the serial communication protocol for an Arduino-like device.
@@ -43,17 +57,8 @@ class Protocol:
         self.logger = logging.getLogger(__name__)
         
         # Protocol
-        self.msg_id: int = 1
-        self.last_ack: str = ""
-        self.ack_timeout: int = 100 # Time to wait for ack in seconds
-        self.sent_messages: dict = {}
-        self.unacknowledged_messages: dict = {} # A dcit of msg_ids and commands that are still to be acked
-        self.abandoned_messages: dict = {}
-        self.messages: dict = {} # Dict to store sent messages 
-        self.delay: float = 0.01 # Amount of time to delay after sending a message
-        self.retry_limit: int = 3 # Amount of times to retry if no ACK
         self.identity: str = "" # Identity of connected Arduino
-        self.on_identity: Callable = on_identity        
+        self.on_identity: Callable = on_identity    
 
         # Connection
         self.port: str = port
@@ -61,104 +66,183 @@ class Protocol:
         self.logger.info(self.port)
         self.conn: serial.Serial = serial.Serial(port=self.port, baudrate=self.baud, timeout=5)
 
-        # Received data
-        self.received_data = {}
+        # Thread management
+        self.stop_flag = threading.Event()
 
-        # Response handling
-        self.response_futures = {} # msg_id 0> {"event": threading.Event(), "response": None}
-        self.lock = threading.Lock()
-        self.on_success: Callable = on_success
+        # State
+        self.state_buffer = deque(maxlen=10)
 
         # Config
-        self.cli_enabled: bool = False 
+        self.cli_enabled: bool = True
 
 
-    def record(self, delay: float = 0.01, duration: float = 2):
-        """
-        Function to emulate recording - calling get data at a certain rate for a certain period.
-        """
-        start = time.time()
-        while time.time() - start < duration:
-            self.send_command("GET_DATA")
-            time.sleep(delay)
-
-
+    """Essential Methods"""
     def listen(self):
-        """
-        Runs in a thread and listens for inbound messages from the arduino.
-        Checks for errors and parses message.
-        """
-        while True:
+        while not self.stop_flag.is_set():
             try:
-                response = self.conn.readline().decode()
+                response = self.conn.readline().decode("utf-8")
                 matches = re.findall(r'<(.+?)>', response) # Look for any serial messages that match the <message> format
                 if not matches:
                     continue
-                cmd = matches[0] 
-                # self.logger.info(cmd)
+                response = matches[0]
+                seps = response.split(":")
+                if len(seps) == 3:
+                    msg_type = seps[0]
+                    msg = ":".join(seps[1:])
+                elif len(seps) == 2:
+                    msg_type = seps[0]
+                    msg = seps[1]
 
-                payload = cmd
-
-                self.parse_message(payload)
-                
+                self.handle_command(msg_type, msg)
             except Exception as e:
-                self.logger.info(f"Error: {e}")
-    
-    def mark_message_acked(self, msg_id: int) -> None:
-        """Update that message has been acked."""
-        if msg_id in self.unacknowledged_messages.keys(): # Check that we were waiting for an ACK
-            del self.unacknowledged_messages[msg_id]
-            self.messages[msg_id]["ack_time"] = time.time()
-        else:
-            self.logger.warning(f"{msg_id} received ACK but was not in unacknowledged messages")
+                print(f"Exception listening on serial port {self.port}: {e}")
 
-    def parse_message(self, payload: str) -> Dict:
-        """
-        Takes a verified message from the arduino in the form of a str. 
-        Parses message for type, msg_id, msg_content (params, basically), sequence
-        """
-        parts = payload.rsplit(":")
-        msg_type = parts[0]
-        msg_id = int(parts[1][1:]) # Find the message ID
-        msg_content = parts[2] # Content of the message e.g. "RPM=2.0, POSITION=180.27" or "Could not start motor"
-        msg_sequence = parts[3][1:] # Sequence given by arduino to arrange arrived packets
-        parsed_message = {"type": parts[0], "msg_id": msg_id}
-        self.logger.info(f"Message received from {self.identity}: {msg_type}, {msg_content}")
-        match parsed_message["type"]:
-            case "ACK": # If this is an acknowledgement message
-                # with self.lock:
-                self.mark_message_acked(msg_id)
 
-            case "ERROR": # If an error message
-                self.logger.warning(f"Error message: {msg_content}")
-                # with self.lock:
-                future = self.response_futures.get(msg_id)
-                if future:
-                    future["response"] = {"type": "ERROR", "msg_id": msg_id, "content": msg_content}
-                    future["event"].set()
-
-            case "IDENTITY":
-                self.logger.info(f"Arduino identifies as: {msg_content}")
-                self.identity = msg_content.lower()
+    def handle_command(self, cmd: str, param: str) -> None:
+        match cmd:
+            case "I":
+                print(f"Identity: {cmd}, {param}")
+                self.identity = param.lower()
                 if self.on_identity:
                     self.on_identity(self, self.identity)
+            case "D":
+                self.interpret_shock(param)
+            case "A": 
+                pass
+            case _:
+                pass
+    
 
-            case "DATA":
-                # self.logger.info(f"DATA received for msg_id: {msg_content} sequence {msg_sequence}")
-                rpm, position = msg_content.rsplit(',', 1)
-                self.received_data[msg_sequence[1:]] = {"rpm": rpm, "position": position, "time": time.time(), "msg_id": msg_id}
+    def send_command(self, cmd: str, param: str) -> None:
+        self.conn.write(f"<{cmd}:{param}>".encode())
 
-            case "SUCCESS":
-                # self.logger.info(f"Success response for msg {msg_id}: {msg_content}")
 
-                # with self.lock:
-                future = self.response_futures.get(msg_id)
+    """SHOCK CONTROLLER SPECIFIC COMMANDS"""
+    def set_weak_shock(self):
+        self.send_command(MSG_CURRENT, 0.5)    
 
-                if future:
-                    future["response"] = {"type": "SUCCESS", "msg_id": msg_id, "content": msg_content}
-                    future["event"].set()
 
-        return parsed_message
+    def set_strong_shock(self):
+        self.send_command(MSG_CURRENT, 1)    
+
+
+    def set_shock_zero(self):
+        self.send_command(MSG_CURRENT, 0)
+
+
+    def check_shock_set(self) -> bool:
+        current = self.calculate_shock(self.state_buffer[-1][0:8])
+        if current > 0:
+            return True
+        else:
+            return False
+
+
+    def run_grid_test(self):
+        # Check that shock is set
+        if not self.check_shock_set():
+            print("Cannot run grid test with current set to 0.")
+            return
+        
+        # Initiate test by writing to pin
+        self.send_command(MSG_WRITE_PIN_LOW, SELF_TEST_OUT)
+        time.sleep(0.2) # Give some time for it to update
+
+        # Check sefl test in
+        val = self.state_buffer[-1][PIN_MAP.index(SELF_TEST_IN)]
+        if val == 0:
+            print("No grid short detected")
+        elif val == 1:
+            print("Grid short detected!")
+        else:
+            print(f"Something went wrong - pin reads {val}")
+
+        # Conclude test by putting self test out high again
+        self.send_command(MSG_WRITE_PIN_HIGH, SELF_TEST_OUT)
+
+        print("Grid test complete.")
+
+
+    def activate_shock(self):
+        if not self.check_shock_set():
+            print("Cannot activate shock with current set to 0.")
+            return
+        self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
+
+
+    def deactivate_shock(self):
+        self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
+
+
+    def interpret_shock(self, state: list) -> None:
+        state = state.split(",")
+        self.state_buffer.append([ int(bit) for bit in state[0:11] ])
+        shock_settings = [ int(bit) for bit in state[0:8] ]
+        self_test_out = int(state[8])
+        self_test_in = int(state[9])
+        trigger_out = int(state[10])
+
+        if self_test_out == 0 :
+            if sum(shock_settings) == len(shock_settings): # Nothing changed
+                print("CANNOT RUN GRID TEST WITHOUT CURRENT BEING SET.")
+            # if self_test_in == 0:
+            #     print("No grid short detected")
+            # if self_test_in == 1:
+            #     print("Grid short detected")
+        elif trigger_out == 0:
+            if sum(shock_settings) == len(shock_settings): # Nothing changed
+                print("CANNOT DELIVER SHOCKS WITHOUT CURRENT BEING SET.")
+            if self_test_in == 0:
+                print("Shocker active but no shock being delivered...")
+            if self_test_in == 1:
+                print("SHOCK BEING DELIVERED!")
+
+
+        # print(f"Self test out: {self_test_out}, self_test_in {self_test_in}, trigger_out {trigger_out}")
+        # print(f"Shock val: {calculate_shock(shock_settings)}mA")
+
+
+    def calculate_shock(self, shock_settings: list) -> float:
+        """Take shock settings from db25 and calculate the current value in mA"""
+        current = 0
+        i = 0
+        while i < len(shock_settings):
+            if int(shock_settings[i]) == 0:
+                current += SHOCK_VALS[i]
+            i+=1
+        return round(current, 3)
+
+
+    def request_identity(self):
+        self.send_command(MSG_IDENTITY, "")
+
+
+    def handle_input(self, cmd: str):
+        # cmd = int(cmd)
+        try:
+            match cmd:
+                case "0": 
+                    # print(state_buffer)
+                    print(f"Shock set to {self.calculate_shock(self.state_buffer[-1][0:8])}mA")
+                case "1": 
+                    self.set_weak_shock()
+                case "2":
+                    self.set_strong_shock()
+                case "3":
+                    t2 = threading.Thread(target=self.run_grid_test).start()
+                case "4":
+                    self.activate_shock()
+                case "5":
+                    self.deactivate_shock()
+                case "6":
+                    self.set_shock_zero()
+                case "I":
+                    self.request_identity()
+                case _:
+                    self.conn.write(f"<{cmd}>".encode())
+        except Exception as e:
+            print(f"Error handling input: {e}")
+
 
     def command_line_interface(self):
         """
@@ -166,104 +250,16 @@ class Protocol:
         A user can enter a single char, which will be matched against some options.
         Alternatively, a user can send a custom command in the form COMMAND:PARAM e.g. CURRENT:0.5
         """
-        while True:
-            command = input()
-            match command:
-                case "t":
-                    self.setup()
-                case "k":
-                    self.logger.info(f"Non acked: {self.unacknowledged_messages}")
-                    continue
-                case "l":
-                    self.logger.info(f"Sent {self.sent_messages}")
-                    continue
-                case "p":
-                    record()
-                    continue
-                case "o":
-                    self.logger.info(f"Data: {self.received_data}")
-                    continue
-            self.send_command(command)
-
-    def send_command(self, command: str, timeout: int=10) -> str:
-        """
-        Takes a command in the format CMD:PARAM and sends it to the arduino.
-        Uses global variales msg_id and delay.
-        """
-        # global msg_id, delay
-        msg_id = self.msg_id # Catch if i type it wrong # TODO: Change this
-        payload = f"M{self.msg_id}:{command}"
-        msg = f"<{payload}>"
-
-        future = {"event": threading.Event(), "response": None} # Create a dict with a threading Event (used to make send_command wait for response) and a response which will later be filled in
-        # with self.lock:
-        self.response_futures[self.msg_id] = future # Add this future dict instance to our dict of them
-        self.logger.debug(f"Send command registered future for {payload}")
-
-        self.logger.info(f"Sending command: {msg}")
-        self.conn.write(msg.encode())
-        self.sent_messages[self.msg_id] =  {"command": command, "sent_time": time.time(), "retries": 0}
-        self.unacknowledged_messages[self.msg_id] = {"command": command, "sent_time": time.time(), "retries": 0}
-        self.messages[self.msg_id] = {
-            "command": command,
-            "sent_time": time.time(),
-            "status": "WAITING",
-            "ack_time": None,
-            "resposne_time": None
-        }
-        self.msg_id += 1
-
-        # Wait for SUCCESS / ERROR
         try:
-            success = future["event"].wait(timeout)
+            while True:
+                cmd = input()
+                self.handle_input(cmd)
+        except KeyboardInterrupt:
+            print("Shutting down CLI")
+            self.stop_flag.set()
         except Exception as e:
-            self.logger.warning(f"send_command wait failed for {self.msg_id}: {e}")
-            success = False
-         
-        # with self.lock:
-        resp = future.get("response")
-        try:
-            del self.response_futures[self.msg_id]
-        except KeyError:
-            pass
-
-        if not success:
-            return None
-        
-        return future["response"]
-
-
-    def resend_command(self, command, msg_id, retries):
-        payload = f"M{msg_id}:{command}"
-        msg = f"<{payload}>"
-        self.logger.info(f"Resending command: {msg}")
-        self.conn.write(msg.encode())
-        self.sent_messages[msg_id] =  {"command": command, "sent_time": time.time(), "retries": 0}
-        self.unacknowledged_messages[msg_id] = {"command": command, "sent_time": time.time(), "retries": retries+1}
-
-
-    def monitor_commands(self):
-        """
-        Check if ACKs received for each message and if not retry sending message with exponential delay
-        """
-        while True:
-            # with self.lock:
-            for msg_id in list(self.unacknowledged_messages.keys()):
-                msg_data = self.unacknowledged_messages.get(msg_id) # Get the data incase it gets acked
-                if not msg_data:
-                    # It got acked while looping
-                    continue
-                if (time.time() - msg_data["sent_time"]) > (2**msg_data["retries"] * self.ack_timeout): # Exponential growth in retry duration
-                    if msg_data["retries"] < self.retry_limit:
-                        # self.logger.info(f"No ACK received in {self.ack_timeout}s, retrying")
-                        self.resend_command(msg_data["command"], msg_id, msg_data["retries"])
-                    else:
-                        self.logger.warning(f"Have attempted {self.retry_limit} retries, abandonding msg M{msg_id}")
-                        self.abandoned_messages[msg_id] = msg_data
-                        del self.unacknowledged_messages[msg_id]
-                else:
-                    # Keep waiting for ack to come
-                    continue
+            print(f"Exception in CLI: {e}")
+            self.stop_flag.set()    
 
 
     def start(self):
@@ -271,52 +267,17 @@ class Protocol:
         self.listen_thread = threading.Thread(target=self.listen)
         self.listen_thread.start()
 
-        self.monitor_commands_thread = threading.Thread(target=self.monitor_commands)
-        self.monitor_commands_thread.start()
-
         if self.cli_enabled == True:
-            self.command_thread = threading.Thread(target=self.command_line_interface)
-            self.command_thread.start()
+            self.command_line_interface()
 
 
-    def read_pin(self, pin: int) -> Optional[int]:
-        command = f"READ_PIN:{pin}"
-        try:
-            response = self.send_command(command)
-            if response is None:
-                self.logger.warning(f"read_pin timed out for pin {pin} on {self.identity}")
-                return None
-            val = response.get("content").split("=")[1]
-            return int(val)
-        except Exception as e:
-            self.logger.error(f"Error reading pin {pin}: {e}")
-            return None
-            
-    
-    def set_pin_low(self, pin:int):
-        command = f"SET_PIN_LOW:{pin}"
-        try:
-            response = self.send_command(command)
-            if response is None:
-                self.logger.warning(f"set_pin_low timed out for pin {pin} on {self.identity}")
-                return None
-            return response
-        except Exception as e:
-            self.logger.error(f"Error reading pin {pin}: {e}")
-            return None
-
-
-    def set_pin_high(self, pin:int):
-        command = f"SET_PIN_HIGH:{pin}"
-        try:
-            response = self.send_command(command)
-            if response is None:
-                self.logger.warning(f"set_pin_high timed out for pin {pin} on {self.identity}")
-                return None
-            return response
-        except Exception as e:
-            self.logger.error(f"Error reading pin {pin}: {e}")
-            return None
+    def stop(self):
+        self.logger.info("Stopping Protocol")
+        self.stop_flag.set()
+        self.listen_thread.join()
+        if self.cli_enabled == True:
+            self.command_thread.join()
+        self.conn.close()
 
 def main():
     p = Protocol(port=args.port, baud=args.baud)

@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(
     prog="arduino_comms_test",
     description="To test arduino comms protocol"
 )
-parser.add_argument('-p', '--port', default="/dev/ttyACM0")
+parser.add_argument('-p', '--port', default="/dev/ttyACM1")
 parser.add_argument('-b', '--baud', default=115200)
 args = parser.parse_args()
 
@@ -70,18 +70,13 @@ class Protocol:
         # Thread management
         self.stop_flag = threading.Event()
 
-        # State
-        self.state_buffer = deque(maxlen=10)
-
-        # Config
-        self.cli_enabled: bool = True
-
 
     def listen(self):
         while not self.stop_flag.is_set():
             try:
                 response = self.conn.readline().decode("utf-8")
                 matches = re.findall(r'<(.+?)>', response) # Look for any serial messages that match the <message> format
+                msg_type = ""
                 if not matches:
                     continue
                 response = matches[0]
@@ -93,28 +88,103 @@ class Protocol:
                     msg_type = seps[0]
                     msg = seps[1]
 
-                self.handle_command(msg_type, msg)
+                self._handle_command(msg_type, msg)
             except Exception as e:
                 print(f"Exception listening on serial port {self.port}: {e}")
     
 
-    def handle_command(self, cmd: str, param: str) -> None:
+    def _handle_command(self, cmd: str, param: str) -> None:
+        """Private version of handle command which can parse identity and then passes to callback for handling specific commands."""
         match cmd:
             case "I":
                 print(f"Identity: {cmd}, {param}")
                 self.identity = param.lower()
                 if self.on_identity:
                     self.on_identity(self, self.identity)
-            case "D":
-                self.interpret_shock(param)
-            case "A": 
-                pass
             case _:
-                pass
+                # Pass it to callback
+                self.handle_command(cmd, param)
+        
+
+    def handle_command(self, cmd: str, param: str) -> None:
+        """Callback that allows for additional cmd types to be implemented"""
+        print("Callback not set!")
 
 
     def send_command(self, cmd: str, param: str) -> None:
         self.conn.write(f"<{cmd}:{param}>".encode())
+
+
+    def request_identity(self):
+        self.send_command(MSG_IDENTITY, "")
+
+
+    def start(self):
+        self.logger.info(f"Starting Protocol on {self.port}")
+        self.listen_thread = threading.Thread(target=self.listen)
+        self.listen_thread.start()
+
+
+    def stop(self):
+        self.logger.info("Stopping Protocol")
+        self.stop_flag.set()
+        self.listen_thread.join()
+        self.conn.close()
+
+
+class Motor:
+    def __init__(self, protocol_instance: Protocol):
+        print("Initialising motor...")
+        self.arduino = protocol_instance # The connection to the arduino
+        self.arduino.handle_command = self.handle_command
+
+        self.cli_enabled = True
+
+        # self.state_buffer = deque(maxlen=10) # What state do we want to capture form motor 
+
+
+    def handle_command(self, cmd: str, param: str) -> None:
+        match cmd:
+            case "D":
+                self.interpret_shock(param)
+            case _:
+                print(f"No logic for {cmd}")
+
+
+    def send_command(self, type: str, param):
+        self.arduino.send_command(type, param)
+
+
+    """Motor specific commands"""
+    def interpret_state(self, system_state: list) -> None:
+        # Interpret data sent back from motor
+
+    def set_speed(self, speed: float) -> None:
+
+
+class Shocker:
+    def __init__(self, protocol_instance: Protocol):
+        print("Initialising shocker...")
+        self.arduino = protocol_instance # The connection to the arduino
+        self.arduino.handle_command = self.handle_command
+
+        self.stop_flag = threading.Event()
+
+        self.cli_enabled = True
+
+        self.state_buffer = deque(maxlen=10)
+
+
+    def handle_command(self, cmd: str, param: str) -> None:
+        match cmd:
+            case "D":
+                self.interpret_shock(param)
+            case _:
+                print(f"No logic for {cmd}")
+
+
+    def send_command(self, type: str, param):
+        self.arduino.send_command(type, param)
 
 
     """SHOCK CONTROLLER SPECIFIC COMMANDS"""
@@ -213,10 +283,6 @@ class Protocol:
         return round(current, 3)
 
 
-    def request_identity(self):
-        self.send_command(MSG_IDENTITY, "")
-
-
     def handle_input(self, cmd: str):
         # cmd = int(cmd)
         try:
@@ -239,10 +305,9 @@ class Protocol:
                 case "I":
                     self.request_identity()
                 case _:
-                    self.conn.write(f"<{cmd}>".encode())
+                    self.arduino.conn.write(f"<{cmd}>".encode())
         except Exception as e:
             print(f"Error handling input: {e}")
-
 
     def command_line_interface(self):
         """
@@ -251,7 +316,7 @@ class Protocol:
         Alternatively, a user can send a custom command in the form COMMAND:PARAM e.g. CURRENT:0.5
         """
         try:
-            while True:
+            while not self.stop_flag.is_set():
                 cmd = input()
                 self.handle_input(cmd)
         except KeyboardInterrupt:
@@ -260,30 +325,24 @@ class Protocol:
         except Exception as e:
             print(f"Exception in CLI: {e}")
             self.stop_flag.set()    
-
-
+    
     def start(self):
-        self.logger.info(f"Starting Protocol on {self.port}")
-        self.listen_thread = threading.Thread(target=self.listen)
-        self.listen_thread.start()
-
         if self.cli_enabled == True:
-            self.command_line_interface()
-
+            self.cli_thread = threading.Thread(target=self.command_line_interface).start()
 
     def stop(self):
-        self.logger.info("Stopping Protocol")
-        self.stop_flag.set()
-        self.listen_thread.join()
         if self.cli_enabled == True:
-            self.command_thread.join()
-        self.conn.close()
-
+            self.cli.join()
 
 def handle_identity(protocol_instance: Protocol, identity_str: str) -> None:
-    arduino_ports = {}
-    arduino_ports[identity_str] = protocol_instance
-    print(f"Handle identity called returning {arduino_ports}")
+    print(f"Discovered a {identity_str}")
+    if identity_str == "shock":
+        s = Shocker(protocol_instance)
+        s.start()
+    if identity_str == "motor":
+        pass
+
+        
 
 
 def main():

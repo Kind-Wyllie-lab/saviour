@@ -2,10 +2,17 @@ import threading
 import logging
 from collections import deque
 from protocol import Protocol
+import sys
+import os
+
+# Import SAVIOUR dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from modules.config import Config
 
 class Motor:
-    def __init__(self, protocol_instance: Protocol):
+    def __init__(self, protocol_instance: Protocol, config: Config):
         self.logger = logging.getLogger(__name__)
+        self.config = config
         self.arduino = protocol_instance # The connection to the arduino
         self.arduino.handle_command = self.handle_command
 
@@ -14,7 +21,6 @@ class Motor:
         self.stop_flag = threading.Event()
 
         self.state_buffer = deque(maxlen=10) # What state do we want to capture form motor 0
-
 
 
     def handle_command(self, cmd: str, param: str) -> None:

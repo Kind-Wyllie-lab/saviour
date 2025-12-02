@@ -3,10 +3,17 @@ import logging
 import threading
 from collections import deque
 from protocol import Protocol
+import sys
+import os
+
+# Import SAVIOUR dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from modules.config import Config
 
 class Shocker:
-    def __init__(self, protocol_instance: Protocol):
+    def __init__(self, protocol_instance: Protocol, config: Config):
         self.logger = logging.getLogger(__name__)
+        self.config = config
         self.arduino = protocol_instance # The connection to the arduino
         self.arduino.handle_command = self.handle_command
 
@@ -16,6 +23,9 @@ class Shocker:
 
         self.state_buffer = deque(maxlen=10)
 
+        self.current = 0
+        self.time_on = 0.5
+        self.time_off = 1.5
 
     def handle_command(self, cmd: str, param: str) -> None:
         match cmd:
@@ -30,16 +40,25 @@ class Shocker:
 
 
     """SHOCK CONTROLLER SPECIFIC COMMANDS"""
-    def set_weak_shock(self):
-        self.send_command(MSG_CURRENT, 0.5)    
+    # Set methods
+    def set_shock(self, current: float):
+        if current > 5.1:
+            self.logger.warning(f"Current too high: {current}")
+            return
+        self.send_command(MSG_CURRENT, current)
 
 
-    def set_strong_shock(self):
-        self.send_command(MSG_CURRENT, 1)    
+    def set_time_on(self, time_on: int):
+        self.send_command(MSG_TIME_ON, time_on)
 
 
-    def set_shock_zero(self):
-        self.send_command(MSG_CURRENT, 0)
+    def set_time_off(self, time_off: int):
+        self.send_command(MSG_TIME_OFF, time_off)
+
+
+    # Get methods
+    def get_shock_current(self) -> float:
+        return self.calculate_shock(self.state_buffer[0][0:8])
 
 
     def check_shock_set(self) -> bool:
@@ -50,11 +69,12 @@ class Shocker:
             return False
 
 
-    def run_grid_test(self):
+    def run_grid_test(self) -> bool:
+        """Check if there is a grid short."""
         # Check that shock is set
         if not self.check_shock_set():
             self.logger.info("Cannot run grid test with current set to 0.")
-            return
+            return False, "Cannot run grid test with current set to 0"
         
         # Initiate test by writing to pin
         self.send_command(MSG_WRITE_PIN_LOW, SELF_TEST_OUT)
@@ -66,13 +86,16 @@ class Shocker:
             self.logger.info("No grid short detected")
         elif val == 1:
             self.logger.info("Grid short detected!")
+            return False, "Grid short detected"
         else:
             self.logger.info(f"Something went wrong - pin reads {val}")
+            return False, f"Something went wrong - pin reads {val}"
 
         # Conclude test by putting self test out high again
         self.send_command(MSG_WRITE_PIN_HIGH, SELF_TEST_OUT)
 
         self.logger.info("Grid test complete.")
+        return True, "No grid short detected"
 
 
     def activate_shock(self):
@@ -97,10 +120,6 @@ class Shocker:
         if self_test_out == 0 :
             if sum(shock_settings) == len(shock_settings): # Nothing changed
                 self.logger.info("CANNOT RUN GRID TEST WITHOUT CURRENT BEING SET.")
-            # if self_test_in == 0:
-            #     self.logger.info("No grid short detected")
-            # if self_test_in == 1:
-            #     self.logger.info("Grid short detected")
         elif trigger_out == 0:
             if sum(shock_settings) == len(shock_settings): # Nothing changed
                 self.logger.info("CANNOT DELIVER SHOCKS WITHOUT CURRENT BEING SET.")
@@ -109,9 +128,7 @@ class Shocker:
             if self_test_in == 1:
                 self.logger.info("SHOCK BEING DELIVERED!")
 
-
-        # self.logger.info(f"Self test out: {self_test_out}, self_test_in {self_test_in}, trigger_out {trigger_out}")
-        # self.logger.info(f"Shock val: {calculate_shock(shock_settings)}mA")
+        # TODO: Add callbacks here
 
 
     def calculate_shock(self, shock_settings: list) -> float:

@@ -576,7 +576,6 @@ void parseCommand(String payload) {
     param = payload.substring(firstSep + 1); 
   }
 
-  // sendMessage(cmd, param); // Is this the ack?
   handleCommand(cmd, param);
 }
 
@@ -665,6 +664,15 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
   
+  // Process incoming serial commands
+  listen();
+
+  if(currentTime - lastSentState > sendStatePeriod) {
+    sendState(); // Send RPM and position across serial
+  }
+
+
+  
   // Read encoder and calculate RPM at fixed intervals (5Hz)
   // This prevents noise amplification from too-frequent readings
   if (currentTime - lastMonitoringTime >= MONITORING_INTERVAL) {
@@ -692,12 +700,5 @@ void loop() {
   // Separate timing from encoder readings for stability
   if (currentTime - lastPidTime >= PID_INTERVAL) {
     applyPID();
-  }
-  
-  // Process incoming serial commands
-  listen();
-
-  if(millis() - lastSentState > sendStatePeriod) {
-    sendState(); // Send RPM and position across serial
   }
 }

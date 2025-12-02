@@ -101,6 +101,10 @@ class Protocol:
                 self._handle_command(msg_type, msg)
             except Exception as e:
                 print(f"Exception listening on serial port {self.port}: {e}")
+
+    
+    def reset_serial(self):
+        self.conn.close()
     
 
     def _handle_command(self, cmd: str, param: str) -> None:
@@ -188,6 +192,10 @@ class Motor:
         self.send_command(MSG_STOP_MOTOR, "")
 
 
+    def get_speed(self) -> float: 
+        return self.state_buffer[0][0]
+
+
     def handle_input(self, cmd: str):
         # cmd = int(cmd)
         try:
@@ -202,6 +210,8 @@ class Motor:
                     self.start_motor()
                 case "3":
                     self.stop_motor()
+                case "4":
+                    print(f"Current speed: {self.get_speed()}rpm")
                 case _:
                     self.arduino.conn.write(f"<{cmd}>".encode())
         except Exception as e:

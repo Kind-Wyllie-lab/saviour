@@ -76,6 +76,7 @@ const double INTEGRAL_LIMIT = 500;   // Anti-windup limit
 // PID control state
 bool pidEnabled = true;              // Whether PID control is active
 bool debugMode = false;              // New: Whether to show debug output in any mode
+bool motorRunning = false;
 
 // PID timing control
 unsigned long lastPidTime = 0;       // Last PID calculation time
@@ -191,6 +192,9 @@ void cleanup();
  */
 void applyPID() {
   // Skip PID if disabled or setpoint is zero
+  if (!motorRunning) {
+    return;
+  }
   if (!pidEnabled || rpmSetpoint == 0) {
     return;
   }
@@ -578,6 +582,8 @@ void parseCommand(String payload) {
 
 
 
+
+
 /**
  * Send a formatted response message over serial
  * 
@@ -606,7 +612,7 @@ void cleanup() {
 
 // STATE
 void sendState() {
-  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition);
+  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition) + "," + String(rpmSetpoint);
   sendMessage(MSG_DATA, stateMessage);
   lastSentState = millis();
 }

@@ -6,51 +6,45 @@
  */
 void handleCommand(String command, String param) {
   // =============================================================================
-  // PARSE COMMAND
-  // =============================================================================
-  // command = command.toUpperCase();
-
-  // =============================================================================
   // SPEED CONTROL COMMANDS
   // =============================================================================
-
-  // sendMessage("DEBUG",  ("Command=" + String(command) + ", Param=" + String(param)).c_str());
 
   if (command == MSG_SET_SPEED) {
     // Handle set current
     if (param == "NONE") {
       sendMessage(MSG_ERROR, "No param given");
     } else {
-      float rpmSetpoint = param.toDouble();
-      if (rpmSetpoint > 0) {
-        // Enable PID control with new setpoint
-        pidEnabled = true;
-        // Re-enable motor drivers (they may have been disabled during stop)
-        md.enableDrivers();
-        delay(1); // Required delay when bringing drivers out of sleep mode
-        // Only reset PID terms if this is a new setpoint (not just re-enabling)
-        if (abs(rpmSetpoint - rpmCurrent) > 0.5) {
-          integral = 0;
-          rpmErrorLast = 0;
-          lastPidTime = millis(); // Reset PID timing
-        }
-        // Send success message?
-      } else {
+      rpmSetpoint = param.toDouble();
+      if (rpmSetpoint == 0) {
         // Disable PID and stop motor
         pidEnabled = false;
         setSpeedSmoothly(0);
-        // Send success message?
-        // sendMessage(MSG_SUCCESS, "PID disabled, motor stopping");
-        }
+      }
     }
   }
 
   else if (command == MSG_START_MOTOR) {
-
+    if (rpmSetpoint > 0) {
+      // Enable PID control with new setpoint
+      pidEnabled = true;
+      motorRunning = true;
+      // Re-enable motor drivers (they may have been disabled during stop)
+      md.enableDrivers();
+      delay(1); // Required delay when bringing drivers out of sleep mode
+      // Only reset PID terms if this is a new setpoint (not just re-enabling)
+      if (abs(rpmSetpoint - rpmCurrent) > 0.5) {
+        integral = 0;
+        rpmErrorLast = 0;
+        lastPidTime = millis(); // Reset PID timing
+      }
+    } else {
+      sendMessage(MSG_ERROR, "rpmSetpoint=0");
+    }
   }
 
   else if (command == MSG_STOP_MOTOR) {
     pidEnabled = false;
+    motorRunning = false;
     setSpeedSmoothly(0);
   }
 
@@ -58,31 +52,12 @@ void handleCommand(String command, String param) {
   // =============================================================================
   // MOTOR CONFIGURATION COMMANDS
   // =============================================================================
+
   
-  // else if (command == "FLIP_MOTOR") {
-  // // Flip motor direction
-  //   if (param == "NONE") {
-  //     flipMotor(1);
-  //     sendMessage(MSG_SUCCESS,  "Motor Flipped (1)");
-  //   } else {
-  //     bool flip_direction = param.toInt();
-  //     flipMotor(flip_direction);
-  //     sendMessage(MSG_SUCCESS,  ("Motor flipped (" + String(flip_direction) + ")").c_str());
-  //   }
-  // }
 
   // =============================================================================
   // STATUS AND MONITORING COMMANDS
   // =============================================================================
-
-  else if (command == "READ_ENCODER") {
-    // Return current encoder position and RPM
-    String response = "Raw:" + String(encoderReading) + 
-                     ",Position:" + String(encoderPosition, 2) + "deg" +
-                     ",RPM:" + String(rpmCurrent, 2);
-    sendMessage(MSG_SUCCESS,  response.c_str());
-      }
-  
   else if (command == "PID_STATUS") {
     // Return current PID status and values for debugging
     String response = "SetpointRPM:" + String(rpmSetpoint, 2) + 

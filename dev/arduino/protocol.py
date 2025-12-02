@@ -28,9 +28,16 @@ MSG_IDENTITY = "I"
 MSG_DATA = "D"
 MSG_WRITE_PIN_HIGH = "H"
 MSG_WRITE_PIN_LOW = "L"
+
+# SHOCK COMMANDS
 MSG_CURRENT = "C"
 MSG_TIME_ON = "T"
 MSG_TIME_OFF = "Y"
+
+# MOTOR COMMANDS
+MSG_SET_SPEED = "S"
+MSG_START_MOTOR = "M"
+MSG_STOP_MOTOR = "N"
 
 PIN_MAP = [17, 16, 15, 14, 4, 5, 6, 7, 12, 2, 9] 
 SHOCK_VALS = [0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56] # Mapping for the shocker
@@ -70,6 +77,9 @@ class Protocol:
         # Thread management
         self.stop_flag = threading.Event()
 
+        # Get identity
+        self.send_command(MSG_IDENTITY, "")
+
 
     def listen(self):
         while not self.stop_flag.is_set():
@@ -108,7 +118,7 @@ class Protocol:
 
     def handle_command(self, cmd: str, param: str) -> None:
         """Callback that allows for additional cmd types to be implemented"""
-        print("Callback not set!")
+        self.send_command(MSG_IDENTITY, "")
 
 
     def send_command(self, cmd: str, param: str) -> None:
@@ -140,7 +150,10 @@ class Motor:
 
         self.cli_enabled = True
 
-        # self.state_buffer = deque(maxlen=10) # What state do we want to capture form motor 
+        self.stop_flag = threading.Event()
+
+        self.state_buffer = deque(maxlen=10) # What state do we want to capture form motor 0
+
 
 
     def handle_command(self, cmd: str, param: str) -> None:
@@ -158,10 +171,69 @@ class Motor:
     """Motor specific commands"""
     def interpret_state(self, system_state) -> None:
         # Interpret data sent back from motor
-        print(f"Interpret state received {system_state} with type {type(system_state)}")
+        # print(f"Interpret state received {system_state} with type {type(system_state)}")
+        system_state = system_state.split(",")
+        self.state_buffer.append(system_state)
+
 
     def set_speed(self, speed: float) -> None:
-        pass
+        self.send_command(MSG_SET_SPEED, speed)
+
+
+    def start_motor(self) -> None:
+        self.send_command(MSG_START_MOTOR, "")
+    
+
+    def stop_motor(self) -> None:
+        self.send_command(MSG_STOP_MOTOR, "")
+
+
+    def handle_input(self, cmd: str):
+        # cmd = int(cmd)
+        try:
+            match cmd:
+                case "0": 
+                    # print(state_buffer)
+                    # print(f"RPM={self.state_buffer[0][0]}, position={self.state_buffer[0][1]}deg")
+                    print(self.state_buffer[0])
+                case "1": 
+                    self.set_speed(2.0)
+                case "2":
+                    self.start_motor()
+                case "3":
+                    self.stop_motor()
+                case _:
+                    self.arduino.conn.write(f"<{cmd}>".encode())
+        except Exception as e:
+            print(f"Error handling input: {e}")
+
+
+    def command_line_interface(self):
+        """
+        A set of CLI commands for a user running this program, protocol.py.
+        A user can enter a single char, which will be matched against some options.
+        Alternatively, a user can send a custom command in the form COMMAND:PARAM e.g. CURRENT:0.5
+        """
+        try:
+            while not self.stop_flag.is_set():
+                cmd = input()
+                self.handle_input(cmd)
+        except KeyboardInterrupt:
+            print("Shutting down CLI")
+            self.stop_flag.set()
+        except Exception as e:
+            print(f"Exception in CLI: {e}")
+            self.stop_flag.set()    
+    
+
+    def start(self):
+        if self.cli_enabled == True:
+            self.cli_thread = threading.Thread(target=self.command_line_interface).start()
+
+
+    def stop(self):
+        if self.cli_enabled == True:
+            self.cli.join()
 
 
 class Shocker:
@@ -339,11 +411,16 @@ class Shocker:
 def handle_identity(protocol_instance: Protocol, identity_str: str) -> None:
     print(f"Discovered a {identity_str}")
     if identity_str == "shock":
+        print("Identified a shocker")
         s = Shocker(protocol_instance)
         s.start()
-    if identity_str == "motor":
+
+    elif identity_str == "motor":
+        print("Identified a motor")
         m = Motor(protocol_instance)
         m.start()
+    else:
+        print(f"Unknown arduino: {identity_str}")
 
         
 

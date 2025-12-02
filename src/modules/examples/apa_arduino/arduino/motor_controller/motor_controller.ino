@@ -77,6 +77,7 @@ const double INTEGRAL_LIMIT = 500;   // Anti-windup limit
 bool pidEnabled = true;              // Whether PID control is active
 bool debugMode = false;              // New: Whether to show debug output in any mode
 bool motorRunning = false;
+bool sendResponseFlag = false;
 
 // PID timing control
 unsigned long lastPidTime = 0;       // Last PID calculation time
@@ -317,7 +318,7 @@ void flipMotor(bool flip_direction) {
  * @param speed Target motor speed (-400 to 400)
  */
 void setSpeedSmoothly(int speed) {
-  setSpeedSmoothly(speed, true); // Default to sending response
+  setSpeedSmoothly(speed, false); // Default to sending response
 }
 
 /**
@@ -649,6 +650,7 @@ void setup() {
   }
 
   // Send identity and ready message to host
+  delay(500); // Add some delay to prevent  Exception listening on serial port /dev/ttyACM0: 'utf-8' codec can't decode byte 0xfe in position 12: invalid start byte
   sendMessage(MSG_IDENTITY, SYSTEM_ID); // Send identity on startup
 }
 

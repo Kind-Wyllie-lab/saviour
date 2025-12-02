@@ -17,8 +17,8 @@ import time
 import json
 import threading
 import csv
-import shutil
 from datetime import datetime
+import serial.tools.list_ports
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,7 +26,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, command, check
-from arduino_manager import ArduinoManager
+from protocol import Protocol
+from motor import Motor
+from shock import Shocker
 
 class APAModule(Module):
     def __init__(self, module_type="apa_arduino"):
@@ -35,7 +37,18 @@ class APAModule(Module):
         # Update config 
         self.config.load_module_config("apa_arduino_config.json")
 
-        self.arduino_manager = ArduinoManager(config=self.config)
+        # List of arduino types we expect to find
+        self.arduino_types = ["motor_arduino", "shock_arduino"]
+        
+        # Store found arduinos and their ports
+        self.arduino_ports: Dict[str, str] = {}  # Maps arduino_type to port
+        self.connected_arduinos: Dict[str, Protocol] = {} # Maps arduino_type to a Protocol which implements a protocol around a serial connection
+
+        self.motor = None
+        self.shock = None
+
+        # Find all arduinos
+        self._find_arduino_ports()
 
         # Recording-specific variables
         self.recording_thread = None
@@ -47,7 +60,6 @@ class APAModule(Module):
         self.data_sampling_rate = 1  # Hz - how often to sample motor data
 
         self.module_checks = [
-            self._check_arduino_managers,
             self._check_motor,
             self._check_shocker,
             self._check_shock_grid_fault
@@ -60,15 +72,72 @@ class APAModule(Module):
 
         self.command.set_commands(self.apa_arduino_commands)
     
+
+    """Arduino Discovery methods"""
+    def _initialize_arduino(self, arduino_type: str, protocol_instance: Protocol) -> None:
+        """Initialize the specified arduino"""
+        self.logger.info(f"Initializing {arduino_type}")
+        if arduino_type.lower() == "motor": # TODO: Use an ENUM for type? Maybe rename it arduino_role as well?
+            self.motor = Motor(protocol_instance, self.config)
+            self.motor.start()
+                
+        if arduino_type.lower() == "shock": 
+            self.shock = Shocker(protocol_instance, self.config)
+            self.shock.start()
+
+
+    def _find_arduino_ports(self):
+        self.logger.info("Searching for connected Arduino.")
+        available_ports = self._get_available_ports()
+        if not available_ports:
+            self.logger.info("No serial ports found!")
+            return
+        available_ports = self._validate_available_ports(available_ports) # Validate that ports begin with ttyACM
+        for port_info in available_ports:
+            self._test_port_identity(port_info)
+
+
+    def _get_available_ports(self) -> list:
+        """Return the available serial ports."""
+        return list(serial.tools.list_ports.comports())
+                
+
+    def _validate_available_ports(self, ports: list) -> list:
+        """Remove any ports that do not begin with /dev/ttyACM"""
+        for port in ports:
+            self.logger.info(f"  - {port.device}: {port.description}")
+            if not port.device.startswith("/dev/ttyACM"):
+                self.logger.info(f"Removing port {port} as it does not match format /dev/ttyACM")
+                ports.remove(port)
+        return ports
+
+
+    def _test_port_identity(self, port_info) -> None:
+        """Create a protocol object to find identity of arduino"""
+        self.logger.info(f"Checking {port_info} for an Arduino")
+        test_protocol = Protocol(port=port_info.device, on_identity=self.handle_identity).start()
+
+            
+    def handle_identity(self, protocol: Protocol, identity: str) -> None:
+        """
+        Callback to be registered with a Protocol object. 
+        Once identity has been discovered, return it here.
+        """
+        self.logger.info(f"{identity} found on {protocol.port}")
+        self.arduino_ports[identity] = protocol.port
+        self.connected_arduinos[identity] = protocol
+        self._initialize_arduino(identity, protocol)
+        self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
+
     def _activate_shock(self):
-        result = self.arduino_manager.shock.send_shock()
+        result = self.shock.send_shock()
         return result
 
     # Create fault-tolerant wrapper functions for Arduino operations
     def _safe_stop_shock(self):
         self.logger.info(f"safe_stop_shock called, is_recording: {self.is_recording}")
         
-        if self.arduino_manager and self.arduino_manager.shock:
+        if self.shock:
             # Record the stop_shock event if we're recording
             if self.is_recording:
                 try:
@@ -80,7 +149,7 @@ class APAModule(Module):
                         'elapsed_time': elapsed_time,
                         'event_type': 'stop_shock',
                         'rpm': self._get_current_rpm(),  # Get actual measured RPM
-                        'encoder_position': self._get_current_encoder_position() if self.arduino_manager.motor else None
+                        'encoder_position': self._get_current_encoder_position() if self.motor else None
                     }
                     
                     self.shock_stop_events.append(stop_event)
@@ -91,7 +160,7 @@ class APAModule(Module):
             else:
                 self.logger.warning(f"Not recording, so not recording stop shock event")
             
-            result = self.arduino_manager.shock.stop()
+            result = self.shock.stop()
             self.logger.info(f"Arduino stop_shock result: {result}")
             return result
         else:
@@ -99,18 +168,18 @@ class APAModule(Module):
             return "error", "Shock controller not available"
 
     def safe_motor_control(self, params):
-        if self.arduino_manager and self.arduino_manager.motor:
-            return self.arduino_manager.motor.set_speed(params["speed"])
+        if self.motor:
+            return self.motor.set_speed(params["speed"])
         else:
             self.logger.warning("Motor controller not available")
             return "error", "Motor controller not available"
 
     def safe_stop_motor(self):
         """Safely stop the motor with verification"""
-        if self.arduino_manager and self.arduino_manager.motor:
+        if self.motor:
             try:
                 self.logger.info("(APA ARDUINO MODULE) Executing safe_stop_motor")
-                status, message = self.arduino_manager.motor.stop_motor()
+                status, message = self.motor.stop_motor()
                 self.logger.info(f"(APA ARDUINO MODULE) Motor stop command result: {status} - {message}")
                 
                 # Verify the command was sent successfully
@@ -129,24 +198,11 @@ class APAModule(Module):
             self.logger.warning("Motor controller not available")
             return "error", "Motor controller not available"
 
-    def safe_pid_status(self):
-        if self.arduino_manager and self.arduino_manager.motor:
-            return self.arduino_manager.motor.pid_status()
-        else:
-            self.logger.warning("Motor controller not available")
-            return "error", "Motor controller not available"
-
-    def safe_read_encoder(self):
-        if self.arduino_manager and self.arduino_manager.motor:
-            return self.arduino_manager.motor.read_encoder()
-        else:
-            self.logger.warning("Motor controller not available")
-            return "error", "Motor controller not available"
 
     def cleanup(self):
         """Clean up resources"""
-        if hasattr(self, 'arduino_manager'):
-            self.arduino_manager.cleanup()
+        # TODO: close serial connections?
+
         self.logger.info("APA system shutdown complete")
 
 
@@ -165,32 +221,28 @@ class APAModule(Module):
         else:
             return True, "No implementation yet..."
 
-    @check()
-    def _check_arduino_managers(self) -> tuple[bool, str]:
-        if not hasattr(self, 'arduino_manager') or not self.arduino_manager:
-            return False, "No arduino manager found"
-        else:
-            return True, "Arduino manager found"
 
     @check()
     def _check_motor(self) -> tuple[bool, str]:
-        if not self.arduino_manager.motor:
+        if not self.motor:
             return False, "No motor found"
         else:
             return True, "Motor connected"
     
+
     @check()
     def _check_shocker(self) -> tuple[bool, str]:
-        if not self.arduino_manager.shock:
+        if not self.shock:
             return False, "No shocker found"
         else:
             return True, "Shocker connected" 
+
 
     @check()
     def _check_shock_grid_fault(self) -> tuple[bool, str]:
         try:
             t0 = time.time()
-            status, message = self.arduino_manager.shock.test_grid_fault()
+            status, message = self.shock.run_grid_test()
             self.logger.info(f"Shock grid test completed in {time.time() - t0}s")
             if status == True:
                 return True, "No grid fault detected"
@@ -199,30 +251,6 @@ class APAModule(Module):
 
         except Exception as e:
             return False, f"Error checking grid fault: {e}"
-
-
-    @check()
-    def _check_motor_comms(self) -> tuple[bool, str]:
-        try:
-            status, message = self.arduino_manager.motor.read_encoder()
-            if status == "OK":
-                return True, message
-            else:
-                return False, message
-        except Exception as e:
-            return False,  f"Motor communication error: {str(e)}"
-
-
-    @check()
-    def _check_shocker_comms(self) -> tuple[bool, str]:
-        try:
-            status, message = self.arduino_manager.shock.get_verification_stats()
-            if status == "OK":
-                return True, message
-            else:
-                return False, message
-        except Exception as e:
-            return False,  f"Motor communication error: {str(e)}"
             
 
     def _start_recording(self):
@@ -236,7 +264,7 @@ class APAModule(Module):
             self.logger.info(f"Starting motor at preset speed: {preset_speed}")
             
             # Check if motor controller is available
-            if not self.arduino_manager or not self.arduino_manager.motor:
+            if not self.motor:
                 self.logger.warning("Motor controller not available")
                 self.communication.send_status({
                 "type": "recording_start_failed",
@@ -244,7 +272,7 @@ class APAModule(Module):
             })
                 return False
             
-            status, message = self.arduino_manager.motor.set_speed(preset_speed)
+            status, message = self.motor.set_speed(preset_speed)
             if status != "OK":
                 self.logger.error(f"Failed to start motor: {message}")
                 self.communication.send_status({
@@ -259,7 +287,7 @@ class APAModule(Module):
             
             # Check if encoder is reading movement
             try:
-                encoder_status, encoder_message = self.arduino_manager.motor.read_encoder()
+                encoder_status, encoder_message = self.motor.read_encoder()
                 self.logger.info(f"Initial encoder reading: {encoder_message}")
             except Exception as e:
                 self.logger.warning(f"Could not read encoder for motor verification: {e}")
@@ -300,13 +328,14 @@ class APAModule(Module):
             })
             return False
 
+
     def _stop_recording(self) -> bool:
         """Stop APA recording and save data"""       
         try:
             # Stop motor
             self.logger.info("Stopping motor")
-            if self.arduino_manager and self.arduino_manager.motor:
-                self.arduino_manager.motor.stop_motor()
+            if self.motor:
+                self.motor.stop_motor()
             else:
                 self.logger.warning("Motor controller not available for stopping")
             
@@ -354,8 +383,29 @@ class APAModule(Module):
 
     
     def configure_module(self):
-        pass
+        self.logger.info("Configuring APA ARDUINO module...")
+        # Configure shocker
+        if self.shock:
+            # TODO: Consider passing through config object to motor and shock objects so they can handle this
+            current_ma = self.config.get("shocker.current")
+            self.shock.set_shock(current_ma)
+            time.sleep(0.1) # small delay between sending commands
+            self.logger.info(f"Set current to {current_ma}, actual setpoint {self.shock.get_shock_current()}")
 
+            time_on = self.config.get("shocker.duration")
+            self.shock.set_time_on(time_on)
+
+            time_off = self.config.get("shocker.intershock_latency")
+            self.shock.set_time_off(time_off)
+        else:
+            self.logger.warning("Configure module called with no discovered shocker.")
+
+        if self.motor:
+            # Configure motor
+            motor_speed = self.config.get("motor.motor_speed_rpm")
+            self.motor.set_speed(motor_speed)
+        else:
+            self.logger.warning("Configure module called with no discovered shocker.")
 
     def _record_data_loop(self):
         """Background thread to continuously record motor data"""
@@ -368,9 +418,9 @@ class APAModule(Module):
                 elapsed_time = timestamp - self.recording_start_time
                 
                 # Read motor data
-                if self.arduino_manager and self.arduino_manager.motor:
-                    encoder_status, encoder_message = self.arduino_manager.motor.read_encoder()
-                    pid_status, pid_message = self.arduino_manager.motor.pid_status()
+                if self.motor:
+                    encoder_status, encoder_message = self.motor.read_encoder()
+                    pid_status, pid_message = self.motor.pid_status()
                 else:
                     # If motor controller not available, use placeholder data
                     encoder_status, encoder_message = "error", "Motor controller not available"
@@ -481,14 +531,14 @@ class APAModule(Module):
             self.logger.info(f"Shock event recorded: {shock_params}")
             
             # Check if shock controller is available
-            if not self.arduino_manager or not self.arduino_manager.shock:
+            if not self.shock:
                 self.logger.warning("Shock controller not available")
                 return "error", "Shock controller not available"
             
             # Start monitoring for shock verification
             # self._start_shock_verification_monitoring(shock_event)
             
-            return self.arduino_manager.shock.send_shock(shock_params)
+            return self.shock.send_shock(shock_params)
         except Exception as e:
             self.logger.error(f"Error recording shock event: {e}")
             return "error", str(e)
@@ -498,12 +548,12 @@ class APAModule(Module):
         def monitor_verification():
             try:
                 # Check if shock controller is available
-                if not self.arduino_manager or not self.arduino_manager.shock:
+                if not self.shock:
                     self.logger.warning("Shock controller not available for verification monitoring")
                     return
                 
                 # Query Arduino for verification status
-                status, message = self.arduino_manager.shock.get_verification_stats()
+                status, message = self.shock.get_verification_stats()
                 if status == "success":
                     # Parse verification data from Arduino response
                     verification_data = self._parse_verification_response(message)
@@ -814,8 +864,8 @@ class APAModule(Module):
     def _get_current_rpm(self):
         """Get the current measured RPM from the motor controller"""
         try:
-            if self.arduino_manager and self.arduino_manager.motor:
-                status, message = self.arduino_manager.motor.read_encoder()
+            if self.motor:
+                status, message = self.motor.read_encoder()
                 self.logger.debug(f"Raw encoder response: status={status}, message={message}")
                 
                 if status == "OK":
@@ -848,8 +898,8 @@ class APAModule(Module):
     def _get_current_encoder_position(self):
         """Get the current encoder position from the motor controller"""
         try:
-            if self.arduino_manager and self.arduino_manager.motor:
-                status, message = self.arduino_manager.motor.read_encoder()
+            if self.motor:
+                status, message = self.motor.read_encoder()
                 if status == "OK":
                     # Parse position from encoder message (assuming format like "Raw:327,Position:115.07deg,RPM: -0.03")
                     if "Position: " in message:
@@ -918,7 +968,7 @@ class APAModule(Module):
         super().set_config(new_config, persist)
 
         self.logger.info(f"Attempting to update shock parameters")
-        self.arduino_manager.shock.set_parameters()
+        self.shock.set_parameters()
 
 if __name__ == "__main__":
     apa = APAModule()

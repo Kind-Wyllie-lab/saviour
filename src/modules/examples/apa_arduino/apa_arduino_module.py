@@ -266,7 +266,7 @@ class APAModule(Module):
         """Start APA recording - motor rotation and data collection"""      
         try:
             # Get preset motor speed from config
-            preset_speed = self.config.get("arduino.motor_speed_rpm", 2)
+            preset_speed = self.config.get("motor.motor_speed_rpm", 2)
             self.motor_speed = preset_speed
             
             # Start motor rotation at preset speed
@@ -391,10 +391,11 @@ class APAModule(Module):
             return False
 
     
-    def configure_module(self):
+    def configure_module(self, updated_keys: Optional[list[str]]):
         self.logger.info("Configuring APA ARDUINO module...")
         self.shock.configure_shocker()
         self.motor.configure_motor()
+
 
     def _record_data_loop(self):
         """Background thread to continuously record motor data"""
@@ -952,12 +953,7 @@ class APAModule(Module):
         except Exception as e:
             self.logger.error(f"Export error: {e}")
             return False
-    
-    def set_config(self, new_config: dict, persist: bool = False) -> bool:
-        super().set_config(new_config, persist)
 
-        self.logger.info(f"Attempting to update shock parameters")
-        self.shock.set_parameters()
 
 if __name__ == "__main__":
     apa = APAModule()

@@ -1,21 +1,23 @@
 {
-    "baudrate": {"value": 115200, "editable": "False"},
-    "motor": {
-        "_max_motor_speed": 400,
-        "_min_motor_speed": -400,
-        "_manual_motor_speed_for_2rpm": 95,
-        "motor_speed_rpm": 2,
-        "_motor_speed_delay": 2,
-        "_encoder_pin": "A2"
-    },
-    "shocker": {
-        "_max_current": 5.1,
-        "_current_step": 0.2,
-        "current": 0.2,
-        "duration": 0.5,
-        "intershock_latency": 1,
-        "entrance_latency": 1.5,
-        "outside_latency": 0.1,
-        "_max_shocks": 50
+    "arduino": {
+        "baudrate": {"value": 115200, "editable": "False"},
+        "motor": {
+            "_max_motor_speed": 400,
+            "_min_motor_speed": -400,
+            "_manual_motor_speed_for_2rpm": 95,
+            "motor_speed_rpm": 2,
+            "_motor_speed_delay": 2,
+            "_encoder_pin": "A2"
+        },
+        "shocker": {
+            "_max_current": 5.1,
+            "_current_step": 0.2,
+            "current": 0.5,
+            "duration": 0.5,
+            "intershock_latency": 1,
+            "entrance_latency": 1.5,
+            "outside_latency": 0.1,
+            "_max_shocks": 50
+        }
     }
 }

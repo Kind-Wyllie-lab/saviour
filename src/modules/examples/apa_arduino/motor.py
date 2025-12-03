@@ -4,10 +4,22 @@ from collections import deque
 from protocol import Protocol
 import sys
 import os
+import time
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.config import Config
+
+# PROTOCOL
+MSG_IDENTITY = "I"
+MSG_DATA = "D"
+MSG_WRITE_PIN_HIGH = "H"
+MSG_WRITE_PIN_LOW = "L"
+
+# MOTOR COMMANDS
+MSG_SET_SPEED = "S"
+MSG_START_MOTOR = "M"
+MSG_STOP_MOTOR = "N"
 
 class Motor:
     def __init__(self, protocol_instance: Protocol, config: Config):
@@ -22,7 +34,12 @@ class Motor:
 
         self.state_buffer = deque(maxlen=10) # What state do we want to capture form motor 0
 
+        self.speed = None
 
+        self.configure_motor()
+
+
+    """Communication"""
     def handle_command(self, cmd: str, param: str) -> None:
         match cmd:
             case "D":
@@ -34,6 +51,12 @@ class Motor:
     def send_command(self, type: str, param):
         self.arduino.send_command(type, param)
 
+
+    """Configure Motor"""
+    def configure_motor(self):
+        # Set target speed
+        self.speed = self.config.get("motor.motor_speed_rpm")
+        self.send_command(MSG_SET_SPEED, self.speed)
 
     """Motor specific commands"""
     def interpret_state(self, system_state) -> None:

@@ -67,7 +67,7 @@ class APAModule(Module):
 
         self.apa_arduino_commands = {
             "activate_shock": self._activate_shock,
-            "deactivate_shock": self._safe_stop_shock
+            "deactivate_shock": self._deactivate_shock
         }
 
         self.command.set_commands(self.apa_arduino_commands)
@@ -85,6 +85,12 @@ class APAModule(Module):
             self.shock = Shocker(protocol_instance, self.config)
             self.shock.start()
 
+        if self.motor and self.shock:
+            self.handle_system_ready()
+
+    def handle_system_ready(self):
+        """Called when both arduino are discovered."""
+        self.configure_module()
 
     def _find_arduino_ports(self):
         self.logger.info("Searching for connected Arduino.")
@@ -130,8 +136,11 @@ class APAModule(Module):
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
 
     def _activate_shock(self):
-        result = self.shock.send_shock()
+        result = self.shock.activate_shock()
         return result
+    
+    def _deactivate_shock(self):
+        self.shock.deactivate_shock()
 
     # Create fault-tolerant wrapper functions for Arduino operations
     def _safe_stop_shock(self):
@@ -384,28 +393,8 @@ class APAModule(Module):
     
     def configure_module(self):
         self.logger.info("Configuring APA ARDUINO module...")
-        # Configure shocker
-        if self.shock:
-            # TODO: Consider passing through config object to motor and shock objects so they can handle this
-            current_ma = self.config.get("shocker.current")
-            self.shock.set_shock(current_ma)
-            time.sleep(0.1) # small delay between sending commands
-            self.logger.info(f"Set current to {current_ma}, actual setpoint {self.shock.get_shock_current()}")
-
-            time_on = self.config.get("shocker.duration")
-            self.shock.set_time_on(time_on)
-
-            time_off = self.config.get("shocker.intershock_latency")
-            self.shock.set_time_off(time_off)
-        else:
-            self.logger.warning("Configure module called with no discovered shocker.")
-
-        if self.motor:
-            # Configure motor
-            motor_speed = self.config.get("motor.motor_speed_rpm")
-            self.motor.set_speed(motor_speed)
-        else:
-            self.logger.warning("Configure module called with no discovered shocker.")
+        self.shock.configure_shocker()
+        self.motor.configure_motor()
 
     def _record_data_loop(self):
         """Background thread to continuously record motor data"""

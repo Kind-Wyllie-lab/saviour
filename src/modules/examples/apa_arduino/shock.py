@@ -5,10 +5,30 @@ from collections import deque
 from protocol import Protocol
 import sys
 import os
+import time
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.config import Config
+
+# SHOCK COMMANDS
+MSG_CURRENT = "C"
+MSG_TIME_ON = "T"
+MSG_TIME_OFF = "Y"
+
+# PROTOCOL
+MSG_IDENTITY = "I"
+MSG_DATA = "D"
+MSG_WRITE_PIN_HIGH = "H"
+MSG_WRITE_PIN_LOW = "L"
+
+# Shock pnout etc
+PIN_MAP = [17, 16, 15, 14, 4, 5, 6, 7, 12, 2, 9] 
+SHOCK_VALS = [0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56] # Mapping for the shocker
+SHOCK_PINS = [17, 16, 15, 14, 4, 5, 6, 7]
+SELF_TEST_OUT = 12
+SELF_TEST_IN = 2
+TRIGGER_OUT = 9
 
 class Shocker:
     def __init__(self, protocol_instance: Protocol, config: Config):
@@ -27,6 +47,10 @@ class Shocker:
         self.time_on = 0.5
         self.time_off = 1.5
 
+        self.configure_shocker()
+
+
+    """Comms related commands"""
     def handle_command(self, cmd: str, param: str) -> None:
         match cmd:
             case "D":
@@ -37,6 +61,26 @@ class Shocker:
 
     def send_command(self, type: str, param):
         self.arduino.send_command(type, param)
+
+
+    """Configuration"""
+    def configure_shocker(self):
+        # Set current from config
+        self.current = self.config.get("shocker.current")
+        self.set_shock(self.current)
+        time.sleep(0.1) # small delay between sending commands
+
+        # self.logger.info(f"Set current to {self.current}, actual setpoint {self.get_shock_current()}")
+
+        # Set time_on from config
+        self.time_on = self.config.get("shocker.duration")
+        self.set_time_on(self.time_on)
+        time.sleep(0.1)
+
+        # Set time_off from config
+        self.time_off = self.config.get("shocker.intershock_latency")
+        self.set_time_off(self.time_off)    
+
 
 
     """SHOCK CONTROLLER SPECIFIC COMMANDS"""
@@ -86,9 +130,13 @@ class Shocker:
             self.logger.info("No grid short detected")
         elif val == 1:
             self.logger.info("Grid short detected!")
+            # Conclude test by putting self test out high again
+            self.send_command(MSG_WRITE_PIN_HIGH, SELF_TEST_OUT)
             return False, "Grid short detected"
         else:
             self.logger.info(f"Something went wrong - pin reads {val}")
+            # Conclude test by putting self test out high again
+            self.send_command(MSG_WRITE_PIN_HIGH, SELF_TEST_OUT)
             return False, f"Something went wrong - pin reads {val}"
 
         # Conclude test by putting self test out high again
@@ -101,8 +149,9 @@ class Shocker:
     def activate_shock(self):
         if not self.check_shock_set():
             self.logger.info("Cannot activate shock with current set to 0.")
-            return
+            return False
         self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
+        return True
 
 
     def deactivate_shock(self):

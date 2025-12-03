@@ -71,10 +71,12 @@ class Motor:
 
 
     def start_motor(self) -> None:
+        self.logger.info("Starting motor")
         self.send_command(MSG_START_MOTOR, "")
     
 
     def stop_motor(self) -> None:
+        self.logger.info("Stopping motor")
         self.send_command(MSG_STOP_MOTOR, "")
 
 

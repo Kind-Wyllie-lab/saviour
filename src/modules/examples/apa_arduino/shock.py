@@ -44,8 +44,11 @@ class Shocker:
         self.state_buffer = deque(maxlen=10)
 
         self.current = 0
+        self.current_from_arduino = None
         self.time_on = 0.5
+        self.time_on_from_arduino = None
         self.time_off = 1.5
+        self.time_off_from_arduino = None
 
         self.configure_shocker()
 
@@ -165,6 +168,11 @@ class Shocker:
         self_test_out = int(state[8])
         self_test_in = int(state[9])
         trigger_out = int(state[10])
+        self.current_from_arduino = float(self.calculate_shock(shock_settings))
+        self.time_on_from_arduino = float(state[11])
+        self.time_off_from_arduino = float(state[12])
+
+        self.validate_state()
 
         if self_test_out == 0 :
             if sum(shock_settings) == len(shock_settings): # Nothing changed
@@ -179,6 +187,23 @@ class Shocker:
 
         # TODO: Add callbacks here
 
+
+    def validate_state(self):
+        valid = True
+        if self.current != self.current_from_arduino:
+            self.logger.warning(f"Current set to {self.current}mA, Arduino reports {self.current_from_arduino}mA")
+            valid = False
+
+        if self.time_on != self.time_on_from_arduino/1000:
+            self.logger.warning(f"Time_on set to {self.time_on}s, Arduino reports {self.time_on_from_arduino}s")
+            valid = False
+
+        if self.time_off != self.time_off_from_arduino/1000:
+            self.logger.warning(f"Time_off set to {self.time_off}s, Arduino reports {self.time_off_from_arduino}s") 
+            valid = False
+
+        if not valid:
+            self.configure_shocker()
 
     def calculate_shock(self, shock_settings: list) -> float:
         """Take shock settings from db25 and calculate the current value in mA"""

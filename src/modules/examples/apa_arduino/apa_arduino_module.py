@@ -18,6 +18,7 @@ import json
 import threading
 import csv
 from datetime import datetime
+from typing import Optional
 import serial.tools.list_ports
 
 # Add the current directory to the path for imports
@@ -55,7 +56,6 @@ class APAModule(Module):
         self.should_stop_recording = False
         self.recording_data = []
         self.shock_events = []
-        self.motor.speed = None
         self.recording_start_time = None
         self.data_sampling_rate = 1  # Hz - how often to sample motor data
 
@@ -67,12 +67,13 @@ class APAModule(Module):
 
         self.apa_arduino_commands = {
             "activate_shock": self._activate_shock,
-            "deactivate_shock": self._deactivate_shock
+            "deactivate_shock": self._deactivate_shock,
+            "start_motor": self._start_motor,
+            "stop_motor": self._stop_motor
         }
 
         self.command.set_commands(self.apa_arduino_commands)
     
-
     """Arduino Discovery methods"""
     def _initialize_arduino(self, arduino_type: str, protocol_instance: Protocol) -> None:
         """Initialize the specified arduino"""
@@ -135,12 +136,42 @@ class APAModule(Module):
         self._initialize_arduino(identity, protocol)
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
 
+
+    # @command
     def _activate_shock(self):
-        result = self.shock.activate_shock()
-        return result
-    
+        self.logger.info("INSIDE APA COMMAND...")
+        if self.shock:
+            self.shock.activate_shock()
+        else:
+            self.logger.warning("Activate shock called but no shocker connected!")
+
+
+    # @command
     def _deactivate_shock(self):
-        self.shock.deactivate_shock()
+        self.logger.info("INSIDE APA COMMAND...")
+        if self.shock:
+            self.shock.deactivate_shock()
+        else:
+            self.logger.warning("Deactivate shock called but no shocker connected!")
+
+
+    # @command
+    def _start_motor(self):
+        self.logger.info("INSIDE APA COMMAND...")
+        if self.motor:
+            self.motor.start_motor()
+        else:
+            self.logger.warning("Start motor called but no motor connected!")
+
+
+    # @command
+    def _stop_motor(self):
+        self.logger.info("INSIDE APA COMMAND...")
+        if self.motor:
+            self.motor.stop_motor()
+        else:
+            self.logger.warning("Stop motor called but no motor connected!")
+
 
     # Create fault-tolerant wrapper functions for Arduino operations
     def _safe_stop_shock(self):

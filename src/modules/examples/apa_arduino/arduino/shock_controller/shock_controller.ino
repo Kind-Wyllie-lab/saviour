@@ -171,6 +171,7 @@ void sendState() {
   for(int i=0; i<11; i++){
     stateMessage += String(state[i]) + ",";
   }
+  stateMessage += String(timeOn) + "," + String(timeOff) + ",";
   sendMessage(MSG_DATA, stateMessage);
   lastSentState = millis();
 }
@@ -370,7 +371,7 @@ void handleCommand(String command, String param) {
   // TIMING CONTROL COMMANDS
   // =============================================================================
   
-  else if (command == "TIME_ON") {
+  else if (command == MSG_TIME_ON) {
     if (param == "NONE") {
       sendMessage(MSG_ERROR,  "No param given");
     } else {
@@ -384,7 +385,7 @@ void handleCommand(String command, String param) {
     } 
   }
 
-  else if (command == "TIME_OFF") {
+  else if (command == MSG_TIME_OFF) {
     // Set inter-pulse interval in seconds
     if (param == "NONE") {
       sendMessage(MSG_ERROR,  "No param given");

@@ -61,6 +61,10 @@ class Protocol:
         # Thread management
         self.stop_flag = threading.Event()
 
+        # Flush serial at start
+        time.sleep(1)
+        self.conn.flushInput()
+
         # Get identity
         self.send_command(MSG_IDENTITY, "")
 
@@ -68,7 +72,11 @@ class Protocol:
     def listen(self):
         while not self.stop_flag.is_set():
             try:
-                response = self.conn.readline().decode("utf-8", errors="ignore")
+                response = self.conn.readline().decode("utf-8")
+                # try:
+                #     response = response.decode("utf-8")
+                # except Exception as e:
+                #     self.logger.info(f"Exception decoding {response}: {e}")
                 matches = re.findall(r'<(.+?)>', response) # Look for any serial messages that match the <message> format
                 msg_type = ""
                 if not matches:

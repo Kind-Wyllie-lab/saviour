@@ -66,19 +66,19 @@ class Shocker:
     """Configuration"""
     def configure_shocker(self):
         # Set current from config
-        self.current = self.config.get("shocker.current")
+        self.current = self.config.get("arduino.shocker.current")
         self.set_shock(self.current)
         time.sleep(0.1) # small delay between sending commands
 
         # self.logger.info(f"Set current to {self.current}, actual setpoint {self.get_shock_current()}")
 
         # Set time_on from config
-        self.time_on = self.config.get("shocker.duration")
+        self.time_on = self.config.get("arduino.shocker.duration")
         self.set_time_on(self.time_on)
         time.sleep(0.1)
 
         # Set time_off from config
-        self.time_off = self.config.get("shocker.intershock_latency")
+        self.time_off = self.config.get("arduino.shocker.intershock_latency")
         self.set_time_off(self.time_off)    
 
 

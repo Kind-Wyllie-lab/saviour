@@ -55,7 +55,7 @@ class Motor:
     """Configure Motor"""
     def configure_motor(self):
         # Set target speed
-        self.speed = self.config.get("motor.motor_speed_rpm")
+        self.speed = self.config.get("arduino.motor.motor_speed_rpm")
         self.send_command(MSG_SET_SPEED, self.speed)
 
     """Motor specific commands"""

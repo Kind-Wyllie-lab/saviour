@@ -101,10 +101,15 @@ class Protocol:
                 self._handle_command(msg_type, msg)
             except Exception as e:
                 self.logger.info(f"Exception listening on serial port {self.port}: {e}")
+                self.reset_serial()
 
     
     def reset_serial(self):
+        self.logger.info(f"Resetting serial connection on {self.port}")
         self.conn.close()
+        time.sleep(0.5)
+        self.conn.open()
+        self.start()
     
 
     def _handle_command(self, cmd: str, param: str) -> None:

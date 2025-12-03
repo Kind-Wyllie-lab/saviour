@@ -6,10 +6,18 @@
  */
 void handleCommand(String command, String param) {
   // =============================================================================
+  // IDENTITY
+  // =============================================================================
+  if (command == MSG_IDENTITY) {
+    sendMessage(MSG_IDENTITY, SYSTEM_ID);
+  }
+
+
+  // =============================================================================
   // SPEED CONTROL COMMANDS
   // =============================================================================
 
-  if (command == MSG_SET_SPEED) {
+  else if (command == MSG_SET_SPEED) {
     // Handle set current
     if (param == "NONE") {
       sendMessage(MSG_ERROR, "No param given");

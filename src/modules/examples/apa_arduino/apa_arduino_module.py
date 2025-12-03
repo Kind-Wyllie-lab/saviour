@@ -55,7 +55,7 @@ class APAModule(Module):
         self.should_stop_recording = False
         self.recording_data = []
         self.shock_events = []
-        self.motor_speed = None
+        self.motor.speed = None
         self.recording_start_time = None
         self.data_sampling_rate = 1  # Hz - how often to sample motor data
 
@@ -266,11 +266,10 @@ class APAModule(Module):
         """Start APA recording - motor rotation and data collection"""      
         try:
             # Get preset motor speed from config
-            preset_speed = self.config.get("motor.motor_speed_rpm", 2)
-            self.motor_speed = preset_speed
+            self.motor.speed = self.motor.speed
             
             # Start motor rotation at preset speed
-            self.logger.info(f"Starting motor at preset speed: {preset_speed}")
+            self.logger.info(f"Starting motor at preset speed: {self.motor.speed}")
             
             # Check if motor controller is available
             if not self.motor:
@@ -478,7 +477,7 @@ class APAModule(Module):
                     "elapsed_time": elapsed_time,
                     "rpm": rpm,
                     "encoder_position": encoder_position,
-                    "motor_speed": self.motor_speed,
+                    "motor_speed": self.motor.speed,
                     "pid_target": pid_data.get("target"),
                     "pid_actual": pid_data.get("actual"),
                     "pid_error": pid_data.get("error"),
@@ -492,7 +491,7 @@ class APAModule(Module):
                 
                 # Log data collection progress (every 10 data points to avoid spam)
                 if len(self.recording_data) % 10 == 0:
-                    self.logger.info(f"Collected {len(self.recording_data)} data points. Latest: RPM={rpm}, Position={encoder_position}, Motor Speed={self.motor_speed}")
+                    self.logger.info(f"Collected {len(self.recording_data)} data points. Latest: RPM={rpm}, Position={encoder_position}, Motor Speed={self.motor.speed}")
                 
                 # Sleep for sampling rate
                 time.sleep(1.0 / self.data_sampling_rate)
@@ -514,7 +513,7 @@ class APAModule(Module):
                 "elapsed_time": elapsed_time,
                 "event_type": "start_shock",  # Add event type for clarity
                 "shock_params": shock_params.copy(),
-                "motor_speed": self.motor_speed,
+                "motor_speed": self.motor.speed,
                 "verified": False  # Will be updated when verification is received
             }
             self.shock_events.append(shock_event)
@@ -556,7 +555,7 @@ class APAModule(Module):
                             "elapsed_time": elapsed_time,
                             "shock_event_index": len(self.shock_events) - 1,
                             "verification_data": verification_data,
-                            "motor_speed": self.motor_speed
+                            "motor_speed": self.motor.speed
                         }
                         self.shock_verification_events.append(verification_event)
                         
@@ -720,7 +719,7 @@ class APAModule(Module):
                 "recording_start_time": self.recording_start_time,
                 "recording_end_time": time.time(),
                 "duration": time.time() - self.recording_start_time if self.recording_start_time else 0,
-                "motor_speed": self.motor_speed,
+                "motor_speed": self.motor.speed,
                 "encoder_data_points": len(self.recording_data),
                 "shock_events": len(self.shock_events),
                 "shock_stop_events": len(self.shock_stop_events),

@@ -35,6 +35,15 @@ class Motor:
         self.state_buffer = deque(maxlen=10) # What state do we want to capture form motor 0
 
         self.speed = None
+        self.speed_from_arduino = None
+        self.position = None
+        self.rotating = False
+        self.time_started_rotating = None
+
+        # TODO: Take these from config.
+        self.time_to_reach_target_speed = 120 # Time to start reaching target speed in seconds
+        self.rpm_error_lower_threshold = 0.2 # % by which rpm may deviate below set point
+        self.rpm_error_upper_threshold = 0.1 # % by which rpm may deviate above set point
 
         self.configure_motor()
 
@@ -58,12 +67,34 @@ class Motor:
         self.speed = self.config.get("arduino.motor.motor_speed_rpm")
         self.send_command(MSG_SET_SPEED, self.speed)
 
+
+    def validate_state(self):
+        if not self.rotating:
+            return
+
+        if time.time() - self.time_started_rotating > self.time_to_reach_target_speed:
+            error = self.speed - self.speed_from_arduino
+            if self.speed_from_arduino > (1+self.rpm_error_upper_threshold) * self.speed:
+                # self.logger.warning(f"MOTOR TOO FAST! Passed {self.time_to_reach_target_speed}s and motor has not reached target speed of {self.speed}rpm, actual speed {self.speed_from_arduino}rpm")
+                # TODO: Do something here.
+                pass
+            if self.speed_from_arduino < (1-self.rpm_error_lower_threshold) * self.speed:
+                # self.logger.warning(f"MOTOR TOO SLOW! It has been more than {self.time_to_reach_target_speed}s and motor has not reached target speed of {self.speed}rpm, actual speed {self.speed_from_arduino}rpm")
+                # TODO: Do something here.
+                pass
+
+
+
+
     """Motor specific commands"""
     def interpret_state(self, system_state) -> None:
         # Interpret data sent back from motor
         # self.logger.info(f"Interpret state received {system_state} with type {type(system_state)}")
         system_state = system_state.split(",")
         self.state_buffer.append(system_state)
+        self.speed_from_arduino = float(self.state_buffer[0][0])
+        self.position = float(self.state_buffer[0][1])
+        self.validate_state()
 
 
     def set_speed(self, speed: float) -> None:
@@ -73,11 +104,15 @@ class Motor:
     def start_motor(self) -> None:
         self.logger.info("Starting motor")
         self.send_command(MSG_START_MOTOR, "")
+        self.time_started_rotating = time.time()
+        self.rotating = True
     
 
     def stop_motor(self) -> None:
         self.logger.info("Stopping motor")
         self.send_command(MSG_STOP_MOTOR, "")
+        self.time_started_rotating = None
+        self.rotating = False
 
 
     def get_speed(self) -> float: 

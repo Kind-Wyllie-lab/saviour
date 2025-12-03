@@ -139,7 +139,6 @@ class APAModule(Module):
 
     # @command
     def _activate_shock(self):
-        self.logger.info("INSIDE APA COMMAND...")
         if self.shock:
             self.shock.activate_shock()
         else:
@@ -148,7 +147,6 @@ class APAModule(Module):
 
     # @command
     def _deactivate_shock(self):
-        self.logger.info("INSIDE APA COMMAND...")
         if self.shock:
             self.shock.deactivate_shock()
         else:
@@ -157,7 +155,6 @@ class APAModule(Module):
 
     # @command
     def _start_motor(self):
-        self.logger.info("INSIDE APA COMMAND...")
         if self.motor:
             self.motor.start_motor()
         else:
@@ -166,7 +163,6 @@ class APAModule(Module):
 
     # @command
     def _stop_motor(self):
-        self.logger.info("INSIDE APA COMMAND...")
         if self.motor:
             self.motor.stop_motor()
         else:

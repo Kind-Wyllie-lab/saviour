@@ -25,6 +25,7 @@ args = parser.parse_args()
 
 # PROTOCOL
 MSG_IDENTITY = "I"
+MSG_ERROR = "E"
 MSG_DATA = "D"
 MSG_WRITE_PIN_HIGH = "H"
 MSG_WRITE_PIN_LOW = "L"
@@ -112,6 +113,8 @@ class Protocol:
                 self.identity = param.lower()
                 if self.on_identity:
                     self.on_identity(self, self.identity)
+            case "E":
+                self.logger.warning(f"ERROR on {self.port}: {param}")
             case _:
                 # Pass it to callback
                 self.handle_command(cmd, param)

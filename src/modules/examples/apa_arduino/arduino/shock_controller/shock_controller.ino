@@ -65,7 +65,7 @@ const int SELF_TEST_IN = 2;       // Test signal input from shock generator (act
 const char MSG_ACK [] = "ACK";
 const char MSG_NACK [] = "NACK";
 const char MSG_SUCCESS [] = "SUCCESS";
-const char MSG_ERROR [] = "ERROR";
+const char MSG_ERROR [] = "E";
 
 // Command types
 const char MSG_IDENTITY [] = "I";
@@ -75,6 +75,8 @@ const char MSG_SET_PIN_LOW [] = "L";
 const char MSG_CURRENT [] = "C";
 const char MSG_TIME_ON [] = "T";
 const char MSG_TIME_OFF [] = "Y";
+const char MSG_ACTIVATE [] = "Z";
+const char MSG_DEACTIVATE [] = "X";
 
 // Messaging Protocol
 const char START_MARKER = '<';
@@ -113,7 +115,7 @@ int timeOn = -1;                      // Pulse duration in milliseconds
 int timeOff = -1;                     // Inter-pulse interval in milliseconds
 
 // Pulse control parameters
-int pulseTarget = -1;                 // Target pulse count (-1=disabled, 0=infinite, >0=specific count)
+int pulseTarget = 50;                 // Target pulse count (-1=disabled, 0=infinite, >0=specific count)
 int pulseCounter = 0;                 // Pulses delivered in current sequence
 int globalPulseCounter = 0;           // Total pulses delivered this trial
 int verifiedShockCounter = 0;        // Verified shocks delivered (via self-test input)
@@ -431,7 +433,7 @@ void handleCommand(String command, String param) {
   // SEQUENCE CONTROL COMMANDS
   // =============================================================================
 
-  else if (command == "ACTIVATE") {
+  else if (command == MSG_ACTIVATE) {
     // Begin shock sequence with current parameters
     if (validateShockParameters()) {
       // Calculate timing parameters for TimerOne
@@ -456,7 +458,7 @@ void handleCommand(String command, String param) {
         }
       }
 
-  else if (command == "DEACTIVATE") {
+  else if (command == MSG_DEACTIVATE) {
     // Stop active shock sequence
     if (activatedState) {
       deactivate();

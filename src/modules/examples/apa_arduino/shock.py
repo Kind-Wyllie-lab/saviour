@@ -21,6 +21,9 @@ MSG_IDENTITY = "I"
 MSG_DATA = "D"
 MSG_WRITE_PIN_HIGH = "H"
 MSG_WRITE_PIN_LOW = "L"
+MSG_ACTIVATE = "Z"
+MSG_DEACTIVATE = "X"
+
 
 # Shock pnout etc
 PIN_MAP = [17, 16, 15, 14, 4, 5, 6, 7, 12, 2, 9] 
@@ -59,7 +62,7 @@ class Shocker:
             case "D":
                 self.interpret_shock(param)
             case _:
-                self.logger.info(f"No logic for {cmd}")
+                self.logger.info(f"No logic for {cmd} with param {param}")
 
 
     def send_command(self, type: str, param):
@@ -153,13 +156,14 @@ class Shocker:
         if not self.check_shock_set():
             self.logger.info("Cannot activate shock with current set to 0.")
             return False
-        self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
+        # self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
+        self.send_command(MSG_ACTIVATE, "")
         return True
 
 
     def deactivate_shock(self):
-        self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
-
+        # self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
+        self.send_command(MSG_DEACTIVATE, "")
 
     def interpret_shock(self, state: list) -> None:
         state = state.split(",")

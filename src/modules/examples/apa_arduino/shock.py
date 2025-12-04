@@ -153,11 +153,16 @@ class Shocker:
             self.logger.info("Cannot run grid test with current set to 0.")
             return False, "Cannot run grid test with current set to 0"
         
+        if self.shock_activated:
+            self.logger.info("Cannot run grid test with shocks active.")
+            return False, "Cannot run grid test with shocks active. Deactivate shocks first."
+        
         # Initiate test by writing to pin
+        self.logger.info("Setting SELF_TEST_OUT low.")
         self.send_command(MSG_WRITE_PIN_LOW, SELF_TEST_OUT)
         time.sleep(0.2) # Give some time for it to update
 
-        # Check sefl test in
+        # Check self test in
         val = self.state_buffer[-1][PIN_MAP.index(SELF_TEST_IN)]
         if val == 0:
             self.logger.info("No grid short detected")
@@ -312,7 +317,7 @@ class Shocker:
 
     def validate_state(self):
         valid = True
-        if 100*self.current_from_arduino != (100*self.current - ((100*self.current) % 2)) :
+        if 100*self.current_from_arduino != (100*self.current - (round((100*self.current) % 2, 2))):
             self.logger.warning(f"Current set to {self.current}mA, Arduino reports {self.current_from_arduino}mA")
             valid = False
 

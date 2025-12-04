@@ -85,7 +85,6 @@ class Motor:
 
 
 
-
     """Motor specific commands"""
     def interpret_state(self, system_state) -> None:
         # Interpret data sent back from motor

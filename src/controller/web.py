@@ -228,6 +228,7 @@ class Web:
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
         def handle_module_status(data):
             """Handle module status update"""
+            self.logger.info("IN WEB HANDLE_MODULE_STATUS")
             try:
                 # self.logger.info(f"Received module status: {data}")
                 if not isinstance(data, dict):
@@ -633,6 +634,17 @@ class Web:
             # Ensure status has required fields
             if not isinstance(status, dict):
                 raise ValueError("Status must be a dictionary")
+
+            status_type = status.get('type')
+            if not status_type:
+                self.logger.warning(f"Bad status type: {status}")
+
+            # Handle APA specific shock state management
+            match status_type:
+                case "shock_started_being_delivered":
+                    self.socketio.emit("shock_started_being_delivered")
+                case "shock_stopped_being_delivered":
+                    self.socketio.emit("shock_stopped_being_delivered")            
 
             # Handle recordings list response
             if status.get('type') == 'recordings_list':

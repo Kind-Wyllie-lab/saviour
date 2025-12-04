@@ -30,6 +30,30 @@ function APACommands( {modules} ) {
         });
     };
 
+    const startMotor = () => {
+        socket.emit("send_command", {
+            type: "start_motor",
+            module_id: apaModule.id,
+            params: {},
+        });
+    };
+
+    const stopMotor = () => {
+        socket.emit("send_command", {
+            type: "stop_motor",
+            module_id: apaModule.id,
+            params: {},
+        });
+    };
+
+    const resetPulses = () => {
+        socket.emit("send_command", {
+            type: "reset_pulse_counter",
+            module_id: apaModule.id,
+            params: {},
+        })
+    }
+
     return (
         <>
             <h2>APA Commands</h2>
@@ -45,6 +69,24 @@ function APACommands( {modules} ) {
                     onClick={deactivateShock}
                     disabled={!apaModule}>
                     Deactivate Shock
+                </button>
+                <button
+                    className="start_motor"
+                    onClick={startMotor}
+                    disabled={!apaModule}>
+                    Start Motor
+                </button>
+                <button
+                    className="stop_motor"
+                    onClick={stopMotor}
+                    disabled={!apaModule}>
+                    Stop Motor
+                </button>
+                <button
+                    className="reset_pulse_counter"
+                    onClick={resetPulses}
+                    disabled={!apaModule}>
+                    Reset Pulse Counter
                 </button>
             </div>
         </>

@@ -14,6 +14,7 @@ from typing import Dict, Any
 
 class ModuleStatus(StrEnum):
     """Enum class which holds all possible status codes a Module can be in"""
+    WAITING = "WAITING"
     NOT_READY = "NOT_READY"
     READY = "READY"
     RECORDING = "RECORDING"
@@ -34,3 +35,4 @@ class Module:
     status: ModuleStatus = ModuleStatus.NOT_READY # Default to NOT_READY
     config: Dict[str, Any] = field(default_factory=dict)
     ready_time: float = 0.0 # Time at which a module went ready, so as to flip it back to NOT_READY if time elapsed.
+    ready_message: str = "" # Message associated with a ready update

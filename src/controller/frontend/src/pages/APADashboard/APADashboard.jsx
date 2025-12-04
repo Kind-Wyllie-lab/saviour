@@ -91,9 +91,6 @@ function APADashboard() {
             <CommandsPanel modules={moduleList} experimentName={experimentName} />
           </section>
           <section>
-            <APACommands modules={moduleList} />
-          </section>
-          <section>
             <ModuleGrid modules = {moduleList} />
           </section>
         </div>    
@@ -103,8 +100,13 @@ function APADashboard() {
             {apaCameraModules.length > 0 ? (
               <APALivestreamCard key={apaCameraModules[0].id} module={apaCameraModules[0]} />
             ) : (
-              <p>APA camera not connected</p>
+              <div className="apa-camera-template">
+                <p>APA camera not connected</p>
+              </div>
             )}
+          </section>
+          <section>
+            <APACommands modules={moduleList} />
           </section>
         </div>
       </div>

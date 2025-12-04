@@ -46,12 +46,31 @@ class Shocker:
 
         self.state_buffer = deque(maxlen=10)
 
+        # Keep track of shocker setpoints
         self.current = 0
         self.current_from_arduino = None
         self.time_on = 0.5
         self.time_on_from_arduino = None
         self.time_off = 1.5
         self.time_off_from_arduino = None
+
+        # To keep track of when shocks get delivered
+        self.self_test_in = None
+        self.last_self_test_in = None
+
+        self.trigger_out = None
+        self.last_trigger_out = None
+
+        self.self_test_out = None
+
+        # Grid state
+        self.grid_is_live = False
+        self.shock_activated = False
+        self.shock_being_attempted = False
+        self.shock_being_delivered = False
+
+        self.attempted_shocks = 0
+        self.delivered_shocks = 0
 
         self.configure_shocker()
 
@@ -158,39 +177,101 @@ class Shocker:
             return False
         # self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
         self.send_command(MSG_ACTIVATE, "")
+        self.shock_activated = True
         return True
-
 
     def deactivate_shock(self):
         # self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
         self.send_command(MSG_DEACTIVATE, "")
+        self.shock_activated = False
 
     def interpret_shock(self, state: list) -> None:
         state = state.split(",")
         self.state_buffer.append([ int(bit) for bit in state[0:11] ])
         shock_settings = [ int(bit) for bit in state[0:8] ]
-        self_test_out = int(state[8])
-        self_test_in = int(state[9])
-        trigger_out = int(state[10])
+        self.self_test_out = int(state[8])
+        self.self_test_in = int(state[9])
+        self.trigger_out = int(state[10])
         self.current_from_arduino = float(self.calculate_shock(shock_settings))
         self.time_on_from_arduino = float(state[11])
         self.time_off_from_arduino = float(state[12])
 
+        self.check_shock_events()
+
         self.validate_state()
 
-        if self_test_out == 0 :
-            if sum(shock_settings) == len(shock_settings): # Nothing changed
-                self.logger.info("CANNOT RUN GRID TEST WITHOUT CURRENT BEING SET.")
-        elif trigger_out == 0:
+        self.last_self_test_in = self.self_test_in
+        self.last_trigger_out = self.trigger_out
+
+    def check_shock_events(self):
+        """
+        In this function we want to check for when shocks are delivered. 
+        We may wish to distinguish between when shocks are sent (trigger_out==0) and delivered (self_test_in==1)
+        This could be useful for debugging.
+        We need to do this as after we activate a shock sequence, the arduino will indepdently turn grid on for time_on and off for time_off.
+        """
+
+        if self.shock_activated == True:
+            # Establish whether shock being attempted
+            if self.trigger_out == 0: # Shock started being sent
+                if self.last_trigger_out == 1:
+                    self._on_shock_started_being_attempted()
+
+                # Establish whether shock being delivered
+                if self.self_test_in == 0 and self.last_self_test_in == 1: # Grid is live and shock not being delivered
+                    self._on_shock_stopped_being_delivered()
+                if self.self_test_in == 1 and self.last_self_test_in == 0:
+                    self._on_shock_started_being_delivered()
+
+            # If shock is no longer being attempted
+            if self.trigger_out == 1 and self.last_trigger_out == 0:
+                self._on_shock_stopped_being_attempted()
+
+
+    def _on_shock_started_being_attempted(self):
+        self.shock_being_attempted = True
+        self.attempted_shocks += 1
+        self.logger.info(f"Attempting shock at {time.time()}, total attempted: {self.attempted_shocks}")
+
+
+    def _on_shock_stopped_being_attempted(self):
+        self.shock_being_attempted = False
+        self.logger.info(f"Stopped attempting shock at {time.time()}")
+
+
+    def _on_shock_started_being_delivered(self):
+        self.delivered_shocks += 1
+        self.shock_being_delivered = True
+        self.logger.info(f"Delivered shock at {time.time()}, total delivered {self.delivered_shocks}")
+
+    
+    def _on_shock_stopped_being_delivered(self):
+        self.shock_being_delivered = False
+        self.logger.info(f"Shock stopped being delivered at {time.time()}")
+
+
+    def simple_check_shock_events(self, shock_settings: List):
+        """A simple method for debugging shock delivery."""
+        if self.trigger_out == 0: # If shock grid is active
             if sum(shock_settings) == len(shock_settings): # Nothing changed
                 self.logger.info("CANNOT DELIVER SHOCKS WITHOUT CURRENT BEING SET.")
-            if self_test_in == 0:
+            if self.self_test_in == 0:
                 self.logger.info("Shocker active but no shock being delivered...")
-            if self_test_in == 1:
+            if self.self_test_in == 1:
                 self.logger.info("SHOCK BEING DELIVERED!")
 
-        # TODO: Add callbacks here
 
+        # if self.self_test_out == 0 :
+        #     if sum(shock_settings) == len(shock_settings): # Nothing changed
+        #         self.logger.info("CANNOT RUN GRID TEST WITHOUT CURRENT BEING SET.")
+
+        # if self_test_out == 0 or trigger_out == 0:
+        #     self.grid_is_live = True
+        
+            # if self_test_in == 0:
+            #     self.logger.info("Shocker active but no shock being delivered...")
+            # if self_test_in == 1:
+            #     self.logger.info("SHOCK BEING DELIVERED!")
 
     def validate_state(self):
         valid = True

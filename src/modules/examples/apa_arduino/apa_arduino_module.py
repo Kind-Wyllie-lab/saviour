@@ -59,7 +59,8 @@ class APAModule(Module):
         self.module_checks = [
             self._check_motor,
             self._check_shocker,
-            self._check_shock_grid_fault
+            self._check_shock_grid_fault,
+            self._check_shock_grid_active
         ]
 
         self.apa_arduino_commands = {
@@ -224,6 +225,21 @@ class APAModule(Module):
 
         except Exception as e:
             return False, f"Error checking grid fault: {e}"
+
+
+    @check()
+    def _check_shock_grid_active(self) -> tuple[bool, str]:
+        if self.shock.shock_activated:
+            return False, "Shocks are active! Please deactivate and try again."
+        else:
+            return True, "No shock sequence active."
+
+    # @check()
+    # def _check_shocks_not_above_50(self) -> tuple[bool, str]:
+    #     if self.shock.attempted_shocks >= 50 or self.shock.attempted_shocks_from_arduino >= 50:
+    #         return False, "Have already delivered limit of 50 shocks - please manually reset pulse counter (GUI button)"
+    #     else:
+    #         return True, ""
             
 
     # TODO: Checks to make sure RPM, shocks etc are set?

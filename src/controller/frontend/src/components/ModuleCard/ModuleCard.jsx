@@ -15,6 +15,10 @@ function ModuleCard({ module }) {
     if (!module.online) borderClass = "offline";
     if (module.status === "READY") borderClass = "ready";
     if (module.status === "RECORDING") borderClass = "recording";
+    // if (module.status === "NOT_READY") {
+    //     alert("Module NOT_READY: " + module.ready_message);
+    // }
+
 
     const removeModule = () => {
         console.log("Emitting remove-module");
@@ -50,8 +54,11 @@ function ModuleCard({ module }) {
                 <h3>{module.id}</h3>
                 <p>IP: {module.ip}</p>
                 <p>Type: {module.type}</p>
-                {/* <p>Status: {module.online ? "Online" : "Offline"}</p> */}
-                <p>Status: {module.status}</p>
+                {module.status === "NOT_READY" ? (
+                    <p>Status: {module.status} : {module.ready_message}</p>
+                ) : (
+                    <p>Status: {module.status}</p>
+                )}
 
                 {module.online ? (
                     module.status === "RECORDING" && (

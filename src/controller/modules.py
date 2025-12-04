@@ -48,7 +48,7 @@ class Modules:
                 # self.logger.info(f"Module status in our terms is {self.modules[module_id].status}")
                 if self.modules[module_id].status == ModuleStatus.RECORDING:
                     # Module has switched from recording to not recording without emitting a stop_recording message
-                    self.modules[module_id].status = ModuleStatus.NOT_READY
+                    self.modules[module_id].status = ModuleStatus.DEFAULT
             if status_data['recording'] == True and self.modules[module_id].status != ModuleStatus.RECORDING:
                 # Module says it's recording but our state doesn't reflect this - update our state
                 self.modules[module_id].status = ModuleStatus.RECORDING
@@ -93,8 +93,8 @@ class Modules:
                 if module_data.status == ModuleStatus.READY:
                     ready_time = module_data.ready_time
                     if current_time - ready_time > self.ready_timeout:
-                        self.logger.info(f"Module {module_id} has timed out from READY to NOT_READY")
-                        self.modules[module_id].status = ModuleStatus.NOT_READY
+                        self.logger.info(f"Module {module_id} has timed out from READY")
+                        self.modules[module_id].status = ModuleStatus.DEFAULT
                         self.broadcast_updated_modules()
             time.sleep(5)
 
@@ -136,7 +136,7 @@ class Modules:
             self.modules[module_id].status = ModuleStatus.OFFLINE # If it's offline, also set it's status to OFFLINE.
         else:
             if has_changed:
-                self.modules[module_id].status = ModuleStatus.NOT_READY # Module has just been marked back online, so flip it's status to "NOT READY"
+                self.modules[module_id].status = ModuleStatus.DEFAULT # Module has just been marked back online, so flip it's status to "NOT READY"
                 
         self.broadcast_updated_modules()
 
@@ -155,7 +155,7 @@ class Modules:
         self.logger.info(f"{module_id} stopped recording {module_data}")
         if module_data["recording"] == False:
             self.logger.info("Recording was false")
-            self.modules[module_id].status = ModuleStatus.NOT_READY
+            self.modules[module_id].status = ModuleStatus.DEFAULT
         else:
             self.logger.warning("Status stop_recording received but recording param was still True, some kind of error.") 
         self.broadcast_updated_modules()
@@ -185,7 +185,7 @@ class Modules:
             self.logger.warning(f"Received config update from unknown module {module_id} - attempting to add to module list")
             self.modules[module_id] = Module(
                 online = True,
-                status = ModuleStatus.NOT_READY,
+                status = ModuleStatus.DEFAULT,
                 config = new_config
             )
         self.broadcast_updated_modules() # Broadcast that module configs have updated

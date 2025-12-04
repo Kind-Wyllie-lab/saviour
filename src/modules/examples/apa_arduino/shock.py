@@ -188,6 +188,9 @@ class Shocker:
         if not self.check_shock_set():
             self.logger.info("Cannot activate shock with current set to 0.")
             return False
+        if self.attempted_shocks >= 50 or self.attempted_shocks_from_arduino >= 50:
+            self.logger.warning("Cannot activate shocker as have already delivered limit of 50 shocks.")
+            return False
         # self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
         self.send_command(MSG_ACTIVATE, "")
         self.shock_activated = True

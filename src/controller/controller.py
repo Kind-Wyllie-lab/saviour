@@ -279,11 +279,12 @@ class Controller:
                 case 'validate_readiness':
                     # Handle readiness validation response
                     ready = status_data.get('ready', False)
+                    message = status_data.get('message', 'No message...')
                     self.logger.info(f"Readiness validation response from {module_id}: {'ready' if ready else 'not ready'}")
                     # Tell Module object that module is ready
                     if not ready:
-                        self.logger.info(f"Full message from non-ready module: {status_data.get('checks', {})}")
-                    self.modules.notify_module_readiness_update(module_id, ready)
+                        self.logger.info(f"Full message from non-ready module: {message}")
+                    self.modules.notify_module_readiness_update(module_id, ready, message)
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:

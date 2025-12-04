@@ -34,6 +34,7 @@ from shock import Shocker
 class APAModule(Module):
     def __init__(self, module_type="apa_arduino"):
         super().__init__(module_type)
+        self.description = "Module for controlling the APA rig, including rotating the arena and using the shock grid."
 
         # Update config 
         self.config.load_module_config("apa_arduino_config.json")
@@ -44,18 +45,14 @@ class APAModule(Module):
         # Store found arduinos and their ports
         self.arduino_ports: Dict[str, str] = {}  # Maps arduino_type to port
         self.connected_arduinos: Dict[str, Protocol] = {} # Maps arduino_type to a Protocol which implements a protocol around a serial connection
-
         self.motor = None
         self.shock = None
-
-        # Find all arduinos
         self._find_arduino_ports()
 
         # Recording-specific variables
+        self._event_file_handle = None
         self.recording_thread = None
         self.should_stop_recording = False
-        self.recording_data = []
-        self.shock_events = []
         self.recording_start_time = None
         self.data_sampling_rate = 1  # Hz - how often to sample motor data
 
@@ -69,11 +66,13 @@ class APAModule(Module):
             "activate_shock": self._activate_shock,
             "deactivate_shock": self._deactivate_shock,
             "start_motor": self._start_motor,
-            "stop_motor": self._stop_motor
+            "stop_motor": self._stop_motor,
+            "reset_pulse_counter": self._reset_pulse_counter
         }
 
         self.command.set_commands(self.apa_arduino_commands)
     
+
     """Arduino Discovery methods"""
     def _initialize_arduino(self, arduino_type: str, protocol_instance: Protocol) -> None:
         """Initialize the specified arduino"""
@@ -89,9 +88,13 @@ class APAModule(Module):
         if self.motor and self.shock:
             self.handle_system_ready()
 
+
     def handle_system_ready(self):
         """Called when both arduino are discovered."""
+        self.set_arduino_callbacks()
         self.configure_module()
+
+
 
     def _find_arduino_ports(self):
         self.logger.info("Searching for connected Arduino.")
@@ -137,6 +140,7 @@ class APAModule(Module):
         self.logger.info(f"Connected arduinos: {list(self.connected_arduinos.keys())}")
 
 
+    """Commands from controller"""
     # @command
     def _activate_shock(self):
         if self.shock:
@@ -167,80 +171,13 @@ class APAModule(Module):
             self.motor.stop_motor()
         else:
             self.logger.warning("Stop motor called but no motor connected!")
+    
 
-
-    # Create fault-tolerant wrapper functions for Arduino operations
-    def _safe_stop_shock(self):
-        self.logger.info(f"safe_stop_shock called, is_recording: {self.is_recording}")
-        
+    def _reset_pulse_counter(self):
         if self.shock:
-            # Record the stop_shock event if we're recording
-            if self.is_recording:
-                try:
-                    timestamp = time.time()
-                    elapsed_time = timestamp - self.recording_start_time if self.recording_start_time else 0
-                    
-                    stop_event = {
-                        'timestamp': timestamp,
-                        'elapsed_time': elapsed_time,
-                        'event_type': 'stop_shock',
-                        'rpm': self._get_current_rpm(),  # Get actual measured RPM
-                        'encoder_position': self._get_current_encoder_position() if self.motor else None
-                    }
-                    
-                    self.shock_stop_events.append(stop_event)
-                    self.logger.info(f"Stop shock event recorded: {stop_event}")
-                    
-                except Exception as e:
-                    self.logger.error(f"Error recording stop shock event: {e}")
-            else:
-                self.logger.warning(f"Not recording, so not recording stop shock event")
-            
-            result = self.shock.stop()
-            self.logger.info(f"Arduino stop_shock result: {result}")
-            return result
-        else:
-            self.logger.warning("Shock controller not available")
-            return "error", "Shock controller not available"
-
-    def safe_motor_control(self, params):
-        if self.motor:
-            return self.motor.set_speed(params["speed"])
-        else:
-            self.logger.warning("Motor controller not available")
-            return "error", "Motor controller not available"
-
-    def safe_stop_motor(self):
-        """Safely stop the motor with verification"""
-        if self.motor:
-            try:
-                self.logger.info("(APA ARDUINO MODULE) Executing safe_stop_motor")
-                status, message = self.motor.stop_motor()
-                self.logger.info(f"(APA ARDUINO MODULE) Motor stop command result: {status} - {message}")
-                
-                # Verify the command was sent successfully
-                if status == "OK":
-                    self.logger.info("(APA ARDUINO MODULE) Motor stop command sent successfully")
-                    # Add a small delay to ensure Arduino processes the command
-                    time.sleep(0.2)
-                else:
-                    self.logger.error(f"(APA ARDUINO MODULE) Motor stop command failed: {status} - {message}")
-                
-                return status, message
-            except Exception as e:
-                self.logger.error(f"(APA ARDUINO MODULE) Exception in safe_stop_motor: {e}")
-                return "ERROR", f"Exception: {str(e)}"
-        else:
-            self.logger.warning("Motor controller not available")
-            return "error", "Motor controller not available"
-
-
-    def cleanup(self):
-        """Clean up resources"""
-        # TODO: close serial connections?
-
-        self.logger.info("APA system shutdown complete")
-
+            self.shock.reset_pulse_counter()
+        else: 
+            self.logger.warning("Reset pulse counter called but no shocker connected!")
 
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
@@ -289,6 +226,42 @@ class APAModule(Module):
             return False, f"Error checking grid fault: {e}"
             
 
+    # TODO: Checks to make sure RPM, shocks etc are set?
+
+
+    """Handle grid state and communicate it to frontend"""
+    def set_arduino_callbacks(self):
+        self.logger.info("Setting arduino callbacks")
+        self.shock.on_shock_started_being_attempted = self.on_shock_started_being_attempted
+        self.shock.on_shock_stopped_being_attempted = self.on_shock_stopped_being_attempted
+        self.shock.on_shock_started_being_delivered = self.on_shock_started_being_delivered
+        self.shock.on_shock_stopped_being_delivered = self.on_shock_stopped_being_delivered
+        
+    def on_shock_started_being_attempted(self):
+        self.logger.info(f"Attempting shock at {time.time()}, total attempted: {self.shock.attempted_shocks} arduino reports {self.shock.attempted_shocks_from_arduino}")
+
+
+    def on_shock_stopped_being_attempted(self):
+        self.logger.info(f"Stopped attempting shock at {time.time()}")
+
+
+    def on_shock_started_being_delivered(self):
+        self.logger.info(f"Delivered shock at {time.time()}, total delivered {self.shock.delivered_shocks}")
+        status = {
+            "type": "shock_started_being_delivered"
+        }
+        self.communication.send_status(status)
+
+    
+    def on_shock_stopped_being_delivered(self):
+        self.logger.info(f"Shock stopped being delivered at {time.time()}")
+        status = {
+            "type": "shock_stopped_being_delivered"
+        }
+        self.communication.send_status(status)
+
+
+    """Recording Methods"""
     def _start_recording(self):
         """Start APA recording - motor rotation and data collection"""      
         try:
@@ -417,8 +390,13 @@ class APAModule(Module):
             return False
 
     
+
+    """Configuration"""
     def configure_module(self, updated_keys: Optional[list[str]]):
         self.logger.info("Configuring APA ARDUINO module...")
+        if self.shock.shock_activated:
+            self.logger.warning("Cannot configure APA rig while shocks are active!")
+            return False
         self.shock.configure_shocker()
         self.motor.configure_motor()
 
@@ -610,30 +588,7 @@ class APAModule(Module):
         verification_thread.daemon = True
         verification_thread.start()
 
-    def _parse_verification_response(self, message: str) -> dict:
-        """Parse verification statistics from Arduino response"""
-        try:
-            # Expected format: "TotalPulses:5,VerifiedShocks:4,VerificationRate:80.0%,CurrentSession:1,SessionVerified:1"
-            verification_data = {}
-            parts = message.split(',')
-            for part in parts:
-                if ':' in part:
-                    key, value = part.split(':', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    # Convert values to appropriate types
-                    if key in ['TotalPulses', 'VerifiedShocks', 'CurrentSession', 'SessionVerified']:
-                        verification_data[key] = int(value)
-                    elif key == 'VerificationRate':
-                        verification_data[key] = float(value.replace('%', ''))
-                    else:
-                        verification_data[key] = value
-            
-            return verification_data
-        except Exception as e:
-            self.logger.error(f"Error parsing verification response: {e}")
-            return None
+
 
     def _save_recording_data(self):
         """Save recorded data to files"""
@@ -777,208 +732,12 @@ class APAModule(Module):
         except Exception as e:
             self.logger.error(f"Error saving recording data: {e}")
 
-    def _calculate_shock_durations(self):
-        """Calculate actual shock durations by pairing start and stop events"""
-        try:
-            if not self.shock_events or not self.shock_stop_events:
-                self.logger.info("No shock events or stop events to calculate durations")
-                return
-            
-            # Create a list to store shock duration data
-            shock_durations = []
-            
-            # Sort events by timestamp
-            all_events = []
-            for shock_event in self.shock_events:
-                all_events.append({
-                    'event_type': 'start_shock',
-                    'timestamp': shock_event['timestamp'],
-                    'elapsed_time': shock_event['elapsed_time'],
-                    'event': shock_event
-                })
-            
-            for stop_event in self.shock_stop_events:
-                all_events.append({
-                    'event_type': 'stop_shock',
-                    'timestamp': stop_event['timestamp'],
-                    'elapsed_time': stop_event['elapsed_time'],
-                    'event': stop_event
-                })
-            
-            all_events.sort(key=lambda x: x['timestamp'])
-            
-            # Pair start and stop events
-            current_shock = None
-            for event in all_events:
-                if event['event_type'] == 'start_shock':
-                    current_shock = event['event']
-                elif event['event_type'] == 'stop_shock' and current_shock:
-                    # Calculate actual duration
-                    actual_duration = event['timestamp'] - current_shock['timestamp']
-                    intended_duration = current_shock['shock_params'].get('time_on', 0)
-                    
-                    duration_data = {
-                        'shock_index': len(shock_durations),
-                        'start_timestamp': current_shock['timestamp'],
-                        'start_elapsed_time': current_shock['elapsed_time'],
-                        'stop_timestamp': event['timestamp'],
-                        'stop_elapsed_time': event['elapsed_time'],
-                        'intended_duration': intended_duration,
-                        'actual_duration': actual_duration,
-                        'duration_difference': actual_duration - intended_duration,
-                        'motor_speed': current_shock['motor_speed'],
-                        'shock_current': current_shock['shock_params'].get('current'),
-                        'shock_pulses': current_shock['shock_params'].get('pulses'),
-                        'verified': current_shock.get('verified', False)
-                    }
-                    
-                    shock_durations.append(duration_data)
-                    current_shock = None  # Reset for next shock
-            
-            # Save shock durations to CSV
-            if shock_durations:
-                durations_file = f"{self.recording_folder}/{self.recording_session_id}_shock_durations.csv"
-                
-                with open(durations_file, 'w', newline='') as csvfile:
-                    fieldnames = ['shock_index', 'start_timestamp', 'start_elapsed_time', 'stop_timestamp', 
-                                 'stop_elapsed_time', 'intended_duration', 'actual_duration', 'duration_difference',
-                                 'motor_speed', 'shock_current', 'shock_pulses', 'verified']
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writeheader()
-                    for duration_data in shock_durations:
-                        writer.writerow(duration_data)
-                
-                self.logger.info(f"Saved {len(shock_durations)} shock duration calculations to {durations_file}")
-                
-                # Add to metadata files
-                if hasattr(self, 'current_experiment_name') and self.current_experiment_name:
-                    safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                    safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                    durations_file = f"{self.recording_folder}/{safe_experiment_name}_{self.recording_session_id}_shock_durations.csv"
-                
-                # Update metadata to include durations file
-                metadata_file = f"{self.recording_folder}/{self.recording_session_id}_metadata.json"
-                if os.path.exists(metadata_file):
-                    with open(metadata_file, 'r') as f:
-                        metadata = json.load(f)
-                    
-                    metadata['files']['shock_durations'] = os.path.basename(durations_file)
-                    metadata['shock_duration_analysis'] = {
-                        'total_shocks_with_duration': len(shock_durations),
-                        'average_duration_difference': sum(d['duration_difference'] for d in shock_durations) / len(shock_durations) if shock_durations else 0,
-                        'duration_accuracy': sum(1 for d in shock_durations if abs(d['duration_difference']) < 0.1) / len(shock_durations) * 100 if shock_durations else 0
-                    }
-                    
-                    with open(metadata_file, 'w') as f:
-                        json.dump(metadata, f, indent=2)
-                    
-                    self.logger.info(f"Updated metadata with shock duration analysis")
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating shock durations: {e}")
 
-    def _get_current_rpm(self):
-        """Get the current measured RPM from the motor controller"""
-        try:
-            if self.motor:
-                status, message = self.motor.read_encoder()
-                self.logger.debug(f"Raw encoder response: status={status}, message={message}")
-                
-                if status == "OK":
-                    # Parse RPM from encoder message (assuming format like "Raw:327,Position:115.07deg,RPM: -0.03")
-                    if "RPM: " in message:
-                        rpm_part = message.split("RPM: ")[1]
-                        if "," in rpm_part:
-                            rpm_str = rpm_part.split(",")[0].strip()
-                        else:
-                            rpm_str = rpm_part.strip()
-                        
-                        self.logger.debug(f"Extracted RPM string: '{rpm_str}'")
-                        
-                        try:
-                            rpm_value = float(rpm_str)
-                            self.logger.debug(f"Parsed RPM value: {rpm_value}")
-                            return rpm_value
-                        except ValueError as ve:
-                            self.logger.error(f"Could not parse RPM value '{rpm_str}': {ve}")
-                            return None
-                    else:
-                        self.logger.debug(f"No 'RPM: ' found in message: {message}")
-            else:
-                self.logger.debug(f"No motor controller available")
-            return None
-        except Exception as e:
-            self.logger.error(f"Error getting current RPM: {e}")
-            return None
+    def cleanup(self):
+        """Clean up resources"""
+        # TODO: close serial connections?
 
-    def _get_current_encoder_position(self):
-        """Get the current encoder position from the motor controller"""
-        try:
-            if self.motor:
-                status, message = self.motor.read_encoder()
-                if status == "OK":
-                    # Parse position from encoder message (assuming format like "Raw:327,Position:115.07deg,RPM: -0.03")
-                    if "Position: " in message:
-                        pos_part = message.split("Position: ")[1]
-                        if "," in pos_part:
-                            pos_str = pos_part.split(",")[0].strip()
-                        else:
-                            pos_str = pos_part.strip()
-                        # Remove "deg" suffix if present
-                        pos_str = pos_str.replace("deg", "").strip()
-                        try:
-                            return float(pos_str)
-                        except ValueError:
-                            return None
-            return None
-        except Exception as e:
-            self.logger.error(f"Error getting current encoder position: {e}")
-            return None
-
-    def _get_current_rpm_from_shock_event(self, shock_event):
-        """Get the RPM that was active when the shock event occurred"""
-        try:
-            # For start events, we can try to get RPM from the recording data around that time
-            if shock_event.get('event_type') == 'start_shock':
-                # Look for the closest data point in time to get RPM
-                event_time = shock_event['timestamp']
-                closest_data_point = None
-                min_time_diff = float('inf')
-                
-                self.logger.debug(f"Looking for RPM data around timestamp {event_time}")
-                self.logger.debug(f"Available data points: {len(self.recording_data)}")
-                
-                for data_point in self.recording_data:
-                    time_diff = abs(data_point['timestamp'] - event_time)
-                    if time_diff < min_time_diff:
-                        min_time_diff = time_diff
-                        closest_data_point = data_point
-                
-                if closest_data_point and closest_data_point.get('rpm') is not None:
-                    self.logger.debug(f"Found closest data point: RPM={closest_data_point['rpm']}, time_diff={min_time_diff}")
-                    return closest_data_point['rpm']
-                else:
-                    self.logger.debug(f"No RPM data found in recording data. Closest point: {closest_data_point}")
-            
-            # Fallback: get current RPM
-            self.logger.debug(f"Falling back to current RPM")
-            return self._get_current_rpm()
-        except Exception as e:
-            self.logger.error(f"Error getting RPM from shock event: {e}")
-            return None
-
-    def _export_current_session_files(self) -> bool:
-        """Export only the files from the current recording session"""
-        try:
-            # Use the export manager's method for consistency
-            return self.export.export_current_session_files(
-                recording_folder=self.recording_folder,
-                recording_session_id=self.recording_session_id,
-                experiment_name=self.current_experiment_name
-            )
-        except Exception as e:
-            self.logger.error(f"Export error: {e}")
-            return False
+        self.logger.info("APA system shutdown complete")
 
 
 if __name__ == "__main__":

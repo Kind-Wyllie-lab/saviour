@@ -64,12 +64,12 @@ const int SELF_TEST_IN = 2;       // Test signal input from shock generator (act
 // Response types
 const char MSG_ACK [] = "ACK";
 const char MSG_NACK [] = "NACK";
-const char MSG_SUCCESS [] = "SUCCESS";
+const char MSG_SUCCESS [] = "S";
 const char MSG_ERROR [] = "E";
-
-// Command types
 const char MSG_IDENTITY [] = "I";
 const char MSG_DATA [] = "D";
+
+const char MSG_RESET_PULSE_COUNTER [] = "R";
 const char MSG_SET_PIN_HIGH [] = "H";
 const char MSG_SET_PIN_LOW [] = "L";
 const char MSG_CURRENT [] = "C";
@@ -173,7 +173,7 @@ void sendState() {
   for(int i=0; i<11; i++){
     stateMessage += String(state[i]) + ",";
   }
-  stateMessage += String(timeOn) + "," + String(timeOff) + ",";
+  stateMessage += String(timeOn) + "," + String(timeOff) + "," + String(globalPulseCounter) + ",";
   sendMessage(MSG_DATA, stateMessage);
   lastSentState = millis();
 }
@@ -422,7 +422,7 @@ void handleCommand(String command, String param) {
     }
   }
   
-  else if (command == "RESET_PULSE_COUNTER") {
+  else if (command == MSG_RESET_PULSE_COUNTER) {
     // Reset global pulse counter for current trial
     globalPulseCounter = 0;
     verifiedShockCounter = 0;

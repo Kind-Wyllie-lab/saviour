@@ -90,10 +90,10 @@ class Modules:
         while True:
             current_time = time.time()
             for module_id, module_data in self.modules.items():
-                if module_data.status == ModuleStatus.READY:
+                if module_data.status == ModuleStatus.READY or module_data.status == ModuleStatus.NOT_READY:
                     ready_time = module_data.ready_time
                     if current_time - ready_time > self.ready_timeout:
-                        self.logger.info(f"Module {module_id} has timed out from READY")
+                        self.logger.info(f"Module {module_id} has timed out from READY/NOT_READY. Check again.")
                         self.modules[module_id].status = ModuleStatus.DEFAULT
                         self.broadcast_updated_modules()
             time.sleep(5)

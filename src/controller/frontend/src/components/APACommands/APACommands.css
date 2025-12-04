@@ -6,4 +6,17 @@ button {
     color: white;
     cursor: pointer;
     font-weight: bold;
-  }
+}
+
+.apa-command-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.apa-commands {
+  border: 1px solid var(--border-color);
+  background-color: var(--card-bg-color);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 5px;
+}

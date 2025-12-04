@@ -170,6 +170,7 @@ class Controller:
             "get_module_configs": self.get_module_configs,
             "get_samba_info": self.get_samba_info,
             "remove_module": self._remove_module,
+            # TODO: on shock start/stop
         })
             
         # Register status change callback with health monitor
@@ -285,10 +286,17 @@ class Controller:
                     if not ready:
                         self.logger.info(f"Full message from non-ready module: {message}")
                     self.modules.notify_module_readiness_update(module_id, ready, message)
+                case 'shock_started_being_delivered':
+                    self.logger.info("NOT IMPLEMENTED YET")
+                case 'shock_stopped_being_delivered':
+                    self.logger.info("NOT IMPLEMENTED YET")
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
+
+
+    # def on_shock_started_being_delivered(se)
 
 
     def on_module_status_change(self, module_id: str, status: str):

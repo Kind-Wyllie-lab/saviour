@@ -133,7 +133,6 @@ bool shockBeingDelivered = false;     // Shock currently being delivered (from s
 // =============================================================================
 
 // Communication functions
-String getStatus();
 void sendMessage(String type, String message);
 void parseCommand(String command, String arg);
 void listen();
@@ -220,11 +219,6 @@ void setup() {
   Timer1.initialize();
 
   delay(1000); // Allow time for systems to stabilize
-  // Send identity and ready message
-  // Serial.println("<IDENTITY:SHOCK_CONTROLLER>");
-  // Serial.println("<READY>");
-  // sendMessage("IDENTITY", "SHOCK_CONTROLLER");
-  // sendMessage("READY", " ");
   sendMessage(MSG_IDENTITY,  SYSTEM_ID); // Send identity on startup
 }
 
@@ -288,17 +282,6 @@ void handleCommand(String command, String param) {
   // =============================================================================
   // DEBUG COMMANDS
   // =============================================================================
-//  if (command == MSG_READ_PIN) {
-//    // Handle reading a digital pin
-//    if (param == "NONE") {
-//      sendMessage(MSG_ERROR,  "No param given");
-//    } else {
-//      int pin = param.toInt(); // Convert the param to a pin to read
-//      int state = digitalRead(pin); // Read teh pin
-//      sendMessage(MSG_SUCCESS,  ("PIN" + String(pin) + "=" + String(state)).c_str());
-//    }
-//  }
-
   if (command == MSG_SET_PIN_HIGH) {
     if (param == "NONE") {
       sendMessage(MSG_ERROR,  "No param given");
@@ -306,7 +289,6 @@ void handleCommand(String command, String param) {
       int pin = param.toInt();
       pinMode(pin, OUTPUT);
       digitalWrite(pin, HIGH);
-//      sendMessage(MSG_SUCCESS,  ("PIN" + String(pin) + "SET TO HIGH").c_str()); // No need for response at the moment
     }
   }
 
@@ -321,32 +303,8 @@ void handleCommand(String command, String param) {
       int pin = param.toInt();
       pinMode(pin, OUTPUT);
       digitalWrite(pin, LOW);
-//      sendMessage(MSG_SUCCESS,  ("PIN" + String(pin) + " SET TO LOW").c_str());
     }
   }
-
-  if(command == "TEST_GRID"){
-      // Step 0: Assert TEST IN is HIGH at start
-      digitalWrite(SELF_TEST_OUT, HIGH); // Ensure self test out is inactvie
-      delay(20);
-      bool pass = digitalRead(SELF_TEST_IN) == HIGH;
-      // Step 1: Initiate test by setting TEST_OUT LOW
-      digitalWrite(SELF_TEST_OUT, LOW);
-      delay(200);
-      // Step 2: Assert TEST_IN is now low
-      pass &= digitalRead(SELF_TEST_IN) == LOW;
-      delay(20);
-
-      // Step 3: Clean up by reverting TEST OUT to HIGH
-      digitalWrite(SELF_TEST_OUT, HIGH);
-      delay(20);
-      pass &= digitalRead(SELF_TEST_IN) == HIGH;
-      delay(20);
-      
-      sendMessage(MSG_SUCCESS,  pass ? "PASSED" : "FAILED");
-  }
-
-
   // =============================================================================
   // CURRENT CONTROL COMMANDS
   // =============================================================================
@@ -405,23 +363,6 @@ void handleCommand(String command, String param) {
   // =============================================================================
   // PULSE CONTROL COMMANDS
   // =============================================================================
-  
-  else if (command == "PULSES") {
-    // Set number of pulses to deliver
-    if (param == "NONE") {
-      sendMessage(MSG_ERROR,  "No param given");
-    } else {
-      int pulses = param.toInt();
-      if (pulses >= 0) {
-        pulseTarget = pulses;
-        String pulseDesc = (pulses == 0) ? "infinite" : String(pulses);
-        sendMessage(MSG_SUCCESS,  ("Pulse count set to " + pulseDesc).c_str());
-      } else {
-        sendMessage(MSG_ERROR,  "Pulse count must be greater than or equal to 0");
-      }
-    }
-  }
-  
   else if (command == MSG_RESET_PULSE_COUNTER) {
     // Reset global pulse counter for current trial
     globalPulseCounter = 0;
@@ -471,16 +412,10 @@ void handleCommand(String command, String param) {
   // ===========================================================#==================
   // STATUS AND MONITORING COMMANDS
   // =============================================================================
-  
-  else if (command == "STATUS") {
-    // Send current params back i.e. current, time_on, time_off, pulses
-    sendMessage(MSG_SUCCESS,  getStatus().c_str());
-  }
-
-  // else {
-  //   String errorMessage = "No logic for " + command + " " + param;
-  //   sendMessage(MSG_ERROR,  errorMessage);
-  // }
+   else {
+     String errorMessage = "No logic for " + command + " " + param;
+     sendMessage(MSG_ERROR,  errorMessage);
+   }
 }
 
 /**
@@ -492,26 +427,6 @@ void handleCommand(String command, String param) {
 void sendMessage(String type, String message) {
   String payload = "<" + type + ":" + message + ">";
   Serial.println(payload);
-}
-
-
-/**
- * Get current system status as a formatted string
- * 
- * @return Status string with all current parameters and state
- */
-String getStatus() {
-  float verificationRate = (globalPulseCounter > 0) ? 
-    ((float)verifiedShockCounter / globalPulseCounter * 100) : 0.0;
-  
-  return "Current:" + String(currentAmps, 2) + "mA" +
-         ",TimeOn:" + String(timeOn/1000.0, 3) + "s" +
-         ",TimeOff:" + String(timeOff/1000.0, 3) + "s" +
-         ",Pulses:" + String(pulseTarget) +
-         ",Active:" + String(activatedState ? "true" : "false") +
-         ",Delivered:" + String(globalPulseCounter) +
-         ",Verified:" + String(verifiedShockCounter) +
-         ",VerificationRate:" + String(verificationRate, 1) + "%";
 }
 
 // =============================================================================
@@ -663,11 +578,10 @@ void onCompleteCycle() {
     digitalWrite(TRIGGER_OUT, HIGH);
   } else {
     digitalWrite(TRIGGER_OUT, LOW);
+    // Update pulse counters when trigger out is set LOW
+    pulseCounter++;
+    globalPulseCounter++;
   }
-
-  // Update pulse counters
-  pulseCounter++;
-  globalPulseCounter++;
 }
 
 /**

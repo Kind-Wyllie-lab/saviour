@@ -14,7 +14,7 @@ from typing import Dict, Any
 
 class ModuleStatus(StrEnum):
     """Enum class which holds all possible status codes a Module can be in"""
-    WAITING = "WAITING"
+    DEFAULT = "WAITING"
     NOT_READY = "NOT_READY"
     READY = "READY"
     RECORDING = "RECORDING"
@@ -32,7 +32,7 @@ class Module:
     port: int = 5353 # The port that zeroconf is operating on?
     groups: list = field(default_factory=list) # Groups the module belongs to
     online: bool = True # Default to assuming it's online
-    status: ModuleStatus = ModuleStatus.NOT_READY # Default to NOT_READY
+    status: ModuleStatus = ModuleStatus.DEFAULT # Default to NOT_READY
     config: Dict[str, Any] = field(default_factory=dict)
     ready_time: float = 0.0 # Time at which a module went ready, so as to flip it back to NOT_READY if time elapsed.
     ready_message: str = "" # Message associated with a ready update

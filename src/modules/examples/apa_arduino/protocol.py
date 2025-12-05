@@ -94,7 +94,10 @@ class Protocol:
             msg_type = seps[0]
             msg = seps[1]
         
-        self._handle_message(msg_type, msg)
+        if msg_type and msg:
+            self._handle_message(msg_type, msg)
+        else:
+            self.logger.warning(f"Cannot handle bad message: {packet}")
 
     def listen_old(self):
         while not self.stop_flag.is_set():

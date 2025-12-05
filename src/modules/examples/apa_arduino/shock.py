@@ -268,21 +268,21 @@ class Shocker:
             # Establish whether shock being attempted
             if self.trigger_out == 0: # Shock started being sent
                 if self.last_trigger_out == 1:
-                    self._on_shock_started_being_attempted()
+                    self._on_shock_started_being_attempted(time.time_ns())
 
                 # Establish whether shock being delivered
                 if self.self_test_in == 1 and self.last_self_test_in == 0: # Grid is live and a shock just started being delivered
-                    self._on_shock_started_being_delivered()
+                    self._on_shock_started_being_delivered(time.time_ns())
                 if self.self_test_in == 0 and self.last_self_test_in == 1: # Grid is live and a shock just stopped being delivered e.g. the rat jumped, pulled finger away from grid
-                    self._on_shock_stopped_being_delivered()
+                    self._on_shock_stopped_being_delivered(time.time_ns())
 
 
             # If shock is no longer being attempted
             if self.trigger_out == 1:
                 if self.shock_being_delivered: # Stopped attempted shocks while shock was being delivered 
-                    self._on_shock_stopped_being_delivered()
+                    self._on_shock_stopped_being_delivered(time.time_ns())
                 if self.last_trigger_out == 0: # If we just stopped attempting shocks
-                    self._on_shock_stopped_being_attempted()
+                    self._on_shock_stopped_being_attempted(time.time_ns())
 
 
         # Update grid is live state - is this necessary?
@@ -292,30 +292,30 @@ class Shocker:
             self.grid_is_live = False
 
 
-    def _on_shock_started_being_attempted(self):
+    def _on_shock_started_being_attempted(self, timestamp: int):
         self.shock_being_attempted = True
         self.attempted_shocks += 1
         # self.logger.info(f"Attempting shock at {time.time()}, total attempted: {self.attempted_shocks}")
-        self.on_shock_started_being_attempted()
+        self.on_shock_started_being_attempted(timestamp)
 
 
-    def _on_shock_stopped_being_attempted(self):
+    def _on_shock_stopped_being_attempted(self, timestamp: int):
         self.shock_being_attempted = False
         # self.logger.info(f"Stopped attempting shock at {time.time()}")
-        self.on_shock_stopped_being_attempted()
+        self.on_shock_stopped_being_attempted(timestamp)
 
 
-    def _on_shock_started_being_delivered(self):
+    def _on_shock_started_being_delivered(self, timestamp: int):
         self.delivered_shocks += 1
         self.shock_being_delivered = True
         # self.logger.info(f"Delivered shock at {time.time()}, total delivered {self.delivered_shocks}")
-        self.on_shock_started_being_delivered()
+        self.on_shock_started_being_delivered(timestamp)
 
     
-    def _on_shock_stopped_being_delivered(self):
+    def _on_shock_stopped_being_delivered(self, timestamp: int):
         self.shock_being_delivered = False
         # self.logger.info(f"Shock stopped being delivered at {time.time()}")
-        self.on_shock_stopped_being_delivered()
+        self.on_shock_stopped_being_delivered(timestamp)
 
 
     def simple_check_shock_events(self, shock_settings: list):

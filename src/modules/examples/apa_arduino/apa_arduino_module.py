@@ -58,8 +58,6 @@ class APAModule(Module):
         self._shock_file_handle = None
         self._time_series_file_handle = None
         self.recording_shocks: bool = False
-        self.recording_thread: threading.Thread = None
-        self.recording_stop_flag: threading.Event = threading.Event()
         self.recording_start_time: int = None
         self.data_sampling_rate: int = 1  # Hz - how often to sample motor data
 
@@ -68,7 +66,8 @@ class APAModule(Module):
             self._check_shocker,
             self._check_shock_grid_fault,
             self._check_shock_grid_active,
-            self._check_shocks_not_above_50
+            self._check_shocks_not_above_50,
+            self._check_shocks_equal_zero
         ]
 
         self.apa_arduino_commands = {
@@ -253,6 +252,13 @@ class APAModule(Module):
             return True, ""
             
 
+    @check()
+    def _check_shocks_equal_zero(self) -> tuple[bool, str]:
+        if self.shock.attempted_shocks != 0 or self.shock.attempted_shocks_from_arduino != 0:
+            return False, "Shock pulse counter is not 0 - please manually reset pulse counter (GUI button)"
+        else:
+            return True, ""
+
     # TODO: Checks to make sure RPM, shocks etc are set?
 
 
@@ -264,21 +270,23 @@ class APAModule(Module):
         self.shock.on_shock_started_being_delivered = self.on_shock_started_being_delivered
         self.shock.on_shock_stopped_being_delivered = self.on_shock_stopped_being_delivered
         
+
     def on_shock_started_being_attempted(self, timestamp: int):
         if self.recording_shocks:
             self._write_shock_event(timestamp, "SENDING_SHOCK")
         # self.logger.info(f"Attempting shock at {time.time()}, total attempted: {self.shock.attempted_shocks} arduino reports {self.shock.attempted_shocks_from_arduino}")
 
+
     def on_shock_stopped_being_attempted(self, timestamp: int):
         if self.recording_shocks:
             self._write_shock_event(timestamp, "STOPPING_SHOCK")
-        self.logger.info(f"Stopped attempting shock at {time.time()}")
+        # self.logger.info(f"Stopped attempting shock at {time.time()}")
 
 
     def on_shock_started_being_delivered(self, timestamp: int):
         if self.recording_shocks:
             self._write_shock_event(timestamp, "SHOCK_DELIVERY")
-        self.logger.info(f"Delivered shock at {time.time()}, total delivered {self.shock.delivered_shocks}")
+        # self.logger.info(f"Delivered shock at {time.time()}, total delivered {self.shock.delivered_shocks}")
         status = {
             "type": "shock_started_being_delivered"
         }
@@ -288,7 +296,7 @@ class APAModule(Module):
     def on_shock_stopped_being_delivered(self, timestamp: int):
         if self.recording_shocks:
             self._write_shock_event(timestamp, "SHOCK_STOP_DELIVERY")
-        self.logger.info(f"Shock stopped being delivered at {time.time()}")
+        # self.logger.info(f"Shock stopped being delivered at {time.time()}")
         status = {
             "type": "shock_stopped_being_delivered"
         }
@@ -335,13 +343,6 @@ class APAModule(Module):
             # Start motor
             self.motor.start_motor()
 
-
-            # Start data recording thread
-            self.recording_stop_flag.clear()
-            self.recording_thread = threading.Thread(target=self._record_data_loop)
-            self.recording_thread.daemon = True
-            self.recording_thread.start()
-            
             # Set recording flag - this happens in module.py too but just to be safe
             self.recording_shocks = True
             
@@ -402,9 +403,7 @@ class APAModule(Module):
             self.motor.stop_motor()
             
             # Set recording flag to false
-            self.recording_stop_flag.set()
             self.recording_shocks = False
-
 
             # self.add_session_file(events_file)
             self._close_shock_event_file()
@@ -412,7 +411,6 @@ class APAModule(Module):
             # Calculate duration
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
-                
                 
                 # Send status response after successful recording stop
                 self.communication.send_status({
@@ -441,22 +439,6 @@ class APAModule(Module):
                 "error": str(e)
             })
             return False
-
-
-    def _record_data_loop(self):
-        """Background thread to continuously record motor data"""
-        self.logger.info("Starting data recording loop")
-        
-        while not self.recording_stop_flag.is_set():
-            try:
-                # Write to time series data file?
-                pass
-                
-            except Exception as e:
-                self.logger.error(f"Error in data recording loop: {e}")
-                time.sleep(0.1)  # Brief pause on error
-        
-        self.logger.info("Data recording loop stopped")
     
 
     """Configuration"""

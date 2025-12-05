@@ -72,6 +72,31 @@ class Protocol:
 
 
     def listen(self):
+        buf = ""
+        while not self.stop_flag.is_set():
+            data = self.conn.read(self.conn.in_waiting or 1).decode("utf-8", errors="ignore")
+            buf += data
+            while "<" in buf and ">" in buf:
+                start = buf.index("<")
+                end = buf.index(">", start)
+                packet = buf[start+1:end]
+                buf = buf[end+1:]
+                self._parse_message(packet)
+    
+
+    def _parse_message(self, packet: str):
+        msg_type = ""
+        seps = packet.split(":")
+        if len(seps) == 3:
+            msg_type = seps[0]
+            msg = ":".join(seps[1:])
+        elif len(seps) == 2:
+            msg_type = seps[0]
+            msg = seps[1]
+        
+        self._handle_message(msg_type, msg)
+
+    def listen_old(self):
         while not self.stop_flag.is_set():
             try:
                 response = self.conn.readline().decode("utf-8")
@@ -92,21 +117,25 @@ class Protocol:
                     msg_type = seps[0]
                     msg = seps[1]
 
-                self._handle_command(msg_type, msg)
+                self._handle_message(msg_type, msg)
             except Exception as e:
                 self.logger.info(f"Exception listening on serial port {self.port}: {e}")
                 self.reset_serial()
 
     
     def reset_serial(self):
-        self.logger.info(f"Resetting serial connection on {self.port}")
+        self.logger.info(f"reset_serial() is not yet implemnted")
+        # self.logger.info(f"Resetting serial connection on {self.port}")
+        # self.pause_flag.set()
+        # self.conn.flushInput()
+        # self.pause_flag.clear()
         # self.conn.close()
         # time.sleep(0.5)
         # self.conn.open()
         # self.start()
     
 
-    def _handle_command(self, cmd: str, param: str) -> None:
+    def _handle_message(self, cmd: str, param: str) -> None:
         """Private version of handle command which can parse identity and then passes to callback for handling specific commands."""
         match cmd:
             case "I":

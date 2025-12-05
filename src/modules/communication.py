@@ -237,7 +237,7 @@ class Communication:
             
             # Send status
             self.status_socket.send_string(f"status/{self.module_id} {message}")
-            self.logger.info(f"Status sent: {message}")
+            # self.logger.info(f"Status sent: {message}")
             
         except Exception as e:
             self.logger.error(f"Error sending status: {e}")

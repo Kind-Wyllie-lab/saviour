@@ -157,7 +157,7 @@ void listen();
 // State
 void sendState();
 int lastSentState = 0;
-int sendStatePeriod = 50;
+int sendStatePeriod = 50; // Frequency at which to send state
 
 // Motor Control
 void applyPID();
@@ -217,27 +217,6 @@ void applyPID() {
   if (pidTimeDelta > 0) {
     // Debug: Print timing and error values
     static unsigned long lastDebugTime = 0;
-    if (debugMode && millis() - lastDebugTime > 500) { // Print every 500ms if debug enabled
-      Serial.print("DEBUG: pidTimeDelta=");
-      Serial.print(pidTimeDelta, 4);
-      Serial.print("s, error=");
-      Serial.print(rpmError, 3);
-      Serial.print("RPM, integral=");
-      Serial.print(integral, 3);
-      Serial.print(", derivative=");
-      Serial.print(derivative, 3);
-      Serial.print(", output=");
-      Serial.print(output, 3);
-      Serial.print(", pos=");
-      Serial.print(encoderPosition, 2);
-      Serial.print("deg, lastPos=");
-      Serial.print(lastEncoderPosition, 2);
-      Serial.print("deg, rpmCurrent=");
-      Serial.print(rpmCurrent, 3);
-      Serial.print("RPM");
-      Serial.println();
-      lastDebugTime = millis();
-    }
     
     // Integral term: accumulates error over time
     integral += rpmError * pidTimeDelta;
@@ -298,7 +277,7 @@ void stopIfFault() {
   if (md.getM1Fault()) {
     md.disableDrivers();
 	delay(1);
-    Serial.println("M1 fault");
+    sendMessage(MSG_ERROR, "M1 Fault");
     while (1); // Halt execution on fault
   }
 }
@@ -333,9 +312,6 @@ void setSpeedSmoothly(int speed) {
 void setSpeedSmoothly(int speed, bool sendResponseFlag) {
   // Skip if speed is already at target
     if (speed == lastSpeed) {
-    if (sendResponseFlag) {
-        sendMessage(MSG_SUCCESS,  "Speed already at target");
-    }
         return;
     }
         
@@ -348,9 +324,6 @@ void setSpeedSmoothly(int speed, bool sendResponseFlag) {
     md.setM1Speed(0);
     md.disableDrivers(); // Put drivers to sleep when stopped
     lastSpeed = 0;
-    if (sendResponseFlag) {
-      sendMessage(MSG_SUCCESS,  "Motor stopped");
-    }
     return;
   }
   
@@ -373,10 +346,6 @@ void setSpeedSmoothly(int speed, bool sendResponseFlag) {
   
   // Update last speed and send response
     lastSpeed = speed;
-  if (sendResponseFlag) {
-    String responseMsg = "Speed set to " + String(speed);
-    sendMessage(MSG_SUCCESS,  responseMsg.c_str());
-  }
 }
 
 /**
@@ -459,11 +428,6 @@ float calculateRPM() {
   if (abs(encoderPosition - lastEncoderPosition) < 0.1 && 
       abs(lastEncoderPosition - encoderPositions[(positionIndex + 1) % 3]) < 0.1) {
     isStuck = true;
-    if (debugMode) {
-      Serial.print("STUCK_DEBUG: Position stuck at ");
-      Serial.print(encoderPosition, 2);
-      Serial.println("deg, using previous RPM");
-    }
   }
   
   // If stuck, return previous RPM value to prevent PID spikes
@@ -478,19 +442,6 @@ float calculateRPM() {
   static bool lastRolloverDebug = false;
   bool currentRolloverDebug = (abs(positionDelta) > 150.0); // Log when we're near rollover threshold
   
-  if (debugMode && (currentRolloverDebug || lastRolloverDebug)) {
-    Serial.print("ROLLOVER_DEBUG: pos=");
-    Serial.print(encoderPosition, 2);
-    Serial.print("deg, lastPos=");
-    Serial.print(lastEncoderPosition, 2);
-    Serial.print("deg, rawDelta=");
-    Serial.print(positionDelta, 2);
-    Serial.print("deg, rawEncoder=");
-    Serial.print(encoderReading);
-    Serial.print(", lastRawEncoder=");
-    Serial.print(analogRead(ENCODER_PIN)); // Read current raw value for comparison
-  }
-  
   // Handle wraparound at 0/360 degrees boundary
   // The key insight: we need to find the shortest angular distance
   // between two angles, considering that 359° and 1° are only 2° apart
@@ -499,23 +450,11 @@ float calculateRPM() {
   if (positionDelta > 180.0) {
     // Wrapped from high to low (e.g., 359° to 1° = -358° change)
     positionDelta -= 360.0;
-    if (debugMode && currentRolloverDebug) {
-      Serial.print(", WRAPPED_HIGH_TO_LOW, correctedDelta=");
-      Serial.print(positionDelta, 2);
-      Serial.println("deg");
-    }
   } else if (positionDelta < -180.0) {
     // Wrapped from low to high (e.g., 1° to 359° = +358° change)
     positionDelta += 360.0;
-    if (debugMode && currentRolloverDebug) {
-      Serial.print(", WRAPPED_LOW_TO_HIGH, correctedDelta=");
-      Serial.print(positionDelta, 2);
-      Serial.println("deg");
-    }
-  } else if (debugMode && currentRolloverDebug) {
-    Serial.println(", NO_WRAPAROUND");
-  }
-  
+  } 
+
   lastRolloverDebug = currentRolloverDebug;
   
   // Convert to RPM: (degrees/time_ms) * (60000ms/min) / (360deg/revolution)
@@ -612,7 +551,7 @@ void cleanup() {
 
 // STATE
 void sendState() {
-  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition) + "," + String(rpmSetpoint);
+  String stateMessage = String(rpmCurrent) + "," + String(encoderPosition) + "," + String(rpmSetpoint) + ",";
   sendMessage(MSG_DATA, stateMessage);
   lastSentState = millis();
 }
@@ -681,21 +620,6 @@ void loop() {
     readEncoder();
     calculateRPM();
     lastMonitoringTime = currentTime;
-    
-    // Debug output for test mode
-    if (debugMode && !pidEnabled) {
-      static unsigned long lastTestDebugTime = 0;
-      if (currentTime - lastTestDebugTime >= 200) { // Print every 200ms
-        Serial.print("TEST_DEBUG: RPM=");
-        Serial.print(rpmCurrent, 3);
-        Serial.print(", encoderRaw=");
-        Serial.print(encoderReading);
-        Serial.print(", position=");
-        Serial.print(encoderPosition, 2);
-        Serial.println("deg");
-        lastTestDebugTime = currentTime;
-      }
-    }
   }
   
   // Run PID control at fixed intervals (5Hz)

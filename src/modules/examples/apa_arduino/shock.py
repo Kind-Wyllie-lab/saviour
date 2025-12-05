@@ -74,6 +74,10 @@ class Shocker:
         self.attempted_shocks_from_arduino = 0
         self.delivered_shocks = 0
 
+        # A thread for shocking
+        self.shock_thread = None
+        self.stop_shock_flag = threading.Event()
+
         # Callbacks for event communication
         self.on_shock_stopped_being_attempted = None
         self.on_shock_stopped_being_attempted = None
@@ -115,6 +119,19 @@ class Shocker:
         self.set_time_off(self.time_off)    
 
 
+    """Shock Thread"""
+    def start_shocking(self):
+        while not self.stop_shock_flag.is_set():
+            # Activate shocks
+            self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
+            time.sleep(self.time_on)
+
+            # Deactivate shocks
+            self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
+            time.sleep(self.time_off)
+
+            if self.attempted_shocks >= 50:
+                self.deactivate_shock()
 
     """SHOCK CONTROLLER SPECIFIC COMMANDS"""
     # Set methods
@@ -192,14 +209,19 @@ class Shocker:
             self.logger.warning("Cannot activate shocker as have already delivered limit of 50 shocks.")
             return False
         # self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
-        self.send_command(MSG_ACTIVATE, "")
+        # self.send_command(MSG_ACTIVATE, "")
         self.shock_activated = True
+        self.stop_shock_flag.clear()
+        self.shock_thread = threading.Thread(target=self.start_shocking)
+        self.shock_thread.start()
         return True
 
 
     def deactivate_shock(self):
-        # self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
-        self.send_command(MSG_DEACTIVATE, "")
+        # self.send_command(MSG_DEACTIVATE, "")
+        self.stop_shock_flag.set()
+        time.sleep(0.1)
+        self.shock_thread.join()
         self.shock_activated = False
 
 

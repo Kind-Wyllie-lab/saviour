@@ -385,9 +385,9 @@ void handleCommand(String command, String param) {
       int dutyCycle = (int)(ratio * 1024);           // TimerOne duty cycle (0-1024)
 
       // Reset counters for new sequence
-          pulseCounter = 0;
-          verifiedShockCounter = 0;
-          shockBeingDelivered = false;
+      pulseCounter = 0;
+      verifiedShockCounter = 0;
+      shockBeingDelivered = false;
 
       // Start PWM timing with TimerOne
       digitalWrite(TRIGGER_OUT, LOW);  // Start with active low
@@ -412,10 +412,10 @@ void handleCommand(String command, String param) {
   // ===========================================================#==================
   // STATUS AND MONITORING COMMANDS
   // =============================================================================
-   else {
-     String errorMessage = "No logic for " + command + " " + param;
-     sendMessage(MSG_ERROR,  errorMessage);
-   }
+//   else {
+//     String errorMessage = "No logic for " + command + ":" + param;
+//     sendMessage(MSG_ERROR,  errorMessage);
+//   }
 }
 
 /**

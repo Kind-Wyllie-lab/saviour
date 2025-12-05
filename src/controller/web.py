@@ -629,7 +629,7 @@ class Web:
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
         try:
-            self.logger.info(f"Received status from {module_id}: {status}")
+            # self.logger.info(f"Received status from {module_id}: {status}")
 
             # Ensure status has required fields
             if not isinstance(status, dict):
@@ -644,7 +644,9 @@ class Web:
                 case "shock_started_being_delivered":
                     self.socketio.emit("shock_started_being_delivered")
                 case "shock_stopped_being_delivered":
-                    self.socketio.emit("shock_stopped_being_delivered")            
+                    self.socketio.emit("shock_stopped_being_delivered")      
+                case "arduino_state":
+                    self.socketio.emit("arduino_state", status)      
 
             # Handle recordings list response
             if status.get('type') == 'recordings_list':

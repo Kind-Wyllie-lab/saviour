@@ -290,6 +290,8 @@ class Controller:
                     self.logger.info("NOT IMPLEMENTED YET")
                 case 'shock_stopped_being_delivered':
                     self.logger.info("NOT IMPLEMENTED YET")
+                case "arduino_state":
+                    pass # Gets handled by web
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:

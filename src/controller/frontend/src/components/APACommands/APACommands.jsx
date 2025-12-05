@@ -13,11 +13,11 @@ function APACommands( {modules} ) {
     useEffect(() => {
         // Handle shock state changes
         function onShockStartBeingDelivered() {
-            setShockState("Shock being delivered");
+            setShockState("Started shocking");
         }
 
         function onShockStopBeingDelivered() {
-            setShockState("Shock no longer being delivered");
+            setShockState("Stopped shocking");
         }
 
         socket.on('shock_started_being_delivered', onShockStartBeingDelivered);

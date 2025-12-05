@@ -39,4 +39,11 @@
   .fullscreen-close-btn:hover {
     background: rgba(0,0,0,0.8);
   }
-  
+
+.video-panel {
+  border: 1px solid red;
+}
+
+.commands-panel {
+  border: 1px solid red;
+}

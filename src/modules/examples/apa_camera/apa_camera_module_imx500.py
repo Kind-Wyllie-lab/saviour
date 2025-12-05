@@ -32,11 +32,11 @@ import cv2
 from typing import Optional, Dict
 from collections import deque
 from ultralytics import YOLO
-# import onnxruntime as ort
+import onnxruntime as ort
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command, check
+from modules.module import Module
 
 class Detection:
     def __init__(self, category, conf, box):
@@ -57,6 +57,16 @@ class APACameraModule(Module):
         # Basic model setup
         self.model = YOLO("ratnet.pt")
 
+        # IMX500 AI Camera Setup
+        imx500_model = "imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
+        self.imx500 = IMX500(f"/usr/share/imx500-models/{imx500_model}")
+        self.intrinsics = self.imx500.network_intrinsics
+        if not self.intrinsics:
+            self.intrinsics = NetworkIntrinsics()
+            self.intrinsics.task = "object detection"
+        elif self.intrinsics.task != "object detection":
+            self.logger.warning("Network is not an object detection task")
+
         # Object detection state
         self._detection_buffer = deque(maxlen=3) # Last 3 frames
         self._detections = None
@@ -65,14 +75,13 @@ class APACameraModule(Module):
 
         # Initialize camera
         self.picam2 = Picamera2()
-        self.height = None # Frame height
-        self.width = None # Frame width
-        self.fps = None # Target FPS
-        self.mode = None # Sensor mode
+        self.height = None
+        self.width = None
+        self.fps = None
+        self.mode = None
 
         # Get camera modes
-        self.camera_modes = self.picam2.sensor_modes # Available sensor modes - trade offs between resolution and framerate.
-        self.logger.info(f"Available sensor modes: {self.camera_modes}")
+        self.camera_modes = self.picam2.sensor_modes
         time.sleep(0.1)
 
         # Shock zone
@@ -110,10 +119,6 @@ class APACameraModule(Module):
         }
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
-
-        self.module_checks = {
-            self._check_picam
-        }
 
         self._configure_mask_and_shock_zone()
         self._configure_object_detection()
@@ -521,30 +526,6 @@ class APACameraModule(Module):
             })
             return False
     
-    """Self Check"""
-    def _perform_module_specific_checks(self) -> tuple[bool, str]:
-        self.logger.info(f"Performing {self.module_type} specific checks")
-        for check in self.module_checks:
-            self.logger.info(f"Running {check.__name__}")
-            result, message = check()
-            if result == False:
-                self.logger.info(f"A check failed: {check.__name__}, {message}")
-                return False, message
-                break # Exit loop on first failed check
-        if result == False:
-            return result, message
-        else:
-            return True, "No implementation yet..."
-
-
-    @check()
-    def _check_picam(self) -> tuple[bool, str]:
-        if not self.picam2:
-            return False, "No picam2 object"
-        else:
-            return True, "Picam2 object instantiated"
-
-
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         super().when_controller_discovered(controller_ip, controller_port)
@@ -1076,34 +1057,34 @@ class IMX500Detector():
             self.logger.error(f"Error in _parse_detections: {e}")
 
 
-# class YoloONNXDetector():
-#     def __init__(self):
-#         # ONNX Setup
-#         self.opts = ort.SessionOptions()
-#         self.opts.intra_op_num_threads = 5
-#         self.opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-#         self.session = ort.InferenceSession(
-#             "ratnet.onnx",
-#             sess_options=self.opts,
-#             providers=["CPUExecutionProvider"]
-#         )
-#         self.input_name = self.session.get_inputs()[0].name
-#         self.input_width = 640
-#         self.input_height = 640
+class YoloONNXDetector():
+    def __init__(self):
+        # ONNX Setup
+        self.opts = ort.SessionOptions()
+        self.opts.intra_op_num_threads = 5
+        self.opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(
+            "ratnet.onnx",
+            sess_options=self.opts,
+            providers=["CPUExecutionProvider"]
+        )
+        self.input_name = self.session.get_inputs()[0].name
+        self.input_width = 640
+        self.input_height = 640
 
-#     def _preprocess(self, frame: np.ndarray):
-#         # Resize → normalize → CHW → NCHW
-#         img = cv2.resize(frame, (self.input_width, self.input_height))
-#         inp = img.astype(np.float32) / 255.0
-#         inp = np.transpose(inp, (2, 0, 1))[None, :, :, :]  # (1,3,H,W)
-#         return inp
+    def _preprocess(self, frame: np.ndarray):
+        # Resize → normalize → CHW → NCHW
+        img = cv2.resize(frame, (self.input_width, self.input_height))
+        inp = img.astype(np.float32) / 255.0
+        inp = np.transpose(inp, (2, 0, 1))[None, :, :, :]  # (1,3,H,W)
+        return inp
 
-#     def detect_objects(self, frame: np.ndarray): 
-#         inp = self._preprocess(frame)
-#         t0 = time.time()
-#         outputs = self.session.run(None, {self.input_name: inp})
-#         dt = (time.time() - t0) * 1000
-#         self.logger.info(f"Inference time: {dt:.1f} ms")
-#         return outputs
+    def detect_objects(self, frame: np.ndarray): 
+        inp = self._preprocess(frame)
+        t0 = time.time()
+        outputs = self.session.run(None, {self.input_name: inp})
+        dt = (time.time() - t0) * 1000
+        self.logger.info(f"Inference time: {dt:.1f} ms")
+        return outputs
 
 

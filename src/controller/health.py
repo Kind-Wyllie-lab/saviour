@@ -106,6 +106,8 @@ class Health:
                     self.module_health[module_id]['phc2sys_offset'] = status_data['phc2sys_offset']
                 if 'phc2sys_freq' in status_data:
                     self.module_health[module_id]['phc2sys_freq'] = status_data['phc2sys_freq']
+                if "last_ptp_restart" not in self.module_health[module_id]:
+                    self.module_health[module_id]["last_ptp_restart"] = time.time()
             
             if was_new_module:
                 self.logger.info(f"New module {module_id} added to health tracking")

@@ -57,7 +57,7 @@ class APAModule(Module):
         # Recording-specific variables
         self._shock_file_handle = None
         self._time_series_file_handle = None
-        self.recording: bool = False
+        self.recording_shocks: bool = False
         self.recording_thread: threading.Thread = None
         self.recording_stop_flag: threading.Event = threading.Event()
         self.recording_start_time: int = None
@@ -67,7 +67,8 @@ class APAModule(Module):
             self._check_motor,
             self._check_shocker,
             self._check_shock_grid_fault,
-            self._check_shock_grid_active
+            self._check_shock_grid_active,
+            self._check_shocks_not_above_50
         ]
 
         self.apa_arduino_commands = {
@@ -242,13 +243,14 @@ class APAModule(Module):
             return False, "Shocks are active! Please deactivate and try again."
         else:
             return True, "No shock sequence active."
+    
 
-    # @check()
-    # def _check_shocks_not_above_50(self) -> tuple[bool, str]:
-    #     if self.shock.attempted_shocks >= 50 or self.shock.attempted_shocks_from_arduino >= 50:
-    #         return False, "Have already delivered limit of 50 shocks - please manually reset pulse counter (GUI button)"
-    #     else:
-    #         return True, ""
+    @check()
+    def _check_shocks_not_above_50(self) -> tuple[bool, str]:
+        if self.shock.attempted_shocks >= 50 or self.shock.attempted_shocks_from_arduino >= 50:
+            return False, "Have already delivered limit of 50 shocks per trial - please manually reset pulse counter (GUI button)"
+        else:
+            return True, ""
             
 
     # TODO: Checks to make sure RPM, shocks etc are set?
@@ -365,7 +367,7 @@ class APAModule(Module):
     def _write_shock_event(self, timestamp_ns: int, event: str): 
         """Write a shock event to file"""
         if self._shock_file_handle:
-            self._shock_file_handle.write(f'{timestamp_ns},{event}\n')
+            self._shock_file_handle.write(f'{timestamp_ns},{event},{self.motor.speed_from_arduino}\n')
 
     def _create_shock_event_file(self) ->  bool:
         filename = f"{self.current_filename_prefix}_shock_events.csv"
@@ -379,7 +381,7 @@ class APAModule(Module):
             f.write(f"# Session ID: {self.recording_session_id}\n")
             f.write(f"# Recording Start: {self.recording_start_time}\n")
             f.write("#\n")
-            f.write("Timestamp_nanoseconds, event\n")
+            f.write("Timestamp_nanoseconds, event, rotation speed (rpm)\n")
         except Exception as e:
             self.logger.error(f"Failed to open shock events file: {e}")
             self._shock_file_handle = None

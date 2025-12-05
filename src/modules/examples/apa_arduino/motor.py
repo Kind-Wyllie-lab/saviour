@@ -54,7 +54,7 @@ class Motor:
             case "D":
                 self.interpret_state(param)
             case _:
-                self.logger.info(f"No logic for {cmd}")
+                self.logger.info(f"No logic for {cmd}: {param}")
 
 
     def send_command(self, type: str, param):
@@ -91,10 +91,13 @@ class Motor:
         # self.logger.info(f"Interpret state received {system_state} with type {type(system_state)}")
         system_state = system_state.split(",")
         self.state_buffer.append(system_state)
-        self.speed_from_arduino = float(self.state_buffer[0][0])
-        self.position = float(self.state_buffer[0][1])
-        self.validate_state()
-
+        try:
+            self.speed_from_arduino = float(system_state[0])
+            self.position = float(system_state[1])
+            self.validate_state()
+        except Exception as e:
+            self.logger.warning(f"Could not parse update from motor {system_state}: {e}")
+            # self.arduino.reset_serial()
 
     def set_speed(self, speed: float) -> None:
         self.send_command(MSG_SET_SPEED, speed)
@@ -115,7 +118,7 @@ class Motor:
 
 
     def get_speed(self) -> float: 
-        return self.state_buffer[0][0]
+        return self.state_buffer[-1][0]
 
 
     def handle_input(self, cmd: str):
@@ -125,7 +128,7 @@ class Motor:
                 case "0": 
                     # self.logger.info(state_buffer)
                     # self.logger.info(f"RPM={self.state_buffer[0][0]}, position={self.state_buffer[0][1]}deg")
-                    self.logger.info(self.state_buffer[0])
+                    self.logger.info(self.state_buffer[-1])
                 case "1": 
                     self.set_speed(2.0)
                 case "2":

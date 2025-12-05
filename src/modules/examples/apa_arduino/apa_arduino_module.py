@@ -49,6 +49,11 @@ class APAModule(Module):
         self.shock = None
         self._find_arduino_ports()
 
+        # Sending state to controller
+        self.send_state_period = 0.2 # Send state every this many seconds
+        self.last_sent_state = time.time()
+        self.send_state_thread = None
+
         # Recording-specific variables
         self._event_file_handle = None
         self.recording_thread = None
@@ -92,9 +97,11 @@ class APAModule(Module):
 
     def handle_system_ready(self):
         """Called when both arduino are discovered."""
+        self.logger.info("Both arduino initialized.")
         self.set_arduino_callbacks()
-        self.configure_module()
-
+        self.send_state_thread = threading.Thread(target=self.send_state_loop, daemon=True)
+        self.send_state_thread.start()
+        self.configure_module([])
 
 
     def _find_arduino_ports(self):
@@ -142,7 +149,7 @@ class APAModule(Module):
 
 
     """Commands from controller"""
-    # @command
+    @command()
     def _activate_shock(self):
         if self.shock:
             self.shock.activate_shock()
@@ -150,7 +157,7 @@ class APAModule(Module):
             self.logger.warning("Activate shock called but no shocker connected!")
 
 
-    # @command
+    @command()
     def _deactivate_shock(self):
         if self.shock:
             self.shock.deactivate_shock()
@@ -158,7 +165,7 @@ class APAModule(Module):
             self.logger.warning("Deactivate shock called but no shocker connected!")
 
 
-    # @command
+    @command()
     def _start_motor(self):
         if self.motor:
             self.motor.start_motor()
@@ -166,7 +173,7 @@ class APAModule(Module):
             self.logger.warning("Start motor called but no motor connected!")
 
 
-    # @command
+    @command()
     def _stop_motor(self):
         if self.motor:
             self.motor.stop_motor()
@@ -275,6 +282,31 @@ class APAModule(Module):
             "type": "shock_stopped_being_delivered"
         }
         self.communication.send_status(status)
+
+    
+    def send_controller_arduino_state(self):
+        # self.logger.info(f"Sending controller arduino state")
+        state = {
+            "shock_activated": self.shock.shock_activated,
+            "grid_live": self.shock.grid_is_live,
+            "attempted_shocks": self.shock.attempted_shocks,
+            "attemped_shocks_from_arduino": self.shock.attempted_shocks_from_arduino,
+            "delivered_shocks": self.shock.delivered_shocks,
+            "rpm": self.motor.speed_from_arduino,
+            "rotating": self.motor.rotating
+        }
+        status = {
+            "type": "arduino_state",
+            "state": state
+        }
+        self.communication.send_status(status)
+
+    
+    def send_state_loop(self):
+        while True:
+            if (time.time() - self.last_sent_state) > self.send_state_period:
+                self.send_controller_arduino_state()
+                self.last_sent_state = time.time()
 
 
     """Recording Methods"""

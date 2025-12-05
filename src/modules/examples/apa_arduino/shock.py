@@ -219,10 +219,11 @@ class Shocker:
 
     def deactivate_shock(self):
         # self.send_command(MSG_DEACTIVATE, "")
+        self.shock_activated = False
         self.stop_shock_flag.set()
         time.sleep(0.1)
         self.shock_thread.join()
-        self.shock_activated = False
+
 
 
     def reset_pulse_counter(self):

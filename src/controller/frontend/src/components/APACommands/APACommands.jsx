@@ -101,7 +101,6 @@ function APACommands( {modules} ) {
                             <p>Grid Not Live</p>
                         )}
                         <p>Attempted Shocks {arduinoState.attempted_shocks}</p>
-                        <p>Attemped Shocks (from Arduino) {arduinoState.attempted_shocks}</p>
                         <p>Delivered Shocks {arduinoState.delivered_shocks}</p>
                         <p>Table RPM {arduinoState.rpm}</p>
                         {arduinoState.rotating? (

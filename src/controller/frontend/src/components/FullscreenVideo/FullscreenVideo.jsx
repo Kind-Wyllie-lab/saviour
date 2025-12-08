@@ -14,16 +14,22 @@ function FullscreenVideo({ ip, moduleList, onClose }) {
 
   return (
     <div className="fullscreen-overlay">
-      {/* Video fills the overlay */}
-      <img
-        src={`http://${ip}:8080/video_feed`}
-        alt="Fullscreen camera stream"
-        className="fullscreen-video"
-      />
-      {/* Close button in top-right corner */}
-      <button className="fullscreen-close-btn" onClick={onClose}>
-        ✕
-      </button>
+      <div className="video-panel">
+        {/* Video fills the overlay */}
+        <img
+          src={`http://${ip}:8080/video_feed`}
+          alt="Fullscreen camera stream"
+          className="fullscreen-video"
+        />
+        {/* Close button in top-right corner */}
+        <button className="fullscreen-close-btn" onClick={onClose}>
+          ✕
+        </button>
+      </div>
+      <div className="commands-panel">
+        {/* <p>Hi</p> */}
+        <APACommands modules={moduleList} />
+      </div>
     </div>
   );
 }

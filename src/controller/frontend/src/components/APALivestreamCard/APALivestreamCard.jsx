@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
 import "./APALivestreamCard.css";
 
-function APALivestreamCard({ module }) {
+function APALivestreamCard({ module, moduleList }) {
   const [showStream, setShowStream] = useState(true); // Show placeholder vs stream
   const [fullscreen, setFullscreen] = useState(false); // Track fullscreen
   const [lastFrameTime, setLastFrameTime] = useState(Date.now());
@@ -45,7 +45,7 @@ function APALivestreamCard({ module }) {
 
       {/* Conditional fullscreen overlay */}
       {fullscreen && (
-        <FullscreenVideo ip={module.ip} onClose={() => setFullscreen(false)} />
+        <FullscreenVideo ip={module.ip} moduleList={moduleList} onClose={() => setFullscreen(false)} />
       )}
     </>
   );

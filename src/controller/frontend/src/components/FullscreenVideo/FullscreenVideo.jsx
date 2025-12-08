@@ -1,7 +1,8 @@
 import React, { useEffect } from "react";
 import "./FullscreenVideo.css";
+import APACommands from "../../components/APACommands/APACommands";
 
-function FullscreenVideo({ ip, onClose }) {
+function FullscreenVideo({ ip, moduleList, onClose }) {
   // Handle ESC key to close fullscreen
   useEffect(() => {
     const handleKeyDown = (e) => {

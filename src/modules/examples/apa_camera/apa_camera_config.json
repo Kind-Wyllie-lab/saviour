@@ -1,0 +1,43 @@
+{
+    "camera": {
+        "monochrome": false,
+        "width": 1080,
+        "height": 1080,
+        "fps": 30,
+        "text_scale": 2,
+        "text_thickness": 3,
+        "_codec": "h264",
+        "_profile": "high",
+        "_level": 4.2,
+        "_bitrate": 2000000
+    },
+    "object_detection": {
+        "enabled": true,
+        "threshold": 0.55,
+        "iou_threshold": 0.9,
+        "max_detections": 2,
+        "coordinate_smoothing": false
+    },
+    "mask": {
+        "mask_radius": 0.65,
+        "mask_enabled": true,
+        "mask_center_x_offset": 0,
+        "mask_center_y_offset": 0
+    },
+    "shock_zone": {
+        "shock_zone_display": true,
+        "shock_zone_enabled": true,
+        "shock_zone_angle_span_deg": 60,
+        "shock_zone_start_angle_deg": 180,
+        "shock_zone_inner_offset": 0.3,
+        "shock_zone_color": [
+            0,
+            255,
+            0
+        ],
+        "shock_zone_line_thickness": 3
+    },
+    "recording": {
+        "_recording_filetype": "mp4"
+    }
+}

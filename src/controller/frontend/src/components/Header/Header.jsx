@@ -8,7 +8,7 @@ import './Header.css';
 import UoELogo from './uofe_logo_alpha.png';
 import SIDBLogo from './sidb_logo_alpha.png';
 
-function Header() {
+function APAHeader() {
     return (
         <header className="main-header">
             <div className="header-content">
@@ -30,4 +30,4 @@ function Header() {
     );
 }
 
-export default Header;
+export default APAHeader;

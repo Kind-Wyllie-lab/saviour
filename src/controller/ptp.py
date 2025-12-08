@@ -6,6 +6,9 @@ PTP Manager
 The PTP manager is responsible for initializing and managing PTP functions using systemd services.
 This approach is more robust than managing processes directly.
 The PTP manager monitors the controller and module PTP offsets. If either are too high, it will restart services.
+
+Author: Andrew SG
+Created: ?
 """
 
 import subprocess

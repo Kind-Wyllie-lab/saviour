@@ -152,7 +152,7 @@ class Communication:
             try:
                 # self.logger.info("Waiting for command...")
                 message = self.command_socket.recv_string()
-                self.logger.info(f"Raw message received: {message}")
+                self.logger.info(f"Raw message received: {message} at {time.time()}")
                 topic, command = message.split(' ', 1)
                 self.logger.info(f"Parsed topic: {topic}, command: {command}")
                 

@@ -236,7 +236,7 @@ class Config:
             return False
 
         if self._check_if_module_config_updated(key_path):
-            self.on_module_config_change()
+            self.on_module_config_change([key_path]) # Put the key in a list to match what the function expects
 
         current[last] = value
         if persist:
@@ -263,6 +263,7 @@ class Config:
     
         self.logger.info("Set_all called for config")
         module_config_updated = False # Flag to track if we should notify that the module settings were updated
+        module_config_updated_keys = [] # Array to store updated module configs
 
         def _recursive_update(target, source, parent_key=""):
             nonlocal module_config_updated
@@ -271,16 +272,21 @@ class Config:
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
                     _recursive_update(target[k], v, full_key)
                 else:
-                    target[k] = v
-                    # Track module-specific changes
-                    if hasattr(self, "module_config_keys") and full_key in self.module_config_keys:
-                        self.logger.info(f"Module-specific config updated: {full_key}")
-                        module_config_updated = True
+                    # Update the value
+                    if target[k] != v:
+                        target[k] = v
+                        # Track module-specific changes
+                        if hasattr(self, "module_config_keys") and full_key in self.module_config_keys:
+                            self.logger.info(f"Module-specific config updated: {full_key}")
+                            module_config_updated_keys.append(full_key)
+                            module_config_updated = True
+                    else:
+                        pass
 
         _recursive_update(self.config, updates)
 
         if module_config_updated == True:
-            self.on_module_config_change()
+            self.on_module_config_change(module_config_updated_keys)
 
         if persist:
             self.save_active()

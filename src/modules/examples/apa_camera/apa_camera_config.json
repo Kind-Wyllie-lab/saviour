@@ -12,7 +12,7 @@
         "_bitrate": 2000000
     },
     "object_detection": {
-        "enabled": true,
+        "enabled": false,
         "threshold": 0.55,
         "iou_threshold": 0.9,
         "max_detections": 2,

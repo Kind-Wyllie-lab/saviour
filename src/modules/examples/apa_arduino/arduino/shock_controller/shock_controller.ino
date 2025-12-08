@@ -50,7 +50,7 @@
 
 // DB25 interface pins (LSB to MSB for current control)
 // Each pin represents a binary weight for current: 0.2mA, 0.4mA, 0.8mA, 1.6mA, 3.2mA, etc.
-const int CURRENT_OUT[8] = {A3, A2, A1, A0, 4, 5, 6, 7};
+const int CURRENT_OUT[8] = {17, 16, 15, 14, 4, 5, 6, 7};
 
 // Timing control pins
 const int TRIGGER_OUT = 9;        // PWM output for precise timing control (must be pin 9 for TimerOne)
@@ -64,21 +64,25 @@ const int SELF_TEST_IN = 2;       // Test signal input from shock generator (act
 // Response types
 const char MSG_ACK [] = "ACK";
 const char MSG_NACK [] = "NACK";
-const char MSG_SUCCESS [] = "SUCCESS";
-const char MSG_ERROR [] = "ERROR";
+const char MSG_SUCCESS [] = "S";
+const char MSG_ERROR [] = "E";
+const char MSG_IDENTITY [] = "I";
+const char MSG_DATA [] = "D";
 
-// Command types
-const char MSG_IDENTITY [] = "IDENTITY";
-const char MSG_DATA [] = "DATA";
-const char MSG_SHOCK [] = "SHOCK_ACTIVE";
+const char MSG_RESET_PULSE_COUNTER [] = "R";
+const char MSG_SET_PIN_HIGH [] = "H";
+const char MSG_SET_PIN_LOW [] = "L";
+const char MSG_CURRENT [] = "C";
+const char MSG_TIME_ON [] = "T";
+const char MSG_TIME_OFF [] = "Y";
+const char MSG_ACTIVATE [] = "Z";
+const char MSG_DEACTIVATE [] = "X";
 
 // Messaging Protocol
 const char START_MARKER = '<';
 const char END_MARKER = '>';
-const char MSG_ID_UNSOLICITED [] = "M0"; // Message ID for unsolicited messages
-const char SYSTEM_ID [] = "SHOCK_ARDUINO";
-int seqId = 0;
-
+const char SYSTEM_ID [] = "SHOCK";
+bool acknowledgeMessages = false;
 
 // =============================================================================
 // SAFETY CONSTANTS AND LIMITS
@@ -111,7 +115,7 @@ int timeOn = -1;                      // Pulse duration in milliseconds
 int timeOff = -1;                     // Inter-pulse interval in milliseconds
 
 // Pulse control parameters
-int pulseTarget = -1;                 // Target pulse count (-1=disabled, 0=infinite, >0=specific count)
+int pulseTarget = 50;                 // Target pulse count (-1=disabled, 0=infinite, >0=specific count)
 int pulseCounter = 0;                 // Pulses delivered in current sequence
 int globalPulseCounter = 0;           // Total pulses delivered this trial
 int verifiedShockCounter = 0;        // Verified shocks delivered (via self-test input)
@@ -129,10 +133,8 @@ bool shockBeingDelivered = false;     // Shock currently being delivered (from s
 // =============================================================================
 
 // Communication functions
-String makeMessage(String payload);
-String getStatus();
-void sendMessage(String type, String msgId, String message);
-void parseCommand(String command, String arg, String msgId);
+void sendMessage(String type, String message);
+void parseCommand(String command, String arg);
 void listen();
 
 // Current control functions
@@ -142,10 +144,38 @@ void setCurrent(byte binary_current);
 // Timing and control functions
 void deactivate();
 void onCompleteCycle();
-bool validateShockParameters(String msgId);
+bool validateShockParameters();
 
 // System functions
 void cleanup();
+
+void readState();
+void sendState();
+int state[11];
+unsigned long lastSentState = 0;
+int sendStatePeriod = 50;
+
+// =============================================================================
+// STATE
+// =============================================================================
+void readState() {
+  for (int i=0; i<8; i++) {
+    state[i] = digitalRead(CURRENT_OUT[i]);
+  }
+  state[8] = digitalRead(SELF_TEST_OUT);
+  state[9] = digitalRead(SELF_TEST_IN);
+  state[10] = digitalRead(TRIGGER_OUT);
+}
+
+void sendState() {
+  String stateMessage = "";
+  for(int i=0; i<11; i++){
+    stateMessage += String(state[i]) + ",";
+  }
+  stateMessage += String(timeOn) + "," + String(timeOff) + "," + String(globalPulseCounter) + ",";
+  sendMessage(MSG_DATA, stateMessage);
+  lastSentState = millis();
+}
 
 // =============================================================================
 // ARDUINO SETUP AND LOOP
@@ -189,12 +219,7 @@ void setup() {
   Timer1.initialize();
 
   delay(1000); // Allow time for systems to stabilize
-  // Send identity and ready message
-  // Serial.println("<IDENTITY:SHOCK_CONTROLLER>");
-  // Serial.println("<READY>");
-  // sendMessage("IDENTITY", "SHOCK_CONTROLLER");
-  // sendMessage("READY", " ");
-  sendMessage(MSG_IDENTITY, MSG_ID_UNSOLICITED, SYSTEM_ID); // Send identity on startup
+  sendMessage(MSG_IDENTITY,  SYSTEM_ID); // Send identity on startup
 }
 
 // =============================================================================
@@ -206,59 +231,49 @@ void setup() {
  *
  */
 void listen() {
-  // --- Listen for incoming messages ---
   if (Serial.available()) {
-    String incoming = Serial.readStringUntil('>');  // read until '>'
+    String incoming = Serial.readStringUntil('>'); // Read until >
     if (incoming.startsWith("<")) {
-      incoming.remove(0, 1); // drop '<'
+      incoming.remove(0, 1); // Drop <
+      String payload = incoming; // Drop >
 
-      int sep = incoming.lastIndexOf('|');
-      if (sep > 0) {
-        String payload = incoming.substring(0, sep);
-        String chkStr = incoming.substring(sep + 1);
-
-        // compute checksum
-        uint8_t chk = 0;
-        for (size_t i = 0; i < payload.length(); i++) {
-          chk ^= payload[i];
-        }
-
-        // parse hex checksum
-        uint8_t chkRecv = (uint8_t) strtol(chkStr.c_str(), NULL, 16);
-
-        if (chk == chkRecv) {
-          Serial.println(makeMessage("ACK:" + payload)); // Send acknowledgement
-
-          // Split by ':'
-          // Example command: <M1:HELLO:2|0c>
-          int firstSep = payload.indexOf(':'); // Index of the first : that preceeds command
-          if (firstSep > 0) {
-            String msgId = payload.substring(0, firstSep); // e.g. M25
-            String rest = payload.substring(firstSep + 1); // e.g. SET_SPEED: 2.0
-            int secondSep = rest.indexOf(':');
-            String command;
-            String arg;
-            command = rest.substring(0, secondSep);
-            arg = rest.substring(secondSep+1);
-            if (command == arg) {  
-              arg = "NONE";
-            }
-            parseCommand(command.c_str(), arg.c_str(), msgId);
-          }
-
-        } else { // Failed checksum
-          sendMessage(MSG_ERROR, MSG_ID_UNSOLICITED, ("CHK_FAIL" + String(payload)).c_str());
-        }
+      // Send acknowledgement
+      if (acknowledgeMessages == true) {
+        sendMessage(MSG_ACK, payload);
       }
+
+      // Process command
+      parseCommand(payload);
     }
   }
+}
+
+/**
+ * Parse a command payload into cmd and param, then pass it to command handler function
+ *
+ */
+void parseCommand(String payload) {
+  int firstSep = payload.indexOf(':'); // Index of the first : that preceeds command
+  String cmd;
+  String param;
+  if (firstSep < 0) {
+    cmd = payload;
+    param = "";
+  }
+  else {
+    cmd = payload.substring(0, firstSep); // e.g. MSG_WRITE
+    param = payload.substring(firstSep + 1); 
+  }
+
+  // sendMessage(cmd, param); // Is this the ack?
+  handleCommand(cmd, param);
 }
 
 /** 
  * Parse a received serial command 
  *
  */
-void parseCommand(String command, String param, String msgId) {
+void handleCommand(String command, String param) {
   // =============================================================================
   // PARSE COMMAND
   // =============================================================================
@@ -267,70 +282,38 @@ void parseCommand(String command, String param, String msgId) {
   // =============================================================================
   // DEBUG COMMANDS
   // =============================================================================
-  if (command == "READ_PIN") {
-    // Handle reading a digital pin
+  if (command == MSG_SET_PIN_HIGH) {
     if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
-    } else {
-      int pin = param.toInt(); // Convert the param to a pin to read
-      int state = digitalRead(pin); // Read teh pin
-      sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + "=" + String(state)).c_str());
-    }
-  }
-
-  if (command == "SET_PIN_HIGH") {
-    if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
+      sendMessage(MSG_ERROR,  "No param given");
     } else {
       int pin = param.toInt();
       pinMode(pin, OUTPUT);
       digitalWrite(pin, HIGH);
-      sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + "SET TO HIGH").c_str());
     }
   }
 
-  if (command == "SET_PIN_LOW") {
+  if (command == MSG_IDENTITY) {
+    sendMessage(MSG_IDENTITY, SYSTEM_ID);
+  }
+
+  if (command == MSG_SET_PIN_LOW) {
     if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
+      sendMessage(MSG_ERROR,  "No param given");
     } else {
       int pin = param.toInt();
       pinMode(pin, OUTPUT);
       digitalWrite(pin, LOW);
-      sendMessage(MSG_SUCCESS, msgId, ("PIN" + String(pin) + " SET TO LOW").c_str());
     }
   }
-
-  if(command == "TEST_GRID"){
-      // Step 0: Assert TEST IN is HIGH at start
-      digitalWrite(SELF_TEST_OUT, HIGH); // Ensure self test out is inactvie
-      delay(20);
-      bool pass = digitalRead(SELF_TEST_IN) == HIGH;
-      // Step 1: Initiate test by setting TEST_OUT LOW
-      digitalWrite(SELF_TEST_OUT, LOW);
-      delay(200);
-      // Step 2: Assert TEST_IN is now low
-      pass &= digitalRead(SELF_TEST_IN) == LOW;
-      delay(20);
-
-      // Step 3: Clean up by reverting TEST OUT to HIGH
-      digitalWrite(SELF_TEST_OUT, HIGH);
-      delay(20);
-      pass &= digitalRead(SELF_TEST_IN) == HIGH;
-      delay(20);
-      
-      sendMessage(MSG_SUCCESS, msgId, pass ? "PASSED" : "FAILED");
-  }
-
-
   // =============================================================================
   // CURRENT CONTROL COMMANDS
   // =============================================================================
 
-  if (command == "CURRENT") {
+  if (command == MSG_CURRENT) {
     // Handle set current
     // float currentMa = cmd["param"];     // Set shock current in mA
     if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
+      sendMessage(MSG_ERROR,  "No param given");
     } else {
       float currentMa = param.toFloat();
       if (currentMa >= 0 && currentMa <= MAX_CURRENT_MA) {
@@ -338,9 +321,9 @@ void parseCommand(String command, String param, String msgId) {
         current = (int)(currentMa * 1000); // Convert to microamps
           byte db25out = calculateCurrentOutput(current);
           setCurrent(db25out);
-        sendMessage(MSG_SUCCESS, msgId, ("Current set to " + String(currentMa, 2) + "mA").c_str());
+        sendMessage(MSG_SUCCESS,  ("Current set to " + String(currentMa, 2) + "mA").c_str());
       } else {
-        sendMessage(MSG_ERROR, msgId, ("Current must be 0.0-" + String(MAX_CURRENT_MA, 1) + "mA").c_str());
+        sendMessage(MSG_ERROR,  ("Current must be 0.0-" + String(MAX_CURRENT_MA, 1) + "mA").c_str());
       }
     } 
   }
@@ -348,31 +331,31 @@ void parseCommand(String command, String param, String msgId) {
   // TIMING CONTROL COMMANDS
   // =============================================================================
   
-  else if (command == "TIME_ON") {
+  else if (command == MSG_TIME_ON) {
     if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
+      sendMessage(MSG_ERROR,  "No param given");
     } else {
       float timeSec = param.toFloat();
       if (timeSec > 0) {
         timeOn = (int)(timeSec * 1000); // Convert to ms
-        sendMessage(MSG_SUCCESS, msgId, ("On time set to " + String(timeSec, 3) + "s").c_str());
+        sendMessage(MSG_SUCCESS,  ("On time set to " + String(timeSec, 3) + "s").c_str());
       } else {
-        sendMessage(MSG_ERROR, msgId, "Time on must be greater than 0");
+        sendMessage(MSG_ERROR,  "Time on must be greater than 0");
       }
     } 
   }
 
-  else if (command == "TIME_OFF") {
+  else if (command == MSG_TIME_OFF) {
     // Set inter-pulse interval in seconds
     if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
+      sendMessage(MSG_ERROR,  "No param given");
     } else {
       float timeSec = param.toFloat();
       if (timeSec > 0) {
         timeOff = (int)(timeSec * 1000); // Convert to milliseconds
-        sendMessage(MSG_SUCCESS, msgId, ("Off time set to " + String(timeOff, 3) + "s").c_str());
+        sendMessage(MSG_SUCCESS,  ("Off time set to " + String(timeOff, 3) + "s").c_str());
       } else {
-        sendMessage(MSG_ERROR, msgId, "Time off must be greater than 0");
+        sendMessage(MSG_ERROR,  "Time off must be greater than 0");
       }
     }
   }
@@ -380,37 +363,20 @@ void parseCommand(String command, String param, String msgId) {
   // =============================================================================
   // PULSE CONTROL COMMANDS
   // =============================================================================
-  
-  else if (command == "PULSES") {
-    // Set number of pulses to deliver
-    if (param == "NONE") {
-      sendMessage(MSG_ERROR, msgId, "No param given");
-    } else {
-      int pulses = param.toInt();
-      if (pulses >= 0) {
-        pulseTarget = pulses;
-        String pulseDesc = (pulses == 0) ? "infinite" : String(pulses);
-        sendMessage(MSG_SUCCESS, msgId, ("Pulse count set to " + pulseDesc).c_str());
-      } else {
-        sendMessage(MSG_ERROR, msgId, "Pulse count must be greater than or equal to 0");
-      }
-    }
-  }
-  
-  else if (command == "RESET_PULSE_COUNTER") {
+  else if (command == MSG_RESET_PULSE_COUNTER) {
     // Reset global pulse counter for current trial
     globalPulseCounter = 0;
     verifiedShockCounter = 0;
-    sendMessage(MSG_SUCCESS, msgId, ("Pulses reset, pulses=" + String(globalPulseCounter) + ", verified_pulses=" + String(verifiedShockCounter)).c_str());
+    sendMessage(MSG_SUCCESS,  ("Pulses reset, pulses=" + String(globalPulseCounter) + ", verified_pulses=" + String(verifiedShockCounter)).c_str());
   }
 
   // =============================================================================
   // SEQUENCE CONTROL COMMANDS
   // =============================================================================
 
-  else if (command == "ACTIVATE") {
+  else if (command == MSG_ACTIVATE) {
     // Begin shock sequence with current parameters
-    if (validateShockParameters(msgId)) {
+    if (validateShockParameters()) {
       // Calculate timing parameters for TimerOne
       long timeOnMicro = ((long)timeOn) * 1000;      // Convert to microseconds
       long timeOffMicro = ((long)timeOff) * 1000;    // Convert to microseconds
@@ -419,9 +385,9 @@ void parseCommand(String command, String param, String msgId) {
       int dutyCycle = (int)(ratio * 1024);           // TimerOne duty cycle (0-1024)
 
       // Reset counters for new sequence
-          pulseCounter = 0;
-          verifiedShockCounter = 0;
-          shockBeingDelivered = false;
+      pulseCounter = 0;
+      verifiedShockCounter = 0;
+      shockBeingDelivered = false;
 
       // Start PWM timing with TimerOne
       digitalWrite(TRIGGER_OUT, LOW);  // Start with active low
@@ -429,84 +395,38 @@ void parseCommand(String command, String param, String msgId) {
           Timer1.pwm(TRIGGER_OUT, dutyCycle, period); 
 
           activatedState = true;
-          sendMessage(MSG_SUCCESS, msgId, "Shock sequence started");
+          sendMessage(MSG_SUCCESS,  "Shock sequence started");
         }
       }
 
-  else if (command == "DEACTIVATE") {
+  else if (command == MSG_DEACTIVATE) {
     // Stop active shock sequence
     if (activatedState) {
       deactivate();
-      sendMessage(MSG_SUCCESS, msgId, ("Shocks stopped, pulses="  + String(globalPulseCounter) + ", verified_pulses=" + String(verifiedShockCounter)).c_str());
+      sendMessage(MSG_SUCCESS,  ("Shocks stopped, pulses="  + String(globalPulseCounter) + ", verified_pulses=" + String(verifiedShockCounter)).c_str());
     } else {
-      sendMessage(MSG_ERROR, msgId, "No active shock sequence");
+      sendMessage(MSG_ERROR,  "No active shock sequence");
       }
     }
 
   // ===========================================================#==================
   // STATUS AND MONITORING COMMANDS
   // =============================================================================
-  
-  else if (command == "STATUS") {
-    // Send current params back i.e. current, time_on, time_off, pulses
-    sendMessage(MSG_SUCCESS, msgId, getStatus().c_str());
-  }
-
-  // else {
-  //   String errorMessage = "No logic for " + command + " " + param;
-  //   sendMessage(MSG_ERROR, msgId, errorMessage);
-  // }
+//   else {
+//     String errorMessage = "No logic for " + command + ":" + param;
+//     sendMessage(MSG_ERROR,  errorMessage);
+//   }
 }
 
 /**
  * Send a formatted response message over serial
  * 
  * @param type Message type ("ACK", "NACK", MSG_SUCCESS, "FAIL", "IDENTITY", "READY" )
- * @param msgId Message ID for tracking - originates from received command
  * @param message Message text e.g. status, error description, data payload
  */
-void sendMessage(String type, String msgId, String message){
-  String payload = type + ":" + msgId + ":" + message;
-  Serial.println(makeMessage(payload));
-}
-
-/**
- * Make a formatted message with checksum
- * 
- * @param payload Message payload (without start/end markers or checksum)
- * @return Formatted message string with start/end markers and checksum
- */
-String makeMessage(String payload) {
-  String sequencePayload = payload + ":S" + seqId;
-  uint8_t chk = 0;
-  for (size_t i = 0; i < sequencePayload.length(); i++) {
-    chk ^= sequencePayload[i];   // XOR checksum
-  }
-
-  char buf[5];
-  sprintf(buf, "%02X", chk);   // hex string (2 chars)
-  String msg = "<" + sequencePayload + "|" + String(buf) + ">";
-  seqId += 1;
-  return msg;
-}
-
-/**
- * Get current system status as a formatted string
- * 
- * @return Status string with all current parameters and state
- */
-String getStatus() {
-  float verificationRate = (globalPulseCounter > 0) ? 
-    ((float)verifiedShockCounter / globalPulseCounter * 100) : 0.0;
-  
-  return "Current:" + String(currentAmps, 2) + "mA" +
-         ",TimeOn:" + String(timeOn/1000.0, 3) + "s" +
-         ",TimeOff:" + String(timeOff/1000.0, 3) + "s" +
-         ",Pulses:" + String(pulseTarget) +
-         ",Active:" + String(activatedState ? "true" : "false") +
-         ",Delivered:" + String(globalPulseCounter) +
-         ",Verified:" + String(verifiedShockCounter) +
-         ",VerificationRate:" + String(verificationRate, 1) + "%";
+void sendMessage(String type, String message) {
+  String payload = "<" + type + ":" + message + ">";
+  Serial.println(payload);
 }
 
 // =============================================================================
@@ -565,25 +485,25 @@ void setCurrent(byte binary_current) {
  * 
  * @return true if all parameters are valid, false otherwise
  */
-bool validateShockParameters(String msgId) {
+bool validateShockParameters() {
   if (timeOn <= 0) {
-    sendMessage(MSG_ERROR, msgId, "Time on must be greater than 0");
+    sendMessage(MSG_ERROR, "Time on must be greater than 0");
     return false;
   }
   if (timeOff <= 0) {
-    sendMessage(MSG_ERROR, msgId, "Time off must be greater than 0");
+    sendMessage(MSG_ERROR, "Time off must be greater than 0");
     return false;
   }
   if (currentAmps <= 0 || currentAmps > MAX_CURRENT_MA) {
-    sendMessage(MSG_ERROR, msgId, ("Current must be 0.0-" + String(MAX_CURRENT_MA, 1) + "mA").c_str());
+    sendMessage(MSG_ERROR,  ("Current must be 0.0-" + String(MAX_CURRENT_MA, 1) + "mA").c_str());
     return false;
   }
   if (pulseTarget < 0) {
-    sendMessage(MSG_ERROR, msgId, "Pulse count must be greater than or equal to 0");
+    sendMessage(MSG_ERROR,  "Pulse count must be greater than or equal to 0");
     return false;
   }
   if (activatedState) {
-    sendMessage(MSG_ERROR, msgId, "Shock sequence already active");
+    sendMessage(MSG_ERROR,  "Shock sequence already active");
     return false;
   }
   return true;
@@ -601,7 +521,7 @@ void checkSelfTestInput() {
       shockBeingDelivered = true;
       verifiedShockCounter++; // Increment verified shocks counter
       String message = "Shock delivery verified, verified_pulses=" + String(verifiedShockCounter);
-      sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, message);
+      sendMessage(MSG_SUCCESS,  message);
 
     } else {
       if (digitalRead(SELF_TEST_IN) == HIGH) {  // Active low input
@@ -658,11 +578,10 @@ void onCompleteCycle() {
     digitalWrite(TRIGGER_OUT, HIGH);
   } else {
     digitalWrite(TRIGGER_OUT, LOW);
+    // Update pulse counters when trigger out is set LOW
+    pulseCounter++;
+    globalPulseCounter++;
   }
-
-  // Update pulse counters
-  pulseCounter++;
-  globalPulseCounter++;
 }
 
 /**
@@ -678,24 +597,9 @@ void loop() {
   // Process incoming serial commands
   listen();
 
-  // Monitor self-test input for shock verification
-  // This provides feedback that shocks are actually being delivered
-  checkSelfTestInput();
-  
-  // Fault detection: Alert if shock is triggered but not delivered
-  static unsigned long lastFaultCheck = 0;
-  static bool faultReported = false;
-  
-  if (activatedState && current > 0 && !shockBeingDelivered) {
-    // Check if we've been waiting too long for a shock to be delivered
-    if (millis() - lastFaultCheck > 5000 && !faultReported) { // 5 second timeout
-      sendMessage("WARNING", "NONE", "Shock triggered but not delivered - check hardware connections");
-      faultReported = true;
-    }
-  } else {
-    // Reset fault detection when shock is delivered or sequence stops
-    lastFaultCheck = millis();
-    faultReported = false;
+  if(millis() - lastSentState > sendStatePeriod) {
+    readState();
+    sendState();
   }
 }
 
@@ -733,5 +637,5 @@ void cleanup() {
   delay(EMERGENCY_STOP_DELAY_MS);
   
   // Send confirmation of cleanup completion
-  sendMessage(MSG_SUCCESS, MSG_ID_UNSOLICITED, "Cleanup complete - all systems in safe state");
+  sendMessage(MSG_SUCCESS,  "Cleanup complete - all systems in safe state");
 }

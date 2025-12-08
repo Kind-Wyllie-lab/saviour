@@ -1139,12 +1139,16 @@ class Module(ABC):
 
     @check()
     def _check_ptp(self) -> tuple[bool, str]:
+        # TODO: Add check for frequency offset as well as time offset
         try:
             ptp_status = self.ptp.get_status()
             # Check if PTP offset is reasonable (configurable threshold)
             max_offset_us = self._get_ptp_offset_threshold_us()
-            if 'last_offset' in ptp_status and abs(ptp_status['last_offset']) > max_offset_us:
-               return False, f"PTP not synchronized: offset {ptp_status['last_offset']}μs (max: {max_offset_us}μs)"
+            last_offset = ptp_status["last_offset"]
+            if last_offset is None:
+                return False, f"PTP reporting Nonetype offsets - may need time to settle"
+            if abs(last_offset) > max_offset_us:
+                return False, f"PTP not synchronized: offset {last_offset}μs (max: {max_offset_us}μs)"
             else:
                 return True, f"PTP synchronised to {ptp_status['last_offset']}μs"
         except Exception as e:

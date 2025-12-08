@@ -10,10 +10,9 @@
             "_encoder_pin": "A2"
         },
         "shocker": {
-            "max_current": 5.1,
-            "current_step": 0.2,
-            "name": "weak_shock",
-            "current": 0.2,
+            "_max_current": 5.1,
+            "_current_step": 0.2,
+            "current": 0.5,
             "duration": 0.5,
             "intershock_latency": 1,
             "entrance_latency": 1.5,

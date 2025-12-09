@@ -7,6 +7,7 @@ import "./APACommands.css";
 function APACommands( {modules} ) {
     const [shockState, setShockState] = useState(null); // Will be updated by socketio event - indicates whether grid live, shock being delivered etc.
     const [arduinoState, setArduinoState] = useState(null); // State object from the apa rig
+    const [spacePressed, setSpacePressed] = useState(false);
 
     const apaModule = modules.filter((m) => m.type === "apa_arduino")[0];
     // apaModule ? console.log("APA Module Connected") : console.log("No APA module connected");
@@ -86,6 +87,30 @@ function APACommands( {modules} ) {
             params: {},
         })
     }
+
+    useEffect(() => {
+        const handleKeyDown = (event) => {
+            if (event.code === "Space" && !spacePressed) {
+                setSpacePressed(true);
+                dummyActivateShock();
+            }
+        };
+
+        const handleKeyUp = (event) => {
+            if (event.code === "Space") {
+                setSpacePressed(false);
+                dummyDeactivateShock();
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        window.addEventListener("keyup", handleKeyUp);
+
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("keyup", handleKeyUp);
+        };
+    }, [spacePressed]); // Put apaModule in the box when leaving dummy mode
 
     return (
         <div className="apa-commands">

@@ -24,3 +24,8 @@ button {
   flex-direction: column;
   max-width: 260px;
 }
+
+.hold-to-shock:hover:active {
+  background-color: grey;
+  transition: ease;
+}

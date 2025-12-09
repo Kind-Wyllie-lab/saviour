@@ -39,6 +39,14 @@ function APACommands( {modules} ) {
         }
     }, []);
 
+    const dummyActivateShock = () => {
+        console.log("Activating shock");
+    }
+
+    const dummyDeactivateShock = () => {
+        console.log("Deactivating shock");
+    }
+
     const activateShock = () => {
         socket.emit("send_command", {
             type: "activate_shock",
@@ -114,6 +122,15 @@ function APACommands( {modules} ) {
                 )}
             </div>
             <div className = "apa-command-buttons">
+                <button
+                    className="hold-to-shock"
+                    onMouseDown={dummyActivateShock}
+                    onMouseUp={dummyDeactivateShock}
+                    onMouseLeave={dummyDeactivateShock}
+                    // disabled={!apaModule}
+                    > 
+                    Hold to Shock
+                </button>
                 <button
                     className="activate-shock"
                     onClick={activateShock}

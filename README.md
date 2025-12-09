@@ -1,14 +1,18 @@
 <!-- PROJECT SHIELDS -->
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
-[![License][license-shield]][license-url]
+<div align="center">
+  
+  [![Contributors][contributors-shield]][contributors-url]
+  [![Forks][forks-shield]][forks-url]
+  [![Stargazers][stars-shield]][stars-url]
+  [![Issues][issues-shield]][issues-url]
+  [![License][license-shield]][license-url]
+  
+</div>
+
 
 <!-- PROJECT LOGO -->
-<br />
 <div align="center">
-  <h3 align="center">Modular Synchronised Data Capture System</h3>
+  <h3 align="center">SAVIOUR - Synchronised Audio Video Input Output Recorder</h3>
   <p align="center">
     A modular and highly usable approach to I/O tasks within the Kind lab and beyond
     <br />
@@ -66,15 +70,11 @@ The controller detects, synchronises, and manages these modules.
 Data is collected, formatted, and stored for analysis.
 The system is modular, allowing for easy expansion and maintenance.
 
-### System Context
-<!-- ![Habitat System Architecture](https://github.com/Kind-Wyllie-lab/habitat/assets/architecture.png) -->
-![Habitat System Architecture](assets/architecture.png)
-
-The system includes:
+Each system includes:
 - A main controller responsible for time synchronisation, data processing, and module management
 - A PoE switch which connects the controller to all modules
-- An external storage system which may include a NAS, SSD, USB, or database like supabase
-- An array of module types, including:
+- A storage dump which is likely a samba share running on the controller, a NAS or other dedicated device
+- An array of modules, including:
   - A camera module, providing compressed video capture
   - A microphone module, recording ultrasonic mice vocalisations
   - A TTL I/O module, interfacing with various I/O devices
@@ -84,7 +84,6 @@ The system includes:
 ## Getting Started
 
 ### Prerequisites
-- Python 3.8 or higher
 - PoE-capable network switch
 - 1x Raspberry Pi 5 for controller
 - 1x Raspberry Pi 5 per module, plus module specific hardware e.g. camera, audiomoth USV microphone 

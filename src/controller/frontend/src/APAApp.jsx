@@ -2,9 +2,9 @@
 import './App.css';
 import React,  { useEffect, useState } from "react";
 
-import Header from "./components/Header/Header";
+import APAHeader from "./components/APAHeader/APAHeader";
 import { Routes, Route } from "react-router-dom";
-import Dashboard from "./pages/Dashboard/Dashboard";
+import APADashboard from "./pages/APADashboard/APADashboard";
 import Settings from "./pages/Settings/Settings";
 import Debug from "./pages/Debug/Debug";
 
@@ -33,9 +33,9 @@ function App() {
 
   return (
     <div>
-      <Header />
+      <APAHeader />
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<APADashboard />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/debug" element={<Debug />} />
       </Routes>

@@ -89,9 +89,13 @@ function APACommands( {modules} ) {
         })
     }
 
-    const armShocker = () => {
-        console.log("Arming shocker");
-        setShockerArmed(true);
+    const toggleShockerArmed = () => {
+        if (shockerArmed) {
+            console.log("Disarming shocker");
+        } else {
+            console.log("Arming shocker");
+        }
+        setShockerArmed(!shockerArmed);
     }
 
     const disarmShocker = () => {
@@ -158,11 +162,8 @@ function APACommands( {modules} ) {
                 )}
             </div>
             <div className = "apa-command-buttons">
-                <button
-                    className="arm-shocker"
-                    onClick={armShocker}
-                    >
-                    Arm Shocker
+                <button className="toggle-shocker" onClick={toggleShockerArmed}>
+                    {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
                 </button>
                 <button
                     className="hold-to-shock"

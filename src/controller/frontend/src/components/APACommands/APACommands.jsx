@@ -45,7 +45,7 @@ function APACommands( {modules} ) {
         console.log("Activating shocks");
         socket.emit("send_command", {
             type: "activate_shock",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -54,7 +54,7 @@ function APACommands( {modules} ) {
         console.log("Deactivating shocks");
         socket.emit("send_command", {
             type: "deactivate_shock",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -62,7 +62,7 @@ function APACommands( {modules} ) {
     const startMotor = () => {
         socket.emit("send_command", {
             type: "start_motor",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -70,7 +70,7 @@ function APACommands( {modules} ) {
     const stopMotor = () => {
         socket.emit("send_command", {
             type: "stop_motor",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -78,7 +78,7 @@ function APACommands( {modules} ) {
     const resetPulses = () => {
         socket.emit("send_command", {
             type: "reset_pulse_counter",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         })
     }

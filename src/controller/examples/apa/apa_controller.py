@@ -1,5 +1,5 @@
 """
-A controller pi for the APA system.
+A controller with APA specific functionality.
 
 Inherits the habitat controller class.
 

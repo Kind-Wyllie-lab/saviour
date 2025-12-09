@@ -7,6 +7,8 @@ import "./APACommands.css";
 function APACommands( {modules} ) {
     const [shockState, setShockState] = useState(null); // Will be updated by socketio event - indicates whether grid live, shock being delivered etc.
     const [arduinoState, setArduinoState] = useState(null); // State object from the apa rig
+    const [spacePressed, setSpacePressed] = useState(false);
+    const [shockerArmed, setShockerArmed] = useState(false);
 
     const apaModule = modules.filter((m) => m.type === "apa_arduino")[0];
     // apaModule ? console.log("APA Module Connected") : console.log("No APA module connected");
@@ -40,17 +42,19 @@ function APACommands( {modules} ) {
     }, []);
 
     const activateShock = () => {
+        console.log("Activating shocks");
         socket.emit("send_command", {
             type: "activate_shock",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
 
     const deactivateShock = () => {
+        console.log("Deactivating shocks");
         socket.emit("send_command", {
             type: "deactivate_shock",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -58,7 +62,7 @@ function APACommands( {modules} ) {
     const startMotor = () => {
         socket.emit("send_command", {
             type: "start_motor",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -66,7 +70,7 @@ function APACommands( {modules} ) {
     const stopMotor = () => {
         socket.emit("send_command", {
             type: "stop_motor",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         });
     };
@@ -74,10 +78,43 @@ function APACommands( {modules} ) {
     const resetPulses = () => {
         socket.emit("send_command", {
             type: "reset_pulse_counter",
-            module_id: apaModule.id,
+            module_id: apaModule?.id,
             params: {},
         })
     }
+
+    const toggleShockerArmed = () => {
+        if (shockerArmed) {
+            console.log("Disarming shocker");
+        } else {
+            console.log("Arming shocker");
+        }
+        setShockerArmed(!shockerArmed);
+    }
+
+    useEffect(() => {
+        const handleKeyDown = (event) => {
+            if (event.code === "Space" && !spacePressed && shockerArmed) {
+                setSpacePressed(true);
+                activateShock();
+            }
+        };
+
+        const handleKeyUp = (event) => {
+            if (event.code === "Space" && shockerArmed) {
+                setSpacePressed(false);
+                deactivateShock();
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        window.addEventListener("keyup", handleKeyUp);
+
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("keyup", handleKeyUp);
+        };
+    }, [spacePressed, shockerArmed]); // Put apaModule in the box when leaving dummy mode
 
     return (
         <div className="apa-commands">
@@ -114,7 +151,21 @@ function APACommands( {modules} ) {
                 )}
             </div>
             <div className = "apa-command-buttons">
+                <button className="toggle-shocker" onClick={toggleShockerArmed} disabled={!apaModule}>
+                    {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
+                </button>
                 <button
+                    className="hold-to-shock"
+                    onMouseDown={activateShock}
+                    onMouseUp={deactivateShock}
+                    onMouseLeave={deactivateShock}
+                    // disabled={!apaModule}
+                    disabled={!shockerArmed}
+                    > 
+                    Spacebar<br></br>
+                    Hold to Shock
+                </button>
+                {/* <button
                     className="activate-shock"
                     onClick={activateShock}
                     disabled={!apaModule}>
@@ -125,7 +176,7 @@ function APACommands( {modules} ) {
                     onClick={deactivateShock}
                     disabled={!apaModule}>
                     Deactivate Shock
-                </button>
+                </button> */}
                 <button
                     className="start_motor"
                     onClick={startMotor}

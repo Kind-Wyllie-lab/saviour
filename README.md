@@ -14,6 +14,7 @@
     <br />
     <a href="https://github.com/Kind-Wyllie-lab/habitat"><strong>Explore the docs »</strong></a>
     <br />
+    <a href="https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2">3D Printable Module Cases</a>
     <br />
     <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Report Bug</a>
     ·

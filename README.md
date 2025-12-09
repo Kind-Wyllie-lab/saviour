@@ -9,6 +9,11 @@
   
 </div>
 
+<div align="center" style="background-color : white">
+
+  <img width="502" height="90" alt="SAVIOUR logo_white" src="https://github.com/user-attachments/assets/0f85edd9-a86b-4326-b66a-7c86d93b454a" />
+
+</div>
 
 <!-- PROJECT LOGO -->
 <div align="center">

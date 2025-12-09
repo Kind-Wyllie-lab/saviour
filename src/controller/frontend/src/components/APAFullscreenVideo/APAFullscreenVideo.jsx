@@ -1,7 +1,8 @@
 import React, { useEffect } from "react";
-import "./FullscreenVideo.css";
+import "./APAFullscreenVideo.css";
+import APACommands from "../APACommands/APACommands";
 
-function FullscreenVideo({ ip, onClose }) {
+function APAFullscreenVideo({ ip, moduleList, onClose }) {
   // Handle ESC key to close fullscreen
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -25,8 +26,12 @@ function FullscreenVideo({ ip, onClose }) {
           ✕
         </button>
       </div>
+      <div className="commands-panel">
+        {/* <p>Hi</p> */}
+        <APACommands modules={moduleList} />
+      </div>
     </div>
   );
 }
 
-export default FullscreenVideo;
+export default APAFullscreenVideo;

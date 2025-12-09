@@ -8,6 +8,7 @@ function APACommands( {modules} ) {
     const [shockState, setShockState] = useState(null); // Will be updated by socketio event - indicates whether grid live, shock being delivered etc.
     const [arduinoState, setArduinoState] = useState(null); // State object from the apa rig
     const [spacePressed, setSpacePressed] = useState(false);
+    const [shockerArmed, setShockerArmed] = useState(false);
 
     const apaModule = modules.filter((m) => m.type === "apa_arduino")[0];
     // apaModule ? console.log("APA Module Connected") : console.log("No APA module connected");
@@ -88,16 +89,26 @@ function APACommands( {modules} ) {
         })
     }
 
+    const armShocker = () => {
+        console.log("Arming shocker");
+        setShockerArmed(true);
+    }
+
+    const disarmShocker = () => {
+        console.log("Disarming shocker");
+        setShockerArmed(false);
+    }
+
     useEffect(() => {
         const handleKeyDown = (event) => {
-            if (event.code === "Space" && !spacePressed) {
+            if (event.code === "Space" && !spacePressed && shockerArmed) {
                 setSpacePressed(true);
                 dummyActivateShock();
             }
         };
 
         const handleKeyUp = (event) => {
-            if (event.code === "Space") {
+            if (event.code === "Space" && shockerArmed) {
                 setSpacePressed(false);
                 dummyDeactivateShock();
             }
@@ -110,7 +121,7 @@ function APACommands( {modules} ) {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keyup", handleKeyUp);
         };
-    }, [spacePressed]); // Put apaModule in the box when leaving dummy mode
+    }, [spacePressed, shockerArmed]); // Put apaModule in the box when leaving dummy mode
 
     return (
         <div className="apa-commands">
@@ -148,11 +159,18 @@ function APACommands( {modules} ) {
             </div>
             <div className = "apa-command-buttons">
                 <button
+                    className="arm-shocker"
+                    onClick={armShocker}
+                    >
+                    Arm Shocker
+                </button>
+                <button
                     className="hold-to-shock"
                     onMouseDown={dummyActivateShock}
                     onMouseUp={dummyDeactivateShock}
                     onMouseLeave={dummyDeactivateShock}
                     // disabled={!apaModule}
+                    disabled={!shockerArmed}
                     > 
                     Hold to Shock
                 </button>

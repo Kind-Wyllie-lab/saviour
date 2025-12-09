@@ -41,15 +41,8 @@ function APACommands( {modules} ) {
         }
     }, []);
 
-    const dummyActivateShock = () => {
-        console.log("Activating shock");
-    }
-
-    const dummyDeactivateShock = () => {
-        console.log("Deactivating shock");
-    }
-
     const activateShock = () => {
+        console.log("Activating shocks");
         socket.emit("send_command", {
             type: "activate_shock",
             module_id: apaModule.id,
@@ -58,6 +51,7 @@ function APACommands( {modules} ) {
     };
 
     const deactivateShock = () => {
+        console.log("Deactivating shocks");
         socket.emit("send_command", {
             type: "deactivate_shock",
             module_id: apaModule.id,
@@ -98,23 +92,18 @@ function APACommands( {modules} ) {
         setShockerArmed(!shockerArmed);
     }
 
-    const disarmShocker = () => {
-        console.log("Disarming shocker");
-        setShockerArmed(false);
-    }
-
     useEffect(() => {
         const handleKeyDown = (event) => {
             if (event.code === "Space" && !spacePressed && shockerArmed) {
                 setSpacePressed(true);
-                dummyActivateShock();
+                activateShock();
             }
         };
 
         const handleKeyUp = (event) => {
             if (event.code === "Space" && shockerArmed) {
                 setSpacePressed(false);
-                dummyDeactivateShock();
+                deactivateShock();
             }
         };
 
@@ -162,20 +151,21 @@ function APACommands( {modules} ) {
                 )}
             </div>
             <div className = "apa-command-buttons">
-                <button className="toggle-shocker" onClick={toggleShockerArmed}>
+                <button className="toggle-shocker" onClick={toggleShockerArmed} disabled={!apaModule}>
                     {shockerArmed ? "Disarm Shocker" : "Arm Shocker"}
                 </button>
                 <button
                     className="hold-to-shock"
-                    onMouseDown={dummyActivateShock}
-                    onMouseUp={dummyDeactivateShock}
-                    onMouseLeave={dummyDeactivateShock}
+                    onMouseDown={activateShock}
+                    onMouseUp={deactivateShock}
+                    onMouseLeave={deactivateShock}
                     // disabled={!apaModule}
                     disabled={!shockerArmed}
                     > 
+                    Spacebar<br></br>
                     Hold to Shock
                 </button>
-                <button
+                {/* <button
                     className="activate-shock"
                     onClick={activateShock}
                     disabled={!apaModule}>
@@ -186,7 +176,7 @@ function APACommands( {modules} ) {
                     onClick={deactivateShock}
                     disabled={!apaModule}>
                     Deactivate Shock
-                </button>
+                </button> */}
                 <button
                     className="start_motor"
                     onClick={startMotor}

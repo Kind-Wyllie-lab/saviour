@@ -14,6 +14,12 @@ button {
   gap: 8px;
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
 .apa-commands {
   border: 1px solid var(--border-color);
   background-color: var(--card-bg-color);
@@ -23,4 +29,9 @@ button {
   display: flex;
   flex-direction: column;
   max-width: 260px;
+}
+
+.hold-to-shock:hover:active:enabled {
+  background-color: grey;
+  transition: ease;
 }

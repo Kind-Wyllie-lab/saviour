@@ -21,8 +21,6 @@
   <p align="center">
     A modular and highly usable approach to I/O tasks within the Kind lab and beyond
     <br />
-    <a href="https://github.com/Kind-Wyllie-lab/habitat"><strong>Explore the docs »</strong></a>
-    <br />
     <a href="https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2">3D Printable Module Cases</a>
     <br />
     <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Report Bug</a>
@@ -131,6 +129,9 @@ Detailed usage instructions can be found in the [System Requirements Specificati
 - [X] pyproject.toml style setup
 - [X] Graphical user interface
 - [X] Reliable PTP synchronisation
+- [ ] Pre-baked SAVIOUR distributions
+- [ ] Basler camera modules
+- [ ] Real time rat tracking for camera modules
 - [ ] REST endpoints for synchronisation with webapp and other apps
 - [ ] Add documentation
 

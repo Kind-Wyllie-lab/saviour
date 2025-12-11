@@ -1,6 +1,6 @@
 // src/pages/Dashboard.js
 import React, { useEffect, useState } from "react";
-import socket from "../../socket";
+import socket from "../../../socket";
 
 // Styling and components
 import "./Dashboard.css";

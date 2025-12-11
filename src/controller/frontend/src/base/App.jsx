@@ -4,9 +4,9 @@ import React,  { useEffect, useState } from "react";
 
 import Header from "./components/Header/Header";
 import { Routes, Route } from "react-router-dom";
-import Dashboard from "../pages/Dashboard/Dashboard";
-import Settings from "../pages/Settings/Settings";
-import Debug from "../pages/Debug/Debug";
+import Dashboard from "./pages/Dashboard/Dashboard";
+import Settings from "./pages/Settings/Settings";
+import Debug from "./pages/Debug/Debug";
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);

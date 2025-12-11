@@ -629,8 +629,6 @@ class Web:
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
         try:
-            # self.logger.info(f"Received status from {module_id}: {status}")
-
             # Ensure status has required fields
             if not isinstance(status, dict):
                 raise ValueError("Status must be a dictionary")

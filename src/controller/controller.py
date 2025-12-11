@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SAVIOUR Controller modified for the APA rig
+SAVIOUR Controller
 
 This script serves as the main controller for the habitat system, providing:
 - Precise time synchronisation (PTP master) for all connected modules
@@ -24,6 +24,7 @@ import logging # for logging and debugging
 from dataclasses import dataclass # to define Module dataclass
 from typing import List, Dict, Any # for type hinting
 import asyncio # for asyncio
+from abc import ABC, abstractmethod
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -56,8 +57,10 @@ from src.controller.web import Web
 from src.controller.modules import Modules
     
 # Habitat Controller Class
-class Controller:
-    """Main controller class for the habitat system"""
+class Controller(ABC):
+    """
+    Base class for SAVIOUR controller devices.
+    """
     def __init__(self, config_file_path: str = None):
         """Initialize the controller with default values
 
@@ -91,7 +94,7 @@ class Controller:
                 os.makedirs(log_dir, exist_ok=True)
                 
                 # Generate log filename with module info
-                log_filename = f"{self.module_type}_{self.module_id}.log"
+                log_filename = f"controller.log"
                 log_filepath = os.path.join(log_dir, log_filename)
                 
                 # Get config values for rotation
@@ -170,7 +173,6 @@ class Controller:
             "get_module_configs": self.get_module_configs,
             "get_samba_info": self.get_samba_info,
             "remove_module": self._remove_module,
-            # TODO: on shock start/stop
         })
             
         # Register status change callback with health monitor
@@ -179,13 +181,8 @@ class Controller:
             "send_command": self.communication.send_command
         })
 
-        # self.network.notify_module_update = self.modules.network_notify_module_update
-        # self.network.notify_module_id_change = self.modules.network_notify_module_id_change
-        # self.network.notify_module_ip_change = self.modules.network_notify_module_ip_change
-
         self.network.notify_module_update = self.network_notify_module_update
         self.network.notify_module_id_change = self.network_notify_module_id_change
-        # self.network.notify_module_ip_change = self.network_notify_module_ip_change
 
         self.modules.push_module_update_to_frontend = self.web.push_module_update
     
@@ -218,7 +215,7 @@ class Controller:
             self.logger.info(f"Updated module_config key from {old_id} to {new_id}")
 
 
-    def _get_modules_for_frontend(self): # From APA
+    def _get_modules_for_frontend(self): 
         """Get list of online modules from health monitor instead of service manager, append additional information"""
         modules = self.modules.get_modules()
         self.logger.info(f"get modules returning {modules}")
@@ -243,8 +240,6 @@ class Controller:
                     self.buffer.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
-                case 'ACK':
-                    self.logger.info(f"Command acknowledged by {module_id}: {status_data['command']}")
                 case 'status':
                     self.logger.info(f"{module_id} sent status type message likely response to get status command")
                     self.modules.check_status(module_id, status_data)
@@ -286,19 +281,10 @@ class Controller:
                     if not ready:
                         self.logger.info(f"Full message from non-ready module: {message}")
                     self.modules.notify_module_readiness_update(module_id, ready, message)
-                case 'shock_started_being_delivered':
-                    self.logger.info("NOT IMPLEMENTED YET")
-                case 'shock_stopped_being_delivered':
-                    self.logger.info("NOT IMPLEMENTED YET")
-                case "arduino_state":
-                    pass # Gets handled by web
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:
             self.logger.error(f"Error parsing status data for module {module_id}: {e}")
-
-
-    # def on_shock_started_being_delivered(se)
 
 
     def on_module_status_change(self, module_id: str, status: str):
@@ -502,7 +488,7 @@ class Controller:
             samba_config = {
                 'share_name': self.config.get('samba.share_name', 'controller_share'),
                 'username': self.config.get('samba.username', 'pi'),
-                'password': self.config.get('samba.password', 'apa'),
+                'password': self.config.get('samba.password', 'saviour'),
                 'share_path': f'\\\\{controller_ip}\\{self.config.get("samba.share_name", "controller_share")}',
                 'controller_ip': controller_ip
             }
@@ -514,7 +500,7 @@ class Controller:
             return {
                 'share_name': 'controller_share',
                 'username': 'pi',
-                'password': 'apa',
+                'password': 'saviour',
                 'share_path': '\\\\192.168.1.1\\controller_share',
                 'controller_ip': '192.168.1.1'
             }

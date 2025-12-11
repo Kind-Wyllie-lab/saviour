@@ -24,6 +24,7 @@ import logging # for logging and debugging
 from dataclasses import dataclass # to define Module dataclass
 from typing import List, Dict, Any # for type hinting
 import asyncio # for asyncio
+from abc import ABC, abstractmethod
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -56,8 +57,10 @@ from src.controller.web import Web
 from src.controller.modules import Modules
     
 # Habitat Controller Class
-class Controller:
-    """Main controller class for the habitat system"""
+class Controller(ABC):
+    """
+    Base class for SAVIOUR controller devices.
+    """
     def __init__(self, config_file_path: str = None):
         """Initialize the controller with default values
 
@@ -91,7 +94,7 @@ class Controller:
                 os.makedirs(log_dir, exist_ok=True)
                 
                 # Generate log filename with module info
-                log_filename = f"{self.module_type}_{self.module_id}.log"
+                log_filename = f"controller.log"
                 log_filepath = os.path.join(log_dir, log_filename)
                 
                 # Get config values for rotation

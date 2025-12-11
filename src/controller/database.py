@@ -4,6 +4,7 @@
 Controller Database Manager
 
 Handles all database interactions, currently using supabase.
+#TODO: Switch to mariadb
 
 Author: Andrew SG
 Created: ?

@@ -30,15 +30,6 @@ class APAController(Controller):
         # Reinstantiate webapp  
         self.web = APAWeb(config=self.config) # Instantiate an APA specific web class 
         self.register_callbacks()
-        # self.register_apa_callbacks()
-
-    # def register_apa_callbacks(self):
-    #     """Register APA-specific callbacks"""
-    #     super().register_callbacks() # First register the parent callbacks
-    #     apa_callbacks = {} # Define any APA specific callbacks
-    #     self.web.register_callbacks(apa_callbacks) # Register them (assumes that register_callbacks appends, not replaces)
-    #     self.logger.info(f"Web interface manager instantiated with these callbacks: {self.web.callbacks}")
-
 
 
 if __name__ == "__main__":

@@ -20,16 +20,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Import habitat controller
 from controller.controller import Controller
 
-# Import APA specific manager classes
-from apa_web import APAWeb # Import APA web interface manager
-
-class APAController(Controller):
+class BasicController(Controller):
     def __init__(self, config_file_path=None):
         super().__init__(config_file_path=config_file_path)
-
-        # Reinstantiate webapp  
-        # self.web = APAWeb(config=self.config) # Instantiate an APA specific web class 
-
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
 
 
@@ -37,15 +30,12 @@ class APAController(Controller):
 
     def handle_special_module_status(self, module_id: str, status: str):
         match status:
-            case "arduino_state":
-                self.socketio.emit("arduino_state", status) 
-                return True    
             case _:
-                self.logger.warning(f"APA web has no logic for {status} from {module_id}")
+                self.logger.warning(f"No logic for {status} from {module_id}")
                 return False    
 
 if __name__ == "__main__":
-    controller = APAController(config_file_path="apa_controller_config.json")
+    controller = BasicController(config_file_path="basic_controller_config.json")
     try:
         # Start the main loop
         controller.start()

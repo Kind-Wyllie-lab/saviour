@@ -14,19 +14,20 @@ Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicroph
 """
 
 import datetime
-import subprocess
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
-from src.modules.module import Module, command
-from src.modules.command import Command
 import logging
 import numpy as np
 import threading
 import soundfile 
 import soundcard
 import re
+
+# Import SAVIOUR dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from modules.module import Module, command
+
 
 class AudiomothModule(Module):
     def __init__(self, module_type="microphone"):

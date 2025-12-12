@@ -13,6 +13,9 @@ This should tell us whether a module is "online" or ModuleStatus.OFFLINE
 - Maybe it should also check the health of the communication socket? Health class could send something and see if it gets an ACK.
 This should also report module status - NOT READY, READY, RECORDING, FAULT etc.
 Controller can then run get_modules() here for a neatly packaged dict of modules which can be passed to frontend.
+
+Author: Andrew SG
+Created: ?
 """
 
 
@@ -38,18 +41,18 @@ class Modules:
 
     def check_status(self, module_id: str, status_data: dict) -> None:
         """Handle a received heartbeat from a module - check recording status"""
-        self.logger.info(f"Checking status for {module_id}, recording status {status_data.get('recording', 'unknown')}")
+        # self.logger.info(f"Checking status for {module_id}, recording status {status_data.get('recording', 'unknown')}")
         if 'recording' in status_data:
             if status_data['recording'] == False:
-                self.logger.info(f"{module_id} says it is not recording")
-                self.logger.info(f"Module status in our terms is {self.modules[module_id].status}")
-                #  and self.modules[module_id].status == ModuleStatus.RECORDING:
-                # Module has switched from recording to not recording without emitting a stop_recording message
-                self.modules[module_id].status = ModuleStatus.NOT_READY # Return to not ready state
+                # self.logger.info(f"{module_id} says it is not recording")
+                # self.logger.info(f"Module status in our terms is {self.modules[module_id].status}")
+                if self.modules[module_id].status == ModuleStatus.RECORDING:
+                    # Module has switched from recording to not recording without emitting a stop_recording message
+                    self.modules[module_id].status = ModuleStatus.DEFAULT
             if status_data['recording'] == True and self.modules[module_id].status != ModuleStatus.RECORDING:
                 # Module says it's recording but our state doesn't reflect this - update our state
                 self.modules[module_id].status = ModuleStatus.RECORDING
-            self.logger.info(f"Nothing to do on status check")
+            # self.logger.info(f"Nothing to do on status check")
 
 
     def network_notify_module_update(self, discovered_modules: list[Module]):
@@ -79,7 +82,7 @@ class Modules:
             if isinstance(m.get("status"), ModuleStatus):
                 m["status"] = m["status"].value
             module_dict[module_id] = m
-        self.logger.info(f"Converted modules to dict.")
+        # self.logger.info(f"Converted modules to dict.")
         return module_dict
 
 
@@ -87,11 +90,11 @@ class Modules:
         while True:
             current_time = time.time()
             for module_id, module_data in self.modules.items():
-                if module_data.status == ModuleStatus.READY:
+                if module_data.status == ModuleStatus.READY or module_data.status == ModuleStatus.NOT_READY:
                     ready_time = module_data.ready_time
                     if current_time - ready_time > self.ready_timeout:
-                        self.logger.info(f"Module {module_id} has timed out from READY to NOT_READY")
-                        self.modules[module_id].status = ModuleStatus.NOT_READY
+                        self.logger.info(f"Module {module_id} has timed out from READY/NOT_READY. Check again.")
+                        self.modules[module_id].status = ModuleStatus.DEFAULT
                         self.broadcast_updated_modules()
             time.sleep(5)
 
@@ -113,8 +116,9 @@ class Modules:
         self.logger.info("No implementation yet.")
 
 
-    def notify_module_readiness_update(self, module_id: str, ready: bool):
-        self.logger.info(f"Received update concerning module {module_id}, with ready status {ready}")
+    def notify_module_readiness_update(self, module_id: str, ready: bool, message: str):
+        # self.logger.info(f"Received update concerning module {module_id}, with ready status {ready}")
+        self.modules[module_id].ready_message = message
         if ready == True:
             self.modules[module_id].status = ModuleStatus.READY
             self.modules[module_id].ready_time = time.time() 
@@ -124,7 +128,7 @@ class Modules:
 
 
     def notify_module_online_update(self, module_id: str, online: bool):
-        self.logger.info(f"Received update concerning module {module_id}, online status {online}")
+        # self.logger.info(f"Received update concerning module {module_id}, online status {online}")
         has_changed = self.modules[module_id].online != online # Check if it changed
 
         self.modules[module_id].online = online # Set the boolean value of online in the modules rcecord
@@ -132,7 +136,7 @@ class Modules:
             self.modules[module_id].status = ModuleStatus.OFFLINE # If it's offline, also set it's status to OFFLINE.
         else:
             if has_changed:
-                self.modules[module_id].status = ModuleStatus.NOT_READY # Module has just been marked back online, so flip it's status to "NOT READY"
+                self.modules[module_id].status = ModuleStatus.DEFAULT # Module has just been marked back online, so flip it's status to "NOT READY"
                 
         self.broadcast_updated_modules()
 
@@ -151,7 +155,7 @@ class Modules:
         self.logger.info(f"{module_id} stopped recording {module_data}")
         if module_data["recording"] == False:
             self.logger.info("Recording was false")
-            self.modules[module_id].status = ModuleStatus.NOT_READY
+            self.modules[module_id].status = ModuleStatus.DEFAULT
         else:
             self.logger.warning("Status stop_recording received but recording param was still True, some kind of error.") 
         self.broadcast_updated_modules()
@@ -181,7 +185,7 @@ class Modules:
             self.logger.warning(f"Received config update from unknown module {module_id} - attempting to add to module list")
             self.modules[module_id] = Module(
                 online = True,
-                status = ModuleStatus.NOT_READY,
+                status = ModuleStatus.DEFAULT,
                 config = new_config
             )
         self.broadcast_updated_modules() # Broadcast that module configs have updated
@@ -200,7 +204,7 @@ class Modules:
 
 
     def broadcast_updated_modules(self) -> None:
-        self.logger.info(f"Updated module list: {self.modules.keys()}")
+        # self.logger.info(f"Updated module list: {self.modules.keys()}")
         module_dict = self._convert_modules_to_dict()
         self.push_module_update_to_frontend(module_dict)
 

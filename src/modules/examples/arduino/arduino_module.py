@@ -13,14 +13,16 @@ import datetime
 import subprocess
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import time
-from src.modules.module import Module
-from habitat.src.modules.command import Command
 import logging
 import numpy as np
 import threading
 import json
+
+# Import SAVIOUR dependencies
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from modules.module import Module, command
+
 
 
 class ArduinoCommand(Command):
@@ -317,7 +319,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down...")
-        ttl.stop()
+        arduino.stop()
 
 if __name__ == '__main__':
     main()

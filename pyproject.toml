@@ -1,16 +1,18 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["hatchling", "setuptools>=80", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "saviour"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Modular Synchronised Data Capture System for behavioral testing labs"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE.txt" }
 authors = [
-    { name = "Andrew Scott-George", email = "ascottg@ed.ac.uk" }
+    { name = "Andrew Scott-George", email = "ascottg@ed.ac.uk" },
+    { name = "Domagoj Anticic", email = "d.anticic@sms.ed.ac.uk" },
+    { name = "Patrick Spooner", email = "p.a.spooner@ed.ac.uk" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,7 +33,7 @@ dependencies = [
     "pandas>=2.2.3",
     "psutil>=7.0.0",
     "pydantic>=2.11.2",
-    "pynwb>=3.0.0",
+    "pytest>=8.4.2",
     "python-dotenv>=1.1.0",
     "pyzmq>=26.4.0",
     "ruamel.yaml>=0.18.10",
@@ -44,7 +46,21 @@ dependencies = [
     "opencv-python>=4.0.0",
     "SoundCard>=0.4.4",
     "soundfile>=0.13.1",
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "ultralytics>=8.3.0"
 ]
+
+[tool.hatch.build]
+exclude = [
+    "src/controller/frontend/node_modules",
+    "src/controller/frontend/.next",
+    "src/controller/frontend/dist",
+    "src/controller/frontend/build",
+]
+
+[tool.hatch.version]
+path = "src/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
@@ -54,6 +70,9 @@ dev = [
     "pytest>=8.3.5",
     "pytest-mock>=3.14.0",
 ]
+
+[tool.setuptools_scm]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

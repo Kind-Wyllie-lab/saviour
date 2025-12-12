@@ -395,18 +395,6 @@ remove_system_packages() {
         PACKAGES_TO_REMOVE=(
             linuxptp
             ffmpeg
-            libavcodec-extra
-            python3-picamera2
-            python3-libcamera
-            python3-kms++
-            libcap-dev
-            python3-dev
-            build-essential
-            libatlas-base-dev
-            libopenjp2-7
-            libtiff6
-            libjpeg-dev
-            libpng-dev
             samba
             samba-common-bin
             cifs-utils

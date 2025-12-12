@@ -5,8 +5,8 @@ import { Routes, Route } from "react-router-dom";
 
 import APAHeader from "./components/APAHeader/APAHeader";
 import APADashboard from "./pages/APADashboard/APADashboard";
-import Settings from "../base/pages/Settings/Settings";
-import Debug from "../base/pages/Debug/Debug";
+import Settings from "../basic/pages/Settings/Settings";
+import Debug from "../basic/pages/Debug/Debug";
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);

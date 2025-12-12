@@ -1,0 +1,415 @@
+#!/usr/env/bin bash
+# Switch Role
+# Script used to switch which role the SAVIOUR device is configured for - controller or module and variant.
+
+set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
+trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
+
+USER=`whoami`
+DIR=`pwd`
+SHARENAME="controller_share"
+
+
+# Function to ask user about their role
+ask_user_role() {
+    echo "Please specify the role of this device:"
+    echo "1) Controller - Central device that coordinates other modules and presents a GUI"
+    echo "2) Module - Peripheral device that connects to a controller and executes received commands"
+    echo ""
+    
+    while true; do
+        read -p "Enter your choice (1 or 2): " choice
+        case $choice in
+            1)
+                DEVICE_ROLE="controller"
+                echo "Device configured as CONTROLLER"
+                break
+                ;;
+            2)
+                DEVICE_ROLE="module"
+                echo "Device configured as MODULE"
+                break
+                ;;
+            *)
+                echo "Invalid choice. Please enter 1 or 2."
+                ;;
+        esac
+    done
+}
+
+# Function to ask user about module type
+ask_module_type() {
+    if [ "$DEVICE_ROLE" = "module" ]; then
+        echo "Please specify the type of module:"
+        echo "1) APA CAMERA - Top mounted camera module that tracks rat location"
+        echo "2) APA RIG - Arduino module that drives rig motor and shock generator"
+        echo ""
+        
+        while true; do
+            read -p "Enter your choice (1-5): " choice
+            case $choice in
+                1)
+                    DEVICE_TYPE="apa_camera"
+                    break
+                    ;;
+                2)
+                    DEVICE_TYPE="apa_arduino"
+                    break
+                    ;;
+                *)
+                    echo "Invalid choice. Please enter 1-2."
+                    ;;
+            esac
+        done
+    fi
+}
+
+ask_controller_type() {
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        echo "Please specify the type of controller - this will affect the GUI primarily:"
+        echo "1) Basic SAVIOUR"
+        echo "2) APA - Active Place Avoidance"
+        echo "3) Habitat (NOT YET IMPLEMENTED)"
+        echo ""
+        
+        while true; do
+            read -p "Enter your choice (1-5): " choice
+            case $choice in
+                1)
+                    DEVICE_TYPE="basic"
+                    break
+                    ;;
+                2)
+                    DEVICE_TYPE="apa"
+                    break
+                    ;;
+                3) 
+                    DEVICE_TYPE="habitat"
+                    break
+                    ;;
+                *)
+                    echo "Invalid choice. Please enter 1-2."
+                    ;;
+            esac
+        done
+    fi
+}
+
+
+# Find the directory and name of the python script for the systemd service
+get_python_directory() {
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        PYTHON_PATH="src/controller/examples/${DEVICE_TYPE}"
+        PYTHON_FILE="${DEVICE}.py"
+    fi
+}
+
+
+# Function to configure systemd service
+configure_service() {
+    echo "Configuring SAVIOUR Systemd Service"
+        
+    # Stop existing service if running
+    sudo systemctl stop saviour.service 2>/dev/null || true
+    
+    # Create service file 
+    sudo tee /etc/systemd/system/saviour.service > /dev/null <<EOF
+[Unit]
+Description=Saviour Service
+After=network.target ptp4l.service phc2sys.service
+Wants=network.target ptp4l.service phc2sys.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${DIR}/${PYTHON_PATH}
+ExecStart=${DIR}/env/bin/python ${PYTHON_FILE}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH=${DIR}/src
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Reload systemd and enable service
+    sudo systemctl daemon-reload
+    sudo systemctl enable saviour.service
+
+    echo "Saviour service configured and enabled at boot."
+}
+
+
+configure_samba_share() {
+    echo "Configuring Samba Share"
+    
+    # Create the share directory
+    sudo mkdir -p /home/pi/${SHARENAME}
+    sudo chown ${USER}:pi /home/pi/${SHARENAME}
+    sudo chmod 755 /home/pi/${SHARENAME}
+    log_message "Created controller_share directory: /home/pi/${SHARENAME}"
+    
+    # Backup original samba config
+    if [ -f /etc/samba/smb.conf ]; then
+        sudo cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
+        echo "Backed up original smb.conf"
+    fi
+    
+    # Create new samba configuration
+    echo "Creating Samba configuration..."
+    sudo tee /etc/samba/smb.conf > /dev/null <<EOF
+[global]
+   workgroup = WORKGROUP
+   server string = SAVIOUR Controller
+   server role = standalone server
+   map to guest = bad user
+   dns proxy = no
+   log level = 1
+   log file = /var/log/samba/%m.log
+   max log size = 50
+
+[${SHARENAME}]
+   comment = Saviour Controller Share
+   path = /home/pi/${SHARENAME}
+   browseable = yes
+   writable = yes
+   guest ok = yes
+   create mask = 0644
+   directory mask = 0755
+   force user = ${USER}
+   force group = pi
+EOF
+
+    # Set Samba password for pi user (default password: saviour)
+    echo "Setting Samba password for {$USER} user..."
+    echo -e "saviour\nsaviour" | sudo smbpasswd -s -a pi
+    
+    # Restart Samba services
+    sudo systemctl restart smbd
+    sudo systemctl restart nmbd
+    
+    # Enable Samba services at boot
+    sudo systemctl enable smbd
+    sudo systemctl enable nmbd
+    
+    echo "Samba share configured successfully!"
+    echo "Share name: ${SHARENAME}"
+    echo "Path: /home/pi/${SHARENAME}"
+    echo "Username: ${USER}"
+    echo "Password: saviour"
+    echo ""
+    echo "Access from other devices:"
+    echo "  Windows: \\\\$(hostname -I | awk '{print $1}')\\controller_share"
+    echo "  Linux/Mac: smb://$(hostname -I | awk '{print $1}')/controller_share"
+    echo ""
+    echo "Samba control commands:"
+    echo "  Start: sudo systemctl start smbd nmbd"
+    echo "  Stop:  sudo systemctl stop smbd nmbd"
+    echo "  Status: sudo systemctl status smbd nmbd"
+    echo "  Restart: sudo systemctl restart smbd nmbd"
+}
+
+disable_samba_share() {
+    sudo systemctl stop smbd nmbd
+    sudo systemctl disable smbd nmbd
+    echo Stopped and disabled smbd and nmbd
+}
+
+# Function to configure DHCP server
+configure_dhcp_server() {
+    echo "Configuring DHCP Server"
+    
+    # Setup static ip
+    echo "Setting static IP to 192.168.1.1 with nmcli"
+    sudo nmcli connection modify "Wired connection 1" ipv4.method manual
+    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.1/24
+
+    # Install dnsmasq
+    if ! is_installed "dnsmasq"; then
+        echo "[INSTALLING] dnsmasq"
+        sudo apt-get install -y dnsmasq
+    else
+        echo "[OK] dnsmasq is already installed."
+    fi
+
+    # Modify DNSMasq service description to start after interfaces are up
+    echo "Modifying DNSMasq service description..."
+    if [ -f /lib/systemd/system/dnsmasq.service ]; then
+        # Backup original service file
+        sudo cp /lib/systemd/system/dnsmasq.service /lib/systemd/system/dnsmasq.service.backup
+        echo "Backed up original dnsmasq.service"
+        
+        # Modify the service file to start after network interfaces are up
+        sudo sed -i 's/Requires=network.target/Requires=network-online.target/g' /lib/systemd/system/dnsmasq.service
+        sudo sed -i 's/After=network.target/After=network-online.target/g' /lib/systemd/system/dnsmasq.service
+        echo "Modified DNSMasq service to start after network interfaces are up"
+    else
+        echo "Warning: dnsmasq.service not found at /lib/systemd/system/dnsmasq.service"
+    fi
+    
+    # Backup original config
+    if [ -f /etc/dnsmasq.conf ]; then
+        sudo cp /etc/dnsmasq.conf /etc/dnsmasq.conf.backup
+        echo "Backed up original dnsmasq.conf"
+    fi
+    
+    # Create new dnsmasq configuration for local network only
+    echo "Creating dnsmasq configuration for local network..."
+    sudo tee /etc/dnsmasq.conf > /dev/null <<EOF
+# dnsmasq configuration for Saviour local network
+# This Pi acts as DHCP server for local network only
+# No internet routing - devices must use wlan0 for internet
+
+# Listen on ethernet interface only (not wlan0)
+interface=eth0
+bind-interfaces
+
+# DHCP range for local network (adjust as needed)
+dhcp-range=192.168.1.100,192.168.1.200,12h
+
+# Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
+dhcp-option=3
+
+# Disable DNS server functionality (we only want DHCP)
+port=0
+
+# Log DHCP leases
+dhcp-leasefile=/var/lib/misc/dnsmasq.leases
+
+# Additional options
+dhcp-authoritative
+log-queries
+log-dhcp
+EOF
+
+    # Create systemd service override to disable at boot by default
+    sudo mkdir -p /etc/systemd/system/dnsmasq.service.d
+    sudo tee /etc/systemd/system/dnsmasq.service.d/override.conf > /dev/null <<EOF
+[Unit]
+Description=DHCP Server for Saviour Local Network
+
+[Service]
+# Don't start automatically at boot
+ExecStartPre=/bin/true
+
+[Install]
+# Don't enable at boot by default
+WantedBy=multi-user.target
+EOF
+
+    # Reload systemd and disable dnsmasq at boot
+    sudo systemctl daemon-reload
+    sudo systemctl enable dnsmasq
+    sudo systemctl restart dnsmasq.service
+    
+    echo "DHCP server configured and enabled."
+    echo "To start DHCP server: sudo systemctl start dnsmasq"
+    echo "To stop DHCP server: sudo systemctl stop dnsmasq"
+}
+
+disable_dhcp_server() {
+    echo Disabling DHCP server and reverting IP address to automatic assignment
+
+    # Change IP to automatic assignment
+    sudo nmcli connection modify "Wired connection 1" ipv4.method auto
+
+    # Stop DHCP server
+    sudo systmectl stop dnsmasq.service
+    sudo systemctl disable dnsmasq.service
+
+    echo DHCP server disabled
+}
+
+configure_mdns() {
+    log_section "Configuring controller mDNS via avahi daemon"
+    if ! is_installed "avahi-daemon"; then
+        echo "Installing avahi-daemon";
+        sudo apt install avahi-daemon -y
+    else
+        echo "avahi-daemon is already installed"
+    fi
+
+    # Configure avahi
+    sudo tee /etc/avahi/avahi-daemon.conf > /dev/null <<EOF
+# avahi daemon configuration for SAVIOUR local network
+[server]
+host-name=saviour
+use-ipv4=yes
+use-ipv6=yes
+allow-interfaces=eth0
+deny-interfaces=wlan0
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+publish-hinfo=no
+publish-workstation=yes
+EOF
+    # Reload systemd and enable
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now avahi-daemon
+    sudo systemctl restart avahi-daemon.service
+
+    echo "mDNS server configured and enabled."
+    echo "Controller will appear on network as saviour.local"
+
+    log_message "Configuring iptables to forward port 80 traffic to port 5000"
+    sudo apt-get install iptables-persistent -y
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    sudo netfilter-persistent save
+}
+
+disable_mdns() {
+    echo Disabling mDNS 
+    sudo systemctl stop avahi-daemon
+    sudo systemctl disable avahi-daemon
+
+    # Stop forwarding port 80 traffic
+    sudo iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    sudo netfilter-persistent save
+    echo mDNS disabled
+}
+
+# Main Program
+ask_user_role
+ask_module_type
+ask_controller_type
+
+DEVICE="${DEVICE_TYPE}_${DEVICE_ROLE}"
+
+echo ""
+echo Device will be configured as a "${DEVICE}."
+
+get_python_directory
+
+echo ""
+echo Python file at "${PYTHON_PATH}/${PYTHON_FILE}"
+echo Checking it is there: `ls ${PYTHON_PATH} | grep ${PYTHON_FILE}` # Check it's there, grep returns 0 if it finds a match.
+
+configure_service
+echo ""
+echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep saviour`
+
+
+echo ""
+
+if [ "$DEVICE_ROLE" = "controller" ]; then
+    echo Configuring controller samba share and DHCP server
+    configure_samba_share
+    configure_dhcp_server
+    configure_mdns
+fi
+
+if [ "$DEVICE_ROLE" = "module" ]; then
+    echo Ensuring module does not run samba or DHCP server
+    remove_samba_share
+    remove_dhcp_server
+    disable_mdns
+fi

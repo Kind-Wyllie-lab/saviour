@@ -151,7 +151,7 @@ configure_samba_share() {
     sudo mkdir -p /home/pi/${SHARENAME}
     sudo chown ${USER}:pi /home/pi/${SHARENAME}
     sudo chmod 755 /home/pi/${SHARENAME}
-    log_message "Created controller_share directory: /home/pi/${SHARENAME}"
+    echo "Created controller_share directory: /home/pi/${SHARENAME}"
     
     # Backup original samba config
     if [ -f /etc/samba/smb.conf ]; then
@@ -325,7 +325,7 @@ disable_dhcp_server() {
 }
 
 configure_mdns() {
-    log_section "Configuring controller mDNS via avahi daemon"
+    echo "Configuring controller mDNS via avahi daemon"
     if ! is_installed "avahi-daemon"; then
         echo "Installing avahi-daemon";
         sudo apt install avahi-daemon -y
@@ -360,7 +360,7 @@ EOF
     echo "mDNS server configured and enabled."
     echo "Controller will appear on network as saviour.local"
 
-    log_message "Configuring iptables to forward port 80 traffic to port 5000"
+    echo "Configuring iptables to forward port 80 traffic to port 5000"
     sudo apt-get install iptables-persistent -y
     sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
     sudo netfilter-persistent save

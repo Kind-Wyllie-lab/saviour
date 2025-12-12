@@ -51,6 +51,7 @@ class Command:
             raise ValueError(f"Missing required callbacks: {missing_callbacks}")
             
         self.callbacks.update(callbacks)
+        self.logger.info(f"Command handler callbacks: {self.callbacks}")
 
     def set_commands(self, commands: Dict[str, Callable]):
         """
@@ -60,8 +61,10 @@ class Command:
             commands: Dictionary of commands
         """
         self.commands.update(commands)
+        self.logger.info(f"Command handler callbacks: {self.commands}")
         
     def _parse_command(self, command: str):
+        # TODO: Migrate to zmq send and recv json
         """
         Parse a command received from the controller into command and params
 
@@ -127,7 +130,7 @@ class Command:
             cmd, params = self._parse_command(raw_command)
             
             # Debug logging for command parsing
-            self.logger.info(f"Parsed command: '{cmd}', parameters: {params}")
+            # self.logger.info(f"Parsed command: '{cmd}', parameters: {params}")
 
             # 2. Find corresponding callback
             handler = self.commands.get(cmd) # Find the callback that matches the name of the commmand
@@ -135,14 +138,17 @@ class Command:
                 return self._unknown_command(cmd)    
             
             # 3. Execute callback and get response
-            self.logger.info(f"Executing command {cmd}")
+            # self.logger.info(f"Executing command {cmd}")
             if not params:
-                self.logger.info(f"Executing without arguments")
+                # self.logger.info(f"Executing without arguments")
                 result = handler()
             else:
                 result = handler(**params) # Unpack params into arguments 
 
-            self.logger.info(f"Command handler returned {result}")
+            # self.logger.info(f"Command handler returned {result}")
+            if result == None:
+                self.logger.warning(f"Make sure {cmd} returns a dict")
+                result = {"message": f"NoneType result from {cmd} callback"}
 
             # 4. Send response to controller
             response = {"type": cmd}

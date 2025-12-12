@@ -8,6 +8,9 @@ Centralizes configuration management for the habitat controller system, includin
 - Providing a consistent interface for accessing and modifying configuration values
 - Validating configuration values
 - Saving configuration changes
+
+Author: Andrew SG
+Created: ?
 """
 
 import os

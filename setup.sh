@@ -19,7 +19,7 @@ log_message() {
     echo "[$timestamp] $1" | tee -a "$LOG_FILE"
 }
 
-# Function to log section header
+# Function to log section headers
 log_section() {
     log_message "=== $1 ==="
 }

@@ -388,6 +388,120 @@ disable_mdns() {
 }
 
 
+configure_ptp_timetransmitter() {
+    echo "Configuring PTP to act as timeTransmitter"
+    
+    # Stop existing services if running
+    sudo systemctl stop ptp4l 2>/dev/null || true
+    sudo systemctl stop phc2sys 2>/dev/null || true
+    
+    # Create ptp4l service file
+    echo "Creating ptp4l systemd service..."
+    sudo tee /etc/systemd/system/ptp4l.service > /dev/null <<EOF
+[Unit]
+Description=PTP4L (Precision Time Protocol daemon)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -l 6
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Create phc2sys service file
+    echo "Creating phc2sys systemd service..."
+    sudo tee /etc/systemd/system/phc2sys.service > /dev/null <<EOF
+[Unit]
+Description=PHC2SYS (PTP Hardware Clock to System Clock synchronization)
+After=ptp4l.service
+Wants=ptp4l.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/sbin/phc2sys -a -r -r
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    echo "PTP configuration:"
+    echo "  - ptp4l: timeTransmitter mode (-m flag, log level 6)"
+    echo "  - phc2sys: Autoconfiguration with system clock sync (-a -r -r)"
+
+    # Reload systemd and enable services
+    sudo systemctl daemon-reload
+    
+    # Enable services to start at boot
+    sudo systemctl enable ptp4l
+    sudo systemctl enable phc2sys
+}
+
+
+configure_ptp_timereceiver() {
+    echo "Configuring PTP to act as timeReceiver"
+    
+    # Stop existing services if running
+    sudo systemctl stop ptp4l 2>/dev/null || true
+    sudo systemctl stop phc2sys 2>/dev/null || true
+    
+    # Create ptp4l service file
+    echo "Creating ptp4l systemd service..."
+    sudo tee /etc/systemd/system/ptp4l.service > /dev/null <<EOF
+[Unit]
+Description=PTP4L (Precision Time Protocol daemon)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -s
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Create phc2sys service file
+    echo "Creating phc2sys systemd service..."
+    sudo tee /etc/systemd/system/phc2sys.service > /dev/null <<EOF
+[Unit]
+Description=PHC2SYS (PTP Hardware Clock to System Clock synchronization)
+After=ptp4l.service
+Wants=ptp4l.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    echo "PTP configuration:"
+    echo "  - ptp4l: timeReceiver mode (-s -m flags)"
+    echo "  - phc2sys: Manual configuration with PTP hardware clock (-s /dev/ptp0 -w -m)"
+
+    # Reload systemd and enable services
+    sudo systemctl daemon-reload
+    
+    # Enable services to start at boot
+    sudo systemctl enable ptp4l
+    sudo systemctl enable phc2sys
+}
+
 build_frontend() {
     echo "Installing nvm, Node.js, vite, and building frontend"
     echo "Installing nvm"
@@ -425,6 +539,8 @@ EOF
     cd ../../../
 }
 
+# TODO: Configure ptp, ntp
+
 # Main Program
 ask_user_role
 ask_module_type
@@ -449,18 +565,34 @@ echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep savio
 echo ""
 
 if [ "$DEVICE_ROLE" = "controller" ]; then
-    echo Configuring controller samba share and DHCP server
+    configure_ptp_timetransmitter
     configure_samba_share
     configure_dhcp_server
     configure_mdns
     build_frontend
+
 fi
 
 if [ "$DEVICE_ROLE" = "module" ]; then
-    echo Ensuring module does not run samba or DHCP server
+    configure_ptp_timereceiver
     disable_samba_share
     disable_dhcp_server
     disable_mdns
+
+fi
+
+if [ "$DEVICE_TYPE" = "microphone" ]; then
+    sudo install -d /etc/pipewire/pipewire.conf.d
+    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+    context.properties = {
+        default.clock.rate = 192000
+        default.clock.allowed-rates = [ 96000 192000 384000]
+    }
+EOF
+    sudo -u pi pkill -9 pipewire
+    sudo -u pi pkill -9 wireplumber
+    sudo -u pi pipewire &
+    sudo -u pi wireplumber &
 fi
 
 

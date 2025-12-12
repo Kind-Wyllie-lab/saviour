@@ -8,6 +8,9 @@ the controller and modules, including:
 - Command publishing to modules
 - Status/data subscription from modules
 - Message routing and handling
+
+Author: Andrew SG
+Created: ?
 """
 
 import zmq
@@ -54,7 +57,7 @@ class Communication:
         self.data_callback = data_callback
 
     # ZeroMQ methods
-    def send_command(self, module_id: str, command: str, params: Dict):
+    def send_command(self, module_id: str, command: str, params: Dict) -> None:
         """Send a command to a specific module"""
         # Handle params
         if not params:
@@ -64,7 +67,8 @@ class Communication:
         # Send message
         message = f"cmd/{module_id} {command} {json_params}"
         self.command_socket.send_string(message)
-        self.logger.info(f"Command sent: {message}")
+        self.logger.info(f"Command sent: {message} at {time.time()}")
+        return None # Eventually this will return something when we move to REQ/REP
 
     def listen_for_updates(self):
         """Listen for status and data updates from modules"""

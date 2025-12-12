@@ -4,11 +4,14 @@ import socket from "../../../socket";
 
 // Styling and components
 import "./APADashboard.css";
-import ModuleCard from "../../../base/components/ModuleCard/ModuleCard";
-import ModuleGrid from "../../../base/components/ModuleGrid/ModuleGrid"
+
+// SAVIOUR Imports
+import ModuleGrid from "../../../basic/components/ModuleGrid/ModuleGrid";
+import ExperimentMetadata from "../../../basic/components/ExperimentMetadata/ExperimentMetadata";
+import CommandsPanel from "../../../basic/components/CommandsPanel/CommandsPanel";
+
+// APA Imports
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
-import ExperimentMetadata from "../../../base/components/ExperimentMetadata/ExperimentMetadata";
-import CommandsPanel from "../../../base/components/CommandsPanel/CommandsPanel";
 import APACommands from "../../components/APACommands/APACommands";
 
 // Check websocket connection

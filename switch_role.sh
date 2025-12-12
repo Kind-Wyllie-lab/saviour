@@ -1,4 +1,4 @@
-#!/usr/env/bin bash
+#!/usr/bin/env bash
 # Switch Role
 # Script used to switch which role the SAVIOUR device is configured for - controller or module and variant.
 
@@ -100,6 +100,10 @@ ask_controller_type() {
 get_python_directory() {
     if [ "$DEVICE_ROLE" = "controller" ]; then
         PYTHON_PATH="src/controller/examples/${DEVICE_TYPE}"
+        PYTHON_FILE="${DEVICE}.py"
+    fi
+    if [ "$DEVICE_ROLE" = "module" ]; then
+        PYTHON_PATH="src/modules/examples/${DEVICE_TYPE}"
         PYTHON_FILE="${DEVICE}.py"
     fi
 }
@@ -318,7 +322,7 @@ disable_dhcp_server() {
     sudo nmcli connection modify "Wired connection 1" ipv4.method auto
 
     # Stop DHCP server
-    sudo systmectl stop dnsmasq.service
+    sudo systemctl stop dnsmasq.service
     sudo systemctl disable dnsmasq.service
 
     echo DHCP server disabled
@@ -368,13 +372,57 @@ EOF
 
 disable_mdns() {
     echo Disabling mDNS 
-    sudo systemctl stop avahi-daemon
-    sudo systemctl disable avahi-daemon
+    sudo systemctl disable avahi-daemon.service
+    sudo systemctl stop avahi-daemon.service
 
     # Stop forwarding port 80 traffic
-    sudo iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    # Check if the rule exists before trying to delete it
+    if sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null; then
+        sudo iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+        echo "Port forwarding rule deleted"
+    else
+        echo "Port forwarding rule does not exist"
+    fi
     sudo netfilter-persistent save
     echo mDNS disabled
+}
+
+
+build_frontend() {
+    echo "Installing nvm, Node.js, vite, and building frontend"
+    echo "Installing nvm"
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash # Install nvm
+    \. "$HOME/.nvm/nvm.sh" # Instead of restarting the shell - from Node.js
+    echo "Installing Node.js v22"
+    nvm install 22 # Install Node.js - make sure to keep version up to date
+    node -v # Should print v22. something
+    npm -v # Should print 10.9.3 or something
+
+    echo "Setting correct frontend for ${DEVICE}"
+    sudo tee src/controller/frontend/src/main.jsx > /dev/null <<EOF
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './index.css';
+import App from './${DEVICE_TYPE}/App';
+import { BrowserRouter } from "react-router-dom";
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <App /> {/*Change this to reflect which controller frontend is being used.*/}
+    </BrowserRouter>
+  </React.StrictMode>
+);
+EOF
+
+    echo "Installing vite and building frontend"
+    cd src/controller/frontend/
+    npm install
+    npm run build
+    echo "Frontend built"
+    echo "nvm, Node.js, vite installed and frontend built"
+    cd ../../../
 }
 
 # Main Program
@@ -405,11 +453,22 @@ if [ "$DEVICE_ROLE" = "controller" ]; then
     configure_samba_share
     configure_dhcp_server
     configure_mdns
+    build_frontend
 fi
 
 if [ "$DEVICE_ROLE" = "module" ]; then
     echo Ensuring module does not run samba or DHCP server
-    remove_samba_share
-    remove_dhcp_server
+    disable_samba_share
+    disable_dhcp_server
     disable_mdns
 fi
+
+
+# Run pytest?
+echo ""
+echo "Running test suite"
+source env/bin/activate
+pytest
+
+echo ""
+echo "Device successfully set to ${DEVICE}, please reboot now"

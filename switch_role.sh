@@ -41,18 +41,38 @@ ask_user_role() {
 ask_module_type() {
     if [ "$DEVICE_ROLE" = "module" ]; then
         echo "Please specify the type of module:"
-        echo "1) APA CAMERA - Top mounted camera module that tracks rat location"
-        echo "2) APA RIG - Arduino module that drives rig motor and shock generator"
+        echo "1) CAMERA - Basic camera module"
+        echo "2) MICROPHONE - Audiomoth module that can support up to 4 connected microphones"
+        echo "3) TTL - TTL pulse generating and capturing module (e.g. for syncing with Open Ephys)"
+        echo "4) RFID - For gathering data from RFID transponders (NOT YET IMPLEMENTED)"
+        echo "5) APA CAMERA - Top mounted camera module that tracks rat location"
+        echo "6) APA RIG - Arduino module that drives rig motor and shock generator"
         echo ""
         
         while true; do
-            read -p "Enter your choice (1-5): " choice
+            read -p "Enter your choice: " choice
             case $choice in
-                1)
-                    DEVICE_TYPE="apa_camera"
+                1) 
+                    DEVICE_TYPE="camera"
                     break
                     ;;
                 2)
+                    DEVICE_TYPE="microphone"
+                    break
+                    ;;
+                3)
+                    DEVICE_TYPE="ttl"
+                    break
+                    ;;
+                4)
+                    DEVICE_TYPE="rfid"
+                    break
+                    ;;
+                5)
+                    DEVICE_TYPE="apa_camera"
+                    break
+                    ;;
+                6)
                     DEVICE_TYPE="apa_arduino"
                     break
                     ;;

@@ -45,7 +45,7 @@ class APAController(Controller):
                 return False    
 
 if __name__ == "__main__":
-    controller = APAController(config_file_path="config.json")
+    controller = APAController(config_file_path="apa_controller_config.json")
     try:
         # Start the main loop
         controller.start()

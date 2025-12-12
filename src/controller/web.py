@@ -24,9 +24,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 from config import Config
+from abc import ABC
 
-
-class Web:
+class Web(ABC):
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -228,6 +228,7 @@ class Web:
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
         def handle_module_status(data):
             """Handle module status update"""
+            self.logger.info("IN WEB HANDLE_MODULE_STATUS")
             try:
                 # self.logger.info(f"Received module status: {data}")
                 if not isinstance(data, dict):
@@ -625,52 +626,56 @@ class Web:
             return False
 
 
+    # @abstractmethod # TODO: Should web be an abstract method?
+    def handle_special_module_status(self, module_id, status):
+        """To be overriden by rig specific functionality""" 
+        pass
+
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""
         try:
-            self.logger.info(f"Received status from {module_id}: {status}")
-
             # Ensure status has required fields
             if not isinstance(status, dict):
                 raise ValueError("Status must be a dictionary")
 
-            # Handle recordings list response
-            if status.get('type') == 'recordings_list':
-                self.logger.info(f"Broadcasting module recordings for module {module_id}")
-                module_recordings = status.get('recordings', [])
-                
-                # Send individual module recordings response
-                self.socketio.emit('module_recordings', {
-                    'module_id': module_id,
-                    'recordings': module_recordings
-                })
-                return
+            status_type = status.get('type')
+            if not status_type:
+                self.logger.warning(f"Bad status type: {status}")
 
-            # Handle export complete response
-            if status.get('type') == 'export_complete':
-                self.logger.info(f"Broadcasting export complete for module {module_id}")
-                self.socketio.emit('export_complete', {
-                    'module_id': module_id,
-                    'success': status.get('success', False),
-                    'error': status.get('error'),
-                    'filename': status.get('filename')
-                })
-                return
+            match status_type:  
+                # Handle recordings list response
+                case 'recordings_list':
+                    self.logger.info(f"Broadcasting module recordings for module {module_id}")
+                    module_recordings = status.get('recordings', [])
+                    
+                    # Send individual module recordings response
+                    self.socketio.emit('module_recordings', {
+                        'module_id': module_id,
+                        'recordings': module_recordings
+                    })
 
-            # Handle recording started/stopped status
-            if status.get('type') in ['recording_started', 'recording_stopped']:
-                self.logger.info(f"Broadcasting recording status for module {module_id}")
-                self.socketio.emit('module_status', {
-                    'module_id': module_id,
-                    'status': status
-                })
-                return
-                
-            # Emit the status to all connected clients
-            self.socketio.emit('module_status', {
-                'module_id': module_id,
-                'status': status
-            })
+                # Handle export complete response
+                case 'export_complete':
+                    self.logger.info(f"Broadcasting export complete for module {module_id}")
+                    self.socketio.emit('export_complete', {
+                        'module_id': module_id,
+                        'success': status.get('success', False),
+                        'error': status.get('error'),
+                        'filename': status.get('filename')
+                    })
+
+                # Handle recording started/stopped status
+                case ('recording_started' | 'recording_stopped'):
+                    self.logger.info(f"Broadcasting recording status for module {module_id}")
+                    self.socketio.emit('module_status', {
+                        'module_id': module_id,
+                        'status': status
+                    })
+
+                case _:              
+                    was_special_status = self.handle_special_module_status(module_id, status)
+                    if not was_special_status:
+                        self.logger.warning(f"No logic for {status} from {module_id}")
         except Exception as e:
             self.logger.error(f"Error handling module status: {str(e)}")
 

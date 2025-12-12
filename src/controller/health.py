@@ -9,6 +9,9 @@ Handles health monitoring for all modules in the habitat system, including:
 - Online/offline status detection
 - Health data processing
 - Historical health data tracking
+
+Author: Andrew SG
+Created: ?
 """
 
 import time
@@ -76,7 +79,9 @@ class Health:
                     'ptp4l_offset': status_data.get('ptp4l_offset'),
                     'ptp4l_freq': status_data.get('ptp4l_freq'),
                     'phc2sys_offset': status_data.get('phc2sys_offset'),
-                    'phc2sys_freq': status_data.get('phc2sys_freq')
+                    'phc2sys_freq': status_data.get('phc2sys_freq'),
+                    'last_ptp_restart': time.time(),
+                    'ptp_restarts': 1
                 }
             else:
                 # Existing module - update heartbeat and status, preserve other fields
@@ -101,6 +106,10 @@ class Health:
                     self.module_health[module_id]['phc2sys_offset'] = status_data['phc2sys_offset']
                 if 'phc2sys_freq' in status_data:
                     self.module_health[module_id]['phc2sys_freq'] = status_data['phc2sys_freq']
+                if "last_ptp_restart" not in self.module_health[module_id]:
+                    self.module_health[module_id]["last_ptp_restart"] = time.time()
+                if "ptp_restarts" not in self.module_health[module_id]:
+                    self.module_health[module_id]["ptp_restarts"] = 1
             
             if was_new_module:
                 self.logger.info(f"New module {module_id} added to health tracking")
@@ -297,8 +306,13 @@ class Health:
                     self.logger.warning(f"phc2sys_offset too high for module {module}: {self.module_health[module]['phc2sys_offset']}")         
                     reset_flag = True
             if reset_flag == True:
-                self.logger.info(f"Telling {module} to restart_ptp")
-                self.callbacks["send_command"](module, "restart_ptp", {})
+                if (time.time() - self.module_health[module]["last_ptp_restart"]) > (2**self.module_health[module]["ptp_restarts"]) * 60: # Exponential backoff? Sort of.
+                    self.logger.info(f"Telling {module} to restart_ptp")
+                    self.module_health[module]["last_ptp_restart"] = time.time()
+                    self.module_health[module]["ptp_restarts"] += 1
+                    if self.module_health[module]["ptp_restarts"] >= 5:
+                        self.module_health[module]["ptp_restarts"] = 5
+                    self.callbacks["send_command"](module, "restart_ptp", {})
 
     def start_monitoring(self):
         """Start the health monitoring thread"""

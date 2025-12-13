@@ -32,7 +32,7 @@ import cv2
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module
+from modules.module import Module, command, check
 
 class CameraModule(Module):
     def __init__(self, module_type="camera"):        
@@ -78,6 +78,33 @@ class CameraModule(Module):
         }
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
+
+
+        self.module_checks = {
+            self._check_picam
+        }
+
+    @check()
+    def _check_picam(self) -> tuple[bool, str]:
+        if not self.picam2:
+            return False, "No picam2 object"
+        else:
+            return True, "Picam2 object instantiated"
+
+    """Self Check"""
+    def _perform_module_specific_checks(self) -> tuple[bool, str]:
+        self.logger.info(f"Performing {self.module_type} specific checks")
+        for check in self.module_checks:
+            self.logger.info(f"Running {check.__name__}")
+            result, message = check()
+            if result == False:
+                self.logger.info(f"A check failed: {check.__name__}, {message}")
+                return False, message
+                break # Exit loop on first failed check
+        if result == False:
+            return result, message
+        else:
+            return True, "No implementation yet..."
 
     def configure_module(self):
         """Override parent method configure module in event that module config changes"""

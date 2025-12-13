@@ -16,7 +16,7 @@
         "_format": "%(asctime)s - %(levelname)s - %(message)s"
     },
     "recording": {
-        "segment_length_seconds": 600,
+        "segment_length_seconds": 30,
         "_pre_record_seconds": 5,
         "_post_record_seconds": 5,
         "_timestamp_overlay": true,

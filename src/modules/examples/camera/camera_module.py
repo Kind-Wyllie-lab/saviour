@@ -79,17 +79,14 @@ class CameraModule(Module):
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
+        # Recording monitoring
+        self.monitor_recording_segments_stop_flag = threading.Event()
+        self.monitor_recording_segments_thread = None 
 
         self.module_checks = {
             self._check_picam
         }
 
-    @check()
-    def _check_picam(self) -> tuple[bool, str]:
-        if not self.picam2:
-            return False, "No picam2 object"
-        else:
-            return True, "Picam2 object instantiated"
 
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
@@ -105,6 +102,15 @@ class CameraModule(Module):
             return result, message
         else:
             return True, "No implementation yet..."
+
+
+    @check()
+    def _check_picam(self) -> tuple[bool, str]:
+        if not self.picam2:
+            return False, "No picam2 object"
+        else:
+            return True, "Picam2 object instantiated"
+
 
     def configure_module(self):
         """Override parent method configure module in event that module config changes"""
@@ -191,6 +197,8 @@ class CameraModule(Module):
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
 
+
+    """Recording"""
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
@@ -209,6 +217,9 @@ class CameraModule(Module):
             # Start recording
             self.picam2.start_encoder(self.main_encoder, name="main") # 
             self.recording_start_time = time.time()
+            
+            self._start_recording_segment_monitoring()
+
             self.frame_times = []  # Reset frame times
 
             # Send status response after successful recording start
@@ -231,40 +242,6 @@ class CameraModule(Module):
                 })
             return False
 
-    def _get_frame_timestamp(self, req):
-        try:
-            metadata = req.get_metadata()
-            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-            if frame_wall_clock != 'No data':
-                self.frame_times.append(frame_wall_clock)
-        except Exception as e:
-            self.logger.error(f"Error capturing frame metadata: {e}")
-
-    def _get_and_apply_frame_timestamp(self, req):
-        try:
-            metadata = req.get_metadata()
-            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-            if frame_wall_clock != 'No data':
-                self.frame_times.append(frame_wall_clock)
-                timestamp = time.strftime("%Y-%m-%d %X")
-
-                # Apply mask to main stream
-                with MappedArray(req, 'main') as m:
-                    if self.config.get("camera.monochrome") is True:
-                        # Convert BGR to grayscale
-                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                        # Convert back to BGR for consistency with other processing
-                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-
-                with MappedArray(req, "lores") as m:
-                    if self.config.get("camera.monochrome") is True:
-                        # Convert BGR to grayscale
-                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                        # Convert back to BGR for consistency with other processing
-                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale", 2), (50,255,50), self.config.get("camera.text_thickness", 1)) # TODO: Make origin reference lores dimensions.
-        except Exception as e:
-            self.logger.error(f"Error capturing frame metadata: {e}")
 
     def _stop_recording(self):
         """Camera Specific implementation of stop recording"""
@@ -288,6 +265,11 @@ class CameraModule(Module):
                 
                 self.add_session_file(timestamps_file)
                 np.savetxt(timestamps_file, self.frame_times)
+
+
+                # Stop monitor thread   
+                self._stop_recording_segment_monitoring()
+
                 
                 # Send status response after successful recording stop
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -323,6 +305,72 @@ class CameraModule(Module):
                 })
             return False
 
+
+    def _monitor_recording_length(self):
+        """
+        Runs in a thread and monitors length of current recording.
+        If it exceeds segment length limit, stops and starts a new recording.
+        """
+        segment_length = self.config.get("recording.segment_length_seconds", 30) # Default to 30 for debug for now 050126
+
+        while not self.monitor_recording_segments_stop_flag.is_set():
+            if (time.time() - self.segment_start_time > segment_length):
+                self.segment_id +=1
+                self.segment_start_time = time.time()
+                self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
+                
+
+
+    def _start_recording_segment_monitoring(self):
+        self.monitor_recording_segments_stop_flag.clear()
+        self.segment_start_time = self.recording_start_time 
+        self.segment_id = 0
+        self.monitor_recording_segments_thread = threading.Thread(target=self._monitor_recording_length, daemon=True).start()
+
+
+    def _stop_recording_segment_monitoring(self):
+        self.monitor_recording_segments_stop_flag.set()
+        self.monitor_recording_segments_thread.join(timeout=5)
+
+    """Timestamping frames"""
+    def _get_frame_timestamp(self, req):
+        try:
+            metadata = req.get_metadata()
+            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+            if frame_wall_clock != 'No data':
+                self.frame_times.append(frame_wall_clock)
+        except Exception as e:
+            self.logger.error(f"Error capturing frame metadata: {e}")
+
+    def _get_and_apply_frame_timestamp(self, req):
+        try:
+            metadata = req.get_metadata()
+            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
+            if frame_wall_clock != 'No data':
+                self.frame_times.append(frame_wall_clock)
+                timestamp = time.strftime("%Y-%m-%d %X")
+
+                # Apply mask to main stream
+                with MappedArray(req, 'main') as m:
+                    if self.config.get("camera.monochrome") is True:
+                        # Convert BGR to grayscale
+                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                        # Convert back to BGR for consistency with other processing
+                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+                with MappedArray(req, "lores") as m:
+                    if self.config.get("camera.monochrome") is True:
+                        # Convert BGR to grayscale
+                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                        # Convert back to BGR for consistency with other processing
+                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale", 2), (50,255,50), self.config.get("camera.text_thickness", 1)) # TODO: Make origin reference lores dimensions.
+        except Exception as e:
+            self.logger.error(f"Error capturing frame metadata: {e}")
+
+
+
+    """Video streaming"""
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         """Start streaming video to the specified receiver using Flask to send MJPEG"""
         try:

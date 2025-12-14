@@ -258,7 +258,7 @@ class CameraModule(Module):
             return False
 
 
-    def _stop_recording(self):
+    def _stop_recording(self) -> bool:
         """Camera Specific implementation of stop recording"""
         try:
             self.logger.info("Attempting to stop camera specific recording")
@@ -285,39 +285,15 @@ class CameraModule(Module):
                 # Stop monitor thread   
                 self._stop_recording_segment_monitoring()
 
-                
-                # Send status response after successful recording stop
-                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                    self.communication.send_status({
-                        "type": "recording_stopped",
-                        "session_id": self.recording_session_id,
-                        "duration": duration,
-                        "frame_count": len(self.frame_times),
-                        "status": "success",
-                        "recording": False,
-                        "message": f"Recording completed successfully with {len(self.frame_times)} frames"
-                    })
-
                 self.logger.info("Concluded camera stop_recording, waiting to exit")
+                return True
 
             else:
                 self.logger.error("Error: recording_start_time was None")
-                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                    self.communication.send_status({
-                        "type": "recording_stopped",
-                        "status": "error",
-                        "error": "Recording start time was not set, so could not create timestamps."
-                    })
                 return False
         
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_stopped",
-                    "status": "error",
-                    "error": str(e)
-                })
             return False
 
 
@@ -341,7 +317,8 @@ class CameraModule(Module):
         self.monitor_recording_segments_stop_flag.clear()
         self.segment_start_time = self.recording_start_time 
         self.segment_id = 0
-        self.monitor_recording_segments_thread = threading.Thread(target=self._monitor_recording_length, daemon=True).start()
+        self.monitor_recording_segments_thread = threading.Thread(target=self._monitor_recording_length, daemon=True)
+        self.monitor_recording_segments_thread.start()
 
 
     def _stop_recording_segment_monitoring(self):

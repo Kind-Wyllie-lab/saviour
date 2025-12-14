@@ -440,7 +440,20 @@ class Module(ABC):
                 })
                 return False
 
-            self._stop_recording() # Specific implementation of stop_recording
+            if not self._stop_recording(): # Specific implementation of stop_recording
+                self.logger.warning(f"Something went wrong stopping recording.")
+                self.communication.send_status({
+                    "type": "recording_stopped",
+                    "status": "error",
+                })
+                return
+
+            self.communication.send_status({
+                "type": "recording_stopped",
+                "status": "success",
+                "recording": False,
+            })
+
             self.is_recording = False
             self.logger.info("Made it past stop_recording call")
 

@@ -523,6 +523,16 @@ class Module(ABC):
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
 
+
+    """File IO"""
+    def _check_file_exists(self, filename: str) -> bool:
+        """Check if a file exists in the recording folder."""
+        if filename in os.listdir(self.recording_folder):
+            return True
+        else:
+            return False
+
+
     def _auto_export(self):
         self.logger.info("Auto-export called")
         if self.config.get("auto_export", True):

@@ -25,7 +25,7 @@ import numpy as np
 import threading
 from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import PyavOutput, FfmpegOutput
+from picamera2.outputs import PyavOutput, FfmpegOutput, SplittableOutput
 import json
 from flask import Flask, Response, request
 import cv2
@@ -82,6 +82,9 @@ class CameraModule(Module):
         # Recording monitoring
         self.monitor_recording_segments_stop_flag = threading.Event()
         self.monitor_recording_segments_thread = None 
+        self.segment_id = 0
+        self.segment_start_time = None
+        self.frame_count = 0
 
         self.module_checks = {
             self._check_picam
@@ -198,11 +201,23 @@ class CameraModule(Module):
             return False
 
 
+    def _start_new_recording_segment(self):
+        """
+        Start recording a new splittable output segment. 
+        """
+        filename = f"{self.recording_folder}/{self.current_experiment_name}_({self.segment_id})_({self.segment_start_time}).{self.config.get('recording.recording_filetype')}" # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        self.add_session_file(filename)
+        self.file_output.split_output(PyavOutput(filename, format="mp4"))
+        self.logger.info(f"Switched to new segment {filename}")
+        if not self._check_file_exists(filename):
+            self.logger.warning(f"{filename} does not exist in recording folder!")
+
+
     """Recording"""
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
-        filename = f"{self.recording_folder}/{self.current_experiment_name}.{self.config.get('recording.recording_filetype')}"
+        filename = f"{self.recording_folder}/{self.current_experiment_name}_({self.segment_id}).{self.config.get('recording.recording_filetype')}"
         self.add_session_file(filename)
         try:
             # Start the camera if not already running
@@ -211,7 +226,7 @@ class CameraModule(Module):
                 time.sleep(0.1)  # Give camera time to start
             
             # Create file output
-            self.file_output = PyavOutput(filename, format="mp4") # 7.2.4 in docs
+            self.file_output = SplittableOutput(PyavOutput(filename, format="mp4")) # 7.2.4 and 7.2.6 in docs
             self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
             
             # Start recording
@@ -317,6 +332,7 @@ class CameraModule(Module):
             if (time.time() - self.segment_start_time > segment_length):
                 self.segment_id +=1
                 self.segment_start_time = time.time()
+                self._start_new_recording_segment()
                 self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
                 
 
@@ -332,42 +348,78 @@ class CameraModule(Module):
         self.monitor_recording_segments_stop_flag.set()
         self.monitor_recording_segments_thread.join(timeout=5)
 
+
     """Timestamping frames"""
-    def _get_frame_timestamp(self, req):
+    def _get_frame_timestamp(self, req) -> bool:
         try:
             metadata = req.get_metadata()
             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
             if frame_wall_clock != 'No data':
                 self.frame_times.append(frame_wall_clock)
+                return True
+            else:
+                return False
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+
 
     def _get_and_apply_frame_timestamp(self, req):
         try:
-            metadata = req.get_metadata()
-            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-            if frame_wall_clock != 'No data':
-                self.frame_times.append(frame_wall_clock)
-                timestamp = time.strftime("%Y-%m-%d %X")
+            if not self._get_frame_timestamp(req):
+                self.logger.warning("No data returned by frame wall clock")
+                return
+            
+            self.frame_count += 1
+            timestamp = time.strftime("%Y-%m-%d %X")
 
-                # Apply mask to main stream
-                with MappedArray(req, 'main') as m:
-                    if self.config.get("camera.monochrome") is True:
-                        # Convert BGR to grayscale
-                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                        # Convert back to BGR for consistency with other processing
-                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            # Apply mask to main stream
+            with MappedArray(req, 'main') as m:
+                if self.config.get("camera.monochrome") is True:
+                    # Convert BGR to grayscale
+                    gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                    # Convert back to BGR for consistency with other processing
+                    m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
-                with MappedArray(req, "lores") as m:
-                    if self.config.get("camera.monochrome") is True:
-                        # Convert BGR to grayscale
-                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                        # Convert back to BGR for consistency with other processing
-                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                    cv2.putText(m.array, timestamp, (0, self.height - int(self.height * 0.01)), cv2.FONT_HERSHEY_SIMPLEX, self.config.get("camera.text_scale", 2), (50,255,50), self.config.get("camera.text_thickness", 1)) # TODO: Make origin reference lores dimensions.
+            with MappedArray(req, "lores") as m:
+                if self.config.get("camera.monochrome") is True:
+                    # Convert BGR to grayscale
+                    gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                    # Convert back to BGR for consistency with other processing
+                    m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                self._apply_timestamp(m, timestamp)
+
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
+
+    def _apply_timestamp(self, m: MappedArray, timestamp: str) -> None:
+        """Apply the frame timestamp to the image."""
+        x = 0
+        y = self.height - int(self.height * 0.01) # TODO: Make origin reference lores dimensions
+        cv2.putText(
+            img=m.array, 
+            text=timestamp, 
+            org=(x, y), 
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
+            fontScale=self.config.get("camera.text_scale", 2), 
+            color=(50,255,50), 
+            thickness=self.config.get("camera.text_thickness", 1)
+            ) 
+
+
+    def _apply_frame_count(self, m: MappedArray, frame_count: int) -> None:
+        """Apply the frame count to the image."""
+        x = 0
+        y = 0 + int(self.height*0.025) # Top but not offscreen
+        cv2.putText(
+            img=m.array, 
+            text=str(frame_count), 
+            org=(x,y), 
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
+            fontScale=1, 
+            color=(50,255,50), 
+            thickness=1
+            )
 
 
     """Video streaming"""
@@ -419,6 +471,7 @@ class CameraModule(Module):
             })
             return False
 
+
     def run_streaming_server(self, port=8080):
         """Run the flask server to stream upon"""
         try:
@@ -430,6 +483,7 @@ class CameraModule(Module):
             self.logger.error(f"Error running streaming server: {e}")
             self.is_streaming = False
             self.streaming_server = None
+
 
     def generate_streaming_frames(self):
         """Generate streaming frames for MJPEG stream"""
@@ -462,6 +516,7 @@ class CameraModule(Module):
                 time.sleep(0.1)
         self.logger.info("Stopped generating streaming frames")
 
+
     def register_routes(self):
         """Register Flask routes"""
         @self.streaming_app.route('/')
@@ -481,6 +536,7 @@ class CameraModule(Module):
                 raise RuntimeError('Not running with the Werkzeug Server')
             func()
             return 'Server shutting down...'
+
 
     def stop_streaming(self) -> bool:
         """Stop streaming video"""
@@ -526,9 +582,7 @@ class CameraModule(Module):
                 "error": f"Failed to stop streaming: {str(e)}"
             })
             return False
-    
-    def when_controller_discovered(self, controller_ip: str, controller_port: int):
-        super().when_controller_discovered(controller_ip, controller_port)
+
 
     def start(self) -> bool:
         """Start the camera module - including streaming"""

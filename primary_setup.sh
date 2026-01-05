@@ -33,6 +33,7 @@ SYSTEM_PACKAGES=(
     imx500-all
     # mDNS
     avahi-daemon
+    iptables-persistent
 )
 
 # Function to check if a package is installed

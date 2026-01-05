@@ -385,7 +385,6 @@ EOF
     echo "Controller will appear on network as saviour.local"
 
     echo "Configuring iptables to forward port 80 traffic to port 5000"
-    sudo apt-get install iptables-persistent -y
     sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
     sudo netfilter-persistent save
 }

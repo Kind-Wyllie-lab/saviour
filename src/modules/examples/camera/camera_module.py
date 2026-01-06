@@ -561,6 +561,41 @@ class CameraModule(Module):
             return False
 
 
+    """Timestamps"""
+    def _create_frame_timestamps_file(self) ->  bool:
+        """Create a csv file to contain timestamps for the current video segment."""
+        filename = f"{self.current_filename_prefix}_timestamps_({segment_id}).csv"
+        self.logger.info(f"Creating timestamps file {filename}")
+        self.add_session_file(filename) 
+        try:
+            self._timestamps_file_handle = open(filename, "w", buffering=1)  # line-buffered
+            # Write header with metadata
+            f = self._timestamps_file_handle
+            f.write("# Timestamps Recording\n")
+            f.write(f"# Session ID: {self.recording_session_id}\n")
+            f.write(f"# Recording Start: {self.recording_start_time}\n")
+            f.write("#\n")
+            f.write("Timestamp_nanoseconds\n") # TODO: Consider adding frame index
+        except Exception as e:
+            self.logger.error(f"Failed to open timestamps file: {e}")
+            self._timestamps_file_handle = None
+
+
+    def _write_frame_timestamp(self, timestamp_ns: int): 
+        """Write a frame timestamp to file"""
+        if self._timestamps_file_handle:
+            self._timestamps_file_handle.write(f'{timestamp_ns}\n')
+
+
+    def _close_timestamps_file(self) -> bool:
+        """Close timestamps file"""
+        try:
+            self._timestamps_file_handle = None
+            self.logger.info(f"Closed timestamps file")
+        except Exception as e:
+            self.logger.warning(f"Error closing timestamps file: {e}")
+            
+
     def start(self) -> bool:
         """Start the camera module - including streaming"""
         try:

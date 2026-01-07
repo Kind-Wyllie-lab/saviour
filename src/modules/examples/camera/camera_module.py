@@ -69,7 +69,7 @@ class CameraModule(Module):
         # State flags
         self.is_recording = False
         self.is_streaming = False
-        self.frame_times = []  # For storing frame timestamps
+        # self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
         self.camera_callbacks = {
@@ -79,12 +79,22 @@ class CameraModule(Module):
         self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
-        # Recording monitoring
+        # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
         self.monitor_recording_segments_thread = None 
         self.segment_id = 0
         self.segment_start_time = None
         self.frame_count = 0
+        self.segment_files = []
+
+
+        self.current_video_segment = None
+        self.last_video_segment = None
+        self.current_timestamp_segment = None
+        self.last_timestamp_segment = None
+
+
+        self.to_export = [] # Files to be exported
 
         self.module_checks = {
             self._check_picam
@@ -201,53 +211,119 @@ class CameraModule(Module):
             return False
 
 
-    def _start_new_recording_segment(self):
-        """
-        Start recording a new splittable output segment. 
-        """
-        filename = f"{self.recording_folder}/{self.current_experiment_name}_({self.segment_id})_({self.segment_start_time}).{self.config.get('recording.recording_filetype')}" # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+    """Segment Oriented Recording (to manage long recordings)"""
+    def _create_new_recording_segment(self):
+        """Create new video segment and corresponding timestamp."""
+        self.segment_id += 1
+        self.segment_start_time = time.time()
+        self._start_new_video_segment() # Start new video segment
+        self._start_new_timestamp_segment() 
+        self._export_staged() # Export files that have been marked for export
+
+
+    def _create_initial_recording_segment(self):
+        self.segment_id = 0
+        self.segment_start_time = time.time()
+
+        # Start video
+        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        self.current_video_segment = filename
         self.add_session_file(filename)
+
+        # Start the camera 
+        if not self.picam2.started:
+            self.picam2.start()
+            time.sleep(0.1)  # Give camera time to start
+        
+        # Create file output
+        self.file_output = SplittableOutput(PyavOutput(filename, format="mp4")) # 7.2.4 and 7.2.6 in docs
+        self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
+        
+        # Start recording
+        self.picam2.start_encoder(self.main_encoder, name="main") # 
+        self.recording_start_time = time.time()
+        
+        # Start timestamp file
+        self._start_new_timestamp_segment()
+
+
+    def _get_video_filename(self) -> str:
+        """Shorthand way to create a filename"""
+        filename = f"{self.current_filename_prefix}_({self.segment_id}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        return filename
+
+
+    def _start_new_video_segment(self):
+        """
+        Start recording a new splittable output video segment. 
+        """
+        # Stage current recording for export
+        self.last_video_segment = self.current_video_segment
+        self.to_export.append(self.last_video_segment)
+
+        # Create new segment name
+        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        self.current_video_segment = filename
+        self.add_session_file(filename)
+
+        # Start recording to new segment
         self.file_output.split_output(PyavOutput(filename, format="mp4"))
         self.logger.info(f"Switched to new segment {filename}")
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
+
+    
+    def _start_new_timestamp_segment(self):
+        self._create_frame_timestamps_file()
+
+
+    """Segment Export"""
+    def _export_staged(self):
+        """Exports all files in the to_export list"""
+        try:
+            # Use the export manager's method for consistency
+            if self.export.export_current_session_files(
+                session_files=self.to_export,
+                recording_folder=self.recording_folder,
+                recording_session_id=self.recording_session_id,
+                experiment_name=self.current_experiment_name
+            ):
+                self.logger.info("Auto-export completed successfully")
+
+                if self.config.get("auto_delete_on_export", True):
+                    self._clear_recordings(filenames=self.to_export)
+                    self._clear_exported_files_from_session_files()
+                    self.to_export = [] # empty the list of files to export
+            else:
+                self.logger.warning("Auto-export failed, but recording was successful")
+        except Exception as e:
+            self.logger.error(f"Auto-export error: {e}")
+
+    
+    def _clear_exported_files_from_session_files(self):
+        for file in self.to_export:
+            if file in self.session_files:
+                self.session_files.pop(self.session_files.index(file))
 
 
     """Recording"""
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
-        filename = f"{self.recording_folder}/{self.current_experiment_name}_({self.segment_id}).{self.config.get('recording.recording_filetype')}"
-        self.add_session_file(filename)
+
+        # New approach
         try:
-            # Start the camera if not already running
-            if not self.picam2.started:
-                self.picam2.start()
-                time.sleep(0.1)  # Give camera time to start
-            
-            # Create file output
-            self.file_output = SplittableOutput(PyavOutput(filename, format="mp4")) # 7.2.4 and 7.2.6 in docs
-            self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
-            
-            # Start recording
-            self.picam2.start_encoder(self.main_encoder, name="main") # 
-            self.recording_start_time = time.time()
-            
+            self._create_initial_recording_segment()
             self._start_recording_segment_monitoring()
-
-            self.frame_times = []  # Reset frame times
-
             # Send status response after successful recording start
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                 self.communication.send_status({
                     "type": "recording_started",
-                    "filename": filename,
+                    "filename": self.current_video_segment,
                     "recording": True,
                     "session_id": self.recording_session_id
                 })
-            
             return True
-            
         except Exception as e:
             self.logger.error(f"Error starting recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -258,39 +334,28 @@ class CameraModule(Module):
             return False
 
 
+    def _stop_recording_video(self):
+        """Stop recording current segment"""
+        self.picam2.stop_encoder(self.main_encoder)
+        self.last_video_segment = self.current_video_segment
+
+
+    def _stop_recording_timestamps(self):
+        self._close_timestamps_file()
+
+
     def _stop_recording(self) -> bool:
         """Camera Specific implementation of stop recording"""
         try:
             self.logger.info("Attempting to stop camera specific recording")
-            # Stop recording with camera-specific code
-            self.picam2.stop_encoder(self.main_encoder)
+
+            self._stop_recording_video()
+            self._stop_recording_timestamps()
             
-            # Calculate duration
-            if self.recording_start_time is not None:
-                duration = time.time() - self.recording_start_time
-                
-                # Save timestamps with experiment name if available
-                if hasattr(self, 'current_experiment_name') and self.current_experiment_name:
-                    # Sanitize experiment name for filename (remove special characters)
-                    safe_experiment_name = "".join(c for c in self.current_experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                    safe_experiment_name = safe_experiment_name.replace(' ', '_')
-                    timestamps_file = f"{self.recording_folder}/{self.current_experiment_name}_timestamps.txt"
-                else:
-                    timestamps_file = f"{self.recording_folder}/{self.recording_session_id}_timestamps.txt"
-                
-                self.add_session_file(timestamps_file)
-                np.savetxt(timestamps_file, self.frame_times)
+            # Stop recording and tidy up session files
+            self._stop_recording_segment_monitoring()
 
-
-                # Stop monitor thread   
-                self._stop_recording_segment_monitoring()
-
-                self.logger.info("Concluded camera stop_recording, waiting to exit")
-                return True
-
-            else:
-                self.logger.error("Error: recording_start_time was None")
-                return False
+            return True
         
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
@@ -306,12 +371,11 @@ class CameraModule(Module):
 
         while not self.monitor_recording_segments_stop_flag.is_set():
             if (time.time() - self.segment_start_time > segment_length):
-                self.segment_id +=1
-                self.segment_start_time = time.time()
-                self._start_new_recording_segment()
+                self._create_new_recording_segment()
                 self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
+            time.sleep(0.1) # Avoid busy waiting
+            
                 
-
 
     def _start_recording_segment_monitoring(self):
         self.monitor_recording_segments_stop_flag.clear()
@@ -321,7 +385,7 @@ class CameraModule(Module):
         self.monitor_recording_segments_thread.start()
 
 
-    def _stop_recording_segment_monitoring(self):
+    def _stop_recording_segment_monitoring(self): 
         self.monitor_recording_segments_stop_flag.set()
         self.monitor_recording_segments_thread.join(timeout=5)
 
@@ -332,7 +396,10 @@ class CameraModule(Module):
             metadata = req.get_metadata()
             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
             if frame_wall_clock != 'No data':
-                self.frame_times.append(frame_wall_clock)
+                # self.frame_times.append(frame_wall_clock)
+                if self.is_recording:
+                    self._write_frame_timestamp(frame_wall_clock)
+                    pass
                 return True
             else:
                 return False
@@ -564,7 +631,7 @@ class CameraModule(Module):
     """Timestamps"""
     def _create_frame_timestamps_file(self) ->  bool:
         """Create a csv file to contain timestamps for the current video segment."""
-        filename = f"{self.current_filename_prefix}_timestamps_({segment_id}).csv"
+        filename = f"{self.current_filename_prefix}_timestamps_({self.segment_id}).csv"
         self.logger.info(f"Creating timestamps file {filename}")
         self.add_session_file(filename) 
         try:

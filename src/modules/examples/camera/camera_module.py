@@ -274,7 +274,16 @@ class CameraModule(Module):
 
     
     def _start_new_timestamp_segment(self):
+        # Stage current recording for export
+        self.last_timestamp_segment = self.current_timestamp_segment
+        if self.last_timestamp_segment is not None:
+            self.to_export.append(self.last_timestamp_segment)
+
+
         self._create_frame_timestamps_file()
+
+        if not self._check_file_exists(self.current_timestamp_segment):
+            self.logger.warning(f"{self.current_timestamp_segment} does not exist in recording folder!")
 
 
     """Segment Export"""
@@ -631,9 +640,11 @@ class CameraModule(Module):
     """Timestamps"""
     def _create_frame_timestamps_file(self) ->  bool:
         """Create a csv file to contain timestamps for the current video segment."""
+        # Create new segment name
         filename = f"{self.current_filename_prefix}_timestamps_({self.segment_id}).csv"
-        self.logger.info(f"Creating timestamps file {filename}")
+        self.current_timestamp_segment = filename
         self.add_session_file(filename) 
+        
         try:
             self._timestamps_file_handle = open(filename, "w", buffering=1)  # line-buffered
             # Write header with metadata

@@ -30,6 +30,7 @@ import json
 from flask import Flask, Response, request
 import cv2
 from typing import Any, Optional
+import subprocess
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -277,6 +278,17 @@ class CameraModule(Module):
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
+        # Reset positioning timestamps on recorded video prior to exporting it
+        tmp_filename = f"{self.last_video_segment[:-4]}_formatted.mp4"
+        subprocess.run([
+            "ffmpeg",
+            "-i", self.last_video_segment,
+            "-map", "0",
+            "-c", "copy",
+            "-reset_timestamps", "1",
+            tmp_filename
+        ], check=True)
+        os.replace(tmp_filename, self.last_video_segment) 
 
     """Segment Export"""
     def _export_staged(self):

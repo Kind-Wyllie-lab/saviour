@@ -237,10 +237,11 @@ class Export:
                 self.logger.warning(f"Could not export config file")
             
             # Create export manifest
-            manifest_filename = self._create_export_manifest(exported_files, destination, export_folder, experiment_name)
-            if not manifest_filename:
-                self.logger.error("Failed to create export manifest")
-                return False
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(exported_files, destination, export_folder, experiment_name)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
                 
             return True
             
@@ -311,10 +312,11 @@ class Export:
                 return True  # Return True as this is not an error, just no files to export
             
             # Create manifest first
-            manifest_filename = self._create_export_manifest(files_to_export, destination, export_folder, experiment_name)
-            if not manifest_filename:
-                self.logger.error("Failed to create export manifest")
-                return False
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(files_to_export, destination, export_folder, experiment_name)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
             
             # Export the module's config file for traceability
             config_exported = self._export_config_file(export_folder)
@@ -555,7 +557,6 @@ class Export:
 
                 except Exception as e:
                     self.logger.error(f"Failed to export {filename}: {e}")
-                    return False
             
             # Export the module's config file for traceability
             config_exported = self._export_config_file(export_folder)
@@ -567,17 +568,17 @@ class Export:
                 self.logger.warning(f"Could not export config file")
             
             # Create export manifest
-            manifest_filename = self._create_export_manifest(session_files, self.ExportDestination.CONTROLLER, export_folder, experiment_name)
-            if not manifest_filename:
-                self.logger.error("Failed to create export manifest")
-                return False
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(session_files, self.ExportDestination.CONTROLLER, export_folder, experiment_name)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
         
             # This is a bit of a hack TECHNICAL DEBT - session_files is later used in clear_recordings so we should remove the "config_file" ref which is only used for export manifest
             # TODO: Copy config.json into rec folder (freeze its state at start of recording), add it to session files, export with other session files, clear with other session files i.e. stop treating it specially 
             session_files.remove("config_file")
 
             self.logger.info(f"Successfully exported {exported_count} session files to {export_folder}")
-            self.logger.info(f"Created export manifest: {manifest_filename}")
             return True
             
         except Exception as e:

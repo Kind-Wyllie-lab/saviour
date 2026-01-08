@@ -322,6 +322,7 @@ class CameraModule(Module):
 
         # New approach
         try:
+            self.to_export = []
             self._create_initial_recording_segment()
             self._start_recording_segment_monitoring()
             # Send status response after successful recording start
@@ -405,34 +406,32 @@ class CameraModule(Module):
             metadata = req.get_metadata()
             frame_wall_clock = metadata.get('FrameWallClock', 'No data')
             if frame_wall_clock != 'No data':
-                # self.frame_times.append(frame_wall_clock)
-                if self.is_recording:
-                    self._write_frame_timestamp(frame_wall_clock)
-                    pass
-                return True
+                return frame_wall_clock
             else:
                 return False
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
 
-    def _get_and_apply_frame_timestamp(self, req):
+    def _get_and_apply_frame_timestamp(self, req) -> None:
         try:
-            if not self._get_frame_timestamp(req):
+            # Get and format timestamp
+            timestamp = self._get_frame_timestamp(req)
+            if not timestamp:
                 self.logger.warning("No data returned by frame wall clock")
                 return
-            
-            self.frame_count += 1
-            timestamp = time.strftime("%Y-%m-%d %X")
+            timestamp = str(datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
 
-            # Apply mask to main stream
+            # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
                 if self.config.get("camera.monochrome") is True:
                     # Convert BGR to grayscale
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                self._apply_timestamp(m, timestamp)
 
+            # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
                 if self.config.get("camera.monochrome") is True:
                     # Convert BGR to grayscale

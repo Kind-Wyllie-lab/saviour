@@ -29,6 +29,7 @@ from picamera2.outputs import PyavOutput, FfmpegOutput, SplittableOutput
 import json
 from flask import Flask, Response, request
 import cv2
+from typing import Any, Optional
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -84,14 +85,11 @@ class CameraModule(Module):
         self.monitor_recording_segments_thread = None 
         self.segment_id = 0
         self.segment_start_time = None
-        self.frame_count = 0
         self.segment_files = []
 
 
         self.current_video_segment = None
         self.last_video_segment = None
-        self.current_timestamp_segment = None
-        self.last_timestamp_segment = None
 
 
         self.to_export = [] # Files to be exported
@@ -125,26 +123,37 @@ class CameraModule(Module):
             return True, "Picam2 object instantiated"
 
 
-    def configure_module(self):
+    def configure_module(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
-            self.logger.info("Camera setttings changed, restarting stream to apply new configuration")
-            self._restarting_stream = True
-            self.stop_streaming()
-            time.sleep(1)
-            try:
-                self._configure_camera()
-                self.logger.info("Camera reconfigured successfully")
-            except Exception as e:
-                self.logger.error(f"Error restarting streaming: {e}")
+            self.logger.info("Camera settings changed, restarting stream to apply new configuration")
+            # Configure anything that doesn't require stream to restart
+            restart_keys = [
+                "camera.fps",
+                "camera.width",
+                "camera.height"
+            ]
+            self._restarting_stream = False
+            for key in updated_keys:
+                if key in restart_keys:
+                    self._restarting_stream = True
             
-            # Restart stream
-            try:
-                self.logger.info("Restarting stream with new settings")
-                self.start_streaming()
-                self.logger.info("Streaming restarted")
-            except Exception as e:
-                self.logger.error(f"Error restarting streaming: {e}")
+            if self._restarting_stream == True:
+                self.stop_streaming()
+                time.sleep(1)
+                try:
+                    self._configure_camera()
+                    self.logger.info("Camera reconfigured successfully")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
+                
+                # Restart stream
+                try:
+                    self.logger.info("Restarting stream with new settings")
+                    self.start_streaming()
+                    self.logger.info("Streaming restarted")
+                except Exception as e:
+                    self.logger.error(f"Error restarting streaming: {e}")
             
             self._restarting_stream = False # Reset the "restarting stream" flag
         elif not self.is_streaming:
@@ -217,11 +226,10 @@ class CameraModule(Module):
         self.segment_id += 1
         self.segment_start_time = time.time()
         self._start_new_video_segment() # Start new video segment
-        self._start_new_timestamp_segment() 
         self._export_staged() # Export files that have been marked for export
 
 
-    def _create_initial_recording_segment(self):
+    def _create_initial_recording_segment(self) -> None:
         self.segment_id = 0
         self.segment_start_time = time.time()
 
@@ -242,9 +250,6 @@ class CameraModule(Module):
         # Start recording
         self.picam2.start_encoder(self.main_encoder, name="main") # 
         self.recording_start_time = time.time()
-        
-        # Start timestamp file
-        self._start_new_timestamp_segment()
 
 
     def _get_video_filename(self) -> str:
@@ -271,19 +276,6 @@ class CameraModule(Module):
         self.logger.info(f"Switched to new segment {filename}")
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
-
-    
-    def _start_new_timestamp_segment(self):
-        # Stage current recording for export
-        self.last_timestamp_segment = self.current_timestamp_segment
-        if self.last_timestamp_segment is not None:
-            self.to_export.append(self.last_timestamp_segment)
-
-
-        self._create_frame_timestamps_file()
-
-        if not self._check_file_exists(self.current_timestamp_segment):
-            self.logger.warning(f"{self.current_timestamp_segment} does not exist in recording folder!")
 
 
     """Segment Export"""
@@ -350,17 +342,12 @@ class CameraModule(Module):
         self.last_video_segment = self.current_video_segment
 
 
-    def _stop_recording_timestamps(self):
-        self._close_timestamps_file()
-
-
     def _stop_recording(self) -> bool:
         """Camera Specific implementation of stop recording"""
         try:
             self.logger.info("Attempting to stop camera specific recording")
 
             self._stop_recording_video()
-            self._stop_recording_timestamps()
             
             # Stop recording and tidy up session files
             self._stop_recording_segment_monitoring()
@@ -635,43 +622,6 @@ class CameraModule(Module):
             })
             return False
 
-
-    """Timestamps"""
-    def _create_frame_timestamps_file(self) ->  bool:
-        """Create a csv file to contain timestamps for the current video segment."""
-        # Create new segment name
-        filename = f"{self.current_filename_prefix}_timestamps_({self.segment_id}).csv"
-        self.current_timestamp_segment = filename
-        self.add_session_file(filename) 
-        
-        try:
-            self._timestamps_file_handle = open(filename, "w", buffering=1)  # line-buffered
-            # Write header with metadata
-            f = self._timestamps_file_handle
-            f.write("# Timestamps Recording\n")
-            f.write(f"# Session ID: {self.recording_session_id}\n")
-            f.write(f"# Recording Start: {self.recording_start_time}\n")
-            f.write("#\n")
-            f.write("Timestamp_nanoseconds\n") # TODO: Consider adding frame index
-        except Exception as e:
-            self.logger.error(f"Failed to open timestamps file: {e}")
-            self._timestamps_file_handle = None
-
-
-    def _write_frame_timestamp(self, timestamp_ns: int): 
-        """Write a frame timestamp to file"""
-        if self._timestamps_file_handle:
-            self._timestamps_file_handle.write(f'{timestamp_ns}\n')
-
-
-    def _close_timestamps_file(self) -> bool:
-        """Close timestamps file"""
-        try:
-            self._timestamps_file_handle = None
-            self.logger.info(f"Closed timestamps file")
-        except Exception as e:
-            self.logger.warning(f"Error closing timestamps file: {e}")
-            
 
     def start(self) -> bool:
         """Start the camera module - including streaming"""

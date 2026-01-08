@@ -103,12 +103,14 @@ class Export:
             
             if config_source and os.path.exists(config_source):
                 # Copy config file to export folder with timestamp for this export session
-                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                timestamped_config = f"config_export_{timestamp}.json"
-                dest_path = os.path.join(export_folder, timestamped_config)
-                shutil.copy2(config_source, dest_path)
-                
-                self.logger.info(f"Exported config file: {timestamped_config}")
+                if "config.json" not in os.listdir(export_folder):
+                    # timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                    # timestamped_config = f"config_export_{timestamp}.json"
+                    dest_path = os.path.join(export_folder, "config.json")
+                    shutil.copy2(config_source, dest_path)
+                    self.logger.info(f"Exported config file: {timestamped_config}")
+                else:
+                    self.logger.info(f"Config already exported for this session; skipping")
                 return True
             else:
                 self.logger.warning(f"No config file found for module {self.module_id}")

@@ -108,7 +108,7 @@ class Export:
                     # timestamped_config = f"config_export_{timestamp}.json"
                     dest_path = os.path.join(export_folder, "config.json")
                     shutil.copy2(config_source, dest_path)
-                    self.logger.info(f"Exported config file: {timestamped_config}")
+                    # self.logger.info(f"Exported config file: {timestamped_config}")
                 else:
                     self.logger.info(f"Config already exported for this session; skipping")
                 return True

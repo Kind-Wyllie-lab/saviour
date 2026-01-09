@@ -255,7 +255,7 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        filename = f"{self.current_filename_prefix}_({self.segment_id}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        filename = f"{self.current_filename_prefix}_({self.segment_id})_({time.strftime('%Y%m%d_%H%M%S')}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
         return filename
 
 

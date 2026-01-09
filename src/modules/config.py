@@ -217,7 +217,9 @@ class Config:
             elif f"_{part}" in config: # Check for leading underscore
                 config = config[f"_{part}"]
             else:
-                return default
+                config = default
+        if config == None:
+            self.logger.warning(f"config.get() returning None for {key}")
         return config
     
     def set(self, key_path: str, value: Any, persist: bool = True) -> bool:

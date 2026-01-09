@@ -463,8 +463,8 @@ class Module(ABC):
             # self._get_session_files()
             # self.logger.info("Made it past _get_session_files call")
 
-            self.logger.info(f"Config says {self.config.get('auto_export')}")
-            if self.config.get("auto_export") == True:
+            self.logger.info(f"Config says {self.config.get('export.auto_export')}")
+            if self.config.get("export.auto_export") == True:
                 self._auto_export()
 
             # return True  # Just return True, let child class handle the rest
@@ -548,7 +548,7 @@ class Module(ABC):
 
     def _auto_export(self):
         self.logger.info("Auto-export called")
-        if self.config.get("auto_export", True):
+        if self.config.get("export.auto_export", True):
             self.logger.info("Auto-export enabled, exporting recording using export manager")
             try:
                 # Use the export manager's method for consistency
@@ -560,7 +560,7 @@ class Module(ABC):
                 ):
                     self.logger.info("Auto-export completed successfully")
 
-                    if self.config.get("auto_delete_on_export", True):
+                    if self.config.get("delete_on_export", True):
                         self._clear_recordings(filenames=self.session_files)
                 else:
                     self.logger.warning("Auto-export failed, but recording was successful")
@@ -748,7 +748,7 @@ class Module(ABC):
             self.logger.error(f"Error clearing recordings: {e}")
             raise
 
-    def export_recordings(self, filename: str, length: int = 0, destination: Union[str, Export.ExportDestination] = Export.ExportDestination.CONTROLLER, experiment_name: str = None):
+    def export_recordings(self, filename: str, length: int = 0, experiment_name: str = None):
         """Export a video to the specified destination
         
         Args:
@@ -765,19 +765,6 @@ class Module(ABC):
             if hasattr(self, 'current_experiment_folder') and self.current_experiment_folder:
                 experiment_name = self.current_experiment_folder
                 self.logger.info(f"Using experiment folder for export: {experiment_name}")
-            
-            # Convert string destination to enum if needed
-            if isinstance(destination, str):
-                try:
-                    destination = Export.ExportDestination.from_string(destination)
-                except ValueError as e:
-                    self.logger.error(f"Invalid destination '{destination}': {e}")
-                    self.communication.send_status({
-                        "type": "export_failed",
-                        "filename": filename,
-                        "error": f"Invalid destination: {destination}"
-                    })
-                    return False
             
             if filename == "all":
                 # Export all recordings in a single export session

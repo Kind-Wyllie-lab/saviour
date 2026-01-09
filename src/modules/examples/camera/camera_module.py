@@ -279,16 +279,21 @@ class CameraModule(Module):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
         # Reset positioning timestamps on recorded video prior to exporting it
-        tmp_filename = f"{self.last_video_segment[:-4]}_formatted.mp4"
+        self._fix_positioning_timestamps(self.last_video_segment)
+
+
+    def _fix_positioning_timestamps(self, filename: str) -> None:
+        """Take an mp4 file produced by picamera2 SplittableOutput and reset positioning timestamps"""
+        tmp_filename = f"{filename[:-4]}_formatted.mp4"
         subprocess.run([
             "ffmpeg",
-            "-i", self.last_video_segment,
+            "-i", filename,
             "-map", "0",
             "-c", "copy",
             "-reset_timestamps", "1",
             tmp_filename
         ], check=True)
-        os.replace(tmp_filename, self.last_video_segment) 
+        os.replace(tmp_filename, filename) 
 
     """Segment Export"""
     def _export_staged(self):
@@ -363,6 +368,12 @@ class CameraModule(Module):
             
             # Stop recording and tidy up session files
             self._stop_recording_segment_monitoring()
+
+            # Preprocess video file for export
+            for file in self.session_files:
+                if file.endswith(".mp4"):
+                    self.logger.info(f"Fixing positioning timestamps for {file}")
+                    self._fix_positioning_timestamps(file)
 
             return True
         

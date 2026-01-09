@@ -308,7 +308,7 @@ class CameraModule(Module):
             ):
                 self.logger.info("Auto-export completed successfully")
 
-                if self.config.get("auto_delete_on_export", True):
+                if self.config.get("delete_on_export", True):
                     self._clear_recordings(filenames=self.to_export)
                     self._clear_exported_files_from_session_files()
                     self.to_export = [] # empty the list of files to export

@@ -15,33 +15,26 @@ from enum import Enum
 import logging
 import subprocess
 import datetime
-from typing import Union
 
 class Export:
-    """Manages file exports to different destinations (NAS or Controller)"""
-    
-    class ExportDestination(Enum):
-        """Enum for export destinations"""
-        CONTROLLER = "controller"
-        NAS = "nas"
-
-        @classmethod
-        def from_string(cls, value: str) -> 'Export.ExportDestination':
-            """Convert string to ExportDestination enum"""
-            try:
-                return cls(value.lower())
-            except ValueError:
-                raise ValueError(f"Invalid destination: {value}. Must be one of: {[d.value for d in cls]}")
-    
+    """Manages Samba based file exports"""
     def __init__(self, module_id: str, recording_folder: str, config: dict):
         self.module_id = module_id
         self.recording_folder = recording_folder
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.current_mount = None
-        self.mount_point = "/mnt/export"  # Could be configurable
+        self.mount_point = "/mnt/export"  # This is where the samba share gets mounted
         self.callbacks = {}
         
+        # Samba details (configurable)
+        self.samba_share_ip = None # 192.168.1.1 for controller
+        self.samba_share_path = None # The name of the top level folder on the samba share
+        self.samba_share_username = None 
+        self.samba_share_password = None
+
+        self._update_samba_settings()
+
         # Create mount point directory if it doesn't exist
         try:
             os.makedirs(self.mount_point, exist_ok=True)
@@ -103,12 +96,14 @@ class Export:
             
             if config_source and os.path.exists(config_source):
                 # Copy config file to export folder with timestamp for this export session
-                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                timestamped_config = f"config_export_{timestamp}.json"
-                dest_path = os.path.join(export_folder, timestamped_config)
-                shutil.copy2(config_source, dest_path)
-                
-                self.logger.info(f"Exported config file: {timestamped_config}")
+                if "config.json" not in os.listdir(export_folder):
+                    # timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                    # timestamped_config = f"config_export_{timestamp}.json"
+                    dest_path = os.path.join(export_folder, "config.json")
+                    shutil.copy2(config_source, dest_path)
+                    # self.logger.info(f"Exported config file: {timestamped_config}")
+                else:
+                    self.logger.info(f"Config already exported for this session; skipping")
                 return True
             else:
                 self.logger.warning(f"No config file found for module {self.module_id}")
@@ -118,7 +113,7 @@ class Export:
             self.logger.error(f"Error exporting config file: {e}")
             return False
 
-    def _create_export_manifest(self, files_to_export: list, destination: Union[str, 'Export.ExportDestination'], export_folder: str, experiment_name: str = None) -> str:
+    def _create_export_manifest(self, files_to_export: list, export_folder: str, experiment_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
         
         Args:
@@ -135,13 +130,10 @@ class Export:
             manifest_filename = f"export_manifest_{manifest_timestamp}.txt"
             manifest_path = os.path.join(export_folder, manifest_filename)
             
-            # Handle both string and enum destination values
-            destination_str = destination.value if hasattr(destination, 'value') else str(destination)
-            
             with open(manifest_path, 'w') as f:
                 f.write(f"Export Manifest - {manifest_timestamp}\n")
                 f.write(f"Module ID: {self.module_id}\n")
-                f.write(f"Destination: {destination_str}\n")
+                f.write(f"Destination: //{self.samba_share_ip}/{self.samba_share_path}\n")
                 f.write(f"Export Folder: {os.path.basename(export_folder)}\n")
                 if experiment_name:
                     f.write(f"Experiment Name: {experiment_name}\n")
@@ -164,7 +156,7 @@ class Export:
             self.logger.error(f"Failed to create export manifest: {e}")
             return None
 
-    def export_file(self, filename: str, destination: 'Export.ExportDestination', experiment_name: str = None) -> bool:
+    def export_file(self, filename: str, experiment_name: str = None) -> bool:
         """Export a single file to the specified destination
         
         Args:
@@ -178,9 +170,8 @@ class Export:
         self.logger.info(f"Attempting to export recordings for {experiment_name}")
         try:
             # Mount the destination if not already mounted
-            if self.current_mount != destination:
-                if not self._mount_destination(destination):
-                    return False
+            if not self._mount_share():
+                return False
                     
             # Create hierarchical export folder structure
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -237,10 +228,11 @@ class Export:
                 self.logger.warning(f"Could not export config file")
             
             # Create export manifest
-            manifest_filename = self._create_export_manifest(exported_files, destination, export_folder, experiment_name)
-            if not manifest_filename:
-                self.logger.error("Failed to create export manifest")
-                return False
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(exported_files, export_folder, experiment_name)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
                 
             return True
             
@@ -248,7 +240,7 @@ class Export:
             self.logger.error(f"Export failed: {e}")
             return False
 
-    def export_all_files(self, destination: 'Export.ExportDestination', experiment_name: str = None) -> bool:
+    def export_all_files(self, experiment_name: str = None) -> bool:
         """Export all files in the recording folder to the specified destination
         
         Args:
@@ -260,9 +252,8 @@ class Export:
         """
         try:
             # Mount the destination if not already mounted
-            if self.current_mount != destination:
-                if not self._mount_destination(destination):
-                    return False
+            if not self._mount_share():
+                return False
                     
             # Create hierarchical export folder structure
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -311,10 +302,11 @@ class Export:
                 return True  # Return True as this is not an error, just no files to export
             
             # Create manifest first
-            manifest_filename = self._create_export_manifest(files_to_export, destination, export_folder, experiment_name)
-            if not manifest_filename:
-                self.logger.error("Failed to create export manifest")
-                return False
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(files_to_export, export_folder, experiment_name)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
             
             # Export the module's config file for traceability
             config_exported = self._export_config_file(export_folder)
@@ -343,142 +335,53 @@ class Export:
         except Exception as e:
             self.logger.error(f"Export failed: {e}")
             return False
-            
-    def _mount_destination(self, destination: 'Export.ExportDestination') -> bool:
-        """Mount the specified destination
-        
-        Args:
-            destination: Where to mount (NAS or Controller)
-            
-        Returns:
-            bool: True if mount successful
-        """
+
+
+    def _update_samba_settings(self):
+        """Check for updated samba settings from config"""
+        self.samba_share_ip = self.config.get("export._share_ip", "192.168.1.1") # These are not pulling from config for now and I don't know why.
+        self.samba_share_path = self.config.get("export._share_path", "controller_share")
+        self.samba_share_username = self.config.get("export._share_username", "pi") # TODO: Make this more secure?
+        self.samba_share_password = self.config.get("export._share_password", "saviour")
+
+
+    def _mount_share(self) -> bool:
+        """Mount Samba share using preconfigured options"""
         try:
-            if destination == Export.ExportDestination.NAS:
-                return self._mount_nas()
-            else:
-                return self._mount_controller()
-        except Exception as e:
-            self.logger.error(f"Mount failed: {e}")
-            return False
-            
-    def _mount_controller(self) -> bool:
-        """Mount the controller's Samba share"""
-        try:
-            # Get controller IP from callback
-            controller_ip = self.callbacks['get_controller_ip']()
-            if not controller_ip:
-                self.logger.error("Could not get controller IP from callback")
-                return False
-                
-            # These are currently defaulting to standard values, config broken somehow 070925
-            share_path = self.config.get('controller_share_path', 'controller_share')
-            username = self.config.get('controller_username', 'pi')
-            password = self.config.get('controller_password', 'saviour')
-            
-            self.logger.info(f"Attempting to mount controller share: //{controller_ip}/{share_path}")
-            self.logger.info(f"Using credentials: username={username}")
-                
+            self._update_samba_settings()
+            self.logger.info(f"Attempting to mount share: //{self.samba_share_ip}/{self.samba_share_path} as user {self.samba_share_username}")
+
             # Unmount if already mounted
             if os.path.ismount(self.mount_point):
                 self.logger.info(f"Unmounting existing mount at {self.mount_point}")
                 subprocess.run(['sudo', 'umount', self.mount_point], check=True)
-                
-            # Try different SMB versions in order of preference
-            smb_versions = ['3.0', '2.1', '1.0']
-            
-            for version in smb_versions:
-                try:
-                    self.logger.info(f"Trying SMB version {version}")
+
+            # Attempt to mount
+            try: 
+                mount_cmd = [
+                    'sudo', 'mount', '-t', 'cifs',
+                    f'//{self.samba_share_ip}/{self.samba_share_path}',
+                    self.mount_point,
+                    '-o', f'username={self.samba_share_username},password={self.samba_share_password}'
+                ]
+
+                result = subprocess.run(mount_cmd, capture_output=True, text=True)
+
+
+                if result.returncode == 0:
+                    self.logger.info(f"Successfully mounted controller share at {self.mount_point}")
+                    return True
+                else:
+                    self.logger.warning(f"Failed to mount with SMB: {result.stderr}")
                     
-                    # Mount the Samba share with credentials
-                    mount_cmd = [
-                        'sudo', 'mount', '-t', 'cifs',
-                        f'//{controller_ip}/{share_path}',
-                        self.mount_point,
-                        '-o', f'username={username},password={password},vers={version}'
-                    ]
-                    
-                    # Run mount command and capture output
-                    result = subprocess.run(mount_cmd, capture_output=True, text=True)
-                    
-                    if result.returncode == 0:
-                        self.logger.info(f"Successfully mounted controller share at {self.mount_point} using SMB {version}")
-                        self.current_mount = Export.ExportDestination.CONTROLLER
-                        return True
-                    else:
-                        self.logger.warning(f"Failed to mount with SMB {version}: {result.stderr}")
-                        
-                except subprocess.CalledProcessError as e:
-                    self.logger.warning(f"Mount command failed with SMB {version}: {e}")
-                    continue
-            
-            # If we get here, all SMB versions failed
-            self.logger.error(f"All SMB versions failed. Last error: {result.stderr if 'result' in locals() else 'Unknown error'}")
-            self.logger.error(f"Please check:")
-            self.logger.error(f"1. Samba service is running on controller: sudo systemctl status smbd")
-            self.logger.error(f"2. Share '{share_path}' exists on controller")
-            self.logger.error(f"3. Credentials are correct (username: {username})")
-            self.logger.error(f"4. Network connectivity to {controller_ip}")
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"Controller mount failed: {str(e)}")
-            return False
-            
-    def _mount_nas(self) -> bool:
-        """Mount the NAS share"""
-        try:
-            nas_ip = self.config.get('nas_ip')
-            share_path = self.config.get('nas_share_path', '/share')
-            recordings_path = self.config.get('nas_recordings_path', 'recordings')
-            username = self.config.get('nas_username')
-            password = self.config.get('nas_password')
-            
-            if not all([nas_ip, username, password]):
-                self.logger.error("Missing NAS configuration (IP, username, or password)")
+            except subprocess.CalledProcessError as e:
+                self.logger.warning(f"Mount command failed with SMB: {e}")
                 return False
-                
-            # Unmount if already mounted
-            if os.path.ismount(self.mount_point):
-                subprocess.run(['sudo', 'umount', self.mount_point], check=True)
-                
-            # Mount the NAS share with credentials
-            mount_cmd = [
-                'sudo', 'mount', '-t', 'cifs',
-                f'//{nas_ip}/{share_path}',
-                self.mount_point,
-                '-o', f'username={username},password={password}'
-            ]
-            
-            subprocess.run(mount_cmd, check=True)
-            
-            # Create recordings folder and module-specific subfolder on NAS if they don't exist
-            recordings_folder = os.path.join(self.mount_point, recordings_path)
-            module_folder = os.path.join(recordings_folder, self.module_id)
-            
-            try:
-                # Create recordings folder first
-                os.makedirs(recordings_folder, exist_ok=True)
-                self.logger.info(f"Created/verified recordings folder on NAS: {recordings_folder}")
-                
-                # Then create module folder inside recordings
-                os.makedirs(module_folder, exist_ok=True)
-                self.logger.info(f"Created/verified module folder on NAS: {module_folder}")
-            except Exception as e:
-                self.logger.error(f"Failed to create folders on NAS: {e}")
-                # Don't return False here as the mount was successful
-            
-            self.logger.info(f"Successfully mounted NAS share at {self.mount_point}")
-            self.current_mount = Export.ExportDestination.NAS
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to mount NAS share: {e}")
-            return False
+        
         except Exception as e:
-            self.logger.error(f"NAS mount failed: {e}")
+            self.logger.warning(f"Error mounting share: {e}")
             return False
+
             
     def export_current_session_files(self, session_files: list, recording_folder: str, recording_session_id: str, experiment_name: str = None) -> bool:
         """Export only the files from the current recording session
@@ -494,8 +397,7 @@ class Export:
         self.logger.info(f"Attempting to export files for session {recording_session_id}, experiment name {experiment_name}")
         try:
             # Mount the export destination
-            if not self._mount_destination(self.ExportDestination.CONTROLLER):
-                self.logger.error("Failed to mount export destination")
+            if not self._mount_share():
                 return False
             
             # Create hierarchical export folder structure with conflict prevention
@@ -555,7 +457,6 @@ class Export:
 
                 except Exception as e:
                     self.logger.error(f"Failed to export {filename}: {e}")
-                    return False
             
             # Export the module's config file for traceability
             config_exported = self._export_config_file(export_folder)
@@ -567,17 +468,17 @@ class Export:
                 self.logger.warning(f"Could not export config file")
             
             # Create export manifest
-            manifest_filename = self._create_export_manifest(session_files, self.ExportDestination.CONTROLLER, export_folder, experiment_name)
-            if not manifest_filename:
-                self.logger.error("Failed to create export manifest")
-                return False
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(session_files, export_folder, experiment_name)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
         
             # This is a bit of a hack TECHNICAL DEBT - session_files is later used in clear_recordings so we should remove the "config_file" ref which is only used for export manifest
             # TODO: Copy config.json into rec folder (freeze its state at start of recording), add it to session files, export with other session files, clear with other session files i.e. stop treating it specially 
             session_files.remove("config_file")
 
             self.logger.info(f"Successfully exported {exported_count} session files to {export_folder}")
-            self.logger.info(f"Created export manifest: {manifest_filename}")
             return True
             
         except Exception as e:

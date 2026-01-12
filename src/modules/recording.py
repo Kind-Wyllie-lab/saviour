@@ -5,6 +5,15 @@ Module Recording Manager
 
 This class is used to manage recording methods for the module - starting and stopping recordings, batch exporting for 24/7 recordings, updating files for export. 
 
+Sequence
+- controller sends call to start_recording()
+- name and duration (if any) are set as params
+- the initial recording segment is created
+- threads are started
+-- self.health_recording_thread records health metadata to a csv for the current segment
+-- self._recording_thread is used to automatically stop recording after preset duration 
+-- self.monitor_recording_segments_thread is used to stop and start new recording segments when condition is met
+
 Author: Andrew SG
 Created: 12/01/2026
 """
@@ -13,6 +22,7 @@ import logging
 import threading
 import os
 import datetime
+from typing import Dict, Any, Optional
 
 from src.modules.config import Config
 
@@ -30,6 +40,14 @@ class Recording():
 
         # State Flags
         self.is_recording = False
+
+        # Main Recording Thread
+        self._recording_thread = None # A thread to automatically stop recording if a duration is given # TODO: Rename this something to do with auto stop recording
+        self.recording_start_time = None # When a recording was started
+        
+        # Health metadata thread
+        self.health_recording_thread = None # A thread to record health on
+        self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
 
         # Tracking files for export
         self.session_files = []
@@ -139,6 +157,12 @@ class Recording():
         self.add_session_file(filename)
 
 
+    def add_session_file(self, filename: str) -> None:
+        """Method to append a recording file to the current list of session files"""
+        self.session_files.append(filename)
+        self.logger.info(f"Session file {filename} added, new list {self.session_files}")
+
+
     """Segment Length Monitoring"""
     def _monitor_recording_length(self):
         """
@@ -167,15 +191,79 @@ class Recording():
         self.monitor_recording_segments_thread.join(timeout=5)
 
 
+    """Auto stop after duration"""
+    def _auto_stop_recording(self, duration: int):
+        self.logger.info(f"Starting thread to stop recording after {duration}s")
+        while ((time.time() - self.recording_start_time) < duration):
+            remaining_time = duration - (time.time() - self.recording_start_time)
+            self.logger.info(f"Still recording, {remaining_time}s left")
+            time.sleep(0.5) # Wait
+        self.logger.info("Stopping recording")
+        self.stop_recording()
+
+
+    """Methods to record health metadata"""
+    def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
+        """Start a thread to record health metadata. Will continue until stopped."""
+        if not filename:
+            filename = self.current_filename_prefix
+        self.health_stop_event.clear() # Clear the stop flag before starting
+        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
+        self.health_recording_thread.start()
+        if not self.health_recording_thread:
+            self.logger.error("Failed to start health recording thread")
+        else:
+            self.logger.info("Health recording thread started")
+
+
+    def _stop_recording_health_metadata(self) -> None:
+        """Stop an existing health_recording_thread"""
+        self.logger.info("Inside stop_recording_health_metadata call")
+        if self.health_recording_thread and self.health_recording_thread.is_alive():
+            self.logger.info("Signalling health recording thread to stop")
+            self.health_stop_event.set()
+            self.health_recording_thread.join(timeout=5)
+            if self.health_recording_thread.is_alive():
+                self.logger.warning("Health recording thread did not terminate cleanly")
+            else:
+                self.logger.info("Health recording thread stopped")
+        else:
+            self.logger.warning("No active health recording thread was found to stop")
+
+
+    def _record_health_metadata(self, filename_prefix: str):
+        """
+        Runs in a thread.
+        Polls Health class for current health data.
+        Saves to file.
+        """
+        interval = 5 # Interval in seconds # TODO: Take this from config
+        csv_filename = f"{filename_prefix}_health_metadata.csv"
+        self.add_session_file(csv_filename)
+        fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
+        with open(csv_filename, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            while not self.health_stop_event.is_set():
+                data = self.health.get_health()
+                writer.writerow(data)
+                f.flush() # Ensure each line is written
+                # Wait for either a stop signal or timeout
+                if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
+                    break
+
+
     """Callbacks"""  
     def start_initial_segment_callback():
         """Does this"""
         raise NotImplementedError
     
+
     def start_new_segment_callback():
         """Does this"""
         raise NotImplementedError
     
+
     def stop_recording_callback():
         """Does this"""
         raise NotImplementedError

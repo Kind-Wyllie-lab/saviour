@@ -189,6 +189,7 @@ class APAModule(Module):
         else: 
             self.logger.warning("Reset pulse counter called but no shocker connected!")
 
+
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
         self.logger.info(f"Performing {self.module_type} specific checks")
@@ -370,6 +371,7 @@ class APAModule(Module):
         if self._shock_file_handle:
             self._shock_file_handle.write(f'{timestamp_ns},{event},{self.motor.speed_from_arduino}\n')
 
+
     def _create_shock_event_file(self) ->  bool:
         filename = f"{self.current_filename_prefix}_shock_events.csv"
         self.logger.info(f"Creating shock events file {filename}")
@@ -395,6 +397,7 @@ class APAModule(Module):
             self.logger.info(f"Closed shock events file")
         except Exception as e:
             self.logger.warning(f"Error closing shock events file: {e}")
+
 
     def _stop_recording(self) -> bool:
         """Stop APA recording and save data"""       
@@ -451,9 +454,7 @@ class APAModule(Module):
         self.motor.configure_motor()
 
 
-
-
-
+    """Cleanup"""
     def cleanup(self):
         """Clean up resources"""
         # TODO: close serial connections?

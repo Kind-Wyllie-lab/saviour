@@ -49,6 +49,8 @@ from src.modules.command import Command
 from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
+from src.modules.recording import Recording
+from src.modules.api import ModuleAPI
 
 def command(name=None):
     """
@@ -63,6 +65,7 @@ def command(name=None):
         return func
     return decorator
 
+
 def check(name=None):
     """
     Decorator to mark a method as a ready check.
@@ -74,6 +77,7 @@ def check(name=None):
         func._cmd_name = name or func.__name__
         return func
     return decorator
+
 
 class Module(ABC):
     """
@@ -145,15 +149,8 @@ class Module(ABC):
         self.logger.info(f"Initialising managers")
         self.logger.info(f"Initialising config manager")
         self.config = Config()
-        # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder", "rec")
-        self.logger.info(f"Recording folder = {self.recording_folder}")
-        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
-            os.makedirs(self.recording_folder, exist_ok=True)
-            self.logger.info(f"Created recording folder: {self.recording_folder}")
         self.export = Export(
             module_id=self.module_id,
-            recording_folder=self.recording_folder,
             config=self.config.get_all(),
         )
         self.logger.info(f"Initialising communication manager")
@@ -168,9 +165,13 @@ class Module(ABC):
         self.logger.info(f"Initialising PTP manager")
         self.ptp = PTP(
             role=PTPRole.SLAVE)
+        self.recording = Recording(
+            config=self.config
+        )
         if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
             self.logger.info(f"Initialising command handler")
             self.command = Command(config=self.config)
+        
 
         self.logger.info(f"Initialising network manager")
 
@@ -191,6 +192,13 @@ class Module(ABC):
             'shutdown': self._shutdown,
         }
 
+
+        # TODO: Replace this with an API object that can get passed through to each object e.g. network, communication
+        self.logger.info(f"Instantiating ModuleAPI")
+        self.api = ModuleAPI(module=self) 
+
+
+
         self.helper_callbacks = { # Define a set of helper methods that allow modules to gain access to state
             'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
             'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
@@ -201,16 +209,20 @@ class Module(ABC):
             'get_ptp_status': self.ptp.get_status,
             'get_recording_status': lambda: self.is_recording,
             'get_streaming_status': lambda: self.is_streaming,
-            "on_module_config_change": self.on_module_config_change
+            "on_module_config_change": self.on_module_config_change,
+            "get_recording_folder": self.recording.recording_folder
         }
 
+
+
         # Register helper methods with modules
-        self.network.set_callbacks(self.helper_callbacks)
-        self.health.set_callbacks(self.helper_callbacks)
-        self.communication.set_callbacks(self.helper_callbacks)
-        self.command.set_callbacks(self.helper_callbacks)
-        self.export.set_callbacks(self.helper_callbacks)
         self.config.on_module_config_change = self.on_module_config_change
+        self.network.api = self.api
+        self.health.api = self.api
+        self.communication.api = self.api
+        self.command.api = self.api
+        self.export.api = self.api
+        self.recording.api = self.api
     
         # Register commands with command router
         self.command.set_commands(self.command_callbacks)
@@ -245,7 +257,7 @@ class Module(ABC):
         # Track when module started for uptime calculation
         self.start_time = None
 
-    def on_module_config_change(self, updated_keys: Optional[list[str]]):
+    def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
         self.configure_module(updated_keys)
 
@@ -350,7 +362,7 @@ class Module(ABC):
 
     """Recording methods"""
     @command()
-    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
+    def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
         #TODO : Should this go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
         """
         Start recording. Should be extended with module-specific implementation.
@@ -358,59 +370,19 @@ class Module(ABC):
         Args:
             experiment_name: Optional experiment name to prefix the filename
             duration: Optional duration parameter (not currently used)
-            experiment_folder: Optional experiment folder name for exports
-            controller_share_path: Optional controller share path for export
             
         Returns the filename if setup was successful, None otherwise.
         """
-        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}, experiment_folder {experiment_folder}, controller_share_path {controller_share_path}")
+        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}")
+        self.recording.start_recording(experiment_name, duration)
         # Check not already recording
-        if self.is_recording:
+        if self.recording.is_recording:
             self.logger.info("Already recording")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_start_failed",
-                    "error": "Already recording"
-                })
+            self.communication.send_status({
+                "type": "recording_start_failed",
+                "error": "Already recording"
+            })
             return None
-        
-        # Empty session files
-        self.session_files = []
-        self.logger.info(f"Session files array emptied: {self.session_files}")
-
-        # Store experiment folder information for export
-        self.current_experiment_folder = experiment_folder
-        self.controller_share_path = controller_share_path
-        self.current_experiment_name = self._create_safe_experiment_name(experiment_name)
-        
-        # Set up recording - filename and folder
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{self.module_id}"
-        
-        # Use experiment name in filename if provided
-        if experiment_name:
-            self.current_filename_prefix = f"{self.recording_folder}/{self.current_experiment_name}_{self.recording_session_id}"
-        else:
-            self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
-        
-        os.makedirs(self.recording_folder, exist_ok=True)
-
-        # Start generating health metadata to go with file
-        self._start_recording_health_metadata()
-
-        self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
-        if duration is not None:
-            if duration > 0:
-                self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
-
-        result = self._start_recording() # Call the start_recording method which handles the actual implementation
-        self.logger.info(f"Child class _start_recording call returned {result}")
-
-        # Start auto stop thread if needed
-        if self._recording_thread:
-            self._recording_thread.start()
-
-        self.is_recording = True
  
         return {"filename": self.current_filename_prefix}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
     
@@ -540,7 +512,7 @@ class Module(ABC):
     """File IO"""
     def _check_file_exists(self, filename: str) -> bool:
         """Check if a file exists in the recording folder."""
-        if filename in os.listdir(self.recording_folder):
+        if filename in os.listdir(self.api.get_recording_folder()):
             return True
         else:
             return False
@@ -554,7 +526,7 @@ class Module(ABC):
                 # Use the export manager's method for consistency
                 if self.export.export_current_session_files(
                     session_files=self.session_files,
-                    recording_folder=self.recording_folder,
+                    recording_folder=self.api.get_recording_folder(),
                     recording_session_id=self.recording_session_id,
                     experiment_name=self.current_experiment_name
                 ):
@@ -575,23 +547,23 @@ class Module(ABC):
             recordings = []
             
             # Ensure recording folder exists
-            if not os.path.exists(self.recording_folder):
-                self.logger.info(f"Recording folder does not exist, creating: {self.recording_folder}")
+            if not os.path.exists(self.api.get_recording_folder()):
+                self.logger.info(f"Recording folder does not exist, creating: {self.api.get_recording_folder()}")
                 try:
-                    os.makedirs(self.recording_folder, exist_ok=True)
+                    os.makedirs(self.api.get_recording_folder(), exist_ok=True)
                 except Exception as e:
-                    self.logger.error(f"Error creating recording folder {self.recording_folder}: {e}")
+                    self.logger.error(f"Error creating recording folder {self.api.get_recording_folder()}: {e}")
                     return []
             
             # Check if we can access the folder
-            if not os.access(self.recording_folder, os.R_OK):
-                self.logger.error(f"No read permission for recording folder: {self.recording_folder}")
+            if not os.access(self.api.get_recording_folder(), os.R_OK):
+                self.logger.error(f"No read permission for recording folder: {self.api.get_recording_folder()}")
                 return []
                 
             try:
-                for filename in os.listdir(self.recording_folder):
+                for filename in os.listdir(self.api.get_recording_folder()):
                     try:
-                        filepath = os.path.join(self.recording_folder, filename)
+                        filepath = os.path.join(self.api.get_recording_folder(), filename)
                         if os.path.isfile(filepath):  # Only include files, not directories
                             stat = os.stat(filepath)
                             recordings.append({
@@ -610,11 +582,11 @@ class Module(ABC):
                 
                 # Sort by creation time, newest first
                 recordings.sort(key=lambda x: x["created"], reverse=True)
-                self.logger.info(f"Found {len(recordings)} recordings in {self.recording_folder}")
+                self.logger.info(f"Found {len(recordings)} recordings in {self.api.get_recording_folder()}")
                 return recordings
                 
             except (OSError, IOError) as e:
-                self.logger.error(f"Error accessing recording folder {self.recording_folder}: {e}")
+                self.logger.error(f"Error accessing recording folder {self.api.get_recording_folder()}: {e}")
                 return []
                 
         except Exception as e:
@@ -663,7 +635,7 @@ class Module(ABC):
         """
         self.logger.debug(f"Attempting to clear recordings: {filenames}")
         try:
-            if not os.path.exists(self.recording_folder):
+            if not os.path.exists(self.api.get_recording_folder()):
                 return {"deleted_count": 0, "kept_count": 0}
             
             # If multiple filenames are provided, delete them
@@ -671,10 +643,10 @@ class Module(ABC):
                 deleted_count = 0
                 for single_filename in filenames:
                     try:
-                        if single_filename.startswith(self.recording_folder):
+                        if single_filename.startswith(self.api.get_recording_folder()):
                             filepath = single_filename
                         else:
-                            filepath = os.path.join(self.recording_folder, single_filename)
+                            filepath = os.path.join(self.api.get_recording_folder(), single_filename)
                         self.logger.debug(f"Attempting to delete {filepath}")
                         if os.path.exists(filepath):
                             os.remove(filepath)
@@ -689,10 +661,10 @@ class Module(ABC):
             # If specific filename is provided, delete just that file
             if filename:
                 try:
-                    if filename.startswith(self.recording_folder):
+                    if filename.startswith(self.api.get_recording_folder()):
                         filepath = filename
                     else:
-                        filepath = os.path.join(self.recording_folder, filename)
+                        filepath = os.path.join(self.api.get_recording_folder(), filename)
                     if os.path.exists(filepath):
                         os.remove(filepath)
                         return {"deleted_count": 1, "kept_count": 0}
@@ -726,11 +698,11 @@ class Module(ABC):
                     continue
                     
                 try:
-                    filepath = os.path.join(self.recording_folder, recording["filename"])
+                    filepath = os.path.join(self.api.get_recording_folder(), recording["filename"])
                     os.remove(filepath)
                     # Also try to remove associated timestamp file if it exists
                     base_name = os.path.splitext(recording["filename"])[0]
-                    timestamp_file = os.path.join(self.recording_folder, f"{base_name}_timestamps.txt")
+                    timestamp_file = os.path.join(self.api.get_recording_folder(), f"{base_name}_timestamps.txt")
                     if os.path.exists(timestamp_file):
                         os.remove(timestamp_file)
                     deleted_count += 1
@@ -761,11 +733,6 @@ class Module(ABC):
             bool: True if export successful
         """
         try:
-            # Use experiment folder if available from recording session
-            if hasattr(self, 'current_experiment_folder') and self.current_experiment_folder:
-                experiment_name = self.current_experiment_folder
-                self.logger.info(f"Using experiment folder for export: {experiment_name}")
-            
             if filename == "all":
                 # Export all recordings in a single export session
                 if not self.export.export_all_files(destination, experiment_name):
@@ -1111,12 +1078,12 @@ class Module(ABC):
     @check()
     def _check_readwrite(self) -> tuple[bool, str]:
         try:
-            self.logger.debug(f"Checking can write to {self.recording_folder}")
-            if not os.path.exists(self.recording_folder):
-                os.makedirs(self.recording_folder, exist_ok=True)
+            self.logger.debug(f"Checking can write to {self.api.get_recording_folder()}")
+            if not os.path.exists(self.api.get_recording_folder()):
+                os.makedirs(self.api.get_recording_folder(), exist_ok=True)
             self.logger.debug("Created folder OK")
             # Test write access
-            test_file = os.path.join(self.recording_folder, '.test_write')
+            test_file = os.path.join(self.api.get_recording_folder(), '.test_write')
             self.logger.debug(f"Going to write to test file {test_file}")
             with open(test_file, 'w') as f:
                 self.logger.debug(f"Opened test file {f}")
@@ -1135,7 +1102,7 @@ class Module(ABC):
     @check()
     def _check_diskspace(self) -> tuple[bool, str]:
         try:
-            statvfs = os.statvfs(self.recording_folder)
+            statvfs = os.statvfs(self.api.get_recording_folder())
             free_bytes = statvfs.f_frsize * statvfs.f_bavail
             free_mb = free_bytes / (1024 * 1024)
             required_mb = self._get_required_disk_space_mb()

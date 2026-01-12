@@ -111,9 +111,10 @@ Each system includes:
     ```sh
     # Make sure you're in the correct directory
     cd /usr/local/src/saviour/
-    . setup.sh
-    # You will be prompted to run tests. You can either choose yes or no. After this, setup is complete.
-  
+    ./primary_setup.sh
+    # Once this has completed, you can select the role of the device.
+    ./switch_role.sh
+    # Reboot the pi and setup will have completed.
 
 <!-- USAGE -->
 ## Usage

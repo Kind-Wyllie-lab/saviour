@@ -1075,7 +1075,7 @@ class Module(ABC):
 
     """Ready to record checks"""
     @abstractmethod
-    def _perform_module_specific_checks(self, checks: dict) -> tuple[bool, str]:
+    def _perform_module_specific_checks(self) -> tuple[bool, str]:
         """
         Perform module-specific readiness checks.
         Subclasses should override this method to add their own validation.

@@ -18,14 +18,12 @@ import datetime
 
 class Export:
     """Manages Samba based file exports"""
-    def __init__(self, module_id: str, recording_folder: str, config: dict):
+    def __init__(self, module_id: str, config: dict):
         self.module_id = module_id
-        self.recording_folder = recording_folder
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.current_mount = None
         self.mount_point = "/mnt/export"  # This is where the samba share gets mounted
-        self.callbacks = {}
         
         # Samba details (configurable)
         self.samba_share_ip = None # 192.168.1.1 for controller
@@ -41,21 +39,7 @@ class Export:
             self.logger.info(f"Created mount point directory: {self.mount_point}")
         except Exception as e:
             self.logger.error(f"Failed to create mount point directory: {e}")
-        
-    def set_callbacks(self, callbacks: dict):
-        """Set callbacks for the export manager
-        
-        Args:
-            callbacks: Dictionary of callback functions
-                - 'get_controller_ip': Callback to get controller IP
-        """
-        # Validate required callbacks
-        required_callbacks = ['get_controller_ip']
-        missing_callbacks = [cb for cb in required_callbacks if cb not in callbacks]
-        if missing_callbacks:
-            raise ValueError(f"Missing required callbacks: {missing_callbacks}")
-            
-        self.callbacks = callbacks
+
         
     def _export_config_file(self, export_folder: str) -> bool:
         """Export the module's config file for traceability
@@ -73,8 +57,8 @@ class Export:
                 "config.json",  # Generic config
                 "apa_arduino_config.json",  # APA Arduino config
                 "apa_camera_config.json",   # APA Camera config
-                os.path.join(os.path.dirname(self.recording_folder), "config.json"),  # Parent directory
-                os.path.join(os.path.dirname(self.recording_folder), f"{self.module_id}_config.json")  # Parent with module ID
+                os.path.join(os.path.dirname(self.api.get_recording_folder()), "config.json"),  # Parent directory
+                os.path.join(os.path.dirname(self.api.get_recording_folder()), f"{self.module_id}_config.json")  # Parent with module ID
             ]
             
             config_source = None
@@ -141,7 +125,7 @@ class Export:
                 for file in files_to_export:
                     f.write(f"- {file}\n")
                     # Add file size and modification time from source
-                    file_path = os.path.join(self.recording_folder, file)
+                    file_path = os.path.join(self.api.get_recording_folder(), file)
                     if os.path.exists(file_path):
                         stat = os.stat(file_path)
                         size_mb = stat.st_size / (1024 * 1024)  # Convert to MB
@@ -204,14 +188,14 @@ class Export:
             os.makedirs(export_folder, exist_ok=True)
             
             # Copy the file
-            source_path = os.path.join(self.recording_folder, filename)
+            source_path = os.path.join(self.api.get_recording_folder(), filename)
             dest_path = os.path.join(export_folder, filename)
             shutil.copy2(source_path, dest_path)
             
             # Copy timestamps if they exist
             base_name = os.path.splitext(filename)[0]  # Remove extension
             timestamp_file = f"{base_name}_timestamps.txt"
-            timestamp_source = os.path.join(self.recording_folder, timestamp_file)
+            timestamp_source = os.path.join(self.api.get_recording_folder(), timestamp_file)
             timestamp_dest = os.path.join(export_folder, timestamp_file)
             
             exported_files = [filename]
@@ -287,9 +271,9 @@ class Export:
             
             # Export all files in the recording folder
             files_to_export = []
-            for filename in os.listdir(self.recording_folder):
+            for filename in os.listdir(self.api.get_recording_folder()):
                 # Skip directories
-                file_path = os.path.join(self.recording_folder, filename)
+                file_path = os.path.join(self.api.get_recording_folder(), filename)
                 if os.path.isdir(file_path):
                     continue
                     
@@ -298,7 +282,7 @@ class Export:
                 self.logger.info(f"Found file to export: {filename}")
             
             if not files_to_export:
-                self.logger.warning(f"No files found in recording folder: {self.recording_folder}")
+                self.logger.warning(f"No files found in recording folder: {self.api.get_recording_folder()}")
                 return True  # Return True as this is not an error, just no files to export
             
             # Create manifest first
@@ -320,7 +304,7 @@ class Export:
             for filename in files_to_export:
                 if filename == "config_file":  # Skip the config file entry we just added
                     continue
-                source_path = os.path.join(self.recording_folder, filename)
+                source_path = os.path.join(self.api.get_recording_folder(), filename)
                 dest_path = os.path.join(export_folder, filename)
                 try:
                     shutil.copy2(source_path, dest_path)

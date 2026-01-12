@@ -74,12 +74,12 @@ class CameraModule(Module):
         # self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
-        self.camera_callbacks = {
+        self.camera_commands = {
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming
         }
-        self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
-        self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
+        self.command.set_commands(self.camera_commands) # Append new camera callbacks
+        self.logger.info(f"Command handler callbacks: {self.command.commands}")
 
         # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
@@ -302,7 +302,7 @@ class CameraModule(Module):
             # Use the export manager's method for consistency
             if self.export.export_current_session_files(
                 session_files=self.to_export,
-                recording_folder=self.recording_folder,
+                recording_folder=self.api.get_recording_folder(),
                 recording_session_id=self.recording_session_id,
                 experiment_name=self.current_experiment_name
             ):

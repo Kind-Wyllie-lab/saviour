@@ -222,22 +222,20 @@ class CameraModule(Module):
 
 
     """Segment Oriented Recording (to manage long recordings)"""
-    def _create_new_recording_segment(self):
+    def _start_next_recording_segment(self):
         """Create new video segment and corresponding timestamp."""
-        self.segment_id += 1
-        self.segment_start_time = time.time()
         self._start_new_video_segment() # Start new video segment
-        self._export_staged() # Export files that have been marked for export
 
 
-    def _create_initial_recording_segment(self) -> None:
+    # def _create_initial_recording_segment(self) -> None:
+    def _start_new_recording(self):
         self.segment_id = 0
         self.segment_start_time = time.time()
 
         # Start video
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
         self.current_video_segment = filename
-        self.add_session_file(filename)
+        self.api.add_session_file(filename)
 
         # Start the camera 
         if not self.picam2.started:
@@ -270,7 +268,7 @@ class CameraModule(Module):
         # Create new segment name
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
         self.current_video_segment = filename
-        self.add_session_file(filename)
+        self.api.add_session_file(filename)
 
         # Start recording to new segment
         self.file_output.split_output(PyavOutput(filename, format="mp4"))
@@ -325,6 +323,9 @@ class CameraModule(Module):
 
 
     """Recording"""
+    # Instead of abstract methods _start_recording and _stop_recording, I need:
+    # Abstract methods _start_recording, _next_recording_segment, and _stop_recoriding?
+    # Perhaps _start_new_recording, _start_next_recording_segment, and _stop_recording?
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
@@ -369,7 +370,7 @@ class CameraModule(Module):
             # Stop recording and tidy up session files
             self._stop_recording_segment_monitoring()
 
-            # Preprocess video file for export
+            # Preprocess video files for export
             for file in self.session_files:
                 if file.endswith(".mp4"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
@@ -456,8 +457,8 @@ class CameraModule(Module):
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str) -> None:
         """Apply the frame timestamp to the image."""
-        x = 0
-        y = self.height - int(self.height * 0.01) # TODO: Make origin reference lores dimensions
+        x = int(self.width * 0.2)
+        y = 0 + int(self.height * 0.03) # TODO: Make origin reference lores dimensions
         cv2.putText(
             img=m.array, 
             text=timestamp, 

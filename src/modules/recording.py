@@ -22,6 +22,8 @@ import logging
 import threading
 import os
 import datetime
+import time
+import csv
 from typing import Dict, Any, Optional
 
 from src.modules.config import Config
@@ -50,6 +52,7 @@ class Recording():
         self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
 
         # Tracking files for export
+        self.current_filename_prefix = None
         self.session_files = []
         self.to_export = []
 
@@ -62,8 +65,26 @@ class Recording():
 
 
     """Start / Stop Recording"""
-    def start_recording(self, experiment_name: str = None, duration: str = None):
+    def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
         """When module starts recording this gets triggered"""
+        """
+        Start recording. Should be extended with module-specific implementation.
+        
+        Args:
+            experiment_name: Optional experiment name to prefix the filename
+            duration: Optional duration parameter (not currently used)
+        """
+        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}")
+        
+        # Check not already recording
+        if self.is_recording:
+            self.logger.info("Already recording")
+            self.api.send_status({
+                "type": "recording_start_failed",
+                "error": "Already recording"
+            })
+            return None
+
         # Empty session files
         self.session_files = []
 
@@ -85,13 +106,23 @@ class Recording():
         # Start generating health metadata to go with file
         self._start_recording_health_metadata()
 
+        # Set recording start time
+        self.recording_start_time = time.time()
+
+        # Check if duration was supplied
         self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
         if duration is not None:
             if duration > 0:
                 self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
 
-        result = self._start_recording() # Call the start_recording method which handles the actual implementation
-        self.logger.info(f"Child class _start_recording call returned {result}")
+        # Empty the files staged for export
+        self.to_export = []
+
+        # Execute module specific recoridng e.g. camera video
+        self._create_initial_recording_segment()
+
+        # Start monitoring recoridng segment durations
+        self._start_recording_segment_monitoring()
 
         # Start auto stop thread if needed
         if self._recording_thread:
@@ -99,32 +130,55 @@ class Recording():
 
         self.is_recording = True
         
-        # Previously in camera start_recording()
-        self.logger.info("Executing camera specific recording functionality...")
 
-        # New approach
-        try:
-            self.to_export = []
-            self._create_initial_recording_segment()
-            self._start_recording_segment_monitoring()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
-            return False
-    
 
-    def stop_recording(self):
-        """Stop recording"""
+    def stop_recording(self) -> bool:
+        """Stop recording. Returns True if stopped, False otherwise."""
         try:
-            self._stop_recording_callback() # Callback to tell specific module to stop recording
-            
-            # Stop recording and tidy up session files
+            # Check if recording
+            if not self.is_recording:
+                self.logger.info("Already stopped recording")
+                self.api.send_status({
+                    "type": "recording_stop_failed",
+                    "error": "Not recording"
+                })
+                return False
+
+            # Stop monitoring recording segment length
             self._stop_recording_segment_monitoring()
-            return True
-        
+
+            # Stop recording in general
+            if not self.api.stop_recording(): # Specific implementation of stop_recording
+                self.logger.warning(f"Something went wrong stopping recording.")
+                self.api.send_status({
+                    "type": "recording_stopped",
+                    "status": "error",
+                })
+                return
+            
+            # Stop recording health metadata
+            self._stop_recording_health_metadata()
+            self.logger.info("Made it past stop_recording_health_metadata call")
+
+            self.api.send_status({
+                "type": "recording_stopped",
+                "status": "success",
+                "recording": False,
+            })
+
+            self.is_recording = False
+            self.logger.info("Made it past stop_recording call")
+
+            self.logger.info(f"Config says {self.config.get('export.auto_export')}")
+            if self.config.get("export.auto_export") == True:
+                # self._auto_export()
+                self.logger.warning("No implementation for auto export in recording.py stop_recording()")
+
+            return {"result": "Success"}
+
         except Exception as e:
-            self.logger.error(f"Error stopping recording: {e}")
-            return False
+            self.logger.error(f"Error in stop_recording: {e}")
+            return {"result": "failure", "message": f"Error in stop_recording: {e}"}
 
 
     def _format_experiment_name(self, experiment_name:str ) -> str:
@@ -143,18 +197,21 @@ class Recording():
         """Create new recording segment"""
         self.segment_id += 1
         self.segment_start_time = time.time()
-        self._start_new_segment_callback() # Callback to tell specific module to start a new recording segment
+        self.api.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
         self._export_staged() # Export files that have been marked for export
 
 
     def _create_initial_recording_segment(self) -> None:
+        self.logger.info(f"Creating initial recording segment")
         self.segment_id = 0
         self.segment_start_time = time.time()
+        self.logger.info(f"Segment {self.segment_id} started at {self.segment_start_time}")
 
         # Start video
-        filename = self._start_initial_segment_callback() # Callback to tell specific module to start initial recording segment - should return a filename.
-        self.current_segment = filename
-        self.add_session_file(filename)
+        self.api.start_new_recording()
+        # filename = self._start_initial_segment_callback() # Callback to tell specific module to start initial recording segment - should return a filename.
+        # self.current_segment = filename
+        # self.add_session_file(filename)
 
 
     def add_session_file(self, filename: str) -> None:
@@ -170,6 +227,7 @@ class Recording():
         If it exceeds segment length limit, stops and starts a new recording.
         """
         segment_length = self.config.get("recording.segment_length_seconds", 30) # Default to 30 for debug for now 050126
+        self.logger.info(f"Segment started at {self.segment_start_time},  segment length {segment_length}")
 
         while not self.monitor_recording_segments_stop_flag.is_set():
             if (time.time() - self.segment_start_time > segment_length):
@@ -203,12 +261,10 @@ class Recording():
 
 
     """Methods to record health metadata"""
-    def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
+    def _start_recording_health_metadata(self) -> None:
         """Start a thread to record health metadata. Will continue until stopped."""
-        if not filename:
-            filename = self.current_filename_prefix
         self.health_stop_event.clear() # Clear the stop flag before starting
-        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
+        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, daemon=True)
         self.health_recording_thread.start()
         if not self.health_recording_thread:
             self.logger.error("Failed to start health recording thread")
@@ -231,21 +287,17 @@ class Recording():
             self.logger.warning("No active health recording thread was found to stop")
 
 
-    def _record_health_metadata(self, filename_prefix: str):
-        """
-        Runs in a thread.
-        Polls Health class for current health data.
-        Saves to file.
-        """
-        interval = 5 # Interval in seconds # TODO: Take this from config
-        csv_filename = f"{filename_prefix}_health_metadata.csv"
+    def _record_health_metadata(self):
+        """Retrieve health metadata and write to csv tile"""
+        interval = self.config.get("health_metadata_recording_interval", 5)
+        csv_filename = f"{self.current_filename_prefix}_health_metadata.csv"
         self.add_session_file(csv_filename)
-        fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
+        fieldnames = list(self.api.get_health().keys())
         with open(csv_filename, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             while not self.health_stop_event.is_set():
-                data = self.health.get_health()
+                data = self.api.get_health()
                 writer.writerow(data)
                 f.flush() # Ensure each line is written
                 # Wait for either a stop signal or timeout

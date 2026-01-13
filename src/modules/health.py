@@ -93,7 +93,7 @@ class Health:
             # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
             time.sleep(check_interval)
     
-    def get_health(self):
+    def get_health(self) -> dict:
         """Get health metrics for the module"""
         ptp_status = self.api.get_ptp_status()
         return {

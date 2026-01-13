@@ -111,9 +111,6 @@ class Command:
         try:
             # 1. Parse command and parameters
             cmd, params = self._parse_command(raw_command)
-            
-            # Debug logging for command parsing
-            # self.logger.info(f"Parsed command: '{cmd}', parameters: {params}")
 
             # 2. Find corresponding callback
             handler = self.commands.get(cmd) # Find the callback that matches the name of the commmand

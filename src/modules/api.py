@@ -38,10 +38,22 @@ class ModuleAPI():
 
     def get_recording_status(self) -> bool:
         return self.module.recording.is_recording
+
+
+    def get_recording_session_id(self) -> str:
+        return self.module.recording_session_id
     
     
     def get_ptp_status(self) -> dict:
         return self.module.ptp.get_status()
+
+    
+    def get_health(self) -> dict:
+        return self.module.health.get_health()
+
+
+    def get_segment_id(self) -> int:
+        return self.module.recording.segment_id
 
 
     """Utility Methods"""
@@ -57,6 +69,55 @@ class ModuleAPI():
     def handle_command(self, raw_command: str) -> None:
         """Handle an incoming command from the controller"""
         self.module.command.handle_command(raw_command)
+
+
+    """Module Specific Recording Methods"""
+    def start_new_recording(self) -> bool:
+        """Implement module specific logic to start initial recording segment."""
+        return self.module._start_new_recording()
+
+
+    def start_next_recording_segment(self) -> bool:
+        """Implement module specific logic to start next recording segment."""
+        return self.module._start_next_recording_segment()
+
+
+    def stop_recording(self) -> bool:
+        """Implement module specific stop recording logic."""
+        return self.module._stop_recording()
+
+    
+    def stage_file_for_export(self, filename: str) -> None:
+        """Stage a file for export when next segment starts or recording is stopped."""
+        self.module.recording.to_export.append(filename)
+
+    
+    def add_session_file(self, filename: str) -> None:
+        """Add a file to the recording session - mayb be redundant with stage_file_for_export"""
+        self.module.recording.add_session_file(filename)
+
+
+    """File Export"""
+    def _export_files(self, files: list):
+    """Exports all files in the to_export list"""
+        try:
+            # Use the export manager's method for consistency
+            if self.module.export.export_current_session_files(
+                session_files=files,
+                recording_folder=self.api.get_recording_folder(),
+                recording_session_id=self.api.get_recording_session_id(),
+                experiment_name=self.api.get_current_experiment_name()
+            ):
+                self.logger.info("Auto-export completed successfully")
+
+                if self.module.config.get("delete_on_export", True):
+                    self.module._clear_recordings(filenames=files)
+                    self.module._clear_exported_files_from_session_files()
+                    self.module.recording.to_export = [] # empty the list of files to export
+            else:
+                self.logger.warning("Auto-export failed, but recording was successful")
+        except Exception as e:
+            self.logger.error(f"Auto-export error: {e}")
 
 
     """Event callbacks"""

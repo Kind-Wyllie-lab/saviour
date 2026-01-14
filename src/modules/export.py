@@ -89,6 +89,7 @@ class Export:
             
             # Export each session file
             exported_count = 0
+            exported = []
             for filename in to_export:
                 try:
                     self.logger.info(f"Exporting {filename}")
@@ -108,6 +109,7 @@ class Export:
                     shutil.copy2(source_path, dest_path)
                     self.logger.info(f"Exported: {dest_filename}")
                     exported_count += 1
+                    exported.append(filename)
 
                 except Exception as e:
                     self.logger.error(f"Failed to export {filename}: {e}")
@@ -120,6 +122,10 @@ class Export:
                     self.logger.error("Failed to create export manifest")
                     return False
         
+            # Delete exported files
+            if self.config.get("export.auto_delete_on_export", True):
+                self._delete_local_files(exported)
+
             self.to_export = []
 
             self.logger.info(f"Successfully exported {exported_count} session files to {export_path}")
@@ -128,6 +134,21 @@ class Export:
         except Exception as e:
             self.logger.error(f"Export error: {e}")
             return False
+
+
+    def _delete_local_files(self, files: list) -> None:
+        deleted_count = 0
+        if len(files) == 0:
+            self.logger.error("No files provided to delete")
+            return
+        for filename in files:
+            try:
+                if os.path.exists(filename):
+                    os.remove(filename)
+                    deleted_count += 1
+            except Exception as e:
+                self.logger.error(f"Error exporting {filename}: {e}")
+        self.logger.info(f"Deleted {deleted_count} files")
 
 
     def _create_export_path(self) -> bool:

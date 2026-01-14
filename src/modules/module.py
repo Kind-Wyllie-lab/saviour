@@ -373,87 +373,11 @@ class Module(ABC):
             return False
 
 
-    def _auto_export(self):
-        self.logger.info("Auto-export called")
-        if self.config.get("export.auto_export", True):
-            self.logger.info("Auto-export enabled, exporting recording using export manager")
-            try:
-                # Use the export manager's method for consistency
-                if self.export.export_current_session_files(
-                    session_files=self.session_files,
-                    recording_folder=self.api.get_recording_folder(),
-                    recording_session_id=self.recording_session_id,
-                    experiment_name=self.current_experiment_name
-                ):
-                    self.logger.info("Auto-export completed successfully")
-
-                    if self.config.get("delete_on_export", True):
-                        self._clear_recordings(filenames=self.session_files)
-                else:
-                    self.logger.warning("Auto-export failed, but recording was successful")
-            except Exception as e:
-                self.logger.error(f"Auto-export error: {e}")
-        else:
-            self.logger.info("Auto-export disabled, not exporting recording")
-
-    def _get_recordings_list(self):
-        """Internal method to get list of recordings with metadata"""
-        try:
-            recordings = []
-            
-            # Ensure recording folder exists
-            if not os.path.exists(self.api.get_recording_folder()):
-                self.logger.info(f"Recording folder does not exist, creating: {self.api.get_recording_folder()}")
-                try:
-                    os.makedirs(self.api.get_recording_folder(), exist_ok=True)
-                except Exception as e:
-                    self.logger.error(f"Error creating recording folder {self.api.get_recording_folder()}: {e}")
-                    return []
-            
-            # Check if we can access the folder
-            if not os.access(self.api.get_recording_folder(), os.R_OK):
-                self.logger.error(f"No read permission for recording folder: {self.api.get_recording_folder()}")
-                return []
-                
-            try:
-                for filename in os.listdir(self.api.get_recording_folder()):
-                    try:
-                        filepath = os.path.join(self.api.get_recording_folder(), filename)
-                        if os.path.isfile(filepath):  # Only include files, not directories
-                            stat = os.stat(filepath)
-                            recordings.append({
-                                "filename": filename,
-                                "size": stat.st_size,
-                                "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                            })
-                    except (OSError, IOError) as e:
-                        # Skip files that can't be accessed
-                        self.logger.warning(f"Skipping file {filename} due to access error: {e}")
-                        continue
-                    except Exception as e:
-                        # Skip files that cause other errors
-                        self.logger.warning(f"Skipping file {filename} due to error: {e}")
-                        continue
-                
-                # Sort by creation time, newest first
-                recordings.sort(key=lambda x: x["created"], reverse=True)
-                self.logger.info(f"Found {len(recordings)} recordings in {self.api.get_recording_folder()}")
-                return recordings
-                
-            except (OSError, IOError) as e:
-                self.logger.error(f"Error accessing recording folder {self.api.get_recording_folder()}: {e}")
-                return []
-                
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting recordings list: {e}")
-            # Don't re-raise the exception - return empty list instead
-            return []
-
     @command()
     def list_recordings(self):
         """List all recorded files with metadata and send to controller"""
         try:
-            recordings = self._get_recordings_list()
+            recordings = [] # TODO: Get recordings here
             
             # Send status response
             self.communication.send_status({

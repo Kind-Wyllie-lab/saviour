@@ -178,8 +178,6 @@ class Module(ABC):
             'start_recording': self.recording.start_recording,
             'stop_recording': self.recording.stop_recording,
             'list_recordings': self.list_recordings,
-            'clear_recordings': self._clear_recordings,
-            'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
             'get_config': self.get_config, # Gets the complete config from
             'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
@@ -251,6 +249,13 @@ class Module(ABC):
 
         # Track when module started for uptime calculation
         self.start_time = None
+
+
+    def get_module_name(self) -> str:
+        name = self.config.get("module.name")
+        if name == "":
+            name = self.module_id
+        return name
 
     def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
@@ -400,204 +405,6 @@ class Module(ABC):
             # Return empty list instead of re-raising
             return []
 
-    def _clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
-        """Clear recordings
-        
-        Args:
-            filename: Optional specific filename to delete
-            filenames: Optional list of specific filenames to delete
-            older_than: Optional timestamp - delete recordings older than this
-            keep_latest: Optional number of latest recordings to keep
-            
-        Returns:
-            dict with deleted_count and kept_count
-        """
-        self.logger.debug(f"Attempting to clear recordings: {filenames}")
-        try:
-            if not os.path.exists(self.api.get_recording_folder()):
-                return {"deleted_count": 0, "kept_count": 0}
-            
-            # If multiple filenames are provided, delete them
-            if filenames:
-                deleted_count = 0
-                for single_filename in filenames:
-                    try:
-                        if single_filename.startswith(self.api.get_recording_folder()):
-                            filepath = single_filename
-                        else:
-                            filepath = os.path.join(self.api.get_recording_folder(), single_filename)
-                        self.logger.debug(f"Attempting to delete {filepath}")
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
-                            deleted_count += 1
-                            self.logger.info(f"Deleted file: {single_filename}")
-                        else:
-                            self.logger.warning(f"File not found: {single_filename}")
-                    except Exception as e:
-                        self.logger.error(f"Error deleting recording {single_filename}: {e}")
-                return {"deleted_count": deleted_count, "kept_count": 0}
-            
-            # If specific filename is provided, delete just that file
-            if filename:
-                try:
-                    if filename.startswith(self.api.get_recording_folder()):
-                        filepath = filename
-                    else:
-                        filepath = os.path.join(self.api.get_recording_folder(), filename)
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                        return {"deleted_count": 1, "kept_count": 0}
-                    else:
-                        self.logger.warning(f"File not found: {filename}")
-                        return {"deleted_count": 0, "kept_count": 0}
-                except Exception as e:
-                    self.logger.error(f"Error deleting recording {filename}: {e}")
-                    return {"deleted_count": 0, "kept_count": 0}
-                
-            # Get list of recordings using internal method
-            recordings = self._get_recordings_list()
-            if not recordings:
-                return {"deleted_count": 0, "kept_count": 0}
-                
-            # Sort by creation time, newest first
-            recordings.sort(key=lambda x: x["created"], reverse=True)
-            
-            deleted_count = 0
-            kept_count = 0
-            
-            # Keep the latest N recordings if specified
-            if keep_latest > 0:
-                kept_recordings = recordings[:keep_latest]
-                recordings = recordings[keep_latest:]
-                kept_count = len(kept_recordings)
-            
-            # Delete recordings older than timestamp if specified
-            for recording in recordings:
-                if older_than and recording["created"] >= older_than:
-                    continue
-                    
-                try:
-                    filepath = os.path.join(self.api.get_recording_folder(), recording["filename"])
-                    os.remove(filepath)
-                    # Also try to remove associated timestamp file if it exists
-                    base_name = os.path.splitext(recording["filename"])[0]
-                    timestamp_file = os.path.join(self.api.get_recording_folder(), f"{base_name}_timestamps.txt")
-                    if os.path.exists(timestamp_file):
-                        os.remove(timestamp_file)
-                    deleted_count += 1
-                except Exception as e:
-                    self.logger.error(f"Error deleting recording {recording['filename']}: {e}")
-            
-            self.logger.info("Deleteted {deleted_count} recordings")
-
-            return {
-                "deleted_count": deleted_count,
-                "kept_count": kept_count
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error clearing recordings: {e}")
-            raise
-
-    def export_recordings(self, filename: str, length: int = 0, experiment_name: str = None):
-        """Export a video to the specified destination
-        
-        Args:
-            filename: Name of the file to export (can be comma-separated list)
-            length: Optional length of the video
-            destination: Where to export to - string or Export.ExportDestination enum
-            experiment_name: Optional experiment name to include in export directory
-            
-        Returns:
-            bool: True if export successful
-        """
-        try:
-            if filename == "all":
-                # Export all recordings in a single export session
-                if not self.export.export_all_files(destination, experiment_name):
-                    self.communication.send_status({
-                        "type": "export_failed",
-                        "filename": "all",
-                        "error": "Failed to export files",
-                        "success": False
-                    })
-                    return False
-                return True
-                
-            elif filename == "latest":
-                # Export latest recording
-                latest_recording = self.get_latest_recording()
-                if not self.export.export_file(latest_recording["filename"], destination, experiment_name):
-                    self.communication.send_status({
-                        "type": "export_failed",
-                        "filename": latest_recording["filename"],
-                        "error": "Failed to export file",
-                        "success": False
-                    })
-                    return False
-                return True
-            
-            # Handle comma-separated filenames
-            if ',' in filename:
-                filenames = [f.strip() for f in filename.split(',')]
-                self.logger.info(f"Exporting multiple files: {filenames}")
-                
-                # Export each file individually
-                for single_filename in filenames:
-                    if not self.export.export_file(single_filename, destination, experiment_name):
-                        self.communication.send_status({
-                            "type": "export_failed",
-                            "filename": single_filename,
-                            "error": "Failed to export file",
-                            "success": False
-                        })
-                        return False
-                
-                # Send success status for all files
-                self.communication.send_status({
-                    "type": "export_complete",
-                    "filename": filename,  # Original comma-separated string
-                    "session_id": self.recording_session_id,
-                    "length": length,
-                    "destination": destination.value,
-                    "experiment_name": experiment_name,
-                    "success": True
-                })
-                self._clear_recordings()
-                return True
-                
-            # Export specific single file
-            if not self.export.export_file(filename, destination, experiment_name):
-                self.communication.send_status({
-                    "type": "export_failed",
-                    "filename": filename,
-                    "error": "Failed to export file",
-                    "success": False
-                })
-                return False
-                
-            # Send success status
-            self.communication.send_status({
-                "type": "export_complete",
-                "filename": filename,
-                "session_id": self.recording_session_id,
-                "length": length,
-                "destination": destination.value,
-                "experiment_name": experiment_name,
-                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt"),
-                "success": True
-            })
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error exporting recordings: {e}")
-            self.communication.send_status({
-                "type": "export_failed",
-                "filename": filename,
-                "error": str(e),
-                "success": False
-            })
-            return False
 
     def list_commands(self):
         """

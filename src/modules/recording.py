@@ -93,7 +93,7 @@ class Recording():
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{self.api.get_module_id()}"
+        self.recording_session_id = f"{self.api.get_module_name()}"
         
         # Use experiment name in filename if provided
         if experiment_name:

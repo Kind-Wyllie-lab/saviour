@@ -1,6 +1,7 @@
 {
     "module": {
-        "_heartbeat_interval": 30
+        "_heartbeat_interval": 30,
+        "name": ""
     },
     "network": {
         "_zeroconf_port": 5353,

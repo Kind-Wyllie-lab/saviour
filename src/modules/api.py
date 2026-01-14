@@ -65,6 +65,9 @@ class ModuleAPI():
         return self.module.recording.current_filename_prefix
 
 
+    def get_module_name(self) -> str:
+        return self.module.get_module_name()
+
     """Utility Methods"""
     def generate_session_id(self, module_id: str) -> str:
         return self.module.generate_session_id(module_id)

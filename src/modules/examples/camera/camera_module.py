@@ -92,9 +92,6 @@ class CameraModule(Module):
         self.current_video_segment = None
         self.last_video_segment = None
 
-
-        self.to_export = [] # Files to be exported
-
         self.module_checks = {
             self._check_picam
         }
@@ -227,14 +224,13 @@ class CameraModule(Module):
         self._start_new_video_segment() # Start new video segment
 
 
-    # def _create_initial_recording_segment(self) -> None:
-    def _start_new_recording(self):
-        self.segment_id = 0
-        self.segment_start_time = time.time()
-
+    def _start_new_recording(self) -> None:
+        """Start a new recording session - set up SplittableOutput"""
         # Start video
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        self.logger.info(f"Starting recording with filename {filename}")
         self.current_video_segment = filename
+        self.api.stage_file_for_export(filename)
         self.api.add_session_file(filename)
 
         # Start the camera 
@@ -253,7 +249,7 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        filename = f"{self.current_filename_prefix}_({self.segment_id})_({time.strftime('%Y%m%d_%H%M%S')}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()})_({time.strftime('%Y%m%d_%H%M%S')}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
         return filename
 
 
@@ -263,7 +259,7 @@ class CameraModule(Module):
         """
         # Stage current recording for export
         self.last_video_segment = self.current_video_segment
-        self.to_export.append(self.last_video_segment)
+        self.api.stage_file_for_export(self.last_video_segment)
 
         # Create new segment name
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
@@ -332,7 +328,6 @@ class CameraModule(Module):
 
         # New approach
         try:
-            self.to_export = []
             self._create_initial_recording_segment()
             self._start_recording_segment_monitoring()
             # Send status response after successful recording start
@@ -366,9 +361,6 @@ class CameraModule(Module):
             self.logger.info("Attempting to stop camera specific recording")
 
             self._stop_recording_video()
-            
-            # Stop recording and tidy up session files
-            self._stop_recording_segment_monitoring()
 
             # Preprocess video files for export
             for file in self.session_files:

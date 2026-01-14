@@ -30,8 +30,12 @@ class Export:
         self.samba_share_path = None # The name of the top level folder on the samba share
         self.samba_share_username = None 
         self.samba_share_password = None
-
         self._update_samba_settings()
+
+        # Staged files for export
+        self.session_files = [] # Record of all recorded files in the session
+        self.staged_for_export = []
+        self.export_folder = None # Should be set by recording manager - expect something akin to habitat6_cohortA2/140126/
 
         # Create mount point directory if it doesn't exist
         try:
@@ -40,7 +44,127 @@ class Export:
         except Exception as e:
             self.logger.error(f"Failed to create mount point directory: {e}")
 
+
+    def export_staged(self) -> bool:
+        """Export all files in self.staged_for_export
+
+        Returns:
+            bool: True if export successful
+        """
+        self.logger.info(f"Attempting to export {self.staged_for_export}")
+        try:
+            # Mount the export destination
+            if not self._mount_share():
+                return False
+            
+            # Create hierarchical export folder structure with conflict prevention
+            export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            # Create top-level experiment folder (without timestamp)
+            self.logger.info(f"Attempting to join mount at {self.mount_point} with target export folder {self.export_folder}")
+            export_path = os.path.join(self.mount_point, self.export_folder)
+            os.makedirs(export_path, exist_ok=True)
+                
+            # Ensure the experiment folder has write permissions for all modules
+            try:
+                os.chmod(export_path, 0o777)  # rwxrwxrwx - full permissions
+                self.logger.info(f"Set permissions on experiment folder: {export_path}")
+            except Exception as e:
+                self.logger.warning(f"Could not set permissions on experiment folder: {e}")
+            
+            to_export = self.staged_for_export
+            source_folder = self.api.get_recording_folder()
+            self.logger.info(f"Will attempt to export {to_export}")
+            
+            # Export each session file
+            exported_count = 0
+            for filename in to_export:
+                try:
+                    self.logger.info(f"Exporting {filename}")
+                    # Determine absolute source path
+                    if os.path.isabs(filename):
+                        source_path = filename
+                    else:
+                        # If the file is relative to recording_folder, resolve properly
+                        # Prevent double-prefix like 'rec/rec/...'
+                        rel_path = os.path.relpath(filename, start=source_folder)
+                        source_path = os.path.join(source_folder, rel_path)
+
+                    # Destination: flat structure, just filename
+                    dest_filename = os.path.basename(filename)
+                    dest_path = os.path.join(export_path, dest_filename)
+
+                    shutil.copy2(source_path, dest_path)
+                    self.logger.info(f"Exported: {dest_filename}")
+                    exported_count += 1
+
+                except Exception as e:
+                    self.logger.error(f"Failed to export {filename}: {e}")
         
+            
+            # Create export manifest
+            if self.config.get("export.manifest_enabled", False):
+                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, self.export_folder)
+                if not manifest_filename:
+                    self.logger.error("Failed to create export manifest")
+                    return False
+        
+            self.to_export = []
+
+            self.logger.info(f"Successfully exported {exported_count} session files to {export_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Export error: {e}")
+            return False
+
+    
+    def stage_file_for_export(self, filename: str) -> bool:
+        """Take a filename (abspath) and stage for export."""
+        self.logger.info(f"Staging {filename} for export")
+        filename = os.path.abspath(filename) # Make path absolute
+        self.staged_for_export.append(filename) # Add to staged files
+        self.logger.info(f"Staged files: {self.staged_for_export}")
+        return True
+
+
+    def add_session_file(self, filename: str) -> bool:
+        """Take a filename (abspath) and stage for export."""
+        self.logger.info(f"Adding {filename} to session files")
+        if not os.path.isfile(filename): # Check file exists
+            return False
+        abspath = os.path.abspath(filename) # Make path absolute
+        self.session_files.append(abspath) # Add to staged files
+        self.logger.info(f"Session files: {self.session_files}")
+        return True
+
+    def set_export_folder(self, folder_name: str) -> bool:
+        """Take a foldername e.g. habitat6_cohortA2/140126/, set it and create it."""
+        safe_folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_folder_name = safe_folder_name.replace(' ', '_')
+        self.export_folder = safe_folder_name
+        self.logger.info(f"Export folder set to {self.export_folder}")
+
+
+    def clear_session_files(self) -> None:
+        self.session_files = []
+    
+
+    def clear_staged_for_export(self) -> None:
+        self.staged_for_export = []
+
+    
+    def when_recording_starts(self) -> bool:
+        """To be called by recording object when a new recording session starts.
+
+        The config file will be exported (as it is expected not to change during recording) and session/staged for export files will be cleared.
+        """
+        self.logger.info("export object received notification that new recording has started.")
+        self.clear_session_files()
+        self.clear_staged_for_export()
+        self._export_config_file(self.export_folder)
+
+
     def _export_config_file(self, export_folder: str) -> bool:
         """Export the module's config file for traceability
         

@@ -42,6 +42,10 @@ class ModuleAPI():
 
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id
+
+    
+    def get_staged_files(self) -> list:
+        return self.module.export.staged_for_export
     
     
     def get_ptp_status(self) -> dict:
@@ -54,6 +58,11 @@ class ModuleAPI():
 
     def get_segment_id(self) -> int:
         return self.module.recording.segment_id
+
+
+    def get_filename_prefix(self) -> str:
+        """Return the prefix for all recorded files - typically looks like <recording_folder>/<experiment_name>_<recording_session_id> e.g. rec/habitat_wistar21_C2_1"""
+        return self.module.recording.current_filename_prefix
 
 
     """Utility Methods"""
@@ -84,22 +93,31 @@ class ModuleAPI():
 
     def stop_recording(self) -> bool:
         """Implement module specific stop recording logic."""
+        self.logger.info("Executing module specific stop recording functionality")
         return self.module._stop_recording()
+
+
+    """File Export"""
+    def set_export_folder(self, folder_name: str) -> bool:
+        return self.module.export.set_export_folder(folder_name)
+
+
+    def export_staged(self):
+        return self.module.export.export_staged()
 
     
     def stage_file_for_export(self, filename: str) -> None:
         """Stage a file for export when next segment starts or recording is stopped."""
-        self.module.recording.to_export.append(filename)
+        self.module.export.stage_file_for_export(filename)
 
     
     def add_session_file(self, filename: str) -> None:
         """Add a file to the recording session - mayb be redundant with stage_file_for_export"""
-        self.module.recording.add_session_file(filename)
+        self.module.export.add_session_file(filename)
 
 
-    """File Export"""
     def _export_files(self, files: list):
-    """Exports all files in the to_export list"""
+        """Exports all files in the to_export list"""
         try:
             # Use the export manager's method for consistency
             if self.module.export.export_current_session_files(
@@ -134,6 +152,9 @@ class ModuleAPI():
     def controller_disconnected(self) -> None:
         self.module.controller_disconnected()
 
+
+    def when_recording_starts(self):
+        self.module.export.when_recording_starts()        
     
 
 

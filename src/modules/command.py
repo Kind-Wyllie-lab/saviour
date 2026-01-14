@@ -126,7 +126,12 @@ class Command:
                 result = handler(**params) # Unpack params into arguments 
 
             # self.logger.info(f"Command handler returned {result}")
-            if result == None:
+
+            if result == True:
+                result = {"message": "success"}
+            elif result == False:
+                result = {"message": "error"}
+            elif result == None:
                 self.logger.warning(f"Make sure {cmd} returns a dict")
                 result = {"message": f"NoneType result from {cmd} callback"}
 

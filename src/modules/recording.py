@@ -89,7 +89,7 @@ class Recording():
         self.current_experiment_name = self._format_experiment_name(experiment_name)
 
         # Set the export folder based on the supplied experiment name
-        self.api.set_export_folder(experiment_name)
+        self.api.set_experiment_name(experiment_name)
         self.api.when_recording_starts()
         
         # Set up recording - filename and folder

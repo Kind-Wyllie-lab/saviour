@@ -16,9 +16,11 @@ import logging
 import subprocess
 import datetime
 
+from src.modules.config import Config
+
 class Export:
     """Manages Samba based file exports"""
-    def __init__(self, module_id: str, config: dict):
+    def __init__(self, module_id: str, config: Config):
         self.module_id = module_id
         self.config = config
         self.logger = logging.getLogger(__name__)

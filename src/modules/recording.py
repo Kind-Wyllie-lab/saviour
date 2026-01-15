@@ -55,7 +55,6 @@ class Recording():
 
         # Tracking files for export
         self.current_filename_prefix = None
-        self.to_export = []
 
         # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
@@ -105,9 +104,6 @@ class Recording():
         
         os.makedirs(self.recording_folder, exist_ok=True)
 
-        # Start generating health metadata to go with file
-        self._start_new_health_recording()
-
         # Set recording start time
         self.recording_start_time = time.time()
 
@@ -117,16 +113,14 @@ class Recording():
             if duration > 0:
                 self._recording_duration_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
 
-        # Empty the files staged for export
-        if self.to_export != []:
-            self.logger.warning(f"Unexported files: {self.to_export}")
-        self.to_export = []
-
         # Execute module specific recoridng e.g. camera video
         self._create_initial_recording_segment()
 
         # Start monitoring recoridng segment durations
         self._start_recording_segment_monitoring()
+
+        # Start generating health metadata to go with file
+        self._start_new_health_recording()
 
         # Start auto stop thread if needed
         if self._recording_duration_thread:
@@ -292,7 +286,7 @@ class Recording():
     def _start_new_health_recording(self) -> None:
         """Start the initial health recording segment"""
         # Set up filename for initial segment
-        csv_filename = f"{self.current_filename_prefix}_health_metadata_({self.segment_id}).csv"
+        csv_filename = self._get_health_segment_filename()
         self.current_health_segment = csv_filename
 
         # Start the thread
@@ -315,7 +309,8 @@ class Recording():
 
     def _get_health_segment_filename(self) -> str:
         """Return a filename for the current health metadata segment""" 
-        return f"{self.current_filename_prefix}_health_metadata_({self.segment_id}).csv"
+        strtime = self.api.get_utc_time(self.segment_start_time)
+        return f"{self.current_filename_prefix}_health_metadata_({self.segment_id}_{strtime}).csv"
 
 
     def _stop_recording_health_metadata(self) -> None:
@@ -348,19 +343,3 @@ class Recording():
                 # Wait for either a stop signal or timeout
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
-
-
-    """Callbacks"""  
-    def start_initial_segment_callback():
-        """Does this"""
-        raise NotImplementedError
-    
-
-    def start_new_segment_callback():
-        """Does this"""
-        raise NotImplementedError
-    
-
-    def stop_recording_callback():
-        """Does this"""
-        raise NotImplementedError

@@ -741,3 +741,8 @@ class Module(ABC):
         except FileNotFoundError:
             return None
 
+
+    def get_utc_time(self, timestamp: int):
+        strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
+        self.logger.info(f"STRTIME: {strtime}")
+        return strtime

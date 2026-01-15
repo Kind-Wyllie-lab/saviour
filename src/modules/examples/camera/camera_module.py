@@ -99,6 +99,7 @@ class CameraModule(Module):
 
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
+        # TODO: Can this go in the base module
         self.logger.info(f"Performing {self.module_type} specific checks")
         for check in self.module_checks:
             self.logger.info(f"Running {check.__name__}")
@@ -161,6 +162,7 @@ class CameraModule(Module):
                 self.logger.info("Camera reconfigured successfully (not streaming)")
             except Exception as e:
                 self.logger.error(f"Error reconfiguring camera: {e}")
+
 
     def _configure_camera(self):
         """Configure the camera with current settings"""
@@ -249,7 +251,8 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()})_({time.strftime('%Y%m%d_%H%M%S')}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
+        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
         return filename
 
 
@@ -375,21 +378,6 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             return False
-
-
-    def _monitor_recording_length(self):
-        """
-        Runs in a thread and monitors length of current recording.
-        If it exceeds segment length limit, stops and starts a new recording.
-        """
-        segment_length = self.config.get("recording.segment_length_seconds", 30) # Default to 30 for debug for now 050126
-
-        while not self.monitor_recording_segments_stop_flag.is_set():
-            if (time.time() - self.segment_start_time > segment_length):
-                self._create_new_recording_segment()
-                self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
-            time.sleep(0.1) # Avoid busy waiting
-            
                 
 
     def _start_recording_segment_monitoring(self):

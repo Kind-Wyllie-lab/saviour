@@ -17,7 +17,6 @@
     },
     "recording": {
         "segment_length_seconds": 30,
-        "_timestamp_overlay": true,
         "_recording_folder": "rec",
         "_recording_filetype": "NOT SET",
         "_record_health_metadata": true,

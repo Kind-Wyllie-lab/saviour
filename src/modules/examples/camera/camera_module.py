@@ -74,12 +74,12 @@ class CameraModule(Module):
         # self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
-        self.camera_callbacks = {
+        self.camera_commands = {
             'start_streaming': self.start_streaming,
             'stop_streaming': self.stop_streaming
         }
-        self.command.set_callbacks(self.camera_callbacks) # Append new camera callbacks
-        self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
+        self.command.set_commands(self.camera_commands) # Append new camera callbacks
+        self.logger.info(f"Command handler callbacks: {self.command.commands}")
 
         # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
@@ -92,9 +92,6 @@ class CameraModule(Module):
         self.current_video_segment = None
         self.last_video_segment = None
 
-
-        self.to_export = [] # Files to be exported
-
         self.module_checks = {
             self._check_picam
         }
@@ -102,6 +99,7 @@ class CameraModule(Module):
 
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
+        # TODO: Can this go in the base module
         self.logger.info(f"Performing {self.module_type} specific checks")
         for check in self.module_checks:
             self.logger.info(f"Running {check.__name__}")
@@ -165,6 +163,7 @@ class CameraModule(Module):
             except Exception as e:
                 self.logger.error(f"Error reconfiguring camera: {e}")
 
+
     def _configure_camera(self):
         """Configure the camera with current settings"""
         try:
@@ -222,22 +221,19 @@ class CameraModule(Module):
 
 
     """Segment Oriented Recording (to manage long recordings)"""
-    def _create_new_recording_segment(self):
+    def _start_next_recording_segment(self):
         """Create new video segment and corresponding timestamp."""
-        self.segment_id += 1
-        self.segment_start_time = time.time()
         self._start_new_video_segment() # Start new video segment
-        self._export_staged() # Export files that have been marked for export
 
 
-    def _create_initial_recording_segment(self) -> None:
-        self.segment_id = 0
-        self.segment_start_time = time.time()
-
+    def _start_new_recording(self) -> None:
+        """Start a new recording session - set up SplittableOutput"""
         # Start video
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        self.logger.info(f"Starting recording with filename {filename}")
         self.current_video_segment = filename
-        self.add_session_file(filename)
+        self.api.stage_file_for_export(filename)
+        self.api.add_session_file(filename)
 
         # Start the camera 
         if not self.picam2.started:
@@ -255,7 +251,8 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        filename = f"{self.current_filename_prefix}_({self.segment_id})_({time.strftime('%Y%m%d_%H%M%S')}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
+        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
         return filename
 
 
@@ -265,12 +262,12 @@ class CameraModule(Module):
         """
         # Stage current recording for export
         self.last_video_segment = self.current_video_segment
-        self.to_export.append(self.last_video_segment)
+        self.api.stage_file_for_export(self.last_video_segment)
 
         # Create new segment name
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
         self.current_video_segment = filename
-        self.add_session_file(filename)
+        self.api.add_session_file(filename)
 
         # Start recording to new segment
         self.file_output.split_output(PyavOutput(filename, format="mp4"))
@@ -302,7 +299,7 @@ class CameraModule(Module):
             # Use the export manager's method for consistency
             if self.export.export_current_session_files(
                 session_files=self.to_export,
-                recording_folder=self.recording_folder,
+                recording_folder=self.api.get_recording_folder(),
                 recording_session_id=self.recording_session_id,
                 experiment_name=self.current_experiment_name
             ):
@@ -325,13 +322,15 @@ class CameraModule(Module):
 
 
     """Recording"""
+    # Instead of abstract methods _start_recording and _stop_recording, I need:
+    # Abstract methods _start_recording, _next_recording_segment, and _stop_recoriding?
+    # Perhaps _start_new_recording, _start_next_recording_segment, and _stop_recording?
     def _start_recording(self):
         """Implement camera-specific recording functionality"""
         self.logger.info("Executing camera specific recording functionality...")
 
         # New approach
         try:
-            self.to_export = []
             self._create_initial_recording_segment()
             self._start_recording_segment_monitoring()
             # Send status response after successful recording start
@@ -365,36 +364,20 @@ class CameraModule(Module):
             self.logger.info("Attempting to stop camera specific recording")
 
             self._stop_recording_video()
-            
-            # Stop recording and tidy up session files
-            self._stop_recording_segment_monitoring()
 
-            # Preprocess video file for export
+            # Preprocess video files for export
             for file in self.session_files:
                 if file.endswith(".mp4"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
+            
+            self.api.stage_file_for_export(self.current_video_segment)
 
             return True
         
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             return False
-
-
-    def _monitor_recording_length(self):
-        """
-        Runs in a thread and monitors length of current recording.
-        If it exceeds segment length limit, stops and starts a new recording.
-        """
-        segment_length = self.config.get("recording.segment_length_seconds", 30) # Default to 30 for debug for now 050126
-
-        while not self.monitor_recording_segments_stop_flag.is_set():
-            if (time.time() - self.segment_start_time > segment_length):
-                self._create_new_recording_segment()
-                self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
-            time.sleep(0.1) # Avoid busy waiting
-            
                 
 
     def _start_recording_segment_monitoring(self):
@@ -456,8 +439,8 @@ class CameraModule(Module):
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str) -> None:
         """Apply the frame timestamp to the image."""
-        x = 0
-        y = self.height - int(self.height * 0.01) # TODO: Make origin reference lores dimensions
+        x = int(self.width * 0.2)
+        y = 0 + int(self.height * 0.03) # TODO: Make origin reference lores dimensions
         cv2.putText(
             img=m.array, 
             text=timestamp, 

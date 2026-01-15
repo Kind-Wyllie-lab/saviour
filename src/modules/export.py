@@ -38,7 +38,7 @@ class Export:
         # Staged files for export
         self.session_files = [] # Record of all recorded files in the session
         self.staged_for_export = []
-        self.export_folder = None # Should be set by recording manager - expect something akin to habitat6_cohort3/140126/camera_dc71/
+        self.recording_name = None # Should be set by recording manager - expect something akin to habitat6_cohort3/140126/camera_dc71/
         self.export_path = None # Set here - the full export path e.g. /mnt/export/habitat6_cohort3/140126/camera_dc71/
 
         # Create mount point directory if it doesn't exist
@@ -121,7 +121,7 @@ class Export:
             
             # Create export manifest
             if self.config.get("export.manifest_enabled", False):
-                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, self.export_folder)
+                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, self.experiment_name)
                 if not manifest_filename:
                     self.logger.error("Failed to create export manifest")
                     return False
@@ -187,13 +187,11 @@ class Export:
         return True
 
 
-    def set_export_folder(self, folder_name: str) -> bool:
+    def set_experiment_name(self, experiment_name: str) -> bool:
         """Take a foldername e.g. habitat6_cohortA2/140126/, set it and create it."""
-        safe_folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_folder_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_folder_name = safe_folder_name.replace(' ', '_')
-        self.export_folder = f"{safe_folder_name}/{self.api.get_utc_date(time.time())}"
-        self.export_path = os.path.join(self.mount_point, self.export_folder)
-        self.logger.info(f"Export folder set to {self.export_folder}, export path set to {self.export_path}")
+        self.experiment_name = safe_folder_name
 
 
     def clear_session_files(self) -> None:
@@ -223,10 +221,8 @@ class Export:
 
     def _validate_export_path(self):
         """Ensure export path is up to date for todays date"""
-        date = self.api.get_utc_date(time.time())
-        if self.export_path[-8:] != date:
-            self.export_path[-8:] = date
-
+        export_path = f"{self.experiment_name}/{self.api.get_utc_date(time.time())}/{self.api.get_module_name()}"
+        self.export_path = os.path.join(self.mount_point, export_path)
 
 
     def _export_config_file(self) -> bool:

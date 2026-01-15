@@ -113,8 +113,8 @@ class ModuleAPI():
 
 
     """File Export"""
-    def set_export_folder(self, folder_name: str) -> bool:
-        return self.module.export.set_export_folder(folder_name)
+    def set_experiment_name(self, experiment_name: str) -> bool:
+        return self.module.export.set_experiment_name(experiment_name)
 
 
     def export_staged(self):

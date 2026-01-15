@@ -37,7 +37,6 @@ class Network:
         self.config = config
         self.module_id = module_id
         self.module_type = module_type
-        self.callbacks = {}
 
         # Controller connection params
         self.controller_ip = None
@@ -139,10 +138,8 @@ class Network:
             self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
-            if "when_controller_discovered" in self.callbacks:
-                self.callbacks["when_controller_discovered"](self.controller_ip, self.controller_port)
-            else:
-                self.logger.warning("No when_controller_discovered callback registered")
+            self.api.when_controller_discovered(self.controller_ip, self.controller_port)
+
 
     def remove_service(self, zeroconf, service_type, name):
         """Called when controller disappears"""
@@ -150,10 +147,7 @@ class Network:
         
         # Only trigger disconnect if we were actually connected
         if self.controller_ip and self.controller_port:
-            if "controller_disconnected" in self.callbacks:
-                self.callbacks["controller_disconnected"]()
-            else:
-                self.logger.warning("No controller_disconnected callback registered")
+            self.api.controller_disconnected()
             
             # Reset controller connection state
             self.controller_ip = None
@@ -202,8 +196,6 @@ class Network:
             self.logger.info(f"Controller service updated, treating as new discovery")
             self.add_service(zeroconf, service_type, name)
     
-    def set_callbacks(self, callbacks: Dict):
-        self.callbacks = callbacks
     
     def _find_own_ip(self):
         # Get the ip address of the module

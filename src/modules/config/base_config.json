@@ -1,6 +1,7 @@
 {
     "module": {
-        "_heartbeat_interval": 30
+        "_heartbeat_interval": 30,
+        "name": ""
     },
     "network": {
         "_zeroconf_port": 5353,
@@ -16,9 +17,10 @@
     },
     "recording": {
         "segment_length_seconds": 30,
-        "_timestamp_overlay": true,
         "_recording_folder": "rec",
-        "_recording_filetype": "NOT SET"
+        "_recording_filetype": "NOT SET",
+        "_record_health_metadata": true,
+        "_health_metadata_recording_interval": 5
     },
     "export": {
         "_auto_export": true,

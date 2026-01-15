@@ -30,8 +30,8 @@ class Config:
     
     def __init__(
         self, 
-        base_config_path: Optional[str] = "../../config/base_config.json", 
-        active_config_path: Optional[str] = "../../config/active_config.json"
+        base_config_path: Optional[str] = "/usr/local/src/saviour/src/modules/config/base_config.json", 
+        active_config_path: Optional[str] = "/usr/local/src/saviour/src/modules/config/active_config.json"
     ):
         """
         Initialize the configuration manager

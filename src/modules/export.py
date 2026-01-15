@@ -15,6 +15,7 @@ from enum import Enum
 import logging
 import subprocess
 import datetime
+import time
 
 from src.modules.config import Config
 
@@ -59,6 +60,7 @@ class Export:
             return False
 
         # Create export folder on mounted share 
+        self._validate_export_path()
         self._create_export_path()
 
         # Set write permissions on export path
@@ -184,11 +186,12 @@ class Export:
         self.logger.info(f"Session files: {self.session_files}")
         return True
 
+
     def set_export_folder(self, folder_name: str) -> bool:
         """Take a foldername e.g. habitat6_cohortA2/140126/, set it and create it."""
         safe_folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_folder_name = safe_folder_name.replace(' ', '_')
-        self.export_folder = safe_folder_name
+        self.export_folder = f"{safe_folder_name}/{self.api.get_utc_date(time.time())}"
         self.export_path = os.path.join(self.mount_point, self.export_folder)
         self.logger.info(f"Export folder set to {self.export_folder}, export path set to {self.export_path}")
 
@@ -216,6 +219,13 @@ class Export:
         if not self._create_export_path(): # Failed to create export path; maybe an issue mounting share?
             return False
         return True
+
+
+    def _validate_export_path(self):
+        """Ensure export path is up to date for todays date"""
+        date = self.api.get_utc_date(time.time())
+        if self.export_path[-8:] != date:
+            self.export_path[-8:] = date
 
 
 

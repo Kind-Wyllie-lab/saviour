@@ -745,3 +745,8 @@ class Module(ABC):
     def get_utc_time(self, timestamp: int):
         strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
         return strtime
+
+    
+    def get_utc_date(self, timestamp: int):
+        strdate = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d")
+        return strdate

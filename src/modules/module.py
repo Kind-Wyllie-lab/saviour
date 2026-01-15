@@ -97,10 +97,11 @@ class Module(ABC):
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
         self.description = "No description" # A human readable description to be overridden by child classes
+        self.version = self._get_version()
         
         # Setup logging first
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
+        self.logger.info(f"Initializing {self.module_type} module {self.module_id}, SAVIOUR {self.version}")
 
         # Manager objects
         self.config = Config()
@@ -750,3 +751,13 @@ class Module(ABC):
     def get_utc_date(self, timestamp: int):
         strdate = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d")
         return strdate
+
+    
+    def _get_version(self) -> str:
+        """Get the current saviour version"""
+        # TODO: Seems to return nothing - possibly due to the working directory of the systemd service not being the git repo?
+        s = subprocess.run(["git", "describe", "--tags"], capture_output=True)
+        vers = s.stdout.decode("utf-8")[:-1]
+        if not vers:
+            vers = "UNKNOWN_VERSION"
+        return vers

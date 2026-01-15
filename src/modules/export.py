@@ -146,6 +146,8 @@ class Export:
                 if os.path.exists(filename):
                     os.remove(filename)
                     deleted_count += 1
+                    if filename in self.staged_for_export:
+                        self.staged_for_export.pop(self.staged_for_export.index(filename))
             except Exception as e:
                 self.logger.error(f"Error exporting {filename}: {e}")
         self.logger.info(f"Deleted {deleted_count} files")

@@ -367,6 +367,8 @@ class CameraModule(Module):
                 if file.endswith(".mp4"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
+            
+            self.api.stage_file_for_export(self.current_video_segment)
 
             return True
         

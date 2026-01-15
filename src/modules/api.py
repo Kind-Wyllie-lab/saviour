@@ -60,6 +60,14 @@ class ModuleAPI():
         return self.module.recording.segment_id
 
 
+    def get_segment_start_time(self) -> int:
+        return self.module.recording.segment_start_time
+
+
+    def get_utc_time(self, timestamp: int) -> str:
+        return self.module.get_utc_time(timestamp)
+
+
     def get_filename_prefix(self) -> str:
         """Return the prefix for all recorded files - typically looks like <recording_folder>/<experiment_name>_<recording_session_id> e.g. rec/habitat_wistar21_C2_1"""
         return self.module.recording.current_filename_prefix

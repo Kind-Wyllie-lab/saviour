@@ -50,6 +50,8 @@ class Recording():
         # Health metadata thread
         self.health_recording_thread = None # A thread to record health on
         self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
+        self.last_health_segment = None
+        self.current_health_segment = None
 
         # Tracking files for export
         self.current_filename_prefix = None
@@ -104,7 +106,7 @@ class Recording():
         os.makedirs(self.recording_folder, exist_ok=True)
 
         # Start generating health metadata to go with file
-        self._start_recording_health_metadata()
+        self._start_new_health_recording()
 
         # Set recording start time
         self.recording_start_time = time.time()
@@ -169,6 +171,7 @@ class Recording():
             
             # Stop recording health metadata
             self._stop_recording_health_metadata()
+            self.api.stage_file_for_export(self.current_health_segment)
             self.logger.info("Made it past stop_recording_health_metadata call")
 
             self.api.send_status({
@@ -210,7 +213,7 @@ class Recording():
         self.segment_start_time = time.time()
         
         # Start new health metadata segment
-
+        self._start_next_health_metadata_segment()
 
         # Start new actual recording segment 
         self.api.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
@@ -261,6 +264,7 @@ class Recording():
             self.logger.error(f"Error stopping recording segment monitoring thread: {e}")
             return False
 
+
     """Auto stop after duration"""
     def _auto_stop_recording(self, duration: int):
         self.logger.info(f"Starting thread to stop recording after {duration}s")
@@ -273,8 +277,9 @@ class Recording():
 
 
     """Methods to record health metadata"""
-    def _start_recording_health_metadata(self) -> None:
-        """Start a thread to record health metadata. Will continue until stopped."""
+    def _start_health_metadata_thread(self) -> None:
+        """Start a thread to record health metadata segment. Will continue until stopped."""
+        # Set up thread
         self.health_stop_event.clear() # Clear the stop flag before starting
         self.health_recording_thread = threading.Thread(target=self._record_health_metadata, daemon=True)
         self.health_recording_thread.start()
@@ -282,6 +287,35 @@ class Recording():
             self.logger.error("Failed to start health recording thread")
         else:
             self.logger.info("Health recording thread started")
+
+
+    def _start_new_health_recording(self) -> None:
+        """Start the initial health recording segment"""
+        # Set up filename for initial segment
+        csv_filename = f"{self.current_filename_prefix}_health_metadata_({self.segment_id}).csv"
+        self.current_health_segment = csv_filename
+
+        # Start the thread
+        self._start_health_metadata_thread()
+
+
+    def _start_next_health_metadata_segment(self) -> None:
+        """Start thread to record next health metadata segment."""
+        # Stop recording health metadata
+        self._stop_recording_health_metadata()
+        
+        # Get new filename and stage last file for export
+        self.last_health_segment = self.current_health_segment
+        self.current_health_segment = self._get_health_segment_filename()
+        self.api.stage_file_for_export(self.last_health_segment)
+
+        # Start new thread
+        self._start_health_metadata_thread()
+
+
+    def _get_health_segment_filename(self) -> str:
+        """Return a filename for the current health metadata segment""" 
+        return f"{self.current_filename_prefix}_health_metadata_({self.segment_id}).csv"
 
 
     def _stop_recording_health_metadata(self) -> None:
@@ -302,8 +336,7 @@ class Recording():
     def _record_health_metadata(self):
         """Retrieve health metadata and write to csv tile"""
         interval = self.config.get("health_metadata_recording_interval", 5)
-        csv_filename = f"{self.current_filename_prefix}_health_metadata.csv"
-        self.api.stage_file_for_export(csv_filename)
+        csv_filename = self.current_health_segment 
         fieldnames = list(self.api.get_health().keys())
         with open(csv_filename, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)

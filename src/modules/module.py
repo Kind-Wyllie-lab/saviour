@@ -102,77 +102,19 @@ class Module(ABC):
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
 
-        # Add file handler if none exists
-        if not self.logger.handlers:
-            # Add file handler for persistent logging (useful when running as systemd service)
-            try:
-                # Check if file logging is enabled in config
-                if self.config.get("logging.to_file", True):
-                    # Create logs directory if it doesn't exist
-                    log_dir = self.config.get("logging.directory", "/var/log/habitat")
-                    os.makedirs(log_dir, exist_ok=True)
-                    
-                    # Generate log filename with module info
-                    log_filename = f"{self.module_type}_{self.module_id}.log"
-                    log_filepath = os.path.join(log_dir, log_filename)
-                    
-                    # Get config values for rotation
-                    max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
-                    backup_count = self.config.get("logging.backup_count", 5)
-                    
-                    # Add file handler with rotation
-                    from logging.handlers import RotatingFileHandler
-                    file_handler = RotatingFileHandler(
-                        log_filepath,
-                        maxBytes=max_bytes,
-                        backupCount=backup_count
-                    )
-                    file_handler.setLevel(logging.INFO)
-                    self.logger.addHandler(file_handler)
-                    
-                    self.logger.info(f"File logging enabled: {log_filepath}")
-                    self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
-                else:
-                    self.logger.info("File logging disabled in config")
-                    
-            except Exception as e:
-                # If file logging fails, log the error but don't crash
-                self.logger.warning(f"Failed to setup file logging: {e}")
-                self.logger.info("Continuing with console logging only")
-
-        # Managers
-        self.logger.info(f"Initialising managers")
-        self.logger.info(f"Initialising config manager")
+        # Manager objects
         self.config = Config()
-        self.export = Export(
-            module_id=self.module_id,
-            config=self.config.get_all(),
-        )
-        self.logger.info(f"Initialising communication manager")
-        self.communication = Communication(         # Communication manager - handles ZMQ messaging
-            self.module_id, # Pass in the module ID for use in messages
-            config=self.config # Pass in the config manager for getting properties
-        )
-        self.logger.info(f"Initialising health manager")
-        self.health = Health(
-            config=self.config
-        )
-        self.logger.info(f"Initialising PTP manager")
-        self.ptp = PTP(
-            role=PTPRole.SLAVE)
-        self.recording = Recording(
-            config=self.config
-        )
-        if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
-            self.logger.info(f"Initialising command handler")
-            self.command = Command(config=self.config)
-        
+        self.export = Export(module_id=self.module_id, config=self.config) # Export object - exports to samba share
+        self.communication = Communication(self.module_id, config=self.config) # Communication object - handles ZMQ messaging
+        self.health = Health(config=self.config) # Health object - monitors system health e.g. temperature, resource utilisation, ptp sync
+        self.ptp = PTP(role=PTPRole.SLAVE) # PTP object - initialises ptp sync
+        self.recording = Recording(config=self.config) # Recording object - sets up, maintains and manages recording sessions
+        self.command = Command(config=self.config) # Command object - routes incoming commands
+        self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type) # Network object - registers zeroconf service, discovers controller
+        self.api = ModuleAPI(module=self) # API object - provides internal routing between objects e.g. network and recording
 
-        self.logger.info(f"Initialising network manager")
-
-        self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type)
-
-        self.command_callbacks = { # A registry of commands that the module can respond to
+        # A registry of commands that the module can respond to
+        self.command_callbacks = { 
             'restart_ptp': self.ptp.restart, # Restart PTP services
             'get_health': self.health.get_health,
             'start_recording': self.recording.start_recording,
@@ -185,30 +127,7 @@ class Module(ABC):
             'shutdown': self._shutdown,
         }
 
-
-        # TODO: Replace this with an API object that can get passed through to each object e.g. network, communication
-        self.logger.info(f"Instantiating ModuleAPI")
-        self.api = ModuleAPI(module=self) 
-
-
-
-        self.helper_callbacks = { # Define a set of helper methods that allow modules to gain access to state
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
-            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
-            'send_status': lambda status: self.communication.send_status(status),
-            'handle_command': self.command.handle_command, 
-            'when_controller_discovered': self.when_controller_discovered,
-            'controller_disconnected': self.controller_disconnected,
-            'get_ptp_status': self.ptp.get_status,
-            'get_recording_status': lambda: self.is_recording,
-            'get_streaming_status': lambda: self.is_streaming,
-            "on_module_config_change": self.on_module_config_change,
-            "get_recording_folder": self.recording.recording_folder
-        }
-
-
-
-        # Register helper methods with modules
+        # Register callbacks and api
         self.config.on_module_config_change = self.on_module_config_change
         self.network.api = self.api
         self.health.api = self.api
@@ -250,6 +169,10 @@ class Module(ABC):
         # Track when module started for uptime calculation
         self.start_time = None
 
+        # Log to file if enabled
+        if self.config.get("logging.to_file", True):
+            self.setup_logger_file_handling() 
+
 
     def get_module_name(self) -> str:
         name = self.config.get("module.name")
@@ -257,19 +180,55 @@ class Module(ABC):
             name = self.module_id
         return name
 
+
+    def setup_logger_file_handling(self) -> None:
+        # Add file handler if none exists
+        if not self.logger.handlers:
+            # Add file handler for persistent logging (useful when running as systemd service)
+            try:
+                # Create logs directory if it doesn't exist
+                log_dir = self.config.get("logging.directory", "/var/log/saviour")
+                os.makedirs(log_dir, exist_ok=True)
+                
+                # Generate log filename with module info
+                log_filename = f"{self.module_type}_{self.module_id}.log"
+                log_filepath = os.path.join(log_dir, log_filename)
+                
+                # Get config values for rotation
+                max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
+                backup_count = self.config.get("logging.backup_count", 5)
+                
+                # Add file handler with rotation
+                from logging.handlers import RotatingFileHandler
+                file_handler = RotatingFileHandler(
+                    log_filepath,
+                    maxBytes=max_bytes,
+                    backupCount=backup_count
+                )
+                file_handler.setLevel(logging.INFO)
+                self.logger.addHandler(file_handler)
+                
+                self.logger.info(f"File logging enabled: {log_filepath}")
+                self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+
+            except Exception as e:
+                # If file logging fails, log the error but don't crash
+                self.logger.warning(f"Failed to setup file logging: {e}")
+                self.logger.info("Continuing with console logging only")
+        else:
+            self.logger.info("Logger file handler was not set up as handlers already exist")
+
+
     def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
         self.configure_module(updated_keys)
+
 
     @abstractmethod
     def configure_module(self, updated_keys: Optional[list[str]]):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
-    
-    # @abstractmethod
-    def register_description(self) -> str:
-        """Register a description of the module - to be implemented by subcclasses"""
-        return "No description registered"
+
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -321,6 +280,7 @@ class Module(ABC):
             self.communication.cleanup()
             self.file_transfer = None
             raise
+
 
     def controller_disconnected(self):
         """Callback when controller is disconnected"""
@@ -468,6 +428,7 @@ class Module(ABC):
         
         return True
 
+
     def _wait_for_network_ready(self, check_interval: float = 2.0) -> bool:
         """
         Wait for proper network connectivity with DHCP-assigned IP address.
@@ -517,6 +478,7 @@ class Module(ABC):
             # Wait before next check
             time.sleep(check_interval)
 
+
     def stop(self) -> bool:
         """
         Stop the module.
@@ -565,10 +527,12 @@ class Module(ABC):
         self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
     
+
     def generate_session_id(self, module_id="unknown"):
         """Start a new session for a module"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"REC_{timestamp}_{module_id}" # Generate a new session ID
+
 
     def _shutdown(self): 
         """Shut down the module"""
@@ -582,10 +546,12 @@ class Module(ABC):
         except Exception as e:
             self.logger.error(f"Error during shutdown: {e}")
 
+
     """Config Methods"""
     @command()
     def get_config(self):
         return {"config": self.config.get_all()}
+
 
     @command()
     def set_config(self, config: dict, persist: bool = True) -> bool:
@@ -765,6 +731,7 @@ class Module(ABC):
         mac = self.get_mac_address("eth0")
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
+
 
     def get_mac_address(self, interface="eth0"):
         """Retreive mac address on specified interface, default eth0."""

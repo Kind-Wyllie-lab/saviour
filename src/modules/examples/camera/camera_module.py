@@ -413,7 +413,9 @@ class CameraModule(Module):
             if not timestamp:
                 self.logger.warning("No data returned by frame wall clock")
                 return
-            timestamp = str(datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+            dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+            timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
+            # alt: timestmap = str(dt)
             timestamp = f"{self.api.get_module_name()} {timestamp}"
 
             # Modify main stream - used for recording.

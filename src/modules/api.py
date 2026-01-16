@@ -28,6 +28,10 @@ class ModuleAPI():
     def get_module_id(self) -> str:
         return self.module.module_id
 
+
+    def get_module_name(self) -> str:
+        return self.module.get_module_name()
+
     def get_controller_ip(self) -> str:
         return self.module.network.controller_ip
 

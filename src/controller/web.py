@@ -23,8 +23,11 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from config import Config
 from abc import ABC
+
+
+from src.controller.config import Config
+
 
 class Web(ABC):
     def __init__(self, config: Config):

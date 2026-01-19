@@ -25,7 +25,7 @@ function LivestreamCard({ module }) {
     <>
       <div className="livestream-card">
         <div className="stream-card-header">
-          <h3>{module.id}</h3>
+          <h3>{module.name}</h3>
           <span className="stream-ip">{module.ip}</span>
         </div>
 

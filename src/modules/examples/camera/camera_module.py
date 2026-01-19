@@ -133,7 +133,8 @@ class CameraModule(Module):
             restart_keys = [
                 "camera.fps",
                 "camera.width",
-                "camera.height"
+                "camera.height",
+                "camera.bitrate"
             ]
             self._restarting_stream = False
             for key in updated_keys:

@@ -69,8 +69,17 @@ class Modules:
                 self.logger.info(f"New module {module.id}, adding")
             else:
                 self.logger.info(f"Existing module {module.id}, updating")
-            self.modules[module.id] = module
+            # self.modules[module.id] = module
+            self.add_module(module)
         self.broadcast_updated_modules()
+
+
+    def add_module(self, module: Module):
+        self.modules[module.id] = module
+        if self.modules[module.id].name is None:
+            self.modules[module.id].name = module.id
+        self.logger.info(f"Module {self.modules[module.id].name} added")
+        
     
 
     def _convert_modules_to_dict(self) -> Dict[str, Dict[str, Any]]:
@@ -169,11 +178,11 @@ class Modules:
 
     def update_module_config(self, module_id: str, new_config: Dict):
         """
-        Update configuration settings for existing modules.
+        Update configuration settings for existing modules. Called when a module returns response to get_config command.
 
         Args:
             module_id (str): The module_id which acts as key in self.modules
-            configs (Dict): A dictionary of config values for the module.
+            configs (Dict): Current config values for the module.
         """
         if module_id in self.modules:
             module_entry = self.modules[module_id]
@@ -188,7 +197,22 @@ class Modules:
                 status = ModuleStatus.DEFAULT,
                 config = new_config
             )
+        self._update_module_name(module_id)
         self.broadcast_updated_modules() # Broadcast that module configs have updated
+
+    
+    def _update_module_name(self, module_id: str):
+        """Update module name based on config setting."""
+        name = self.modules[module_id].config['module']['name']
+        # Check if name is valid
+        self.modules[module_id].name = name
+        self.logger.info(f"{module_id} name set to {self.modules[module_id].name}")
+
+    
+    def get_module_name(self, module_id: str):
+        """Return module name for given module_id"""
+
+
         
 
     def update_module_configs(self, configs: Dict):

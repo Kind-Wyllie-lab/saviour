@@ -76,12 +76,9 @@ class Modules:
 
     def add_module(self, module: Module):
         self.modules[module.id] = module
-        if self.modules[module.id].name is None:
-            self.modules[module.id].name = module.id
         self.logger.info(f"Module {self.modules[module.id].name} added")
         
     
-
     def _convert_modules_to_dict(self) -> Dict[str, Dict[str, Any]]:
         """Convert dict of Modules to dict of dicts, using enum values for status."""
         module_dict = {}
@@ -205,13 +202,15 @@ class Modules:
         """Update module name based on config setting."""
         name = self.modules[module_id].config['module']['name']
         # Check if name is valid
-        self.modules[module_id].name = name
-        self.logger.info(f"{module_id} name set to {self.modules[module_id].name}")
-
+        if name == "" or name is None:
+            self.logger.info(f"Bad name received: {name}")
+            self.modules[module_id].name = module_id
+        else:
+            self.modules[module_id].name = name
+        
     
     def get_module_name(self, module_id: str):
         """Return module name for given module_id"""
-
 
         
 

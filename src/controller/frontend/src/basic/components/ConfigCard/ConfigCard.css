@@ -11,7 +11,7 @@
   align-items: center;
   align-items: stretch;   /* <-- make children stretch horizontally */
   align-self: flex-start; /* <-- let card shrink to its content height */
-  box-shadow: 0 0 20px black;
+  /* box-shadow: 0 0 20px black; */
 }
 
 .config-card.collapsed {

@@ -104,7 +104,7 @@ function GenericConfigCard({ id, module }) {
     <div className={`config-card ${collapsed ? "collapsed" : ""}`}>
       <div className="card-header">
         <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
-          {id} {collapsed ? "(+)" : "(-)"}
+          {module.name} {collapsed ? "(+)" : "(-)"}
         </h3>
       </div>
 

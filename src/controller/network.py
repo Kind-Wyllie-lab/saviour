@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 
-from models import Module # Import the dataclass for Modules
+from src.controller.models import Module # Import the dataclass for Modules
 
 class Network():
     def __init__(self, config_manager=None):

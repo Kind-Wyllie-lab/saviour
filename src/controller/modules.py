@@ -24,7 +24,7 @@ import time
 import threading
 from typing import Dict, Any
 from dataclasses import asdict
-from models import Module, ModuleStatus
+from src.controller.models import Module, ModuleStatus
 
 
 class Modules:

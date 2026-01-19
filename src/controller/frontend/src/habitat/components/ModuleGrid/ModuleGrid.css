@@ -1,0 +1,11 @@
+.module-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: flex-start;
+  }
+  
+  .module-grid > * {
+    flex: 1 1 300px; /* adjust card width and responsiveness */
+  }
+  

@@ -60,10 +60,7 @@ class Network:
         # Service registration parameters
         self.service_type = self.config.get("network.zeroconf_service_type", "_module._tcp.local.")
 
-        if self.config.get("module.name"):
-            self.service_name = f"{self.config.get('module.name')}_{self.module_type}_{self.module_id}._module._tcp.local."
-        else:
-            self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
+        self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
         self.service_port = self.config.get("network._zeroconf_port", 5353) if config else 5353
         # Initialize zeroconf
         self.zeroconf = Zeroconf()
@@ -97,6 +94,8 @@ class Network:
                 } # the properties of the service
             )
             
+            self.logger.info(f"Registering {self.service_info}")
+
             # Register the service
             self.zeroconf.register_service(self.service_info)
             

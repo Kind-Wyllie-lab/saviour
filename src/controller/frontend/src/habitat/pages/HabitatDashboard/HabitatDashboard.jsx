@@ -83,14 +83,14 @@ function HabitatDashboard() {
         </div>
 
         {/* right side */}
-        <div className="sidebar-container">
+        {/* <div className="sidebar-container">
           <section>
             <ExperimentMetadata experimentName={experimentName} />
           </section>
           <section>
             <CommandsPanel modules={moduleList} experimentName={experimentName} />
           </section>
-        </div>    
+        </div>     */}
       </div>
     </main>
   );

@@ -1,0 +1,19 @@
+.habitat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    gap: 12px;
+  }
+  
+  .habitat-grid-cell {
+    min-height: 200px;
+  }
+  
+  .empty-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #777;
+    border: 1px dashed #444;
+  }
+  

@@ -3,11 +3,12 @@ import React, { useEffect, useState } from "react";
 import socket from "../../../socket";
 
 // Styling and components
-import "./Dashboard.css";
+import "./HabitatDashboard.css";
 import ModuleCard from "../../components/ModuleCard/ModuleCard";
 import LivestreamCard from "../../components/HabitatLivestreamCard/HabitatLivestreamCard";
 import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
+import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
 
 // Check websocket connection
 socket.on("connect", () => {
@@ -18,7 +19,7 @@ socket.on("disconnect", () => {
   console.log("Disconnected from backend");
 });
 
-function Dashboard() {
+function HabitatDashboard() {
   const [modules, setModules] = useState({}); // Modules object returned from backend
   const [experimentName, setExperimentName] = useState("loading..."); // The experiment name 
 
@@ -89,16 +90,7 @@ function Dashboard() {
             </div>
           </section> */}
           <section>
-            {/* <h2>Camera Streams</h2> */}
-            <div className="livestream-grid">
-              {cameraModules.length > 0 ? (
-                cameraModules.map((cam) => (
-                  <LivestreamCard key={cam.id} module={cam} />
-                ))
-              ) : (
-                <p>No camera modules connected</p>
-              )}
-            </div>
+            <HabitatLivestreamGrid modules={modules} />
           </section>
         </div>
 
@@ -115,4 +107,4 @@ function Dashboard() {
   );
 }
 
-export default Dashboard;
+export default HabitatDashboard;

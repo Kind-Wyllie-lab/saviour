@@ -75,25 +75,14 @@ function HabitatDashboard() {
   return (
     <main className="dashboard">
       <div className="dashboard-wrapper">
+        {/* left side */}
         <div className="dashboard-container">
-          {/* left side */}
-          {/* <section>
-            <h2>Connected Modules</h2>
-            <div className="module-grid">
-              {moduleList.length > 0 ? (
-                moduleList.map((module) => (
-                  <ModuleCard key={module.id} module={module} />
-                ))
-              ) : (
-                <p>No modules connected</p>
-              )}
-            </div>
-          </section> */}
-          <section>
+          <section className="livestream-square">
             <HabitatLivestreamGrid modules={modules} />
           </section>
         </div>
 
+        {/* right side */}
         <div className="sidebar-container">
           <section>
             <ExperimentMetadata experimentName={experimentName} />

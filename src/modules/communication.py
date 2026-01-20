@@ -224,6 +224,7 @@ class Communication:
             # Add timestamp and module ID to status data
             status_data['timestamp'] = time.time()
             status_data['module_id'] = self.module_id
+            status_data['module_name'] = self.api.get_module_name()
             
             # Convert to JSON string
             import json

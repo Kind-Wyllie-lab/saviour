@@ -62,7 +62,10 @@ class CameraModule(Module):
         self.streaming_server_process = None
         self.should_stop_streaming = False  # Add flag for graceful shutdown
         self.register_routes()
-            
+
+        self.latest_frame = None
+        self.frame_lock = threading.Lock()
+
         # Configure camera
         time.sleep(0.1)
         self._configure_camera()
@@ -130,7 +133,8 @@ class CameraModule(Module):
             restart_keys = [
                 "camera.fps",
                 "camera.width",
-                "camera.height"
+                "camera.height",
+                "camera.bitrate"
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -202,6 +206,7 @@ class CameraModule(Module):
 
             # Apply callback
             self.picam2.pre_callback = self._get_and_apply_frame_timestamp
+            self.picam2.post_callback = self._stream_post_callback
             
             # Create encoders with current settings
             bitrate = self.config.get("camera.bitrate", 10000000)
@@ -413,7 +418,10 @@ class CameraModule(Module):
             if not timestamp:
                 self.logger.warning("No data returned by frame wall clock")
                 return
-            timestamp = str(datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+            dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+            timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
+            # alt: timestmap = str(dt)
+            timestamp = f"{self.api.get_module_name()} {timestamp}"
 
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
@@ -517,11 +525,26 @@ class CameraModule(Module):
             return False
 
 
+    def _stream_post_callback(self, request):
+        try:
+            frame = request.make_array("lores")
+
+            ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if not ret:
+                return
+            
+            with self.frame_lock:
+                self.latest_frame = jpeg.tobytes()            
+        
+        except Exception as e:
+            self.logger.error(f"Capture error: {e}")
+
+
     def run_streaming_server(self, port=8080):
         """Run the flask server to stream upon"""
         try:
             from werkzeug.serving import make_server
-            self.streaming_server = make_server('0.0.0.0', port, self.streaming_app)
+            self.streaming_server = make_server('0.0.0.0', port, self.streaming_app, threaded=True)
             self.logger.info(f"Starting Flask server on port {port}")
             self.streaming_server.serve_forever()
         except Exception as e:
@@ -532,35 +555,22 @@ class CameraModule(Module):
 
     def generate_streaming_frames(self):
         """Generate streaming frames for MJPEG stream"""
-        import time
-        self.logger.info("Starting to generate streaming frames")
-
         while not self.should_stop_streaming:
-            try:
-                self.logger.debug("Capturing frame...")
-                # Add a timeout for capture_array if possible, or break after N seconds
-                start_time = time.time()
-                frame = None
-                while frame is None and (time.time() - start_time) < 2.0:
-                    try:
-                        frame = self.picam2.capture_array("lores")
-                    except Exception as e:
-                        self.logger.error(f"Error capturing frame: {e}")
-                        time.sleep(0.1)
-                if frame is None:
-                    self.logger.error("Timeout waiting for frame")
-                    break
-                ret, jpeg = cv2.imencode('.jpg', frame)
-                if not ret:
-                    self.logger.warning("JPEG encoding failed")
-                    continue
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
-            except Exception as e:
-                self.logger.error(f"Error generating streaming frame: {e}")
-                time.sleep(0.1)
-        self.logger.info("Stopped generating streaming frames")
+            with self.frame_lock:
+                frame = self.latest_frame
 
+            if frame is None:
+                time.sleep(0.01)
+                continue
+            
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                frame +
+                b"\r\n"
+            )
+
+            time.sleep(0.04)
 
     def register_routes(self):
         """Register Flask routes"""
@@ -568,10 +578,13 @@ class CameraModule(Module):
         def index():
             return "Camera Streaming Server"
             
+
         @self.streaming_app.route('/video_feed')
         def video_feed():
-            return Response(self.generate_streaming_frames(),
-                          mimetype='multipart/x-mixed-replace; boundary=frame')
+            return Response(
+                self.generate_streaming_frames(),
+                mimetype='multipart/x-mixed-replace; boundary=frame'
+            )
 
                           
         @self.streaming_app.route('/shutdown')

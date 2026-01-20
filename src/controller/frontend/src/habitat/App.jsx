@@ -2,7 +2,7 @@
 import './App.css';
 import React,  { useEffect, useState } from "react";
 
-import Header from "./components/Header/Header";
+import HabitatHeader from "./components/HabitatHeader/HabitatHeader";
 import { Routes, Route } from "react-router-dom";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import Settings from "./pages/Settings/Settings";
@@ -33,7 +33,7 @@ function App() {
 
   return (
     <div>
-      <Header />
+      <HabitatHeader />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />

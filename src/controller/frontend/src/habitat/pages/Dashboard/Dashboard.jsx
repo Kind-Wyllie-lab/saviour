@@ -5,7 +5,7 @@ import socket from "../../../socket";
 // Styling and components
 import "./Dashboard.css";
 import ModuleCard from "../../components/ModuleCard/ModuleCard";
-import LivestreamCard from "../../components/LivestreamCard/LivestreamCard";
+import LivestreamCard from "../../components/HabitatLivestreamCard/HabitatLivestreamCard";
 import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
 
@@ -76,7 +76,7 @@ function Dashboard() {
       <div className="dashboard-wrapper">
         <div className="dashboard-container">
           {/* left side */}
-          <section>
+          {/* <section>
             <h2>Connected Modules</h2>
             <div className="module-grid">
               {moduleList.length > 0 ? (
@@ -87,9 +87,9 @@ function Dashboard() {
                 <p>No modules connected</p>
               )}
             </div>
-          </section>
+          </section> */}
           <section>
-            <h2>Camera Streams</h2>
+            {/* <h2>Camera Streams</h2> */}
             <div className="livestream-grid">
               {cameraModules.length > 0 ? (
                 cameraModules.map((cam) => (

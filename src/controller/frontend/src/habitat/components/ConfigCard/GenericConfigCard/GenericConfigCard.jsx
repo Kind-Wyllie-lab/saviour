@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 // import './ConfigCard.css';
-import LivestreamCard from "../../LivestreamCard/LivestreamCard";
+import LivestreamCard from "../../HabitatLivestreamCard/HabitatLivestreamCard";
 
 function GenericConfigCard({ id, module }) {
   const [formData, setFormData] = useState(module.config); // Component level config state

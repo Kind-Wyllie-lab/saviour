@@ -20,78 +20,16 @@ from typing import Dict, Any, Optional, Union
 
 class Config:
     """Manages configuration for the habitat controller system"""
-    
-    # Default configuration values
-    DEFAULT_CONFIG = {
-        "controller": {
-            "max_buffer_size": 2000,
-            "manual_control": True,
-            "print_received_data": False,
-            "cli_commands": ["help", 
-            "quit", 
-            "list",
-            "zmq send", 
-            "health status", 
-            "health history"],
-            "zmq_commands": ["get_status",
-            "start_recording",
-            "stop_recording",
-            "export_recordings",
-            "update_settings",
-            "list_recordings",
-            "clear_recordings"
-        ]},
-        "zeroconf": {
-            "port": 5353,
-            "service_type": "_controller._tcp.local.",
-            "service_name": "controller._controller._tcp.local."
-        },
-        "zmq": {
-            "cmd_port": 5555,
-            "status_port": 5556,
-            "host": "0.0.0.0"
-        },
-        "health_monitor": {
-            "heartbeat_interval": 30,
-            "heartbeat_timeout": 90 
-        },
-        "data_export": {
-            "export_interval": 15,
-            "health_export_interval": 30
-        },
-        "database": {
-            "url": "",
-            "key": ""
-        },
-        "logging": {
-            "level": "INFO",
-            "format": "%(levelname)s - %(name)s - %(message)s",
-            "directory": "var/log/habitat",
-            "max_file_size_mb": 10,
-            "backup_count": 5
-        },
-        "interface": {
-            "web_interface_port": 5000
-        }
-    } 
-
-    
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {
-        "SUPABASE_URL": "database.url",
-        "SUPABASE_KEY": "database.key",
-        "NAS_IP": "nas.ip",
-        "NAS_SHARE_PATH": "nas.share_path",
-        "NAS_USERNAME": "nas.username",
-        "NAS_PASSWORD": "nas.password",
-        "NAS_LOCAL_MOUNT": "nas.local_mount",
-        "CONTROLLER_PORT": "service.port",
-        "CONTROLLER_MAX_BUFFER_SIZE": "controller.max_buffer_size",
-        "CONTROLLER_MANUAL_CONTROL": "controller.manual_control",
-        "CONTROLLER_LOG_LEVEL": "logging.level",
+
     }
     
-    def __init__(self, config_file_path: Optional[str] = None):
+    def __init__(
+        self, 
+        base_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/base_config.json",
+        active_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/active_config.json"
+    ):
         """
         Initialize the configuration manager
         

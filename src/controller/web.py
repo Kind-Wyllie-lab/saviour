@@ -364,6 +364,18 @@ class Web(ABC):
             else:
                 self.logger.error("No 'send command' callback registered")
 
+
+        """Controller Level Config"""
+        @self.socketio.on('get_controller_config')
+        def handle_get_controller_config(data=None):
+            self.logger.info("Received request for controller config")
+            config = self.config.get_all()
+            self.socketio.emit("controller_config_response", {
+                "config": config
+            })
+
+
+        """Viewing exported recordings on the share"""
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():
             """Handle request for exported recordings"""
@@ -428,6 +440,9 @@ class Web(ABC):
         def handle_remove_module(module):
             self.logger.info(f"Received request to remove module: {module['id']}")
             self.callbacks["remove_module"](module['id'])
+
+
+        
 
 
     def update_modules(self, modules: list):

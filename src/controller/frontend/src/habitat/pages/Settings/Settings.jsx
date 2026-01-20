@@ -9,7 +9,6 @@ function Settings() {
   const [selectedId, setSelectedId] = useState("controller");
 
   useEffect(() => {
-    socket.emit("get_module_configs");
     socket.emit("get_modules");
 
     socket.on("modules_update", (data) => {

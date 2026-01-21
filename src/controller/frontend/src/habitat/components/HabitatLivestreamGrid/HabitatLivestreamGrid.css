@@ -6,6 +6,9 @@
     grid-template-columns: repeat(4, 1fr);
     grid-template-rows: repeat(4, 1fr);
     
+    box-sizing: border-box;
+    padding: 8px; 
+
     gap: 0; /* no seams */
     overflow: hidden;
   }
@@ -13,8 +16,8 @@
   .habitat-grid-cell {
     min-height: 0;
     min-width: 0;
+    box-sizing: border-box;
   }
-  
   
   .empty-cell {
     display: flex;
@@ -22,5 +25,8 @@
     justify-content: center;
     color: #777;
     border: 1px dashed #444;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
   }
   

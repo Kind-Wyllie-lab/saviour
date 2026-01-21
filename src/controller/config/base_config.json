@@ -2,21 +2,8 @@
     "controller": {
         "max_buffer_size": 2000,
         "manual_control": true,
-        "print_received_data": false,
-        "cli_commands": ["help", 
-        "quit", 
-        "list",
-        "zmq send", 
-        "health status", 
-        "health history"],
-        "zmq_commands": ["get_status",
-        "start_recording",
-        "stop_recording",
-        "export_recordings",
-        "update_settings",
-        "list_recordings",
-        "clear_recordings"
-    ]},
+        "print_received_data": false
+    },
     "zeroconf": {
         "port": 5353,
         "service_type": "_controller._tcp.local.",

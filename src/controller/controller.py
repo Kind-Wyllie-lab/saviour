@@ -61,7 +61,7 @@ class Controller(ABC):
     """
     Base class for SAVIOUR controller devices.
     """
-    def __init__(self, config_file_path: str = None):
+    def __init__(self):
         """Initialize the controller with default values
 
         Instantiates the following:
@@ -73,9 +73,6 @@ class Controller(ABC):
         - A buffer manager, which initially sets the max buffer size
         - A web manager, which hosts a flask based webapp GUI
         - A health monitor, which then has it's start monitoring method called to start a thread to monitor the health of the modules
-
-        Args:
-            config_file_path: Path to the config file
         """
 
         # Setup logging
@@ -83,7 +80,7 @@ class Controller(ABC):
         self.logger.info(f"Initializing managers")
 
         # Initialize config manager
-        self.config = Config(config_file_path)
+        self.config = Config()
 
         # Add logging file handler if none exists
         if not self.logger.handlers:
@@ -507,7 +504,7 @@ class Controller(ABC):
 
 
 if __name__ == "__main__":
-    controller = Controller(config_file_path="config.json")
+    controller = Controller()
     try:
         # Start the main loop
         controller.start()

@@ -21,9 +21,9 @@ import time
 from src.controller.models import Module # Import the dataclass for Modules
 
 class Network():
-    def __init__(self, config_manager=None):
+    def __init__(self, config=None):
         self.logger = logging.getLogger(__name__)
-        self.config_manager = config_manager
+        self.config = config
 
         # Module tracking
         self.discovered_modules = []
@@ -40,15 +40,9 @@ class Network():
 
         self.logger.info(f"Controller IP address: {self.ip}")
         
-        # Get service configuration from config manager if available
-        self.service_port = 5353 # Default value
-        self.service_type = "_controller._tcp.local."  # Use standard service type format
-        self.service_name = f"controller_{socket.gethostname()}._controller._tcp.local."
-        
-        if self.config_manager:
-            self.service_port = self.config_manager.get("zeroconf.port", self.service_port)
-            self.service_type = self.config_manager.get("zeroconf.service_type", self.service_type)
-            self.service_name = self.config_manager.get("zeroconf.service_name", self.service_name)
+        self.service_port = self.config.get("zeroconf.port", 5353)
+        self.service_type = self.config.get("zeroconf.service_type", "_controller._tcp.local.")
+        self.service_name = self.config.get("zeroconf.service_name", f"controller_{socket.gethostname()}._controller._tcp.local.")
 
         # Initialize zeroconf but don't register service yet
         self.zeroconf = Zeroconf()

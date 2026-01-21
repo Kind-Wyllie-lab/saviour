@@ -61,7 +61,7 @@ class Network:
         self.service_type = self.config.get("network.zeroconf_service_type", "_module._tcp.local.")
 
         self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
-        self.service_port = self.config.get("network._zeroconf_port", 5353) if config else 5353
+        self.service_port = self.config.get("network._zeroconf_port", 5353)
         # Initialize zeroconf
         self.zeroconf = Zeroconf()
 

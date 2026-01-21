@@ -57,12 +57,14 @@ class Config:
         self._apply_env_override()
         self.logger.info(f"Module config loaded - {len(self.config)} parameters")
 
+
     def _apply_env_override(self):
         """Override config values using environment variables"""
         for env_var, config_key in self.ENV_CONFIG_MAPPING.items():
             if env_var in os.environ:
                 value = os.environ[env_var]
                 self._set_nested(config_key, value)
+
 
     def _set_nested(self, dotted_key, value):
         """Set a nested config value given a dotted key like 'a.b.c'."""
@@ -71,6 +73,7 @@ class Config:
         for k in keys[:-1]:
             d = d.setdefault(k, {})
         d[keys[-1]] = value
+
 
     def load_module_config(self, module_config_path: str) -> None:
         """
@@ -106,6 +109,7 @@ class Config:
         # Persist active config after merging defaults
         self.save_active()
 
+
     def _flatten_keys(self, config: Dict[str, Any], parent_key=""):
         """Return a set of all nested keys in dotted notation"""
         keys = set()
@@ -117,6 +121,7 @@ class Config:
                 keys.add(full_key)
         return keys
     
+
     def _load_json(self, path: str) -> Dict[str, Any]:
         try:
             with open(path, "r") as f:
@@ -124,6 +129,7 @@ class Config:
         except Exception as e:
             self.logger.error(f"Failed to load {path}: {e}")
             return {}
+
 
     def _merge_defaults(self, target: Dict[str, Any], defaults: Dict[str, Any]) -> None:
         """
@@ -140,6 +146,7 @@ class Config:
                     self._merge_defaults(target[key], val)
                 # Otherwise target has a value, do not overwrite
 
+
     def _merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
         """Recursive merge - override values in base with override."""
         for key, val in override.items():
@@ -153,6 +160,7 @@ class Config:
             # If current value is not dict, override base value with new val
             else:
                 base[key] = val
+
 
     def reset_to_defaults(self, module_config_path: Optional[str] = None) -> None:
         """
@@ -173,7 +181,6 @@ class Config:
             self._merge_dicts(self.config, module_config)
         self.save_active()
  
-
     
     def _check_if_module_config_updated(self, key_path: str) -> bool:
         """
@@ -188,6 +195,7 @@ class Config:
         else:
             return False
 
+
     def save_active(self) -> None:
         """
         Save the aggregated config to active_config.json
@@ -196,6 +204,7 @@ class Config:
         with open(self.active_config_path, "w") as f:
             json.dump(self.config, f, indent=4)
         self.logger.info(f"Saved active config to {self.active_config_path}")
+
 
     """Get and Set methods"""
     def get(self, key: str, default: Any = None) -> Any:
@@ -222,6 +231,7 @@ class Config:
             self.logger.warning(f"config.get() returning None for {key}")
         return config
     
+    
     def set(self, key_path: str, value: Any, persist: bool = True) -> bool:
         """Set value unless key is private (starts with underscore)."""
         parts = key_path.split('.')
@@ -244,6 +254,7 @@ class Config:
         if persist:
             self.save_active()
         return True
+        
 
     def get_all(self) -> Dict[str, Any]:
         """
@@ -253,6 +264,7 @@ class Config:
             Dictionary containing the entire configuration
         """
         return self.config.copy()
+    
     
     def set_all(self, updates: dict, persist: bool = False) -> None:
         """

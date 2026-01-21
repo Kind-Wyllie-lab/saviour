@@ -2,7 +2,7 @@
 import './App.css';
 import React,  { useEffect, useState } from "react";
 
-import HabitatHeader from "./components/HabitatHeader/HabitatHeader";
+import HabitatSidebar from "./components/HabitatSidebar/HabitatSidebar";
 import { Routes, Route } from "react-router-dom";
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Settings from "./pages/Settings/Settings";
@@ -32,13 +32,15 @@ function App() {
   }, [darkMode]);
 
   return (
-    <div>
-      <HabitatHeader />
-      <Routes>
-        <Route path="/" element={<HabitatDashboard />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/debug" element={<Debug />} />
-      </Routes>
+    <div className="app">
+      <HabitatSidebar />
+      <div className="content">
+        <Routes>
+          <Route path="/" element={<HabitatDashboard />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/debug" element={<Debug />} />
+        </Routes>
+      </div>
     </div>
   );
 }

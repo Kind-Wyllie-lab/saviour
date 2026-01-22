@@ -1,39 +1,40 @@
 {
     "controller": {
-        "max_buffer_size": 2000,
-        "manual_control": true,
-        "print_received_data": false
+        "_max_buffer_size": 2000,
+        "_manual_control": true,
+        "_print_received_data": false,
+        "name": ""
     },
     "zeroconf": {
-        "port": 5353,
-        "service_type": "_controller._tcp.local.",
-        "service_name": "controller._controller._tcp.local."
+        "_port": 5353,
+        "_service_type": "_controller._tcp.local.",
+        "_service_name": "controller._controller._tcp.local."
     },
     "zmq": {
-        "cmd_port": 5555,
-        "status_port": 5556,
-        "host": "0.0.0.0"
+        "_cmd_port": 5555,
+        "_status_port": 5556,
+        "_host": "0.0.0.0"
     },
     "health_monitor": {
-        "heartbeat_interval": 30,
-        "heartbeat_timeout": 60 
+        "_heartbeat_interval": 30,
+        "_heartbeat_timeout": 60 
     },
     "data_export": {
-        "export_interval": 15,
-        "health_export_interval": 30
+        "_export_interval": 15,
+        "_health_export_interval": 30
     },
     "database": {
         "url": "",
         "key": ""
     },
     "logging": {
-        "level": "INFO",
-        "format": "%(levelname)s - %(name)s - %(message)s",
-        "directory": "var/log/habitat"
+        "_level": "INFO",
+        "_format": "%(levelname)s - %(name)s - %(message)s",
+        "_directory": "var/log/habitat"
     },
     "interface": {
-        "cli": false,
-        "web_interface": true,
-        "web_interface_port": 5000
+        "_cli": false,
+        "_web_interface": true,
+        "_web_interface_port": 5000
     }
 } 

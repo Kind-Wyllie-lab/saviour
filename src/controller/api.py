@@ -25,5 +25,15 @@ class ControllerAPI():
 
     
     """Getter Methods"""
-    
+    def get_controller_config(self) -> dict:
+        return self.controller.config.get_all()
+
+    """Set config"""
+    def set_config(self, new_config: dict) -> bool:
+        self.controller.config.set_all(new_config)
+        updated_config = self.controller.config.get_all()
+        if new_config != updated_config:
+            return False
+        else: 
+            return True
 

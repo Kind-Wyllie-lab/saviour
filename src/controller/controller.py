@@ -22,7 +22,7 @@ import time
 import datetime
 import logging # for logging and debugging
 from dataclasses import dataclass # to define Module dataclass
-from typing import List, Dict, Any # for type hinting
+from typing import List, Dict, Any, Optional # for type hinting
 import asyncio # for asyncio
 from abc import ABC, abstractmethod
 
@@ -55,7 +55,8 @@ from src.controller.config import Config
 from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
 from src.controller.modules import Modules
-    
+from src.controller.api import ControllerAPI
+
 # Habitat Controller Class
 class Controller(ABC):
     """
@@ -127,9 +128,7 @@ class Controller(ABC):
         self.network = Network(self.config) 
         self.network.on_module_discovered = self.on_module_discovered
         self.network.on_module_removed = self.on_module_removed              
-
         self.logger.info(f"Module discovery callback registered early")
-        
         self.communication = Communication(
             status_callback=self.handle_status_update,
         )
@@ -137,7 +136,6 @@ class Controller(ABC):
         # self.database = database.ControllerDatabaseManager(self.config)
         self.ptp = PTP(role=PTPRole.MASTER)
         self.web = Web(self.config)
-
         # Initialize health monitor with configuration
         heartbeat_interval = self.config.get("health_monitor.heartbeat_interval")
         heartbeat_timeout = self.config.get("health_monitor.heartbeat_timeout")
@@ -145,8 +143,16 @@ class Controller(ABC):
             heartbeat_interval=heartbeat_interval,
             heartbeat_timeout=heartbeat_timeout
         )
-
         self.modules = Modules()
+        self.api = ControllerAPI(self)
+
+        # Register callbacks and API
+        self.network.api = self.api
+        self.health.api = self.api
+        self.communication.api = self.api
+        self.web.api = self.api
+        self.config.on_controller_config_change = self.on_controller_config_change
+
 
         # Start health monitoring
         self.logger.info("Starting health monitoring thread")
@@ -155,6 +161,17 @@ class Controller(ABC):
         # Register callbacks
         self.register_callbacks()
     
+
+    def on_controller_config_change(self, updated_keys: Optional[list[str]]) -> None:
+        self.logger.info(f"Received notification that controller config changed, calling configure_controller() with keys {updated_keys}")
+        self.configure_controller(updated_keys)
+
+
+    @abstractmethod
+    def configure_controller(self, updated_keys: Optional[list[str]]):
+        """Gets called when controller specific configuration changes - allows controllers to update their specific settings when they change"""
+        self.logger.warning("No implementation provided for abstract method configure_controller")
+
 
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""

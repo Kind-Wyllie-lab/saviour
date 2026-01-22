@@ -375,6 +375,15 @@ class Web(ABC):
             })
 
 
+        @self.socketio.on('save_controller_config')
+        def handle_save_controller_config(data):
+            self.logger.info("Saving controller config")
+            self.api.set_config(data.get("config", {}))
+            self.socketio.emit("controller_config_response", {
+                "config": self.api.get_controller_config()
+            })
+
+
         """Viewing exported recordings on the share"""
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():

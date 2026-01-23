@@ -7,6 +7,10 @@ import { Routes, Route } from "react-router-dom";
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Settings from "./pages/Settings/Settings";
 import Debug from "./pages/Debug/Debug";
+import Monitor from "./pages/Monitor/Monitor";
+import Recording from './pages/Recording/Recording';
+
+document.title="Habitat GUI";
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);
@@ -38,6 +42,8 @@ function App() {
         <Routes>
           <Route path="/" element={<HabitatDashboard />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/monitor" element={<Monitor />} />
+          <Route path="/recording" element={<Recording />} />
           <Route path="/debug" element={<Debug />} />
         </Routes>
       </div>

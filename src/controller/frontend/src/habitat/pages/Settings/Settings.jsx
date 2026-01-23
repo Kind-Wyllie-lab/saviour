@@ -1,40 +1,16 @@
 import React, { useEffect, useState } from "react";
-import socket from "../../../socket";
 import "./Settings.css";
+import socket from "../../../socket";
+import useModules from "/src/hooks/useModules";
+
+
 import ConfigCard from "../../components/ConfigCard/ConfigCard";
 import ControllerConfigCard from "../../components/ConfigCard/ControllerConfigCard/ControllerConfigCard";
 
+
 function Settings() {
-  const [modules, setModules] = useState({});
+  const { modules } = useModules();
   const [selectedId, setSelectedId] = useState("controller");
-
-  useEffect(() => {
-    socket.emit("get_modules");
-
-    socket.on("modules_update", (data) => {
-      if (!data || typeof data !== "object") return;
-
-      const withDefaults = Object.fromEntries(
-        Object.entries(data).map(([id, m]) => [
-          id,
-          {
-            ...m,
-            id,
-            config: m.config || {},
-            ready: false,
-            checks: {},
-            error: null,
-          },
-        ])
-      );
-
-      setModules(withDefaults);
-    });
-
-    return () => {
-      socket.off("modules_update");
-    };
-  }, []);
 
   const moduleOptions = [
     { id: "controller", name: "Controller" },

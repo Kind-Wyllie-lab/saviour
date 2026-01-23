@@ -20,7 +20,9 @@ function HabitatSidebar() {
                 <nav className="main-nav">
                     <NavLink to="/" className="nav-link">Dashboard</NavLink>
                     <NavLink to="/settings" className="nav-link">Settings</NavLink>
-                    <NavLink to="/debug" className="nav-link">Debug</NavLink>
+                    <NavLink to="/monitor" className="nav-link">Monitor</NavLink>
+                    <NavLink to="/recording" className="nav-link">Recording</NavLink>
+                    {/* <NavLink to="/debug" className="nav-link">Debug</NavLink> */}
                 </nav>
             </div>
             <div className="footer">

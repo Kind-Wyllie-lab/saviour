@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCard";
 import "./HabitatLivestreamGrid.css";
 
+const STREAM_REFRESH_MS = 60 * 1000; // 1 minute in ms
+
 const COLUMNS = ["A", "B", "C", "D"];
 const ROWS = [1, 2, 3, 4];
 
@@ -32,9 +34,9 @@ function getSelectionRect(start, end) {
 
 
 function HabitatLivestreamGrid({ modules }) {
+  // Making selection of subset of cells
   const [startCell, setStartCell] = useState("");
   const [endCell, setEndCell] = useState("");
-
   const selectionRect = getSelectionRect(startCell, endCell);
 
   const visibleCols = selectionRect
@@ -58,6 +60,17 @@ function HabitatLivestreamGrid({ modules }) {
     }, {});
   }, [modules]);
 
+  // Refresh streams
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRefreshKey(k => k + 1);
+    }, STREAM_REFRESH_MS);
+
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="habitat-grid-wrapper">
       {/* Grid */}
@@ -76,7 +89,7 @@ function HabitatLivestreamGrid({ modules }) {
             return (
               <div key={cell} className="habitat-grid-cell">
                 {module ? (
-                  <HabitatLivestreamCard module={module} />
+                  <HabitatLivestreamCard key={`${cell}-${refreshKey}`} module={module} />
                 ) : (
                   <div className="empty-cell">{cell}</div>
                 )}
@@ -88,6 +101,7 @@ function HabitatLivestreamGrid({ modules }) {
       {/* Controls */}
       <div className="habitat-grid-controls">
         <h3>Zoom Controls</h3>
+        <button onClick={() => setRefreshKey(k => k + 1)}>Refresh Streams</button>
         <label>
           Start
           <select

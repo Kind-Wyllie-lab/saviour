@@ -1,0 +1,28 @@
+.fullscreen-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;   /* full width */
+    height: 100vh;  /* full height */
+    display: flex;
+    /* justify-content: center; */
+    /* align-items: center; */
+    background-color: black;
+    z-index: 9999; /* Put it ontop of everything else */
+}
+  
+.monitor-left {
+    flex: 1;
+    height: 100%;
+}
+
+.monitor-right {
+    flex: 3;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}

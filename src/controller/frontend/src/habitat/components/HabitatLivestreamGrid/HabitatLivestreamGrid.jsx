@@ -100,10 +100,10 @@ function HabitatLivestreamGrid({ modules }) {
       </div>
       {/* Controls */}
       <div className="habitat-grid-controls">
-        <h3>Zoom Controls</h3>
+        <h3>Stream Controls</h3>
         <button onClick={() => setRefreshKey(k => k + 1)}>Refresh Streams</button>
         <label>
-          Start
+          Start from
           <select
             value={startCell}
             onChange={e => setStartCell(e.target.value)}
@@ -115,8 +115,8 @@ function HabitatLivestreamGrid({ modules }) {
           </select>
         </label>
 
-        <label>
-          End
+        <label> 
+          End at
           <select
             value={endCell}
             onChange={e => setEndCell(e.target.value)}

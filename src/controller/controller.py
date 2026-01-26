@@ -143,6 +143,7 @@ class Controller(ABC):
         self.health.api = self.api
         self.communication.api = self.api
         self.web.api = self.api
+        self.modules.api = self.api
         self.config.on_controller_config_change = self.on_controller_config_change
 
 
@@ -150,9 +151,6 @@ class Controller(ABC):
         self.logger.info("Starting health monitoring thread")
         self.health.start_monitoring()
 
-        # Register callbacks
-        self.register_callbacks()
-    
 
     def on_controller_config_change(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that controller config changed, calling configure_controller() with keys {updated_keys}")
@@ -163,22 +161,6 @@ class Controller(ABC):
     def configure_controller(self, updated_keys: Optional[list[str]]):
         """Gets called when controller specific configuration changes - allows controllers to update their specific settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_controller")
-
-
-    def register_callbacks(self):
-        """Register callbacks for getting data from other managers"""
-        self.logger.info("Registering callbacks")
-
-        # Register status change callback with health monitor
-        self.health.set_callbacks({
-            "on_status_change": self.on_module_status_change,
-            "send_command": self.communication.send_command
-        })
-
-        self.network.notify_module_update = self.network_notify_module_update
-        self.network.notify_module_id_change = self.network_notify_module_id_change
-
-        self.modules.push_module_update_to_frontend = self.web.push_module_update
     
 
     def _remove_module(self, module_id: str):

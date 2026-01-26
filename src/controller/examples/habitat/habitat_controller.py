@@ -31,8 +31,6 @@ class HabitatController(Controller):
 
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
 
-        self.register_callbacks() # If reinstantiating web object make sure to re-register callbacks
-
 
     def configure_controller(self, updated_keys: Optional[list[str]]):
         pass

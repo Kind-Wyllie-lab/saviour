@@ -30,10 +30,6 @@ class ControllerAPI():
         return self.controller._get_modules_for_frontend()
 
 
-    def send_command(self, module_id: str, command: str, params: Dict) -> None:
-        self.controller.communication.send_command(module_id, command, params)
-
-
     def get_module_health(self, module_id: Optional[str] = None):
         return self.controller.health.get_module_health(module_id)
 
@@ -50,10 +46,6 @@ class ControllerAPI():
         return self.controller.get_samba_info()
 
 
-    def remove_module(self, module_id: str):
-        self.controller._remove_module(module_id)
-
-
     def get_config(self) -> dict:
         return self.controller.config.get_all()
 
@@ -67,18 +59,35 @@ class ControllerAPI():
         }
 
 
+    """Utilities"""
+    def remove_module(self, module_id: str):
+        self.controller._remove_module(module_id)
 
+
+    def send_command(self, module_id: str, command: str, params: Dict) -> None:
+        self.controller.communication.send_command(module_id, command, params)
             
-        # Register status change callback with health monitor
-        self.health.set_callbacks({
-            "on_status_change": self.on_module_status_change,
-            "send_command": self.communication.send_command
-        })
 
-        self.network.notify_module_update = self.network_notify_module_update
-        self.network.notify_module_id_change = self.network_notify_module_id_change
+    """Callbacks"""
+    def on_status_change(self, module_id: str, status: str):
+        self.controller.on_module_status_change(module_id, status)
 
-        self.modules.push_module_update_to_frontend = self.web.push_module_update
+
+    def notify_module_update(self, discovered_modules: dict):
+        self.controller.network_notify_module_update(discovered_modules)
+
+
+    def notify_module_id_change(self, old_id: str, new_id: str):
+        self.controller.network_notify_module_id_change(old_id, new_id)
+
+
+    def notify_module_ip_change(self, id: str, new_ip: str):
+        pass
+
+
+    def push_module_update_to_frontend(self, modules: dict):
+        self.controller.web.push_module_update(modules)
+
 
     """Set config"""
     def set_config(self, new_config: dict) -> bool:

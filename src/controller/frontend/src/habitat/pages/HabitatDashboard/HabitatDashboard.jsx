@@ -9,6 +9,7 @@ import LivestreamCard from "../../components/HabitatLivestreamCard/HabitatLivest
 import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
 import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
+import Dashboard from "../../components/Dashboard/Dashboard";
 
 // Check websocket connection
 socket.on("connect", () => {
@@ -74,9 +75,14 @@ function HabitatDashboard() {
 
   return (
     <main className="dashboard">
+      <section className="dashboard-left">
+        <Dashboard modules={modules} />
+      </section>
 
-      <section className="livestream-square">
-        <HabitatLivestreamGrid modules={modules} />
+      <section className="dashboard-right">
+        <div className="livestream-square">
+          <HabitatLivestreamGrid modules={modules} />
+        </div>
       </section>
 
     </main>

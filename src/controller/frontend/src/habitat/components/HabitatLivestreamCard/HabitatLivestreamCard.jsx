@@ -9,6 +9,13 @@ function HabitatLivestreamCard({ module }) {
     <>
       <div className="livestream-card">
         <div className="stream-video">
+          {module.status === "RECORDING" && (
+            <div
+              className="recording-indicator"
+              title="Recording"
+            />
+          )}
+          
           <img
             src={`http://${module.ip}:8080/video_feed`}
             alt={`Stream for ${module.name}`}

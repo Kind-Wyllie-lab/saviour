@@ -50,7 +50,6 @@ import threading # for concurrent operations
 from src.controller.network import Network
 from src.controller.communication import Communication
 from src.controller.health import Health
-from src.controller.buffer import Buffer
 from src.controller.config import Config
 from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
@@ -71,7 +70,6 @@ class Controller(ABC):
         - A network manager, which initially registers a zeroconf network and (passively, as part of zeroconf object) starts a thread to browse for module networks
         - A communication manager, which initially starts a thread to listen for status and data updates from modules
         - A PTP manager, which initally defines the ptp4l and phc2sys arguments based on the role of the controller and will later start a thread
-        - A buffer manager, which initially sets the max buffer size
         - A web manager, which hosts a flask based webapp GUI
         - A health monitor, which then has it's start monitoring method called to start a thread to monitor the health of the modules
         """
@@ -116,10 +114,6 @@ class Controller(ABC):
                 # If file logging fails, log the error but don't crash
                 self.logger.warning(f"Failed to setup file logging: {e}")
                 self.logger.info("Continuing with console logging only")
-            
-
-        # Module state managemenet
-        self.max_buffer_size = self.config.get("controller.max_buffer_size")
         
         # Control flags 
         self.is_running = True  # Add flag for listener thread
@@ -132,8 +126,6 @@ class Controller(ABC):
         self.communication = Communication(
             status_callback=self.handle_status_update,
         )
-        self.buffer = Buffer(self.max_buffer_size)
-        # self.database = database.ControllerDatabaseManager(self.config)
         self.ptp = PTP(role=PTPRole.MASTER)
         self.web = Web(self.config)
         # Initialize health monitor with configuration
@@ -176,19 +168,7 @@ class Controller(ABC):
     def register_callbacks(self):
         """Register callbacks for getting data from other managers"""
         self.logger.info("Registering callbacks")
-        # Web interface
-        self.web.register_callbacks({
-            "get_modules": self._get_modules_for_frontend,
-            "get_ptp_history": self.buffer.get_ptp_history,
-            "send_command": self.communication.send_command,
-            "get_module_health": self.health.get_module_health,
-            "get_discovered_modules": self.network.get_modules,
-            "get_config": lambda: self.config.config,
-            "get_module_configs": self.get_module_configs,
-            "get_samba_info": self.get_samba_info,
-            "remove_module": self._remove_module,
-        })
-            
+
         # Register status change callback with health monitor
         self.health.set_callbacks({
             "on_status_change": self.on_module_status_change,
@@ -249,9 +229,6 @@ class Controller(ABC):
                     self.logger.info(f"Heartbeat received from {module_id}")
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
-                case 'ptp_status':
-                    self.logger.info(f"PTP status received from {module_id}: {status_data}")
-                    self.buffer.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
                 case 'status':
@@ -338,10 +315,6 @@ class Controller(ABC):
             # Clean up health monitoring
             self.logger.info("Cleaning up module health tracking")
             self.health.clear_all_health()
-            
-            # Clean up module data buffer
-            self.logger.info("Cleaning up module data buffer")
-            self.buffer.clear_module_data()
             
             # Clean up network manager
             self.logger.info("Cleaning up network manager")
@@ -447,10 +420,6 @@ class Controller(ABC):
         Returns:
             True if successful
         """
-        # Update local variable if applicable
-        if key == "controller.max_buffer_size":
-            self.max_buffer_size = value
-            self.buffer.max_buffer_size = value
 
         # Update in config manager
         return self.config.set(key, value, persist) 

@@ -138,7 +138,7 @@ class Controller(ABC):
         self.modules = Modules()
         self.api = ControllerAPI(self)
 
-        # Register callbacks and API
+        # Register api/callbacks
         self.network.api = self.api
         self.health.api = self.api
         self.communication.api = self.api
@@ -146,6 +146,8 @@ class Controller(ABC):
         self.modules.api = self.api
         self.config.on_controller_config_change = self.on_controller_config_change
 
+        # Controller state
+        self.start_time = None
 
         # Start health monitoring
         self.logger.info("Starting health monitoring thread")
@@ -335,6 +337,7 @@ class Controller(ABC):
         - A forever loop to keep the main controller thread alive
         """
         self.logger.info("Starting controller")
+        self.start_time = time.time()
 
         # Register controller network for module discovery
         self.logger.info("Registering controller service...")

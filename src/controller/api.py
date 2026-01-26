@@ -16,6 +16,7 @@ Created: 20/01/2026
 import logging
 import os
 from typing import Dict, Any, Optional
+import time
 
 
 class ControllerAPI():
@@ -49,12 +50,16 @@ class ControllerAPI():
     def get_config(self) -> dict:
         return self.controller.config.get_all()
 
+    
+    def get_uptime(self) -> int:
+        return round(time.time() - self.controller.start_time, 0)
+
 
     def get_system_state(self) -> dict:
         return {
             "example": "This is an example system state object",
             "recording": True,
-            "uptime": 1357, # Uptime in minutes
+            "uptime": self.get_uptime(), # Uptime in minutes
             "ptp_sync": 6 # Largest ptp offset from a module in ms
         }
 

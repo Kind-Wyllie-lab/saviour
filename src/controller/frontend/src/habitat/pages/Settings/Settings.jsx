@@ -16,7 +16,7 @@ function Settings() {
     { id: "controller", name: "Controller" },
     ...Object.entries(modules).map(([id, module]) => ({
       id,
-      name: module.name || id,
+      name: module.name + " (" + id + ")" || id,
     })),
   ];
 

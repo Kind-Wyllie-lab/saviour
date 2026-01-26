@@ -102,7 +102,7 @@ function GenericConfigCard({ id, module }) {
   return (
     <div className="config-card">
       <div className="card-header">
-        <h3>{module.name}</h3>
+        <h3>{module.name} ({module.id})</h3>
       </div>
 
       <div className="config-card-body">

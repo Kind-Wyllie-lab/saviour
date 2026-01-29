@@ -7,6 +7,7 @@ import useExperimentTitle from "/src/hooks/useExperimentTitle";
 
 import ExperimentMetadata from "/src/habitat/components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "/src/habitat/components/CommandsPanel/CommandsPanel";
+import ModuleList from "../../components/ModuleList/ModuleList";
 
 
 function Recording() {
@@ -15,8 +16,13 @@ function Recording() {
 
     return (
         <div className="recording-page">
-            <ExperimentMetadata experimentName={experimentName} />
-            <CommandsPanel experimentName={experimentName} modules={moduleList} />
+            <div className="recording-left">
+                <ModuleList modules={moduleList} />
+            </div>
+            <div className="recording-right">
+                <ExperimentMetadata experimentName={experimentName} />
+                <CommandsPanel experimentName={experimentName} modules={moduleList} />
+            </div>
         </div>
     )
 }

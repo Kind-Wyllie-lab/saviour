@@ -458,7 +458,7 @@ class Module(ABC):
                     
                     # Check for proper DHCP-assigned IP (192.168.x.x)
                     for ip in ip_addresses:
-                        if ip.startswith('192.168.'):
+                        if ip.startswith('192.168.') or ip.startswith('10.0.'):
                             self.logger.info(f"Network ready! Got IP: {ip} (attempt {attempts})")
                             return True
                     
@@ -551,7 +551,11 @@ class Module(ABC):
     """Config Methods"""
     @command()
     def get_config(self):
-        return {"config": self.config.get_all()}
+        response = {
+            "config": self.config.get_all()
+        }
+        self.logger.info(f"Get config called, returning config with {len(response['config'])} keys")
+        return response
 
 
     @command()

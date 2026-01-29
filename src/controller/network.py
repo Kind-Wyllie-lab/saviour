@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional
 import logging
 import threading
 import time
-
+import subprocess
 from src.controller.models import Module # Import the dataclass for Modules
 
 class Network():
@@ -57,104 +57,46 @@ class Network():
         attempt = 0
         
         while True:
-            attempt += 1
-            self.logger.info(f"IP detection attempt {attempt} (waiting for DHCP)...")
-            
             # Try multiple methods to get the actual network IP address
             ip = None
             
             # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
             try:
-                import subprocess
-                result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    # Parse ifconfig output to find eth0 IP
-                    for line in result.stdout.split('\n'):
-                        if 'inet ' in line:
-                            # Extract IP from "inet 192.168.1.197" format
-                            parts = line.strip().split()
-                            for i, part in enumerate(parts):
-                                if part == 'inet' and i + 1 < len(parts):
-                                    potential_ip = parts[i + 1]
-                                    if potential_ip.startswith('192.168.1.'):
-                                        ip = potential_ip
-                                        self.ip_is_valid = True
-                                        self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
-                                        break
-                            if ip:
-                                break
-                    
-                    if not ip:
-                        self.logger.warning(f"No eth0 IP found in ifconfig output")
-                else:
-                    self.logger.warning(f"ifconfig eth0 failed: {result.stderr}")
+                ip = self._get_eth0_ip_ifconfig()
+                if not self._validate_ip(ip):
+                    self.logger.warning(f"{potential_ip} could not be validated")
+                    return False
+                return ip
             except Exception as e:
                 self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
-            
-            # Method 2: Try socket.getaddrinfo with a connection to get local IP
-            if not ip or ip.startswith('127.'):
-                try:
-                    # Create a socket and connect to a remote address to get local IP
-                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.connect(("8.8.8.8", 80))
-                    potential_ip = s.getsockname()[0]
-                    s.close()
-                    
-                    # Only use eth0 IP
-                    if potential_ip.startswith('192.168.1.'):
-                        ip = potential_ip
-                        self.ip_is_valid = True
-                        self.logger.info(f"Selected eth0 IP from socket connection: {ip}")
-                    else:
-                        self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from socket connection: {e}")
-            
-            # Method 3: Try socket.gethostbyname but filter out loopback
-            if not ip or ip.startswith('127.'):
-                try:
-                    hostname_ip = socket.gethostbyname(socket.gethostname())
-                    if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
-                        ip = hostname_ip
-                        self.ip_is_valid = True
-                        self.logger.info(f"Selected eth0 IP from hostname resolution: {ip}")
-                    else:
-                        self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from hostname resolution: {e}")
-            
-            # Method 4: Try to get IP from network interfaces
-            if not ip or ip.startswith('127.'):
-                try:
-                    import subprocess
-                    result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
-                                          capture_output=True, text=True, timeout=5)
-                    if result.returncode == 0:
-                        # Parse the output to get the source IP
-                        lines = result.stdout.strip().split('\n')
-                        for line in lines:
-                            if 'src' in line:
-                                parts = line.split()
-                                src_index = parts.index('src')
-                                if src_index + 1 < len(parts):
-                                    potential_ip = parts[src_index + 1]
-                                    if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
-                                        ip = potential_ip
-                                        self.ip_is_valid = True
-                                        self.logger.info(f"Selected eth0 IP from ip route: {ip}")
-                                        break
-                                    else:
-                                        self.logger.warning(f"ip route returned non-eth0 IP: {potential_ip}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from ip route: {e}")
-            
-            # Check if we got a proper IP (eth0 only)
-            if ip and ip.startswith('192.168.1.'):
-                self.logger.info(f"Found proper eth0 IP: {ip}")
-                return ip
-            else:
-                self.logger.warning(f"No proper eth0 IP found yet (attempt {attempt}). Waiting for DHCP...")
-                time.sleep(5)  # Wait 5 seconds before next attempt
+
+
+    def _get_eth0_ip_ifconfig(self) -> str:
+        result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return
+
+        # Parse ifconfig output to find eth0 IP
+        for line in result.stdout.split('\n'):
+            if 'inet ' in line:
+                # Extract IP from "inet 192.168.1.197" format
+                parts = line.strip().split()
+                for i, part in enumerate(parts):
+                    if part == 'inet' and i + 1 < len(parts):
+                        potential_ip = parts[i + 1]
+                        return potential_ip
+
+
+    def _validate_ip(self, potential_ip: str) -> bool:
+        """Check that the ip belongs to valid rangaes"""
+        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0.0."):
+            ip = potential_ip
+            self.ip_is_valid = True
+            self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
+            return True
+        else:
+            return False
+
 
     def register_service(self):
         """Register the controller service"""

@@ -87,6 +87,17 @@ class Network():
                         return potential_ip
 
 
+    def _get_static_ip_from_nm(self) -> str:
+        """
+        SAVIOUR Controllers currently get assigned a static IP during setup, and act as DHCP servers (290126)
+        This method gets the static IP on interface eth0.
+        """
+        interface = "eth0"
+        connection_id = "Wired Connection 1"
+        cmd = ["nmcli", "-f", "ipv4.addresses", "connection", "show", connection_id]
+        subprocess.run(cmd)
+
+
     def _validate_ip(self, potential_ip: str) -> bool:
         """Check that the ip belongs to valid ranges"""
         if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0.0."):

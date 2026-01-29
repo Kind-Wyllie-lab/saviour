@@ -88,7 +88,7 @@ class Network():
 
 
     def _validate_ip(self, potential_ip: str) -> bool:
-        """Check that the ip belongs to valid rangaes"""
+        """Check that the ip belongs to valid ranges"""
         if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0.0."):
             ip = potential_ip
             self.ip_is_valid = True

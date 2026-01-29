@@ -33,6 +33,7 @@ class Network():
         self.module_last_seen = {}
         
         # Get the ip address of the controller
+        self.interface = "eth0" # The interface connected to the SAVIOUR network
         self.ip_is_valid = False
         self.ip = self._wait_for_proper_ip()
 
@@ -62,40 +63,25 @@ class Network():
             
             # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
             try:
-                ip = self._get_eth0_ip_ifconfig()
+                ip = self._get_eth0_ip_nm()
                 if not self._validate_ip(ip):
-                    self.logger.warning(f"{potential_ip} could not be validated")
+                    self.logger.warning(f"{ip} could not be validated")
                     return False
                 return ip
             except Exception as e:
                 self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
 
 
-    def _get_eth0_ip_ifconfig(self) -> str:
-        result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
-        if result.returncode != 0:
-            return
-
-        # Parse ifconfig output to find eth0 IP
-        for line in result.stdout.split('\n'):
-            if 'inet ' in line:
-                # Extract IP from "inet 192.168.1.197" format
-                parts = line.strip().split()
-                for i, part in enumerate(parts):
-                    if part == 'inet' and i + 1 < len(parts):
-                        potential_ip = parts[i + 1]
-                        return potential_ip
-
-
-    def _get_static_ip_from_nm(self) -> str:
+    def _get_eth0_ip_nm(self) -> str:
         """
         SAVIOUR Controllers currently get assigned a static IP during setup, and act as DHCP servers (290126)
         This method gets the static IP on interface eth0.
         """
         interface = "eth0"
-        connection_id = "Wired Connection 1"
-        cmd = ["nmcli", "-f", "ipv4.addresses", "connection", "show", connection_id]
-        subprocess.run(cmd)
+        cmd = ["nmcli", "-g", "IP4.ADDRESS", "device", "show", interface]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        ip = result.stdout.strip().split("/")[0]
+        return ip
 
 
     def _validate_ip(self, potential_ip: str) -> bool:
@@ -137,6 +123,7 @@ class Network():
             self.logger.error(f"Error registering service: {e}")
             return False
 
+
     def cleanup(self):
         """Cleanup zeroconf resources"""
         self.logger.info("Cleaning up service manager")
@@ -165,6 +152,7 @@ class Network():
         finally:
             self.logger.info("Service manager cleanup complete")
     
+
     def _validate_discovered_module(self, module):
         self.logger.info(f"Validating module {module.id}")
         if self.discovered_modules:
@@ -199,7 +187,8 @@ class Network():
             self.logger.info("No modules yet discovered, adding this as first module")
             return True
 
-    # zeroconf methods
+    
+    """Zeroconf Methods"""
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
         self.logger.info(f"Discovered module: {name}")
@@ -232,6 +221,7 @@ class Network():
         self.logger.info(f"Calling module discovery callback")
         self.api.notify_module_update(self.discovered_modules)
 
+
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
@@ -242,6 +232,7 @@ class Network():
             self.module_last_seen[module_id] = time.time()
             self.logger.info(f"Updated last seen time for module: {module_id}")
             self.api.notify_module_update(self.discovered_modules)
+
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules.
@@ -289,12 +280,14 @@ class Network():
             modules.append(module_dict)
         return modules
     
+
     def get_own_ip(self):
         if self.ip_is_valid:
             return self.ip
         else:
             self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")
             self._wait_for_proper_ip()
+
 
     def get_module_status(self, module_id: str) -> Optional[Dict]:
         """Get detailed status for a specific module"""

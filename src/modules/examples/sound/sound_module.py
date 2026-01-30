@@ -17,6 +17,11 @@ class SoundModule(Module):
         self.config.load_module_config("sound_config.json")
 
 
+        self.module_checks = {
+            self._check_hifiberry
+        }
+
+
     def configure_module(self, updated_keys: Optional[list[str]]):
         # Configure self however necessary
         pass
@@ -37,23 +42,8 @@ class SoundModule(Module):
 
 
     """Self Check"""
-    def _perform_module_specific_checks(self) -> tuple[bool, str]:
-        # TODO: Can this go in the base module
-        self.logger.info(f"Performing {self.module_type} specific checks")
-        for check in self.module_checks:
-            self.logger.info(f"Running {check.__name__}")
-            result, message = check()
-            if result == False:
-                self.logger.info(f"A check failed: {check.__name__}, {message}")
-                return False, message
-                break # Exit loop on first failed check
-        if result == False:
-            return result, message
-        else:
-            return True, "No implementation yet..."
-
     @check()
-    def _check_hifiberry():
+    def _check_hifiberry(self):
         # Do something here to check hifiberry working as intended
         hifiberry_working = True
         if not hifiberry_working:

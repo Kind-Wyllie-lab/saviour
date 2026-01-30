@@ -19,15 +19,21 @@ function Dashboard({ modules }) {
 
     // Filter the received modules
     const moduleList = Object.values(modules);
-    const cameraModules = moduleList.filter((m) => m.type === "camera");
-    const micModules = moduleList.filter((m) => m.type === "microphone");
+    const moduleCounts = moduleList.reduce((acc, m) => {
+        const type = m.type || "unknown"; // fallback if type is missing
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      }, {});
 
     return (
         <div className="dashboard-overview">
             <section className="connected-modules">
                 <h3>Connected Modules</h3>
-                <p>{cameraModules.length} camera(s)</p>
-                <p>{micModules.length} microphone(s)</p>
+                {Object.entries(moduleCounts).map(([type, count]) => (
+                    <p key={type}>
+                    {count} {type}{count > 1 ? "s" : ""}
+                    </p>
+                ))}
                 <p>{moduleList.length} total</p>
             </section>
             <section className="habitat-system">

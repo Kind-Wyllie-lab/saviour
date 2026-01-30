@@ -18,6 +18,7 @@ function ModuleList({ modules }) {
                 <div className="module-list-item">
                     <div className={`status-icon ${module.status.toLowerCase()}`}></div>
                     <p>{module.name} ({module.type}) - {module.status}</p>
+                    <p>{module.ip}</p> 
                 </div>
             ))}
             </div>

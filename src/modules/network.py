@@ -68,7 +68,7 @@ class Network:
         self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
         self.service_port = self.config.get("network._zeroconf_port", 5353)
         # Initialize zeroconf
-        self.zeroconf = Zeroconf()
+        self.zeroconf = Zeroconf(interfaces=[self.ip])
         
 
     """Controller reconnection"""

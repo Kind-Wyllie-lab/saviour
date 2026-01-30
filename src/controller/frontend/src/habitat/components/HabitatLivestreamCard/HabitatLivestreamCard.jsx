@@ -16,11 +16,18 @@ function HabitatLivestreamCard({ module }) {
             />
           )}
           
-          <img
-            src={`http://${module.ip}:8080/video_feed`}
-            alt={`Stream for ${module.name}`}
-            onClick={() => setFullscreen(true)}
-          />
+          { module.status === "OFFLINE" ? (
+            <div className="offline-livestream">
+              <p>{module.name} OFFLINE</p>
+            </div>
+          ) : (
+            <img
+              src={`http://${module.ip}:8080/video_feed`}
+              alt={`Stream for ${module.name}`}
+              onClick={() => setFullscreen(true)}
+            />
+          )}
+
         </div>
       </div>
       {/* Conditional fullscreen overlay */}

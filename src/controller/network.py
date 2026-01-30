@@ -44,7 +44,7 @@ class Network():
         self.service_name = self.config.get("zeroconf.service_name", f"controller_{socket.gethostname()}._controller._tcp.local.")
 
         # Initialize zeroconf but don't register service yet
-        self.zeroconf = Zeroconf()
+        self.zeroconf = Zeroconf(interfaces=[self.ip])
         self.service_info = None
         self.browser = None
         self.service_registered = False

@@ -1,8 +1,8 @@
 .livestream-card {
   position: relative;
   aspect-ratio: 1/1;
-  /* width: 100%;
-  height: 100%; */
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   background: black;
 
@@ -45,4 +45,14 @@
   background: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
   color: white;
   pointer-events: none;
+}
+
+.offline-livestream {
+  height: 100%;
+  width: 100%;
+  color: red;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }

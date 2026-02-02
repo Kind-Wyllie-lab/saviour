@@ -26,29 +26,17 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "aiohttp>=3.11.16",
-    "h5py>=3.13.0",
-    "hdmf>=4.0.0",
     "numpy>=2.2.4",
-    "pandas>=2.2.3",
     "psutil>=7.0.0",
-    "pydantic>=2.11.2",
     "pytest>=8.4.2",
     "python-dotenv>=1.1.0",
     "pyzmq>=26.4.0",
-    "ruamel.yaml>=0.18.10",
-    "supabase>=2.15.0",
-    "websockets>=14.2",
     "zeroconf>=0.146.3",
     "Flask>=2.2.6",
     "Flask-SocketIO>=5.5.1",
-    "simplejpeg>=1.8.2",
     "opencv-python>=4.0.0",
     "SoundCard>=0.4.4",
-    "soundfile>=0.13.1",
-    "torch==2.8.0",
-    "torchvision==0.23.0",
-    "ultralytics>=8.3.0"
+    "soundfile>=0.13.1"
 ]
 
 [tool.hatch.build]

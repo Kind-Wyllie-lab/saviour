@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCard";
 import "./HabitatLivestreamGrid.css";
 
+import { NavLink } from "react-router-dom";
+
 const STREAM_REFRESH_MS = 60 * 1000; // 1 minute in ms
 
 const COLUMNS = ["A", "B", "C", "D"];
@@ -53,9 +55,10 @@ function HabitatLivestreamGrid({ modules }) {
       )
     : ROWS;
 
-  const moduleByName = React.useMemo(() => {
+  const modulesByName = React.useMemo(() => {
     return Object.values(modules).reduce((acc, module) => {
-      acc[module.name] = module;
+      if (!acc[module.name]) acc[module.name] = [];
+      acc[module.name].push(module);
       return acc;
     }, {});
   }, [modules]);
@@ -84,12 +87,22 @@ function HabitatLivestreamGrid({ modules }) {
         {visibleCols.map(col =>
           visibleRows.map(row => {
             const cell = `${col}${row}`;
-            const module = moduleByName[cell];
+            const modulesInCell = modulesByName[cell]; // Check for duplicate modules with same name
 
             return (
               <div key={cell} className="habitat-grid-cell">
-                {module ? (
-                  <HabitatLivestreamCard key={`${cell}-${refreshKey}`} module={module} />
+                {modulesInCell ? (
+                  modulesInCell.length > 1 ? (
+                    <div className="duplicate-modules">
+                      <p>ERROR: Multiple modules with name {modulesInCell[0].name}</p>
+                      {modulesInCell.map((module) => (
+                        <p key={module.id}>{module.id} - {module.ip}</p>
+                      ))}
+                      <p>Go to <NavLink to="/settings">Settings</NavLink> to fix</p>
+                    </div>
+                  ) : (
+                    <HabitatLivestreamCard key={`${cell}-${refreshKey}`} module={modulesInCell[0]} />
+                  )
                 ) : (
                   <div className="empty-cell">{cell}</div>
                 )}

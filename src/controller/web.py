@@ -43,12 +43,12 @@ class Web(ABC):
 
         # Default experiment metadata
         self.experiment_metadata = {
-            'experiment': 'demo',
-            'rat_id': '001',
-            'strain': 'Wistar',
-            'batch': 'B1',
-            'stage': 'habituation',
-            'trial': '1'
+            'experiment': '',
+            'rat_id': '',
+            'strain': '',
+            'batch': '',
+            'stage': '',
+            'trial': ''
         }
         self.current_experiment_name = self._generate_experiment_name() # To be constructed from metadata, or overriden
 
@@ -166,6 +166,32 @@ class Web(ABC):
                     
             except Exception as e:
                 self.logger.error(f"Error handling command: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
+
+
+        @self.socketio.on("start_recording")
+        def start_recording(data):
+            """
+            Start a new recording session.
+
+            """ 
+            try:
+                self.logger.info(f"Start recording called with {data}")
+                target = data.get("target")
+                session_name = data.get("session_name")
+                duration = data.get("duration")
+                self.api.start_recording(target, session_name, duration)
+            except Exception as e:
+                self.logger.error(f"Error starting recording: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
+
+        @self.socketio.on("stop_recording")
+        def stop_recording(data):
+            try:
+                target = data.get("target")
+                self.api.stop_recording(target)
+            except Exception as e:
+                self.logger.error(f"Error stopping recording: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
 
 
@@ -296,7 +322,13 @@ class Web(ABC):
             self.logger.info(f"Sent experiment metadata to client")
 
 
-        """ Settings Page  """
+        """Settings Page"""
+        @self.socketio.on("get_module_config")
+        def handle_get_module_config(data):
+            module_id = data.get("module_id")
+            self.api.get_module_config(module_id)
+
+
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""

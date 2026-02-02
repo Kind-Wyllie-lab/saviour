@@ -4,10 +4,6 @@ import socket from "../../../socket";
 
 // Styling and components
 import "./HabitatDashboard.css";
-import ModuleCard from "../../components/ModuleCard/ModuleCard";
-import LivestreamCard from "../../components/HabitatLivestreamCard/HabitatLivestreamCard";
-import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
-import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
 import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
 import Dashboard from "../../components/Dashboard/Dashboard";
 

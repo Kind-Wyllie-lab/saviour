@@ -30,7 +30,7 @@
     "logging": {
         "_level": "INFO",
         "_format": "%(levelname)s - %(name)s - %(message)s",
-        "_directory": "var/log/habitat"
+        "_directory": "/var/log/habitat"
     },
     "interface": {
         "_cli": false,

@@ -258,9 +258,9 @@ configure_dhcp_server() {
     echo "Configuring DHCP Server"
     
     # Setup static ip
-    echo "Setting static IP to 192.168.1.1 with nmcli"
+    echo "Setting static IP to 10.0.0.1 with nmcli"
     sudo nmcli connection modify "Wired connection 1" ipv4.method manual
-    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.1/24
+    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 10.0.0.1/24
 
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
@@ -303,7 +303,7 @@ interface=eth0
 bind-interfaces
 
 # DHCP range for local network (adjust as needed)
-dhcp-range=192.168.1.100,192.168.1.200,12h
+dhcp-range=10.0.0.128,10.0.0.255,12h
 
 # Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
 dhcp-option=3

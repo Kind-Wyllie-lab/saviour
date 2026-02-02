@@ -65,16 +65,16 @@ class Recording():
 
 
     """Start / Stop Recording"""
-    def start_recording(self, experiment_name: str = None, duration: str = None) -> Optional[str]:
+    def start_recording(self, session_name: str = None, duration: str = None) -> Optional[str]:
         """When module starts recording this gets triggered"""
         """
         Start recording. Should be extended with module-specific implementation.
         
         Args:
-            experiment_name: Optional experiment name to prefix the filename
+            session_name: Optional experiment name to prefix the filename
             duration: Optional duration parameter (not currently used)
         """
-        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}")
+        self.logger.info(f"start_recording called with session_name {session_name}, duration {duration}")
         
         # Check not already recording
         if self.is_recording:
@@ -86,10 +86,10 @@ class Recording():
             return None
 
         # Store experiment folder information for export
-        self.current_experiment_name = self._format_experiment_name(experiment_name)
+        self.current_session_name = self._format_session_name(session_name)
 
         # Set the export folder based on the supplied experiment name
-        self.api.set_experiment_name(experiment_name)
+        self.api.set_session_name(session_name)
         self.api.when_recording_starts()
         
         # Set up recording - filename and folder
@@ -97,8 +97,8 @@ class Recording():
         self.recording_session_id = f"{self.api.get_module_name()}"
         
         # Use experiment name in filename if provided
-        if experiment_name:
-            self.current_filename_prefix = f"{self.recording_folder}/{self.current_experiment_name}_{self.recording_session_id}"
+        if session_name:
+            self.current_filename_prefix = f"{self.recording_folder}/{self.current_session_name}_{self.recording_session_id}"
         else:
             self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
         
@@ -188,15 +188,15 @@ class Recording():
             return {"result": "failure", "message": f"Error in stop_recording: {e}"}
 
 
-    def _format_experiment_name(self, experiment_name:str ) -> str:
+    def _format_session_name(self, session_name:str ) -> str:
         """
         Take an experiment name received from the frontend and put it in a file-safe format.
         """
-        if not experiment_name:
+        if not session_name:
             return ""
-        formatted_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip() # Keep alphanumeric characters and spaces, dashes, underscores 
-        formatted_experiment_name = formatted_experiment_name.replace(' ', '_') # Replace all spaces with underscores
-        return formatted_experiment_name
+        formatted_session_name = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip() # Keep alphanumeric characters and spaces, dashes, underscores 
+        formatted_session_name = formatted_session_name.replace(' ', '_') # Replace all spaces with underscores
+        return formatted_session_name
 
 
     """Creating Recording Segments"""

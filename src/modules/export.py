@@ -121,7 +121,7 @@ class Export:
             
             # Create export manifest
             if self.config.get("export.manifest_enabled", False):
-                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, self.experiment_name)
+                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, self.session_name)
                 if not manifest_filename:
                     self.logger.error("Failed to create export manifest")
                     return False
@@ -187,11 +187,11 @@ class Export:
         return True
 
 
-    def set_experiment_name(self, experiment_name: str) -> bool:
+    def set_session_name(self, session_name: str) -> bool:
         """Take a foldername e.g. habitat6_cohortA2/140126/, set it and create it."""
-        safe_folder_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_folder_name = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_folder_name = safe_folder_name.replace(' ', '_')
-        self.experiment_name = safe_folder_name
+        self.session_name = safe_folder_name
 
 
     def clear_session_files(self) -> None:
@@ -221,7 +221,7 @@ class Export:
 
     def _validate_export_path(self):
         """Ensure export path is up to date for todays date"""
-        export_path = f"{self.experiment_name}/{self.api.get_utc_date(time.time())}/{self.api.get_module_name()}"
+        export_path = f"{self.session_name}/{self.api.get_utc_date(time.time())}/{self.api.get_module_name()}"
         self.export_path = os.path.join(self.mount_point, export_path)
 
 
@@ -286,14 +286,14 @@ class Export:
             self.logger.error(f"Error exporting config file: {e}")
             return False
 
-    def _create_export_manifest(self, files_to_export: list, export_folder: str, experiment_name: str = None) -> str:
+    def _create_export_manifest(self, files_to_export: list, export_folder: str, session_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
         
         Args:
             files_to_export: List of filenames that will be exported
             destination: Where the files will be exported to (string or enum)
             export_folder: Path to the folder where files will be exported
-            experiment_name: Optional experiment name for the export
+            session_name: Optional session_name for the export
             
         Returns:
             str: Name of the created manifest file
@@ -308,8 +308,8 @@ class Export:
                 f.write(f"Module ID: {self.module_id}\n")
                 f.write(f"Destination: //{self.samba_share_ip}/{self.samba_share_path}\n")
                 f.write(f"Export Folder: {os.path.basename(export_folder)}\n")
-                if experiment_name:
-                    f.write(f"Experiment Name: {experiment_name}\n")
+                if session_name:
+                    f.write(f"session_name: {session_name}\n")
                 f.write(f"Files to be exported:\n")
                 for file in files_to_export:
                     f.write(f"- {file}\n")
@@ -333,7 +333,7 @@ class Export:
     """Samba Methods"""
     def _update_samba_settings(self):
         """Check for updated samba settings from config"""
-        self.samba_share_ip = self.config.get("export._share_ip", "192.168.1.1") # These are not pulling from config for now and I don't know why.
+        self.samba_share_ip = self.config.get("export._share_ip", "10.0.0.1") # These are not pulling from config for now and I don't know why.
         self.samba_share_path = self.config.get("export._share_path", "controller_share")
         self.samba_share_username = self.config.get("export._share_username", "pi") # TODO: Make this more secure?
         self.samba_share_password = self.config.get("export._share_password", "saviour")

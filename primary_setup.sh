@@ -17,7 +17,6 @@ SYSTEM_PACKAGES=(
     libcap-dev
     python3-dev
     build-essential
-    libatlas-base-dev
     libopenjp2-7
     libtiff6
     # Additional dependencies for image processing

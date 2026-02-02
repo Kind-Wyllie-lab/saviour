@@ -430,7 +430,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/ptp4l -i eth0 -m -l 6
+ExecStart=/usr/sbin/ptp4l -i eth0 -2 -m -l 6
 Restart=always
 RestartSec=5
 
@@ -487,7 +487,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/ptp4l -i eth0 -m -s
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -s -2
 Restart=always
 RestartSec=5
 

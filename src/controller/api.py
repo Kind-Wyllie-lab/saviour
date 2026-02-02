@@ -38,6 +38,10 @@ class ControllerAPI():
     def get_discovered_modules(self) -> dict:
         return self.controller.network.get_modules()
 
+
+    def get_module_config(self, module_id: str) -> dict:
+        return self.controller.get_module_config(module_id)
+        
     
     def get_module_configs(self) -> dict:
         return self.controller.get_module_configs()

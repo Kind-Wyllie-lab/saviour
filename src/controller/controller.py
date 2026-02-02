@@ -442,6 +442,10 @@ class Controller(ABC):
         self.web.notify_module_update()
 
 
+    def get_module_config(self, module_id: str):
+        self.communication.send_command(module_id, "get_config", {})
+
+
     def get_module_configs(self):
         """Get the module configuration data for online modules only"""
         # Request config from all modules - refresh the config stored on controller

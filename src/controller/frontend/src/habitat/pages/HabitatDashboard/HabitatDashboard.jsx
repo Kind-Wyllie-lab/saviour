@@ -22,7 +22,6 @@ function HabitatDashboard() {
 
   useEffect(() => {
     console.log("Emitting get_modules");
-    socket.emit("get_module_configs"); // Ask backend for module configs
     socket.emit("get_modules"); // Ask backend for modules
     socket.emit("get_experiment_metadata");
 

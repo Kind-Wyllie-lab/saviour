@@ -322,7 +322,13 @@ class Web(ABC):
             self.logger.info(f"Sent experiment metadata to client")
 
 
-        """ Settings Page  """
+        """Settings Page"""
+        @self.socketio.on("get_module_config")
+        def handle_get_module_config(data):
+            module_id = data.get("module_id")
+            self.api.get_module_config(module_id)
+
+
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""

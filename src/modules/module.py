@@ -458,7 +458,7 @@ class Module(ABC):
                     
                     # Check for proper DHCP-assigned IP (192.168.x.x)
                     for ip in ip_addresses:
-                        if ip.startswith('192.168.'):
+                        if ip.startswith('192.168.') or ip.startswith('10.0.'):
                             self.logger.info(f"Network ready! Got IP: {ip} (attempt {attempts})")
                             return True
                     
@@ -551,7 +551,11 @@ class Module(ABC):
     """Config Methods"""
     @command()
     def get_config(self):
-        return {"config": self.config.get_all()}
+        response = {
+            "config": self.config.get_all()
+        }
+        self.logger.info(f"Get config called, returning config with {len(response['config'])} keys")
+        return response
 
 
     @command()
@@ -604,7 +608,6 @@ class Module(ABC):
     
 
     """Ready to record checks"""
-    @abstractmethod
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
         """
         Perform module-specific readiness checks.
@@ -616,8 +619,15 @@ class Module(ABC):
         Returns:
             tuple: (ready: bool, error_msg: str or None)
         """
-        # Base implementation - no module-specific checks
-        return True, None
+        self.logger.info(f"Performing {self.module_type} specific checks")
+        for check in self.module_checks:
+            self.logger.info(f"Running {check.__name__}")
+            result, message = check()
+            if result == False:
+                self.logger.info(f"A check failed: {check.__name__}, {message}")
+                return False, message
+                break # Exit loop on first failed check
+        return True, f"{self.module_type} checks passed"
     
 
     @check()
@@ -707,8 +717,10 @@ class Module(ABC):
         
         result, message = self._perform_module_specific_checks()
         if result == False:
+            self.logger.info(f"Check failed {result} {message}")
             return result, message
 
+        self.logger.info("ALL CHECKS PASSED")
         return True, "All tests passed" # Everything passed    
         
 

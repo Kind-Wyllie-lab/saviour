@@ -36,8 +36,6 @@ class Modules:
 
         self.modules: dict[str, Module] = {} # A dict of modules. module_id as primary key
 
-        self.push_module_update_to_frontend = None # A callback to be registered by controller.py
-
 
     def check_status(self, module_id: str, status_data: dict) -> None:
         """Handle a received heartbeat from a module - check recording status"""
@@ -229,7 +227,7 @@ class Modules:
     def broadcast_updated_modules(self) -> None:
         # self.logger.info(f"Updated module list: {self.modules.keys()}")
         module_dict = self._convert_modules_to_dict()
-        self.push_module_update_to_frontend(module_dict)
+        self.api.push_module_update_to_frontend(module_dict)
 
 
     def get_modules(self) -> Dict[str, Any]:

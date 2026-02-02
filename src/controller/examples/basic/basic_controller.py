@@ -13,6 +13,7 @@ import sys
 import os
 import logging
 import threading
+from typing import Optional
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -21,12 +22,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from controller.controller import Controller
 
 class BasicController(Controller):
-    def __init__(self, config_file_path=None):
-        super().__init__(config_file_path=config_file_path)
+    def __init__(self):
+        super().__init__()
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
 
+        self.config.load_controller_config("basic_controller_config.json")
 
-        self.register_callbacks() # If reinstantiating web object make sure to re-register callbacks
+        #self.register_callbacks() # If reinstantiating web object make sure to re-register callbacks
 
     def handle_special_module_status(self, module_id: str, status: str):
         match status:
@@ -34,8 +36,11 @@ class BasicController(Controller):
                 self.logger.warning(f"No logic for {status} from {module_id}")
                 return False    
 
+    def configure_controller(self, updated_keys: Optional[list[str]]):
+        pass
+
 if __name__ == "__main__":
-    controller = BasicController(config_file_path="basic_controller_config.json")
+    controller = BasicController()
     try:
         # Start the main loop
         controller.start()

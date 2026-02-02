@@ -40,9 +40,6 @@ class Web(ABC):
         # Flask setup
         self.app = Flask(__name__, static_folder="frontend/dist", static_url_path="/")
         self.socketio = SocketIO(self.app, host="0.0.0.0", cors_allowed_origins="*", async_mode='threading')
-        
-        # Callbacks
-        self.callbacks = {} # An empty dict which will later be assigned callback functions
 
         # Default experiment metadata
         self.experiment_metadata = {
@@ -93,27 +90,10 @@ class Web(ABC):
         return name
 
 
-    def register_callbacks(self, callbacks={}):
-        """Register callbacks based on a dict.
-        Should include:
-            "get_modules"
-            "get_ptp_history"
-            "send_command"
-            "get_module_health"
-        """
-        self.callbacks.update(callbacks)
-
-
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""
-        self.logger.info(f"Getting list of modules and sending emitting 'module_update'")
-        if self.callbacks["get_modules"]:
-            modules = self.callbacks["get_modules"]()
-            self.logger.info(f"Got {len(modules)} modules from callback")
-            
-            # Use socketio.emit instead of individual handlers to ensure proper context
-            self.socketio.emit('module_update', {"modules": modules})
-            self.logger.info(f"Sent module update to all clients")
+        modules = self.api.get_modules()
+        self.socketio.emit('module_update', {"modules": modules}) # Use socketio.emit instead of individual handlers to ensure proper context
 
 
     def push_module_update(self, modules: dict):
@@ -147,7 +127,7 @@ class Web(ABC):
             self.logger.info(f"Client connected")
             
             # Send initial module list
-            modules = self.callbacks["get_modules"]()
+            modules = self.api.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('module_update', {"modules": modules})
             
@@ -156,9 +136,11 @@ class Web(ABC):
                 self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
                 self.logger.info(f"Sent current experiment name to new client: {self.current_experiment_name}")
 
+
         @self.socketio.on('disconnect')
         def handle_disconnect():
             self.logger.info(f"Client disconnected")
+
 
         @self.socketio.on('send_command')
         def handle_command(data):
@@ -172,47 +154,20 @@ class Web(ABC):
                 command (json): The command received from the frontend. Should contain type, module_id (may be "all" or a specific module), and params field
             """
             try:
-                command_type = data.get('type')
+                command = data.get('type')
                 module_id = data.get('module_id')
                 params = data.get('params', {})
-                
-                self.logger.info(f"Received command via WebSocket: {data}")
-                
-                # Format command with parameters
-                command = command_type 
-                if params:
-                    if command_type == 'start_streaming':
-                        # For streaming, we need client_ip and port
-                        client_ip = params.get('client_ip')
-                        port = params.get('port', 8080)  # Default to 8080 if not specified
-                        command = f"{command_type}"
-                        params = {"client_ip": client_ip, "port": port}
-                    if command_type == 'start_recording':
-                        # Append timestamp
-                        params["experiment_name"] += ("_" + datetime.now().strftime('%Y%m%d_%H%M%S'))
-                    else:
-                        # For other commands format as cmd/module_id command_type {params}
-                        command = command_type
+
+                if command == "start_recording":
+                    params["experiment_name"] += ("_" + datetime.now().strftime("%Y%M%d_%H%m%s"))
                 
                 # Send command to module
-                if self.callbacks["send_command"]:
-                    self.callbacks["send_command"](module_id, command, params)
-                    self.logger.info(f"Command sent successfully: {command} to module {module_id} with params {params}")
-                    
-                    # If this was a clear_recordings command, request updated list
-                    if command_type == 'clear_recordings':
-                        # Wait a short moment for the deletion to complete
-                        self.socketio.sleep(0.5)
-                        # Request updated recordings list
-                        if self.callbacks["send_command"]:
-                            self.callbacks["send_command"](module_id, 'list_recordings', {})
-                            self.logger.info(f"Requested updated recordings list after clear")
-                else:
-                    self.logger.error("No command handler registered")
+                self.api.send_command(module_id, command, params)
                     
             except Exception as e:
                 self.logger.error(f"Error handling command: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
+
 
         """ Get Modules """
         @self.socketio.on('get_modules')
@@ -221,12 +176,13 @@ class Web(ABC):
             self.logger.info(f"Frontend called 'get_modules'")
             
             # Get current modules from callback
-            modules = self.callbacks["get_modules"]()
+            modules = self.api.get_modules()
             self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Send module update to all clients
             self.socketio.emit('modules_update', modules)
             self.logger.info(f"Sent module update to all clients: {modules}")
+
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
         def handle_module_status(data):
@@ -325,6 +281,7 @@ class Web(ABC):
             })
             self.logger.info(f"Sent experiment metadata update confirmation")
 
+
         @self.socketio.on('get_experiment_metadata')
         def handle_get_experiment_metadata(data=None):
             """Handle request for experiment metadata from frontend"""
@@ -338,32 +295,55 @@ class Web(ABC):
             })
             self.logger.info(f"Sent experiment metadata to client")
 
+
         """ Settings Page  """
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""
             self.logger.info(f"Get module configs called")
-            if "get_module_configs" in self.callbacks:
-                # Get the current module configs
-                self.callbacks["get_module_configs"]()
-            else:
-                self.logger.warning(f"get_module_configs callback not available")
+            self.api.get_module_configs()
+
 
         @self.socketio.on('save_module_config')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
             self.logger.info(f"Received request to save config to module {data['id']} with data {data['config']}")
-            if "send_command" in self.callbacks:
-                # Format command with parameters
-                command = "set_config"
-                # Extract params from the data
-                params = data.get("config", {})
-                
-                # Send the config update command to all modules
-                self.callbacks["send_command"](data['id'], command, params)
-            else:
-                self.logger.error("No 'send command' callback registered")
+            # Format command with parameters
+            command = "set_config"
+            # Extract params from the data
+            params = data.get("config", {})
+            # Send the config update command to the relevant module
+            self.api.send_command(data['id'], command, params)
 
+
+        """Controller System State"""
+        @self.socketio.on("get_system_state")
+        def handle_get_system_state(data=None):
+            """Handle a request for information about controller system state e.g. recording status ."""
+            state = self.api.get_system_state()
+            self.socketio.emit("system_state", state)
+
+
+        """Controller Level Config"""
+        @self.socketio.on('get_controller_config')
+        def handle_get_controller_config(data=None):
+            self.logger.info("Received request for controller config")
+            config = self.api.get_config()
+            self.socketio.emit("controller_config_response", {
+                "config": config
+            })
+
+
+        @self.socketio.on('save_controller_config')
+        def handle_save_controller_config(data):
+            self.logger.info("Saving controller config")
+            self.api.set_config(data.get("config", {}))
+            self.socketio.emit("controller_config_response", {
+                "config": self.api.get_controller_config()
+            })
+
+
+        """Viewing exported recordings on the share"""
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():
             """Handle request for exported recordings"""
@@ -382,33 +362,22 @@ class Web(ABC):
         @self.socketio.on('get_module_health')
         def handle_get_module_health():
             """Handle request for module health status"""
-            try:
-                if self.callbacks["get_module_health"]:
-                    health = self.callbacks["get_module_health"]()
-                    self.socketio.emit('module_health_update', {
-                        'module_health': health
-                    })
-                else:
-                    self.socketio.emit('module_health_update', {
-                        'module_health': {},
-                        'error': 'Module health callback not available'
-                    })
-            except Exception as e:
-                self.logger.error(f"Error getting module health: {str(e)}")
-                self.socketio.emit('module_health_update', {
-                    'module_health': {},
-                    'error': str(e)
-                })
+            health = self.api.get_module_health()
+
+            self.socketio.emit('module_health_update', {
+                'module_health': health
+            })
+
 
         """ Debug """
         @self.socketio.on('get_debug_data')
         def handle_get_debug_info():
             self.logger.info(f"Received request for debug data")
             debug_data = {}
-            debug_data["modules"] = self.callbacks["get_modules"]()
-            debug_data["module_health"] = self.callbacks["get_module_health"]()
-            debug_data["discovered_modules"] = self.callbacks["get_discovered_modules"]()
-            debug_data["module_configs"] = self.callbacks["get_module_configs"]()
+            debug_data["modules"] = self.api.get_modules()
+            debug_data["module_health"] = self.api.get_module_health()
+            debug_data["discovered_modules"] = self.api.get_discovered_modules()
+            debug_data["module_configs"] = self.api.get_module_configs()
             self.socketio.emit("debug_data", debug_data)
 
         """ Login """
@@ -423,11 +392,12 @@ class Web(ABC):
             else:
                 self.socketio.emit("login_error", "Wrong username or password", room=request.sid)
 
+
         """ Commands and utility """
         @self.socketio.on('remove_module')
         def handle_remove_module(module):
             self.logger.info(f"Received request to remove module: {module['id']}")
-            self.callbacks["remove_module"](module['id'])
+            self.api.remove_module(module['id'])        
 
 
     def update_modules(self, modules: list):
@@ -487,7 +457,7 @@ class Web(ABC):
     def list_modules(self):
         """List all discovered modules"""
         self.logger.info("Listing modules")
-        modules = self.callbacks["get_modules"]()
+        modules = self.api.get_modules()
         return jsonify({"modules": modules})
 
 
@@ -690,19 +660,10 @@ class Web(ABC):
         @self.app.route('/api/list_modules', methods=['GET'])
         def list_modules():
             self.logger.info(f"/api/list_modules endpoint called. Listing modules")
-            modules = self.callbacks["get_modules"]()
+            modules = self.api.get_modules()
             self.logger.info(f"Found {len(modules)} modules")
             return jsonify({"modules": modules})
 
-        @self.app.route('/api/ptp_history', methods=['GET'])
-        def ptp_history():
-            """Get PTP history for all modules"""
-            self.logger.info(f"/api/ptp_history endpoint called. Getting PTP history")
-            if self.callbacks["get_ptp_history"]:
-                history = self.callbacks["get_ptp_history"]()
-                self.logger.info(f"Got PTP history for {len(history)} modules")
-                return jsonify(history)
-            return jsonify({})
 
         @self.app.route('/api/send_command', methods=['POST'])
         def send_command():
@@ -751,20 +712,13 @@ class Web(ABC):
                 
                 self.logger.info(f"Processing command: {command} for module: {module_id}")
                 
-                if self.callbacks["send_command"]:
-                    result = self.callbacks["send_command"](module_id, command, params)
-                    return jsonify({
-                        "status": "success",
-                        "message": "Command sent successfully",
-                        "command": command,
-                        "module_id": module_id
-                    })
-                else:
-                    self.logger.error("No command callback registered")
-                    return jsonify({
-                        "error": "Command system not available",
-                        "status": "error"
-                    }), 503
+                result = self.api.send_command(module_id, command, params)
+                return jsonify({
+                    "status": "success",
+                    "message": "Command sent successfully",
+                    "command": command,
+                    "module_id": module_id
+                })
                     
             except Exception as e:
                 self.logger.error(f"Error in send_command endpoint: {str(e)}")
@@ -773,15 +727,15 @@ class Web(ABC):
                     "status": "error"
                 }), 500
                 
+
         @self.app.route('/api/module_health', methods=['GET'])
         def module_health():
             """Get the health status of all modules"""
             self.logger.info(f"/api/module_health endpoint called. Getting module health")
-            if self.callbacks["get_module_health"]:
-                health = self.callbacks["get_module_health"]()
-                self.logger.info(f"Got module health for {len(health)} modules")
-                return jsonify(health)
-            return jsonify({})
+            health = self.api.get_module_health()
+            self.logger.info(f"Got module health for {len(health)} modules")
+            return jsonify(health)
+
 
         @self.app.route('/api/exported_recordings', methods=['GET'])
         def get_exported_recordings_api():

@@ -3,11 +3,13 @@ import React, { useEffect, useState } from "react";
 import socket from "../../../socket";
 
 // Styling and components
-import "./Dashboard.css";
+import "./HabitatDashboard.css";
 import ModuleCard from "../../components/ModuleCard/ModuleCard";
-import LivestreamCard from "../../components/LivestreamCard/LivestreamCard";
+import LivestreamCard from "../../components/HabitatLivestreamCard/HabitatLivestreamCard";
 import ExperimentMetadata from "../../components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "../../components/CommandsPanel/CommandsPanel";
+import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
+import Dashboard from "../../components/Dashboard/Dashboard";
 
 // Check websocket connection
 socket.on("connect", () => {
@@ -18,7 +20,7 @@ socket.on("disconnect", () => {
   console.log("Disconnected from backend");
 });
 
-function Dashboard() {
+function HabitatDashboard() {
   const [modules, setModules] = useState({}); // Modules object returned from backend
   const [experimentName, setExperimentName] = useState("loading..."); // The experiment name 
 
@@ -73,46 +75,18 @@ function Dashboard() {
 
   return (
     <main className="dashboard">
-      <div className="dashboard-wrapper">
-        <div className="dashboard-container">
-          {/* left side */}
-          <section>
-            <h2>Connected Modules</h2>
-            <div className="module-grid">
-              {moduleList.length > 0 ? (
-                moduleList.map((module) => (
-                  <ModuleCard key={module.id} module={module} />
-                ))
-              ) : (
-                <p>No modules connected</p>
-              )}
-            </div>
-          </section>
-          <section>
-            <h2>Camera Streams</h2>
-            <div className="livestream-grid">
-              {cameraModules.length > 0 ? (
-                cameraModules.map((cam) => (
-                  <LivestreamCard key={cam.id} module={cam} />
-                ))
-              ) : (
-                <p>No camera modules connected</p>
-              )}
-            </div>
-          </section>
-        </div>
+      <section className="dashboard-left">
+        <Dashboard modules={modules} />
+      </section>
 
-        <div className="sidebar-container">
-          <section>
-            <ExperimentMetadata experimentName={experimentName} />
-          </section>
-          <section>
-            <CommandsPanel modules={moduleList} experimentName={experimentName} />
-          </section>
-        </div>    
-      </div>
+      <section className="dashboard-right">
+        <div className="livestream-square">
+          <HabitatLivestreamGrid modules={modules} />
+        </div>
+      </section>
+
     </main>
   );
 }
 
-export default Dashboard;
+export default HabitatDashboard;

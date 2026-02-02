@@ -1,0 +1,72 @@
+.habitat-grid-wrapper {
+  display: flex;
+  height: 100%;
+  gap: 16px;
+  align-items: center;
+}
+
+.habitat-grid {
+    height: 100%;
+    aspect-ratio: 1/1;
+    width: auto;
+
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    
+    box-sizing: border-box;
+    padding: 8px; 
+
+    gap: 0; /* no seams */
+    overflow: hidden;
+  }
+  
+  .habitat-grid-cell {
+    min-height: 0;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  
+  .habitat-grid-cell.highlighted {
+    outline: 2px solid #4da3ff;
+    outline-offset: -2px;
+  }
+  
+
+  .empty-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #777;
+    border: 1px solid#444;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  .habitat-grid-controls {
+    min-width: 80px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    justify-content: center;
+    align-items: center;
+    background-color: var(--card-bg-color);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .habitat-grid-controls h3 {
+    padding: 0; margin: 0;
+  }
+
+  .habitat-grid-controls label {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .habitat-grid-controls button {
+    border-radius: 4px;
+  }

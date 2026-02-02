@@ -50,7 +50,14 @@ class Health:
         
         # Callback for status changes
         self.logger.info(f"Initialised health monitor with heartbeat interval {self.heartbeat_interval}s, timeout {self.heartbeat_timeout}s.")
+
+
+    """Modify module health records"""
+    def remove_module(self, module_id: str):
+        if module_id in self.module_health.keys():
+            self.module_health.pop(module_id)
     
+
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
         """
         Update health data for a specific module
@@ -122,6 +129,7 @@ class Health:
             self.logger.error(f"Error updating health for module {module_id}: {e}")
             return False
 
+
     def network_notify_module_update(self, discovered_modules: dict):
         """Receive discovered modules from network manager
         Ensure health tracking is aware of all modules
@@ -145,12 +153,15 @@ class Health:
                     'phc2sys_freq': None
                 }
     
+
     def network_notify_module_id_change(self, old_module_id, new_module_id):
         # Move the module data to the new key
         self.module_health[new_module_id] = self.module_health.pop(old_module_id)
         if old_module_id in self.module_health_history:
             self.module_health_history[new_module_id] = self.module_health_history.pop(old_module_id)
 
+
+    """Get methods"""
     def get_module_health_history(self, module_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Get historical health data for a specific module
@@ -170,10 +181,7 @@ class Health:
             history = history[-limit:]
         return history
     
-    def remove_module(self, module_id: str):
-        if module_id in self.module_health.keys():
-            self.module_health.pop(module_id)
-    
+
     def get_module_health(self, module_id: Optional[str] = None) -> Dict:
         """
         Get health data for a specific module or all modules
@@ -223,6 +231,49 @@ class Health:
         
         return online_modules
     
+
+    def get_health_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of overall system health
+        
+        Returns:
+            Dictionary with health statistics
+        """
+        online_modules = self.get_online_modules()
+        offline_modules = self.get_offline_modules()
+        
+        # Calculate average health metrics across all online modules
+        avg_metrics = {}
+        if online_modules:
+            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset', 'ptp4l_freq']
+            for metric in metrics:
+                values = []
+                for module_id in online_modules:
+                    if module_id in self.module_health and metric in self.module_health[module_id]:
+                        values.append(self.module_health[module_id][metric])
+                if values:
+                    avg_metrics[f'avg_{metric}'] = sum(values) / len(values)
+        
+        return {
+            'total_modules': len(self.module_health),
+            'online_modules': len(online_modules),
+            'offline_modules': len(offline_modules),
+            'online_module_ids': online_modules,
+            'offline_module_ids': offline_modules,
+            'average_metrics': avg_metrics
+        }
+
+    
+    def get_ptp_sync(self) -> int:
+        max_ptp_sync = 0
+        for module_id in self.module_health:
+            ptp_sync = self.module_health[module_id]["ptp4l_offset"]
+            if abs(ptp_sync) > max_ptp_sync:
+                max_ptp_sync = abs(ptp_sync)
+        return int(max_ptp_sync)
+
+
+    """Health Methods"""
     def monitor_health(self):
         """Monitor the health of all modules (runs in separate thread)"""
         self.logger.info("Checking for offline modules via monitor_health()")
@@ -278,6 +329,7 @@ class Health:
             
             time.sleep(self.monitor_interval)
 
+
     def _check_ptp_health(self):
         """
         Check received PTP stats and reset PTP if necessary
@@ -311,6 +363,7 @@ class Health:
                         self.module_health[module]["ptp_restarts"] = 5
                     self.api.send_command(module, "restart_ptp", {})
 
+
     def start_monitoring(self):
         """Start the health monitoring thread"""
         if self.is_monitoring:
@@ -322,6 +375,7 @@ class Health:
         self.monitor_thread.start()
         self.logger.info(f"Started health monitoring with {self.heartbeat_interval}s interval")
     
+
     def stop_monitoring(self):
         """Stop the health monitoring thread"""
         self.is_monitoring = False
@@ -329,42 +383,12 @@ class Health:
             self.monitor_thread.join(timeout=5)
         self.logger.info("Stopped health monitoring")
     
+
     def clear_all_health(self):
         """Clear all health data"""
         self.module_health.clear()
         self.module_health_history.clear()
         self.logger.info("Cleared all health data")
-    
-    def get_health_summary(self) -> Dict[str, Any]:
-        """
-        Get a summary of overall system health
-        
-        Returns:
-            Dictionary with health statistics
-        """
-        online_modules = self.get_online_modules()
-        offline_modules = self.get_offline_modules()
-        
-        # Calculate average health metrics across all online modules
-        avg_metrics = {}
-        if online_modules:
-            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset', 'ptp4l_freq']
-            for metric in metrics:
-                values = []
-                for module_id in online_modules:
-                    if module_id in self.module_health and metric in self.module_health[module_id]:
-                        values.append(self.module_health[module_id][metric])
-                if values:
-                    avg_metrics[f'avg_{metric}'] = sum(values) / len(values)
-        
-        return {
-            'total_modules': len(self.module_health),
-            'online_modules': len(online_modules),
-            'offline_modules': len(offline_modules),
-            'online_module_ids': online_modules,
-            'offline_module_ids': offline_modules,
-            'average_metrics': avg_metrics
-        }
 
 
     def mark_module_offline(self, module_id: str, reason: str = "Communication test failed"):
@@ -388,6 +412,7 @@ class Health:
                 self.logger.info(f"Module {module_id} already offline: {reason}")
         else:
             self.logger.warning(f"Attempted to mark unknown module {module_id} as offline: {reason}")
+    
     
     def handle_communication_test_response(self, module_id: str, success: bool):
         """Handle communication test response from a module

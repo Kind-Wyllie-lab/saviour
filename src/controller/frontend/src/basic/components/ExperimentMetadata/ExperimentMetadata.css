@@ -11,6 +11,7 @@
     box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     width: 100%;
     box-sizing: border-box;
+    max-width: 400px;
   }
   
   /* Form row containing label + input/select */
@@ -41,7 +42,11 @@
   }
   
   /* Experiment name preview */
-  .experiment-name-preview {
+  .session-name-preview-title {
+    text-align: center;
+  }
+  
+  .session-name-preview {
     font-weight: 600;
     color: var(--text-color);
     background: var(--bg-color);

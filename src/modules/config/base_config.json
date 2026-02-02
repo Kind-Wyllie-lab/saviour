@@ -1,38 +1,34 @@
 {
     "module": {
-        "_heartbeat_interval": 30
+        "_heartbeat_interval": 30,
+        "name": ""
     },
-    "service": {
-        "_port": 5000,
-        "_service_type": "_module._tcp.local."
+    "network": {
+        "_zeroconf_port": 5353,
+        "_zeroconf_service_type": "_module._tcp.local."
     },
     "communication": {
         "_command_socket_port": 5555,
-        "_status_socket_port": 5556,
-        "_data_format": "json"
+        "_status_socket_port": 5556
     },
     "logging": {
         "_level": "INFO",
         "_format": "%(asctime)s - %(levelname)s - %(message)s"
     },
     "recording": {
-        "segment_length_seconds": 600,
-        "_pre_record_seconds": 5,
-        "_post_record_seconds": 5,
-        "_timestamp_overlay": true,
-        "_timestamp_format": "%Y-%m-%d %H:%M:%S",
-        "_timestamp_position": "bottom-right",
+        "segment_length_seconds": 30,
         "_recording_folder": "rec",
-        "_recording_filetype": "NOT SET"
+        "_recording_filetype": "NOT SET",
+        "_record_health_metadata": true,
+        "_health_metadata_recording_interval": 5
     },
-    "streaming": {
-        "_enabled": true,
-        "_port": 8554,
-        "_transport": "udp"
-    },
-    "_auto_export": true,
-    "_controller_share_path": "controller_share",
-    "_nas_ip": "192.168.0.2",
-    "_nas_share_path": "data",
-    "_nas_recordings_path": "recordings"
+    "export": {
+        "_auto_export": true,
+        "_delete_on_export": true,
+        "_manifest_enabled": false,
+        "_share_path": "controller_share",
+        "_share_ip": "192.168.1.1",
+        "_share_username": "pi",
+        "_share_password": "saviour"
+    }
 }

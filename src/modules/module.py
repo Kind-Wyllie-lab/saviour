@@ -49,6 +49,8 @@ from src.modules.command import Command
 from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
+from src.modules.recording import Recording
+from src.modules.api import ModuleAPI
 
 def command(name=None):
     """
@@ -63,6 +65,7 @@ def command(name=None):
         return func
     return decorator
 
+
 def check(name=None):
     """
     Decorator to mark a method as a ready check.
@@ -74,6 +77,7 @@ def check(name=None):
         func._cmd_name = name or func.__name__
         return func
     return decorator
+
 
 class Module(ABC):
     """
@@ -93,97 +97,30 @@ class Module(ABC):
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
         self.description = "No description" # A human readable description to be overridden by child classes
-
-        self._recording_thread = None # A thread to automatically stop recording if a duration is given
-        self.recording_start_time = None # When a recording was started
-        self.health_recording_thread = None # A thread to record health on
-        self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
+        self.version = self._get_version()
         
         # Setup logging first
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"Initializing {self.module_type} module {self.module_id}")
+        self.logger.info(f"Initializing {self.module_type} module {self.module_id}, SAVIOUR {self.version}")
 
-        # Add file handler if none exists
-        if not self.logger.handlers:
-            # Add file handler for persistent logging (useful when running as systemd service)
-            try:
-                # Check if file logging is enabled in config
-                if self.config.get("logging.to_file", True):
-                    # Create logs directory if it doesn't exist
-                    log_dir = self.config.get("logging.directory", "/var/log/habitat")
-                    os.makedirs(log_dir, exist_ok=True)
-                    
-                    # Generate log filename with module info
-                    log_filename = f"{self.module_type}_{self.module_id}.log"
-                    log_filepath = os.path.join(log_dir, log_filename)
-                    
-                    # Get config values for rotation
-                    max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
-                    backup_count = self.config.get("logging.backup_count", 5)
-                    
-                    # Add file handler with rotation
-                    from logging.handlers import RotatingFileHandler
-                    file_handler = RotatingFileHandler(
-                        log_filepath,
-                        maxBytes=max_bytes,
-                        backupCount=backup_count
-                    )
-                    file_handler.setLevel(logging.INFO)
-                    self.logger.addHandler(file_handler)
-                    
-                    self.logger.info(f"File logging enabled: {log_filepath}")
-                    self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
-                else:
-                    self.logger.info("File logging disabled in config")
-                    
-            except Exception as e:
-                # If file logging fails, log the error but don't crash
-                self.logger.warning(f"Failed to setup file logging: {e}")
-                self.logger.info("Continuing with console logging only")
-
-        # Managers
-        self.logger.info(f"Initialising managers")
-        self.logger.info(f"Initialising config manager")
+        # Manager objects
         self.config = Config()
-        # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder", "rec")
-        self.logger.info(f"Recording folder = {self.recording_folder}")
-        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
-            os.makedirs(self.recording_folder, exist_ok=True)
-            self.logger.info(f"Created recording folder: {self.recording_folder}")
-        self.export = Export(
-            module_id=self.module_id,
-            recording_folder=self.recording_folder,
-            config=self.config.get_all(),
-        )
-        self.logger.info(f"Initialising communication manager")
-        self.communication = Communication(         # Communication manager - handles ZMQ messaging
-            self.module_id, # Pass in the module ID for use in messages
-            config=self.config # Pass in the config manager for getting properties
-        )
-        self.logger.info(f"Initialising health manager")
-        self.health = Health(
-            config=self.config
-        )
-        self.logger.info(f"Initialising PTP manager")
-        self.ptp = PTP(
-            role=PTPRole.SLAVE)
-        if not hasattr(self, 'command'): # Initialize command handler if not already set - extensions of module class might set their own command handler
-            self.logger.info(f"Initialising command handler")
-            self.command = Command(config=self.config)
+        self.export = Export(module_id=self.module_id, config=self.config) # Export object - exports to samba share
+        self.communication = Communication(self.module_id, config=self.config) # Communication object - handles ZMQ messaging
+        self.health = Health(config=self.config) # Health object - monitors system health e.g. temperature, resource utilisation, ptp sync
+        self.ptp = PTP(role=PTPRole.SLAVE) # PTP object - initialises ptp sync
+        self.recording = Recording(config=self.config) # Recording object - sets up, maintains and manages recording sessions
+        self.command = Command(config=self.config) # Command object - routes incoming commands
+        self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type) # Network object - registers zeroconf service, discovers controller
+        self.api = ModuleAPI(module=self) # API object - provides internal routing between objects e.g. network and recording
 
-        self.logger.info(f"Initialising network manager")
-
-        self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type)
-
-        self.command_callbacks = { # A registry of commands that the module can respond to
+        # A registry of commands that the module can respond to
+        self.command_callbacks = { 
             'restart_ptp': self.ptp.restart, # Restart PTP services
             'get_health': self.health.get_health,
-            'start_recording': self.start_recording,
-            'stop_recording': self.stop_recording,
+            'start_recording': self.recording.start_recording,
+            'stop_recording': self.recording.stop_recording,
             'list_recordings': self.list_recordings,
-            'clear_recordings': self._clear_recordings,
-            'export_recordings': self.export_recordings,
             'list_commands': self.list_commands,
             'get_config': self.get_config, # Gets the complete config from
             'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
@@ -191,26 +128,14 @@ class Module(ABC):
             'shutdown': self._shutdown,
         }
 
-        self.helper_callbacks = { # Define a set of helper methods that allow modules to gain access to state
-            'generate_session_id': lambda module_id: self.generate_session_id(module_id), # 
-            'get_controller_ip': lambda: self.network.controller_ip,  # or whatever the callback function is
-            'send_status': lambda status: self.communication.send_status(status),
-            'handle_command': self.command.handle_command, 
-            'when_controller_discovered': self.when_controller_discovered,
-            'controller_disconnected': self.controller_disconnected,
-            'get_ptp_status': self.ptp.get_status,
-            'get_recording_status': lambda: self.is_recording,
-            'get_streaming_status': lambda: self.is_streaming,
-            "on_module_config_change": self.on_module_config_change
-        }
-
-        # Register helper methods with modules
-        self.network.set_callbacks(self.helper_callbacks)
-        self.health.set_callbacks(self.helper_callbacks)
-        self.communication.set_callbacks(self.helper_callbacks)
-        self.command.set_callbacks(self.helper_callbacks)
-        self.export.set_callbacks(self.helper_callbacks)
+        # Register callbacks and api
         self.config.on_module_config_change = self.on_module_config_change
+        self.network.api = self.api
+        self.health.api = self.api
+        self.communication.api = self.api
+        self.command.api = self.api
+        self.export.api = self.api
+        self.recording.api = self.api
     
         # Register commands with command router
         self.command.set_commands(self.command_callbacks)
@@ -245,19 +170,66 @@ class Module(ABC):
         # Track when module started for uptime calculation
         self.start_time = None
 
-    def on_module_config_change(self, updated_keys: Optional[list[str]]):
+        # Log to file if enabled
+        if self.config.get("logging.to_file", True):
+            self.setup_logger_file_handling() 
+
+
+    def get_module_name(self) -> str:
+        name = self.config.get("module.name")
+        if name == "":
+            name = self.module_id
+        return name
+
+
+    def setup_logger_file_handling(self) -> None:
+        # Add file handler if none exists
+        if not self.logger.handlers:
+            # Add file handler for persistent logging (useful when running as systemd service)
+            try:
+                # Create logs directory if it doesn't exist
+                log_dir = self.config.get("logging.directory", "/var/log/saviour")
+                os.makedirs(log_dir, exist_ok=True)
+                
+                # Generate log filename with module info
+                log_filename = f"{self.module_type}_{self.module_id}.log"
+                log_filepath = os.path.join(log_dir, log_filename)
+                
+                # Get config values for rotation
+                max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
+                backup_count = self.config.get("logging.backup_count", 5)
+                
+                # Add file handler with rotation
+                from logging.handlers import RotatingFileHandler
+                file_handler = RotatingFileHandler(
+                    log_filepath,
+                    maxBytes=max_bytes,
+                    backupCount=backup_count
+                )
+                file_handler.setLevel(logging.INFO)
+                self.logger.addHandler(file_handler)
+                
+                self.logger.info(f"File logging enabled: {log_filepath}")
+                self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+
+            except Exception as e:
+                # If file logging fails, log the error but don't crash
+                self.logger.warning(f"Failed to setup file logging: {e}")
+                self.logger.info("Continuing with console logging only")
+        else:
+            self.logger.info("Logger file handler was not set up as handlers already exist")
+
+
+    def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
         self.configure_module(updated_keys)
+
 
     @abstractmethod
     def configure_module(self, updated_keys: Optional[list[str]]):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
-    
-    # @abstractmethod
-    def register_description(self) -> str:
-        """Register a description of the module - to be implemented by subcclasses"""
-        return "No description registered"
+
 
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
@@ -310,6 +282,7 @@ class Module(ABC):
             self.file_transfer = None
             raise
 
+
     def controller_disconnected(self):
         """Callback when controller is disconnected"""
         # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
@@ -337,273 +310,40 @@ class Module(ABC):
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
-    def _create_safe_experiment_name(self, experiment_name:str ) -> str:
-        """
-        Take an experiment name received from the frontend and put it in a file-safe format.
-        """
-        if not experiment_name:
-            return ""
-        safe_experiment_name = "".join(c for c in experiment_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_experiment_name = safe_experiment_name.replace(' ', '_')
-        self.logger.info(f"Generated safe experiment name {safe_experiment_name}")
-        return safe_experiment_name
 
     """Recording methods"""
-    @command()
-    def start_recording(self, experiment_name: str = None, duration: str = None, experiment_folder: str = None, controller_share_path: str = None) -> Optional[str]:
-        #TODO : Should this go in a separate class that uses strategy pattern to allow different recording behaviours to be implemented.
-        """
-        Start recording. Should be extended with module-specific implementation.
-        
-        Args:
-            experiment_name: Optional experiment name to prefix the filename
-            duration: Optional duration parameter (not currently used)
-            experiment_folder: Optional experiment folder name for exports
-            controller_share_path: Optional controller share path for export
-            
-        Returns the filename if setup was successful, None otherwise.
-        """
-        self.logger.info(f"start_recording called with experiment_name {experiment_name}, duration {duration}, experiment_folder {experiment_folder}, controller_share_path {controller_share_path}")
-        # Check not already recording
-        if self.is_recording:
-            self.logger.info("Already recording")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_start_failed",
-                    "error": "Already recording"
-                })
-            return None
-        
-        # Empty session files
-        self.session_files = []
-        self.logger.info(f"Session files array emptied: {self.session_files}")
-
-        # Store experiment folder information for export
-        self.current_experiment_folder = experiment_folder
-        self.controller_share_path = controller_share_path
-        self.current_experiment_name = self._create_safe_experiment_name(experiment_name)
-        
-        # Set up recording - filename and folder
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{self.module_id}"
-        
-        # Use experiment name in filename if provided
-        if experiment_name:
-            self.current_filename_prefix = f"{self.recording_folder}/{self.current_experiment_name}_{self.recording_session_id}"
-        else:
-            self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
-        
-        os.makedirs(self.recording_folder, exist_ok=True)
-
-        # Start generating health metadata to go with file
-        self._start_recording_health_metadata()
-
-        self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
-        if duration is not None:
-            if duration > 0:
-                self._recording_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
-
-        result = self._start_recording() # Call the start_recording method which handles the actual implementation
-        self.logger.info(f"Child class _start_recording call returned {result}")
-
-        # Start auto stop thread if needed
-        if self._recording_thread:
-            self._recording_thread.start()
-
-        self.is_recording = True
- 
-        return {"filename": self.current_filename_prefix}  # Just return filename, let child class handle status # TODO delete this as it should end up being redundant.
-    
-    def add_session_file(self, filename: str) -> None:
-        """Method to append a recording file to the current list of session files"""
-        self.session_files.append(filename)
-        self.logger.info(f"Session file {filename} added, new list {self.session_files}")
-
     @abstractmethod
-    def _start_recording(self):
+    def _start_new_recording(self) -> bool:
         """To be implemented by subclasses"""
         pass
 
-    @command()
-    def stop_recording(self) -> bool:
-        """
-        Stop recording. Should be extended with module-specific implementation.
-        Returns True if ready to stop, False otherwise.
-        """
-        try:
-            # Check if recording
-            if not self.is_recording:
-                self.logger.info("Already stopped recording")
-                self.communication.send_status({
-                    "type": "recording_stop_failed",
-                    "error": "Not recording"
-                })
-                return False
-
-            self._stop_recording() # Specific implementation of stop_recording
-            self.is_recording = False
-            self.logger.info("Made it past stop_recording call")
-
-            self._stop_recording_health_metadata()
-            self.logger.info("Made it past stop_recording_health_metadata call")
-
-            # self._get_session_files()
-            # self.logger.info("Made it past _get_session_files call")
-
-            self.logger.info(f"Config says {self.config.get('auto_export')}")
-            if self.config.get("auto_export") == True:
-                self._auto_export()
-
-            # return True  # Just return True, let child class handle the rest
-            return {"result": "Success"}
-
-        except Exception as e:
-            self.logger.error(f"Error in stop_recording: {e}")
-            return {"result": "failure", "message": f"Error in stop_recording: {e}"}
-
+    
     @abstractmethod
-    def _stop_recording(self):
+    def _start_next_recording_segment(self) -> bool:
         """To be implemented by subclasses"""
         pass
-    
-    def _auto_stop_recording(self, duration: int):
-        self.logger.info(f"Starting thread to stop recording after {duration}s")
-        while ((time.time() - self.recording_start_time) < duration):
-            remaining_time = duration - (time.time() - self.recording_start_time)
-            self.logger.info(f"Still recording, {remaining_time}s left")
-            time.sleep(0.5) # Wait
-        self.logger.info("Stopping recording")
-        self.stop_recording()
 
-    """Methods to record health metadata"""
-    def _start_recording_health_metadata(self, filename: Optional[str] = None) -> None:
-        """Start a thread to record health metadata. Will continue until stopped."""
-        if not filename:
-            filename = self.current_filename_prefix
-        self.health_stop_event.clear() # Clear the stop flag before starting
-        self.health_recording_thread = threading.Thread(target=self._record_health_metadata, args=(filename,), daemon=True)
-        self.health_recording_thread.start()
-        if not self.health_recording_thread:
-            self.logger.error("Failed to start health recording thread")
+
+    @abstractmethod
+    def _stop_recording(self) -> bool:
+        """To be implemented by subclasses"""
+        pass
+
+
+    """File IO"""
+    def _check_file_exists(self, filename: str) -> bool:
+        """Check if a file exists in the recording folder."""
+        if filename in os.listdir(self.api.get_recording_folder()):
+            return True
         else:
-            self.logger.info("Health recording thread started")
+            return False
 
-    def _stop_recording_health_metadata(self) -> None:
-        """Stop an existing health_recording_thread"""
-        self.logger.info("Inside stop_recording_health_metadata call")
-        if self.health_recording_thread and self.health_recording_thread.is_alive():
-            self.logger.info("Signalling health recording thread to stop")
-            self.health_stop_event.set()
-            self.health_recording_thread.join(timeout=5)
-            if self.health_recording_thread.is_alive():
-                self.logger.warning("Health recording thread did not terminate cleanly")
-            else:
-                self.logger.info("Health recording thread stopped")
-        else:
-            self.logger.warning("No active health recording thread was found to stop")
-
-    def _record_health_metadata(self, filename_prefix: str):
-        """
-        Runs in a thread.
-        Polls Health class for current health data.
-        Saves to file.
-        """
-        interval = 5 # Interval in seconds # TODO: Take this from config
-        csv_filename = f"{filename_prefix}_health_metadata.csv"
-        self.add_session_file(csv_filename)
-        fieldnames = ["timestamp", "cpu_temp", "cpu_usage", "memory_usage", "uptime", "disk_space", "ptp4l_offset", "ptp4l_freq", "phc2sys_offset", "phc2sys_freq", "recording", "streaming"] # Tightly coupled. #TODO: Get keys of dict returned from health.get_health()
-        with open(csv_filename, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            while not self.health_stop_event.is_set():
-                data = self.health.get_health()
-                writer.writerow(data)
-                f.flush() # Ensure each line is written
-                # Wait for either a stop signal or timeout
-                if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
-                    break
-
-    def _auto_export(self):
-        self.logger.info("Auto-export called")
-        if self.config.get("auto_export", True):
-            self.logger.info("Auto-export enabled, exporting recording using export manager")
-            try:
-                # Use the export manager's method for consistency
-                if self.export.export_current_session_files(
-                    session_files=self.session_files,
-                    recording_folder=self.recording_folder,
-                    recording_session_id=self.recording_session_id,
-                    experiment_name=self.current_experiment_name
-                ):
-                    self.logger.info("Auto-export completed successfully")
-
-                    if self.config.get("auto_delete_on_export", True):
-                        self._clear_recordings(filenames=self.session_files)
-                else:
-                    self.logger.warning("Auto-export failed, but recording was successful")
-            except Exception as e:
-                self.logger.error(f"Auto-export error: {e}")
-        else:
-            self.logger.info("Auto-export disabled, not exporting recording")
-
-    def _get_recordings_list(self):
-        """Internal method to get list of recordings with metadata"""
-        try:
-            recordings = []
-            
-            # Ensure recording folder exists
-            if not os.path.exists(self.recording_folder):
-                self.logger.info(f"Recording folder does not exist, creating: {self.recording_folder}")
-                try:
-                    os.makedirs(self.recording_folder, exist_ok=True)
-                except Exception as e:
-                    self.logger.error(f"Error creating recording folder {self.recording_folder}: {e}")
-                    return []
-            
-            # Check if we can access the folder
-            if not os.access(self.recording_folder, os.R_OK):
-                self.logger.error(f"No read permission for recording folder: {self.recording_folder}")
-                return []
-                
-            try:
-                for filename in os.listdir(self.recording_folder):
-                    try:
-                        filepath = os.path.join(self.recording_folder, filename)
-                        if os.path.isfile(filepath):  # Only include files, not directories
-                            stat = os.stat(filepath)
-                            recordings.append({
-                                "filename": filename,
-                                "size": stat.st_size,
-                                "created": datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                            })
-                    except (OSError, IOError) as e:
-                        # Skip files that can't be accessed
-                        self.logger.warning(f"Skipping file {filename} due to access error: {e}")
-                        continue
-                    except Exception as e:
-                        # Skip files that cause other errors
-                        self.logger.warning(f"Skipping file {filename} due to error: {e}")
-                        continue
-                
-                # Sort by creation time, newest first
-                recordings.sort(key=lambda x: x["created"], reverse=True)
-                self.logger.info(f"Found {len(recordings)} recordings in {self.recording_folder}")
-                return recordings
-                
-            except (OSError, IOError) as e:
-                self.logger.error(f"Error accessing recording folder {self.recording_folder}: {e}")
-                return []
-                
-        except Exception as e:
-            self.logger.error(f"Unexpected error getting recordings list: {e}")
-            # Don't re-raise the exception - return empty list instead
-            return []
 
     @command()
     def list_recordings(self):
         """List all recorded files with metadata and send to controller"""
         try:
-            recordings = self._get_recordings_list()
+            recordings = [] # TODO: Get recordings here
             
             # Send status response
             self.communication.send_status({
@@ -626,222 +366,6 @@ class Module(ABC):
             # Return empty list instead of re-raising
             return []
 
-    def _clear_recordings(self, filename: str = None, filenames: list = None, older_than: int = None, keep_latest: int = 0):
-        """Clear recordings
-        
-        Args:
-            filename: Optional specific filename to delete
-            filenames: Optional list of specific filenames to delete
-            older_than: Optional timestamp - delete recordings older than this
-            keep_latest: Optional number of latest recordings to keep
-            
-        Returns:
-            dict with deleted_count and kept_count
-        """
-        self.logger.debug(f"Attempting to clear recordings: {filenames}")
-        try:
-            if not os.path.exists(self.recording_folder):
-                return {"deleted_count": 0, "kept_count": 0}
-            
-            # If multiple filenames are provided, delete them
-            if filenames:
-                deleted_count = 0
-                for single_filename in filenames:
-                    try:
-                        if single_filename.startswith(self.recording_folder):
-                            filepath = single_filename
-                        else:
-                            filepath = os.path.join(self.recording_folder, single_filename)
-                        self.logger.debug(f"Attempting to delete {filepath}")
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
-                            deleted_count += 1
-                            self.logger.info(f"Deleted file: {single_filename}")
-                        else:
-                            self.logger.warning(f"File not found: {single_filename}")
-                    except Exception as e:
-                        self.logger.error(f"Error deleting recording {single_filename}: {e}")
-                return {"deleted_count": deleted_count, "kept_count": 0}
-            
-            # If specific filename is provided, delete just that file
-            if filename:
-                try:
-                    if filename.startswith(self.recording_folder):
-                        filepath = filename
-                    else:
-                        filepath = os.path.join(self.recording_folder, filename)
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                        return {"deleted_count": 1, "kept_count": 0}
-                    else:
-                        self.logger.warning(f"File not found: {filename}")
-                        return {"deleted_count": 0, "kept_count": 0}
-                except Exception as e:
-                    self.logger.error(f"Error deleting recording {filename}: {e}")
-                    return {"deleted_count": 0, "kept_count": 0}
-                
-            # Get list of recordings using internal method
-            recordings = self._get_recordings_list()
-            if not recordings:
-                return {"deleted_count": 0, "kept_count": 0}
-                
-            # Sort by creation time, newest first
-            recordings.sort(key=lambda x: x["created"], reverse=True)
-            
-            deleted_count = 0
-            kept_count = 0
-            
-            # Keep the latest N recordings if specified
-            if keep_latest > 0:
-                kept_recordings = recordings[:keep_latest]
-                recordings = recordings[keep_latest:]
-                kept_count = len(kept_recordings)
-            
-            # Delete recordings older than timestamp if specified
-            for recording in recordings:
-                if older_than and recording["created"] >= older_than:
-                    continue
-                    
-                try:
-                    filepath = os.path.join(self.recording_folder, recording["filename"])
-                    os.remove(filepath)
-                    # Also try to remove associated timestamp file if it exists
-                    base_name = os.path.splitext(recording["filename"])[0]
-                    timestamp_file = os.path.join(self.recording_folder, f"{base_name}_timestamps.txt")
-                    if os.path.exists(timestamp_file):
-                        os.remove(timestamp_file)
-                    deleted_count += 1
-                except Exception as e:
-                    self.logger.error(f"Error deleting recording {recording['filename']}: {e}")
-            
-            self.logger.info("Deleteted {deleted_count} recordings")
-
-            return {
-                "deleted_count": deleted_count,
-                "kept_count": kept_count
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error clearing recordings: {e}")
-            raise
-
-    def export_recordings(self, filename: str, length: int = 0, destination: Union[str, Export.ExportDestination] = Export.ExportDestination.CONTROLLER, experiment_name: str = None):
-        """Export a video to the specified destination
-        
-        Args:
-            filename: Name of the file to export (can be comma-separated list)
-            length: Optional length of the video
-            destination: Where to export to - string or Export.ExportDestination enum
-            experiment_name: Optional experiment name to include in export directory
-            
-        Returns:
-            bool: True if export successful
-        """
-        try:
-            # Use experiment folder if available from recording session
-            if hasattr(self, 'current_experiment_folder') and self.current_experiment_folder:
-                experiment_name = self.current_experiment_folder
-                self.logger.info(f"Using experiment folder for export: {experiment_name}")
-            
-            # Convert string destination to enum if needed
-            if isinstance(destination, str):
-                try:
-                    destination = Export.ExportDestination.from_string(destination)
-                except ValueError as e:
-                    self.logger.error(f"Invalid destination '{destination}': {e}")
-                    self.communication.send_status({
-                        "type": "export_failed",
-                        "filename": filename,
-                        "error": f"Invalid destination: {destination}"
-                    })
-                    return False
-            
-            if filename == "all":
-                # Export all recordings in a single export session
-                if not self.export.export_all_files(destination, experiment_name):
-                    self.communication.send_status({
-                        "type": "export_failed",
-                        "filename": "all",
-                        "error": "Failed to export files",
-                        "success": False
-                    })
-                    return False
-                return True
-                
-            elif filename == "latest":
-                # Export latest recording
-                latest_recording = self.get_latest_recording()
-                if not self.export.export_file(latest_recording["filename"], destination, experiment_name):
-                    self.communication.send_status({
-                        "type": "export_failed",
-                        "filename": latest_recording["filename"],
-                        "error": "Failed to export file",
-                        "success": False
-                    })
-                    return False
-                return True
-            
-            # Handle comma-separated filenames
-            if ',' in filename:
-                filenames = [f.strip() for f in filename.split(',')]
-                self.logger.info(f"Exporting multiple files: {filenames}")
-                
-                # Export each file individually
-                for single_filename in filenames:
-                    if not self.export.export_file(single_filename, destination, experiment_name):
-                        self.communication.send_status({
-                            "type": "export_failed",
-                            "filename": single_filename,
-                            "error": "Failed to export file",
-                            "success": False
-                        })
-                        return False
-                
-                # Send success status for all files
-                self.communication.send_status({
-                    "type": "export_complete",
-                    "filename": filename,  # Original comma-separated string
-                    "session_id": self.recording_session_id,
-                    "length": length,
-                    "destination": destination.value,
-                    "experiment_name": experiment_name,
-                    "success": True
-                })
-                self._clear_recordings()
-                return True
-                
-            # Export specific single file
-            if not self.export.export_file(filename, destination, experiment_name):
-                self.communication.send_status({
-                    "type": "export_failed",
-                    "filename": filename,
-                    "error": "Failed to export file",
-                    "success": False
-                })
-                return False
-                
-            # Send success status
-            self.communication.send_status({
-                "type": "export_complete",
-                "filename": filename,
-                "session_id": self.recording_session_id,
-                "length": length,
-                "destination": destination.value,
-                "experiment_name": experiment_name,
-                "has_timestamps": os.path.exists(f"{filename}_timestamps.txt"),
-                "success": True
-            })
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error exporting recordings: {e}")
-            self.communication.send_status({
-                "type": "export_failed",
-                "filename": filename,
-                "error": str(e),
-                "success": False
-            })
-            return False
 
     def list_commands(self):
         """
@@ -905,6 +429,7 @@ class Module(ABC):
         
         return True
 
+
     def _wait_for_network_ready(self, check_interval: float = 2.0) -> bool:
         """
         Wait for proper network connectivity with DHCP-assigned IP address.
@@ -933,7 +458,7 @@ class Module(ABC):
                     
                     # Check for proper DHCP-assigned IP (192.168.x.x)
                     for ip in ip_addresses:
-                        if ip.startswith('192.168.'):
+                        if ip.startswith('192.168.') or ip.startswith('10.0.'):
                             self.logger.info(f"Network ready! Got IP: {ip} (attempt {attempts})")
                             return True
                     
@@ -953,6 +478,7 @@ class Module(ABC):
             
             # Wait before next check
             time.sleep(check_interval)
+
 
     def stop(self) -> bool:
         """
@@ -1002,10 +528,12 @@ class Module(ABC):
         self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
     
+
     def generate_session_id(self, module_id="unknown"):
         """Start a new session for a module"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"REC_{timestamp}_{module_id}" # Generate a new session ID
+
 
     def _shutdown(self): 
         """Shut down the module"""
@@ -1019,10 +547,16 @@ class Module(ABC):
         except Exception as e:
             self.logger.error(f"Error during shutdown: {e}")
 
+
     """Config Methods"""
     @command()
     def get_config(self):
-        return {"config": self.config.get_all()}
+        response = {
+            "config": self.config.get_all()
+        }
+        self.logger.info(f"Get config called, returning config with {len(response['config'])} keys")
+        return response
+
 
     @command()
     def set_config(self, config: dict, persist: bool = True) -> bool:
@@ -1074,8 +608,7 @@ class Module(ABC):
     
 
     """Ready to record checks"""
-    @abstractmethod
-    def _perform_module_specific_checks(self, checks: dict) -> tuple[bool, str]:
+    def _perform_module_specific_checks(self) -> tuple[bool, str]:
         """
         Perform module-specific readiness checks.
         Subclasses should override this method to add their own validation.
@@ -1086,8 +619,15 @@ class Module(ABC):
         Returns:
             tuple: (ready: bool, error_msg: str or None)
         """
-        # Base implementation - no module-specific checks
-        return True, None
+        self.logger.info(f"Performing {self.module_type} specific checks")
+        for check in self.module_checks:
+            self.logger.info(f"Running {check.__name__}")
+            result, message = check()
+            if result == False:
+                self.logger.info(f"A check failed: {check.__name__}, {message}")
+                return False, message
+                break # Exit loop on first failed check
+        return True, f"{self.module_type} checks passed"
     
 
     @check()
@@ -1101,12 +641,12 @@ class Module(ABC):
     @check()
     def _check_readwrite(self) -> tuple[bool, str]:
         try:
-            self.logger.debug(f"Checking can write to {self.recording_folder}")
-            if not os.path.exists(self.recording_folder):
-                os.makedirs(self.recording_folder, exist_ok=True)
+            self.logger.debug(f"Checking can write to {self.api.get_recording_folder()}")
+            if not os.path.exists(self.api.get_recording_folder()):
+                os.makedirs(self.api.get_recording_folder(), exist_ok=True)
             self.logger.debug("Created folder OK")
             # Test write access
-            test_file = os.path.join(self.recording_folder, '.test_write')
+            test_file = os.path.join(self.api.get_recording_folder(), '.test_write')
             self.logger.debug(f"Going to write to test file {test_file}")
             with open(test_file, 'w') as f:
                 self.logger.debug(f"Opened test file {f}")
@@ -1125,7 +665,7 @@ class Module(ABC):
     @check()
     def _check_diskspace(self) -> tuple[bool, str]:
         try:
-            statvfs = os.statvfs(self.recording_folder)
+            statvfs = os.statvfs(self.api.get_recording_folder())
             free_bytes = statvfs.f_frsize * statvfs.f_bavail
             free_mb = free_bytes / (1024 * 1024)
             required_mb = self._get_required_disk_space_mb()
@@ -1177,8 +717,10 @@ class Module(ABC):
         
         result, message = self._perform_module_specific_checks()
         if result == False:
+            self.logger.info(f"Check failed {result} {message}")
             return result, message
 
+        self.logger.info("ALL CHECKS PASSED")
         return True, "All tests passed" # Everything passed    
         
 
@@ -1203,6 +745,7 @@ class Module(ABC):
         short_id = mac[-4:]  # Takes last 4 characters
         return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
 
+
     def get_mac_address(self, interface="eth0"):
         """Retreive mac address on specified interface, default eth0."""
         try:
@@ -1211,3 +754,22 @@ class Module(ABC):
         except FileNotFoundError:
             return None
 
+
+    def get_utc_time(self, timestamp: int):
+        strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
+        return strtime
+
+    
+    def get_utc_date(self, timestamp: int):
+        strdate = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d")
+        return strdate
+
+    
+    def _get_version(self) -> str:
+        """Get the current saviour version"""
+        # TODO: Seems to return nothing - possibly due to the working directory of the systemd service not being the git repo?
+        s = subprocess.run(["git", "describe", "--tags"], capture_output=True)
+        vers = s.stdout.decode("utf-8")[:-1]
+        if not vers:
+            vers = "UNKNOWN_VERSION"
+        return vers

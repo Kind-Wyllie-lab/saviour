@@ -1,0 +1,72 @@
+/* Container for the entire experiment metadata panel */
+.experiment-metadata-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    background-color: var(--card-bg-color);
+    color: var(--text-color);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    width: 100%;
+    box-sizing: border-box;
+    max-width: 400px;
+  }
+  
+  /* Form row containing label + input/select */
+  .metadata-form-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  
+  /* Label styling */
+  .metadata-form-row label {
+    min-width: 60px;
+    font-weight: 600;
+    color: var(--text-color);
+  }
+  
+  /* Input and select styling */
+  .metadata-form-row input,
+  .metadata-form-row select {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+  
+  /* Experiment name preview */
+  .experiment-name-preview {
+    font-weight: 600;
+    color: var(--text-color);
+    background: var(--bg-color);
+    padding: 8px 10px;
+    border-radius: 4px;
+    text-align: center;
+  }
+  
+  /* Optional: make preview stand out more if updated */
+  .experiment-name-preview.updated {
+    border: 2px solid #27ae60;
+    background: #dff0d8;
+    transition: all 0.3s ease;
+  }
+  
+  /* Responsive adjustments for smaller panels */
+  @media (max-width: 500px) {
+    .metadata-form-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .metadata-form-row label {
+      min-width: 100%;
+    }
+  }
+  

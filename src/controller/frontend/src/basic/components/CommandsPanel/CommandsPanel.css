@@ -16,23 +16,22 @@
   padding: 8px 12px;
   border-radius: 4px;
   border: none;
-  background-color: var(--accent-color);
   color: white;
   cursor: pointer;
   font-weight: bold;
 }
 
-/* .start-button {
-  background-color: var(--accent-color-alt);
+.start-button {
+  background-color: red;
 }
 
 .stop-button {
-  background-color: var(--accent-color);
+  background-color: red;
 }
 
 .ready-button {
-  background-color: var(--accent-color-alt);
-} */
+  background-color: blue;
+}
   
 /* Hover effect only when enabled */
 .commands-panel button:not(:disabled):hover {

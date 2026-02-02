@@ -94,7 +94,8 @@ ask_controller_type() {
         echo "Please specify the type of controller - this will affect the GUI primarily:"
         echo "1) Basic SAVIOUR"
         echo "2) APA - Active Place Avoidance"
-        echo "3) Habitat (NOT YET IMPLEMENTED)"
+        echo "3) Habitat"
+        echo "4) Acoustic Startle (NOT YET IMPLEMENTED)"
         echo ""
         
         while true; do
@@ -110,6 +111,10 @@ ask_controller_type() {
                     ;;
                 3) 
                     DEVICE_TYPE="habitat"
+                    break
+                    ;;
+                4) 
+                    DEVICE_TYPE="acoustic"
                     break
                     ;;
                 *)

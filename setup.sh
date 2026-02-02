@@ -2,6 +2,32 @@
 # Primary Setup
 # Install dependencies for SAVIOUR
 
+echo "======================================="
+echo " SAVIOUR installer"
+echo " Installing to /usr/local/src/saviour"
+echo "======================================="
+
+TARGET_DIR="/usr/local/src/saviour"
+
+# Resolve absolute path of this script
+SCRIPT_PATH="$(readlink -f "$0")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+
+if [[ "$SCRIPT_DIR" != "$TARGET_DIR" ]]; then
+    echo "Relocating SAVIOUR to $TARGET_DIR..."
+
+    sudo mkdir -p "$TARGET_DIR"
+
+    # Move entire repo contents (not parent dir)
+    sudo rsync -a --delete "$SCRIPT_DIR/" "$TARGET_DIR/"
+
+    # Fix ownership so pi can work there
+    sudo chown -R "$USER:$USER" "$TARGET_DIR"
+
+    echo "Re-running setup from $TARGET_DIR"
+    exec "$TARGET_DIR/$(basename "$SCRIPT_PATH")"
+fi
+
 set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
 trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
 
@@ -53,12 +79,9 @@ install_system_packages() {
 }
 
 create_python_environment() {
-    if [ -d "env" ]; then
-        echo "Removing existing virtual environment..."
-        sudo rm -rf env
+    if [ ! -d "env" ]; then
+        python3 -m venv env --system-site-packages
     fi
-
-    python3 -m venv env --system-site-packages
 
     source env/bin/activate
 

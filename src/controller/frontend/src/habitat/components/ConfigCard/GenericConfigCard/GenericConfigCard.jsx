@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from "react";
 // import './ConfigCard.css';
-import LivestreamCard from "../../LivestreamCard/LivestreamCard";
+import LivestreamCard from "../../HabitatLivestreamCard/HabitatLivestreamCard";
 
 function GenericConfigCard({ id, module }) {
   const [formData, setFormData] = useState(module.config); // Component level config state
-  const [collapsed, setCollapsed] = useState(false); // top-level collapse
   const [collapsedSections, setCollapsedSections] = useState({}); // per-section collapse
 
   // Keep formData synced if parent updates config
@@ -101,28 +100,24 @@ function GenericConfigCard({ id, module }) {
   };
 
   return (
-    <div className={`config-card ${collapsed ? "collapsed" : ""}`}>
+    <div className="config-card">
       <div className="card-header">
-        <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
-          {module.name} {collapsed ? "(+)" : "(-)"}
-        </h3>
+        <h3>{module.name} ({module.id})</h3>
       </div>
 
-      {!collapsed && (
-        <div className="config-card-body">
-          <div className="config-form">
-            <form>{renderFields(formData)}</form>
-            <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
-          </div>
-
-          {/* Render livestream only for camera modules */}
-          {module.type.includes("camera") && (
-            <div className="livestream-wrapper">
-              <LivestreamCard module={module} />
-            </div>
-          )}
+      <div className="config-card-body">
+        <div className="config-form">
+          <form>{renderFields(formData)}</form>
+          <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
         </div>
-      )}
+
+        {/* Render livestream only for camera modules */}
+        {module.type.includes("camera") && (
+          <div className="livestream-wrapper">
+            <LivestreamCard module={module} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

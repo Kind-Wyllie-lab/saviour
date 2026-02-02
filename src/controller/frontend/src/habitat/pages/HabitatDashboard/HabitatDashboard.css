@@ -1,0 +1,26 @@
+.dashboard {
+  height: 100vh;
+  display: flex;
+  /*  allow children to shrink */
+  /* min-height: 0;     */
+  gap: 32px;
+  justify-content: center;
+  align-items: center;
+  flex: 3;
+}
+
+  .dashboard-left {
+    height: 100%;
+    display: flex;
+    align-items: center;
+  }
+
+  .dashboard-right {
+    height: 100%;
+  }
+
+    .livestream-square {
+      aspect-ratio: 1/1;
+      height: 100%;
+      max-width: 100%;
+    }

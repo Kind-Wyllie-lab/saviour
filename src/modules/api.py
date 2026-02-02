@@ -32,6 +32,7 @@ class ModuleAPI():
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 
+
     def get_controller_ip(self) -> str:
         return self.module.network.controller_ip
 
@@ -93,6 +94,7 @@ class ModuleAPI():
     def send_status(self, status_data: Dict[str, Any]) -> None:
         """Send a response to the controller"""
         self.module.communication.send_status(status_data)
+
 
     def handle_command(self, raw_command: str) -> None:
         """Handle an incoming command from the controller"""

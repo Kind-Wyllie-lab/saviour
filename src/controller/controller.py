@@ -22,7 +22,7 @@ import time
 import datetime
 import logging # for logging and debugging
 from dataclasses import dataclass # to define Module dataclass
-from typing import List, Dict, Any # for type hinting
+from typing import List, Dict, Any, Optional # for type hinting
 import asyncio # for asyncio
 from abc import ABC, abstractmethod
 
@@ -50,18 +50,18 @@ import threading # for concurrent operations
 from src.controller.network import Network
 from src.controller.communication import Communication
 from src.controller.health import Health
-from src.controller.buffer import Buffer
 from src.controller.config import Config
 from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
 from src.controller.modules import Modules
-    
+from src.controller.api import ControllerAPI
+
 # Habitat Controller Class
 class Controller(ABC):
     """
     Base class for SAVIOUR controller devices.
     """
-    def __init__(self, config_file_path: str = None):
+    def __init__(self):
         """Initialize the controller with default values
 
         Instantiates the following:
@@ -70,12 +70,8 @@ class Controller(ABC):
         - A network manager, which initially registers a zeroconf network and (passively, as part of zeroconf object) starts a thread to browse for module networks
         - A communication manager, which initially starts a thread to listen for status and data updates from modules
         - A PTP manager, which initally defines the ptp4l and phc2sys arguments based on the role of the controller and will later start a thread
-        - A buffer manager, which initially sets the max buffer size
         - A web manager, which hosts a flask based webapp GUI
         - A health monitor, which then has it's start monitoring method called to start a thread to monitor the health of the modules
-
-        Args:
-            config_file_path: Path to the config file
         """
 
         # Setup logging
@@ -83,7 +79,7 @@ class Controller(ABC):
         self.logger.info(f"Initializing managers")
 
         # Initialize config manager
-        self.config = Config(config_file_path)
+        self.config = Config()
 
         # Add logging file handler if none exists
         if not self.logger.handlers:
@@ -118,10 +114,6 @@ class Controller(ABC):
                 # If file logging fails, log the error but don't crash
                 self.logger.warning(f"Failed to setup file logging: {e}")
                 self.logger.info("Continuing with console logging only")
-            
-
-        # Module state managemenet
-        self.max_buffer_size = self.config.get("controller.max_buffer_size")
         
         # Control flags 
         self.is_running = True  # Add flag for listener thread
@@ -130,17 +122,12 @@ class Controller(ABC):
         self.network = Network(self.config) 
         self.network.on_module_discovered = self.on_module_discovered
         self.network.on_module_removed = self.on_module_removed              
-
         self.logger.info(f"Module discovery callback registered early")
-        
         self.communication = Communication(
             status_callback=self.handle_status_update,
         )
-        self.buffer = Buffer(self.max_buffer_size)
-        # self.database = database.ControllerDatabaseManager(self.config)
         self.ptp = PTP(role=PTPRole.MASTER)
         self.web = Web(self.config)
-
         # Initialize health monitor with configuration
         heartbeat_interval = self.config.get("health_monitor.heartbeat_interval")
         heartbeat_timeout = self.config.get("health_monitor.heartbeat_timeout")
@@ -148,43 +135,34 @@ class Controller(ABC):
             heartbeat_interval=heartbeat_interval,
             heartbeat_timeout=heartbeat_timeout
         )
-
         self.modules = Modules()
+        self.api = ControllerAPI(self)
+
+        # Register api/callbacks
+        self.network.api = self.api
+        self.health.api = self.api
+        self.communication.api = self.api
+        self.web.api = self.api
+        self.modules.api = self.api
+        self.config.on_controller_config_change = self.on_controller_config_change
+
+        # Controller state
+        self.start_time = None
 
         # Start health monitoring
         self.logger.info("Starting health monitoring thread")
         self.health.start_monitoring()
 
-        # Register callbacks
-        self.register_callbacks()
-    
 
-    def register_callbacks(self):
-        """Register callbacks for getting data from other managers"""
-        self.logger.info("Registering callbacks")
-        # Web interface
-        self.web.register_callbacks({
-            "get_modules": self._get_modules_for_frontend,
-            "get_ptp_history": self.buffer.get_ptp_history,
-            "send_command": self.communication.send_command,
-            "get_module_health": self.health.get_module_health,
-            "get_discovered_modules": self.network.get_modules,
-            "get_config": lambda: self.config.config,
-            "get_module_configs": self.get_module_configs,
-            "get_samba_info": self.get_samba_info,
-            "remove_module": self._remove_module,
-        })
-            
-        # Register status change callback with health monitor
-        self.health.set_callbacks({
-            "on_status_change": self.on_module_status_change,
-            "send_command": self.communication.send_command
-        })
+    def on_controller_config_change(self, updated_keys: Optional[list[str]]) -> None:
+        self.logger.info(f"Received notification that controller config changed, calling configure_controller() with keys {updated_keys}")
+        self.configure_controller(updated_keys)
 
-        self.network.notify_module_update = self.network_notify_module_update
-        self.network.notify_module_id_change = self.network_notify_module_id_change
 
-        self.modules.push_module_update_to_frontend = self.web.push_module_update
+    @abstractmethod
+    def configure_controller(self, updated_keys: Optional[list[str]]):
+        """Gets called when controller specific configuration changes - allows controllers to update their specific settings when they change"""
+        self.logger.warning("No implementation provided for abstract method configure_controller")
     
 
     def _remove_module(self, module_id: str):
@@ -235,9 +213,6 @@ class Controller(ABC):
                     self.logger.info(f"Heartbeat received from {module_id}")
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
-                case 'ptp_status':
-                    self.logger.info(f"PTP status received from {module_id}: {status_data}")
-                    self.buffer.add_ptp_history(module_id, status_data)
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
                 case 'status':
@@ -325,10 +300,6 @@ class Controller(ABC):
             self.logger.info("Cleaning up module health tracking")
             self.health.clear_all_health()
             
-            # Clean up module data buffer
-            self.logger.info("Cleaning up module data buffer")
-            self.buffer.clear_module_data()
-            
             # Clean up network manager
             self.logger.info("Cleaning up network manager")
             self.network.cleanup()
@@ -366,6 +337,7 @@ class Controller(ABC):
         - A forever loop to keep the main controller thread alive
         """
         self.logger.info("Starting controller")
+        self.start_time = time.time()
 
         # Register controller network for module discovery
         self.logger.info("Registering controller service...")
@@ -433,10 +405,6 @@ class Controller(ABC):
         Returns:
             True if successful
         """
-        # Update local variable if applicable
-        if key == "controller.max_buffer_size":
-            self.max_buffer_size = value
-            self.buffer.max_buffer_size = value
 
         # Update in config manager
         return self.config.set(key, value, persist) 
@@ -507,7 +475,7 @@ class Controller(ABC):
 
 
 if __name__ == "__main__":
-    controller = Controller(config_file_path="config.json")
+    controller = Controller()
     try:
         # Start the main loop
         controller.start()

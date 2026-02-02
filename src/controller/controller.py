@@ -55,6 +55,7 @@ from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
 from src.controller.modules import Modules
 from src.controller.api import ControllerAPI
+from src.controller.recording import Recording
 
 # Habitat Controller Class
 class Controller(ABC):
@@ -136,6 +137,7 @@ class Controller(ABC):
             heartbeat_timeout=heartbeat_timeout
         )
         self.modules = Modules()
+        self.recording = Recording()
         self.api = ControllerAPI(self)
 
         # Register api/callbacks
@@ -144,6 +146,7 @@ class Controller(ABC):
         self.communication.api = self.api
         self.web.api = self.api
         self.modules.api = self.api
+        self.recording.api = self.api
         self.config.on_controller_config_change = self.on_controller_config_change
 
         # Controller state

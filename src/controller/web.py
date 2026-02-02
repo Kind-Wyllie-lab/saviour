@@ -169,6 +169,32 @@ class Web(ABC):
                 self.socketio.emit('error', {'message': str(e)})
 
 
+        @self.socketio.on("start_recording")
+        def start_recording(data):
+            """
+            Start a new recording session.
+
+            """ 
+            try:
+                self.logger.info(f"Start recording called with {data}")
+                target = data.get("target")
+                session_name = data.get("session_name")
+                duration = data.get("duration")
+                self.api.start_recording(target, session_name, duration)
+            except Exception as e:
+                self.logger.error(f"Error starting recording: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
+
+        @self.socketio.on("stop_recording")
+        def stop_recording(data):
+            try:
+                target = data.get("target")
+                self.api.stop_recording(target)
+            except Exception as e:
+                self.logger.error(f"Error stopping recording: {str(e)}")
+                self.socketio.emit('error', {'message': str(e)})
+
+
         """ Get Modules """
         @self.socketio.on('get_modules')
         def handle_module_update():

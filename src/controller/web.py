@@ -43,12 +43,12 @@ class Web(ABC):
 
         # Default experiment metadata
         self.experiment_metadata = {
-            'experiment': 'demo',
-            'rat_id': '001',
-            'strain': 'Wistar',
-            'batch': 'B1',
-            'stage': 'habituation',
-            'trial': '1'
+            'experiment': '',
+            'rat_id': '',
+            'strain': '',
+            'batch': '',
+            'stage': '',
+            'trial': ''
         }
         self.current_experiment_name = self._generate_experiment_name() # To be constructed from metadata, or overriden
 

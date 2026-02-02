@@ -42,7 +42,11 @@
   }
   
   /* Experiment name preview */
-  .experiment-name-preview {
+  .session-name-preview-title {
+    text-align: center;
+  }
+  
+  .session-name-preview {
     font-weight: 600;
     color: var(--text-color);
     background: var(--bg-color);

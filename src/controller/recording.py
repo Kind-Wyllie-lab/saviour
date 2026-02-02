@@ -29,7 +29,7 @@ class Recording():
             - duration: Recording session duration in seconds
         """
         # Add timestamp to session name
-        start_time = datetime.now().strftime("%Y%M%d_%H%m$S")
+        start_time = datetime.now().strftime("%Y%M%d_%H%m%S")
         session_name += ("_" + start_time)
 
         # Send the command

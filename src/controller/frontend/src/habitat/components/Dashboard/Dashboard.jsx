@@ -8,13 +8,15 @@ function Dashboard({ modules }) {
     const [systemState, setSystemState] = useState({});
 
     useEffect(() => {
-        socket.emit("get_system_state");
+        const id = setInterval(() => {
+            socket.emit("get_system_state");
 
-        socket.on("system_state", (data) => {
-            console.log("Received system state: ", data);
-            setSystemState(data);
-        })
-
+            socket.on("system_state", (data) => {
+                console.log("Received system state: ", data);
+                setSystemState(data);
+            })
+        }, 10000);
+        return () => clearInterval(id);
     }, []);
 
     // Filter the received modules

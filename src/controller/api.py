@@ -55,12 +55,17 @@ class ControllerAPI():
         return round(time.time() - self.controller.start_time, 0)
 
 
+    def get_ptp_sync(self) -> int:
+        """Return the offset for the worst-synced module"""
+        return self.controller.health.get_ptp_sync()
+
+
     def get_system_state(self) -> dict:
         return {
             "example": "This is an example system state object",
             "recording": True,
             "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": 6 # Largest ptp offset from a module in ms
+            "ptp_sync": self.get_ptp_sync() # Largest ptp offset from a module in ms
         }
 
 

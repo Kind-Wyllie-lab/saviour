@@ -12,7 +12,11 @@
     z-index: 9999;
   }
   
-  
+  .video-panel {
+    height: 100vh;
+    width: 100vw;
+  }
+
   /* Video fills the overlay while maintaining aspect ratio */
   .fullscreen-video {
     width: 100%;      /* take full width of overlay */

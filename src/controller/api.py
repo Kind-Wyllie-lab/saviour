@@ -38,6 +38,10 @@ class ControllerAPI():
     def get_discovered_modules(self) -> dict:
         return self.controller.network.get_modules()
 
+
+    def get_module_config(self, module_id: str) -> dict:
+        return self.controller.get_module_config(module_id)
+        
     
     def get_module_configs(self) -> dict:
         return self.controller.get_module_configs()
@@ -55,12 +59,21 @@ class ControllerAPI():
         return round(time.time() - self.controller.start_time, 0)
 
 
+    def get_ptp_sync(self) -> int:
+        """Return the offset for the worst-synced module"""
+        return self.controller.health.get_ptp_sync()
+
+    
+    def get_recording_status(self) -> bool:
+        return self.controller.recording.get_recording_status()
+
+
     def get_system_state(self) -> dict:
         return {
             "example": "This is an example system state object",
-            "recording": True,
+            "recording": self.get_recording_status(),
             "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": 6 # Largest ptp offset from a module in ms
+            "ptp_sync": self.get_ptp_sync() # Largest ptp offset from a module in ms
         }
 
 
@@ -92,6 +105,16 @@ class ControllerAPI():
 
     def push_module_update_to_frontend(self, modules: dict):
         self.controller.web.push_module_update(modules)
+
+
+
+    """Recording"""
+    def start_recording(self, target: str, session_name: str, duration: int):
+        return self.controller.recording.start_recording(target, session_name, duration)
+
+    
+    def stop_recording(self, target: str):
+        return self.controller.recording.stop_recording(target)
 
 
     """Set config"""

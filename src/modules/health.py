@@ -50,7 +50,7 @@ class Health:
             self.logger.info("Heartbeats already active")
             return False
             
-        if not self.callbacks["get_controller_ip"]:
+        if not self.api.get_controller_ip():
             self.logger.error("Cannot start heartbeats: not connected to controller")
             return False
             
@@ -74,7 +74,7 @@ class Health:
             if (current_time - last_heartbeat_time) >= int(self.heartbeat_interval):
                 try:
                     # Check if communication manager is still valid
-                    if not self.callbacks["get_controller_ip"]:
+                    if not self.api.get_controller_ip():
                         self.logger.warning("Controller IP not available, stopping heartbeats")
                         self.heartbeats_active = False
                         break
@@ -82,7 +82,7 @@ class Health:
                     # self.logger.info("Sending heartbeat")
                     status = self.get_health()
                     status['type'] = 'heartbeat' # Add type field to identify heartbeat status
-                    self.callbacks["send_status"](status)
+                    self.api.send_status(status)
                     last_heartbeat_time = current_time
                 except Exception as e:
                     self.logger.error(f"Error sending heartbeat: {e}")
@@ -93,9 +93,9 @@ class Health:
             # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
             time.sleep(check_interval)
     
-    def get_health(self):
+    def get_health(self) -> dict:
         """Get health metrics for the module"""
-        ptp_status = self.callbacks["get_ptp_status"]()
+        ptp_status = self.api.get_ptp_status()
         return {
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
@@ -107,8 +107,7 @@ class Health:
             'ptp4l_freq': ptp_status.get('ptp4l_freq'),
             'phc2sys_offset': ptp_status.get('phc2sys_offset'),
             'phc2sys_freq': ptp_status.get('phc2sys_freq'),
-            'recording': self.callbacks["get_recording_status"](),
-            'streaming': self.callbacks["get_streaming_status"]()
+            'recording': self.api.get_recording_status()
         }
 
     def get_cpu_temp(self):
@@ -136,10 +135,4 @@ class Health:
     def cleanup(self): # TODO: is this redundant with the stop_heartbeats method?
         """Clean up resources"""
         self.stop_heartbeats()
-
-    def set_callbacks(self, callbacks: Dict[str, Callable]):
-        """
-        Receive a universal set of callbacks from the module
-        """
-        self.callbacks = callbacks
         

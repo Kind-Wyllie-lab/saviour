@@ -15,6 +15,7 @@ import threading
 import time
 import logging
 import os
+import subprocess
 
 from src.modules.config import Config
 
@@ -37,7 +38,10 @@ class Network:
         self.config = config
         self.module_id = module_id
         self.module_type = module_type
-        self.callbacks = {}
+        self.valid_ips = [
+            "192.168.1.",
+            "10.0.0."
+        ]
 
         # Controller connection params
         self.controller_ip = None
@@ -59,22 +63,46 @@ class Network:
         self.logger.info(f"Registering service with IP: {self.ip}")
         
         # Service registration parameters
-        self.service_type = "_module._tcp.local."
-        if self.config.get("module.name"):
-            self.service_name = f"{self.config.get('module.name')}_{self.module_type}_{self.module_id}._module._tcp.local."
-        else:
-            self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
-        self.service_port = self.config.get("zeroconf.port", 5353) if config else 5353
+        self.service_type = self.config.get("network.zeroconf_service_type", "_module._tcp.local.")
+
+        self.service_name = f"{self.module_type}_{self.module_id}._module._tcp.local."
+        self.service_port = self.config.get("network._zeroconf_port", 5353)
         # Initialize zeroconf
-        self.zeroconf = Zeroconf()
-
-
-    def start(self):
-        self.logger.info("Starting service registration")
-        if not self.ip:
-            self._find_own_ip()
+        self.zeroconf = Zeroconf(interfaces=[self.ip])
         
 
+    """Controller reconnection"""
+    def _schedule_reconnection(self):
+        """Schedule a reconnection attempt"""
+        if self.reconnect_attempts < self.max_reconnect_attempts:
+            self.reconnect_attempts += 1
+            self.logger.info(f"Scheduling reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {self.reconnect_delay} seconds")
+            
+            # Schedule reconnection in a separate thread
+            def delayed_reconnect():
+                time.sleep(self.reconnect_delay)
+                if not self.controller_ip:  # Only reconnect if still disconnected
+                    self.logger.info(f"Attempting reconnection {self.reconnect_attempts}/{self.max_reconnect_attempts}")
+                    self._attempt_reconnection()
+            
+            threading.Thread(target=delayed_reconnect, daemon=True).start()
+        else:
+            self.logger.warning(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
+
+
+    def _attempt_reconnection(self):
+        """Attempt to reconnect to the controller"""
+        try:
+            # Re-register service to refresh discovery
+            if self.register_service():
+                self.logger.info("Service re-registered for reconnection attempt")
+            else:
+                self.logger.error("Failed to re-register service for reconnection")
+        except Exception as e:
+            self.logger.error(f"Error during reconnection attempt: {e}")
+
+
+    """Zeroconf methods"""
     def register_service(self):
         """Register the service with current IP address"""
         self.logger.info(f"Starting service registration with ip {self.ip}")
@@ -92,10 +120,13 @@ class Network:
                 port=self.service_port, # the port number of the controller
                 properties={
                     'type': self.module_type,
-                    'id': self.module_id  # Important: Add module_id to properties
+                    'id': self.module_id,  # Important: Add module_id to properties
+                    'name': self.api.get_module_name()
                 } # the properties of the service
             )
             
+            self.logger.info(f"Registering {self.service_info}")
+
             # Register the service
             self.zeroconf.register_service(self.service_info)
             
@@ -110,6 +141,7 @@ class Network:
         except Exception as e:
             self.logger.error(f"Error registering service: {e}")
             return False
+
 
     def add_service(self, zeroconf, service_type, name):
         """Called when controller is discovered"""
@@ -138,58 +170,8 @@ class Network:
             self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
-            if "when_controller_discovered" in self.callbacks:
-                self.callbacks["when_controller_discovered"](self.controller_ip, self.controller_port)
-            else:
-                self.logger.warning("No when_controller_discovered callback registered")
+            self.api.when_controller_discovered(self.controller_ip, self.controller_port)
 
-    def remove_service(self, zeroconf, service_type, name):
-        """Called when controller disappears"""
-        self.logger.warning("Lost connection to controller")
-        
-        # Only trigger disconnect if we were actually connected
-        if self.controller_ip and self.controller_port:
-            if "controller_disconnected" in self.callbacks:
-                self.callbacks["controller_disconnected"]()
-            else:
-                self.logger.warning("No controller_disconnected callback registered")
-            
-            # Reset controller connection state
-            self.controller_ip = None
-            self.controller_port = None
-            self.logger.info("Controller connection state reset")
-            
-            # Start reconnection attempts if configured
-            if self.max_reconnect_attempts > 0:
-                self._schedule_reconnection()
-
-    def _schedule_reconnection(self):
-        """Schedule a reconnection attempt"""
-        if self.reconnect_attempts < self.max_reconnect_attempts:
-            self.reconnect_attempts += 1
-            self.logger.info(f"Scheduling reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {self.reconnect_delay} seconds")
-            
-            # Schedule reconnection in a separate thread
-            def delayed_reconnect():
-                time.sleep(self.reconnect_delay)
-                if not self.controller_ip:  # Only reconnect if still disconnected
-                    self.logger.info(f"Attempting reconnection {self.reconnect_attempts}/{self.max_reconnect_attempts}")
-                    self._attempt_reconnection()
-            
-            threading.Thread(target=delayed_reconnect, daemon=True).start()
-        else:
-            self.logger.warning(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
-
-    def _attempt_reconnection(self):
-        """Attempt to reconnect to the controller"""
-        try:
-            # Re-register service to refresh discovery
-            if self.register_service():
-                self.logger.info("Service re-registered for reconnection attempt")
-            else:
-                self.logger.error("Failed to re-register service for reconnection")
-        except Exception as e:
-            self.logger.error(f"Error during reconnection attempt: {e}")
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
@@ -201,9 +183,26 @@ class Network:
             self.logger.info(f"Controller service updated, treating as new discovery")
             self.add_service(zeroconf, service_type, name)
     
-    def set_callbacks(self, callbacks: Dict):
-        self.callbacks = callbacks
+
+    def remove_service(self, zeroconf, service_type, name):
+        """Called when controller disappears"""
+        self.logger.warning("Lost connection to controller")
+        
+        # Only trigger disconnect if we were actually connected
+        if self.controller_ip and self.controller_port:
+            self.api.controller_disconnected()
+            
+            # Reset controller connection state
+            self.controller_ip = None
+            self.controller_port = None
+            self.logger.info("Controller connection state reset")
+            
+            # Start reconnection attempts if configured
+            if self.max_reconnect_attempts > 0:
+                self._schedule_reconnection()
     
+
+    """IP Methods"""
     def _find_own_ip(self):
         # Get the ip address of the module
         self.logger.info("Searching for own ip")
@@ -218,87 +217,28 @@ class Network:
                 attempt += 1
                 self.logger.info(f"Attempting to get eth0 IP (attempt {attempt})...")
                 # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
-                try:
-                    import subprocess
-                    result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
-                    if result.returncode == 0:
-                        # Parse ifconfig output to find eth0 IP
-                        for line in result.stdout.split('\n'):
-                            if 'inet ' in line:
-                                # Extract IP from "inet 192.168.1.197" format
-                                parts = line.strip().split()
-                                for i, part in enumerate(parts):
-                                    if part == 'inet' and i + 1 < len(parts):
-                                        potential_ip = parts[i + 1]
-                                        if potential_ip.startswith('192.168.1.'):
-                                            self.ip = potential_ip
-                                            self.backup_ip = potential_ip
-                                            self.logger.info(f"Found eth0 IP from ifconfig: {self.ip}")
-                                            break   
-                                if self.ip:
-                                    break
-                        
-                        if not self.ip:
-                            self.logger.warning(f"No eth0 IP found in ifconfig output")
-                    else:
-                        self.logger.warning(f"ifconfig eth0 failed: {result.stderr}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
-                # Method 2: Try socket.getaddrinfo with a connection to get local IP
+                self.ip = self._get_eth0_ip_nm()
+                
+
                 if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        s.connect(("8.8.8.8", 80))
-                        potential_ip = s.getsockname()[0]
-                        s.close()
-                        
-                        # Only use eth0 IP
-                        if potential_ip.startswith('192.168.1.'):
-                            self.ip = potential_ip
-                            self.logger.info(f"Selected eth0 IP from socket connection: {self.ip}")
-                        else:
-                            self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to get IP from socket connection: {e}")
-                # Method 3: Try socket.gethostbyname but filter out loopback
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        hostname_ip = socket.gethostbyname(socket.gethostname())
-                        if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
-                            self.ip = hostname_ip
-                            self.logger.info(f"Selected eth0 IP from hostname resolution: {self.ip}")
-                        else:
-                            self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to get IP from hostname resolution: {e}")
-                # Method 4: Try to get IP from network interfaces
-                if not self.ip or self.ip.startswith('127.'):
-                    try:
-                        import subprocess
-                        result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
-                                              capture_output=True, text=True, timeout=5)
-                        if result.returncode == 0:
-                            lines = result.stdout.strip().split('\n')
-                            for line in lines:
-                                if 'src' in line:
-                                    parts = line.split()
-                                    src_index = parts.index('src')
-                                    if src_index + 1 < len(parts):
-                                        potential_ip = parts[src_index + 1]
-                                        if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
-                                            self.ip = potential_ip
-                                            self.logger.info(f"Selected eth0 IP from ip route: {self.ip}")
-                                            break
-                                        else:
-                                            self.logger.warning(f"ip route returned non-eth0 IP: {potential_ip}")
-                    except Exception as e:
-                        pass
-                # If still no valid IP, wait and retry indefinitely
-                if not self.ip or self.ip.startswith('127.') or not self.ip.startswith('192.168.1.'):
                     self.logger.warning(f"No valid eth0 IP found yet (current: {self.ip}). Waiting for DHCP... (attempt {attempt})")
                     time.sleep(2)
                 else:
                     break
+
+
+    def _get_eth0_ip_nm(self) -> str:
+        cmd = ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return result.stdout.split("/", 1)[0]
+
+
+    """Start and Stop"""
+    def start(self):
+        self.logger.info("Starting service registration")
+        if not self.ip:
+            self._find_own_ip()
+
 
     def cleanup(self):
         """Clean up the zeroconf service"""

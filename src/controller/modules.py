@@ -24,7 +24,7 @@ import time
 import threading
 from typing import Dict, Any
 from dataclasses import asdict
-from models import Module, ModuleStatus
+from src.controller.models import Module, ModuleStatus
 
 
 class Modules:
@@ -35,8 +35,6 @@ class Modules:
         self.ready_timeout_thread = threading.Thread(target=self._ready_timeout_checker)
 
         self.modules: dict[str, Module] = {} # A dict of modules. module_id as primary key
-
-        self.push_module_update_to_frontend = None # A callback to be registered by controller.py
 
 
     def check_status(self, module_id: str, status_data: dict) -> None:
@@ -69,10 +67,16 @@ class Modules:
                 self.logger.info(f"New module {module.id}, adding")
             else:
                 self.logger.info(f"Existing module {module.id}, updating")
-            self.modules[module.id] = module
+            # self.modules[module.id] = module
+            self.add_module(module)
         self.broadcast_updated_modules()
-    
 
+
+    def add_module(self, module: Module):
+        self.modules[module.id] = module
+        self.logger.info(f"Module {self.modules[module.id].name} added")
+        
+    
     def _convert_modules_to_dict(self) -> Dict[str, Dict[str, Any]]:
         """Convert dict of Modules to dict of dicts, using enum values for status."""
         module_dict = {}
@@ -169,11 +173,11 @@ class Modules:
 
     def update_module_config(self, module_id: str, new_config: Dict):
         """
-        Update configuration settings for existing modules.
+        Update configuration settings for existing modules. Called when a module returns response to get_config command.
 
         Args:
             module_id (str): The module_id which acts as key in self.modules
-            configs (Dict): A dictionary of config values for the module.
+            configs (Dict): Current config values for the module.
         """
         if module_id in self.modules:
             module_entry = self.modules[module_id]
@@ -188,7 +192,24 @@ class Modules:
                 status = ModuleStatus.DEFAULT,
                 config = new_config
             )
+        self._update_module_name(module_id)
         self.broadcast_updated_modules() # Broadcast that module configs have updated
+
+    
+    def _update_module_name(self, module_id: str):
+        """Update module name based on config setting."""
+        name = self.modules[module_id].config['module']['name']
+        # Check if name is valid
+        if name == "" or name is None:
+            self.logger.info(f"Bad name received: {name}")
+            self.modules[module_id].name = module_id
+        else:
+            self.modules[module_id].name = name
+        
+    
+    def get_module_name(self, module_id: str):
+        """Return module name for given module_id"""
+
         
 
     def update_module_configs(self, configs: Dict):
@@ -206,7 +227,7 @@ class Modules:
     def broadcast_updated_modules(self) -> None:
         # self.logger.info(f"Updated module list: {self.modules.keys()}")
         module_dict = self._convert_modules_to_dict()
-        self.push_module_update_to_frontend(module_dict)
+        self.api.push_module_update_to_frontend(module_dict)
 
 
     def get_modules(self) -> Dict[str, Any]:

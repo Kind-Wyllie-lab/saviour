@@ -55,11 +55,6 @@ class Communication:
         # Command listener thread
         self.command_thread = None
         
-        # Callbacks
-        self.callbacks = {}
-    
-    def set_callbacks(self, callbacks: Dict):
-        self.callbacks = callbacks
 
     def connect(self, controller_ip: str, controller_port: int) -> bool:
         """Connect to the controller's ZMQ sockets
@@ -160,13 +155,12 @@ class Communication:
                 self.last_command = command
                 self.logger.info(f"Stored command: {self.last_command}")
                 
-                # Call the command handler if available
-                if 'handle_command' in self.callbacks and self.callbacks['handle_command']:
-                    try:
-                        self.callbacks['handle_command'](command)
-                    except Exception as e:
-                        self.logger.error(f"Error handling command: {e}")
-                        # Don't re-raise the exception, just log it and continue
+                # Call the command handler
+                try:
+                    self.api.handle_command(command)
+                except Exception as e:
+                    self.logger.error(f"Error handling command: {e}")
+
             except zmq.Again:
                 # Timeout occurred, check if we should still be running
                 if not self.command_listener_running:
@@ -216,7 +210,7 @@ class Communication:
         except Exception as e:
             self.logger.error(f"Error during reconnection attempt: {e}")
 
-    def send_status(self, status_data: Dict[str, Any]):
+    def send_status(self, status_data: Dict[str, Any]) -> None:
         """Send status information to the controller
         
         Args:
@@ -230,6 +224,7 @@ class Communication:
             # Add timestamp and module ID to status data
             status_data['timestamp'] = time.time()
             status_data['module_id'] = self.module_id
+            status_data['module_name'] = self.api.get_module_name()
             
             # Convert to JSON string
             import json

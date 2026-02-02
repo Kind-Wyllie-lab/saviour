@@ -49,7 +49,6 @@ class Health:
         self.monitor_thread = None
         
         # Callback for status changes
-        self.callbacks = None
         self.logger.info(f"Initialised health monitor with heartbeat interval {self.heartbeat_interval}s, timeout {self.heartbeat_timeout}s.")
     
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
@@ -116,7 +115,7 @@ class Health:
             else:
                 self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
 
-            self.callbacks["on_status_change"](module_id, self.module_health[module_id]['status'])
+            self.api.on_status_change(module_id, self.module_health[module_id]['status'])
             return True
             
         except Exception as e:
@@ -255,25 +254,23 @@ class Health:
                         )
                         self.module_health[module_id]['status'] = 'offline'
                         # Trigger callback for offline status
-                        if "on_status_change" in self.callbacks:
-                            try:
-                                self.callbacks["on_status_change"](module_id, 'offline')
-                            except Exception as e:
-                                self.logger.error(f"Error in status change callback: {e}")
+                        try:
+                            self.api.on_status_change(module_id, 'offline')
+                        except Exception as e:
+                            self.logger.error(f"Error in status change callback: {e}")
                 else:
                     # Module is responsive, ensure it's marked as online
                     if self.module_health[module_id]['status'] == 'offline':
                         self.logger.info(f"Module {module_id} is back online")
                         self.module_health[module_id]['status'] = 'online'
                         # Trigger callback for online status
-                        if "on_status_change" in self.callbacks:
-                            try:
-                                self.callbacks["on_status_change"](module_id, 'online')
-                            except Exception as e:
-                                self.logger.error(f"Error in status change callback: {e}")
+                        try:
+                            self.api.on_status_change(module_id, 'online')
+                        except Exception as e:
+                            self.logger.error(f"Error in status change callback: {e}")
                 
                 self.logger.info(f"Module {module_id} is {self.module_health[module_id]['status']}")
-                self.callbacks["on_status_change"](module_id, self.module_health[module_id]['status'])
+                self.api.on_status_change(module_id, self.module_health[module_id]['status'])
             
             # Check PTP health periodically
             if cycle_count % 2 == 0:  # Check PTP health every couple cycles 
@@ -312,7 +309,7 @@ class Health:
                     self.module_health[module]["ptp_restarts"] += 1
                     if self.module_health[module]["ptp_restarts"] >= 5:
                         self.module_health[module]["ptp_restarts"] = 5
-                    self.callbacks["send_command"](module, "restart_ptp", {})
+                    self.api.send_command(module, "restart_ptp", {})
 
     def start_monitoring(self):
         """Start the health monitoring thread"""
@@ -370,17 +367,6 @@ class Health:
         }
 
 
-     
-    def set_callbacks(self, callbacks):
-        """
-        Register callbacks the dict way
-
-        Args:
-            callbacks: Dictionary of callback functions
-                - 'on_status_change' : Callback to inform the controller program that a module has gone offline 
-        """
-        self.callbacks = callbacks
-    
     def mark_module_offline(self, module_id: str, reason: str = "Communication test failed"):
         """Mark a module as offline due to communication failure
         
@@ -394,11 +380,10 @@ class Health:
                 self.module_health[module_id]['status'] = 'offline'
                 
                 # Trigger callback for offline status
-                if "on_status_change" in self.callbacks:
-                    try:
-                        self.callbacks["on_status_change"](module_id, 'offline')
-                    except Exception as e:
-                        self.logger.error(f"Error in status change callback: {e}")
+                try:
+                    self.api.on_status_change(module_id, 'offline')
+                except Exception as e:
+                    self.logger.error(f"Error in status change callback: {e}")
             else:
                 self.logger.info(f"Module {module_id} already offline: {reason}")
         else:
@@ -418,11 +403,10 @@ class Health:
                     self.logger.info(f"Module {module_id} communication test successful - marking online")
                     self.module_health[module_id]['status'] = 'online'
                     # Trigger callback for online status
-                    if "on_status_change" in self.callbacks:
-                        try:
-                            self.callbacks["on_status_change"](module_id, 'online')
-                        except Exception as e:
-                            self.logger.error(f"Error in status change callback: {e}")
+                    try:
+                        self.api.on_status_change(module_id, 'online')
+                    except Exception as e:
+                        self.logger.error(f"Error in status change callback: {e}")
                 else:
                     self.logger.info(f"Module {module_id} communication test successful - already online")
             else:

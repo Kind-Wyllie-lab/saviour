@@ -128,29 +128,21 @@ class AudiomothModule(Module):
                             file_counter += 1
                             break
 
-        timestamps_writer.close()
-
-    # def _duration_process_stopper(self, duration):
-    #     # TODO: This exists in base module class now which will call _stop_recording at the appropriate time. 
-    #     duration_seconds = float(duration)*60
-    #     while True:
-    #         if time.time() >= self.recording_start_time + duration_seconds:
-    #             self.is_recording = False
-    #             return
-    #         time.sleep(0.5)
-
-        
+        timestamps_writer.close()      
 
     
     def clear_recordings(self):
         pass
     
+
     def start_streaming(self):
         # TODO: Could monitor stuff go here? It's basically streaming but for audio
         pass
 
+
     def stop_streaming(self):
         pass
+
 
     def _start_recording(self) -> bool:
         """Start continuous audio recording"""
@@ -160,7 +152,7 @@ class AudiomothModule(Module):
         self.logger.info(f"Recording will use {self.current_experiment_name} for filenames ")
 
         try: 
-            #if there are audiomoths connected
+            # If there are audiomoths connected
             if len(self.audiomoths) > 0:
                 self.audiomoth_threads = []
                 self.recording_start_time = time.time()

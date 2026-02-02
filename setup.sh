@@ -7,6 +7,9 @@ echo " SAVIOUR installer"
 echo " Installing to /usr/local/src/saviour"
 echo "======================================="
 
+set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
+trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
+
 TARGET_DIR="/usr/local/src/saviour"
 
 # Resolve absolute path of this script
@@ -28,8 +31,7 @@ if [[ "$SCRIPT_DIR" != "$TARGET_DIR" ]]; then
     exec "$TARGET_DIR/$(basename "$SCRIPT_PATH")"
 fi
 
-set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
-trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
+cd "$TARGET_DIR"
 
 # List of required system packages
 SYSTEM_PACKAGES=(
@@ -149,3 +151,8 @@ EOF
 install_system_packages
 configure_ntp_for_ptp
 create_python_environment
+
+echo ""
+echo "Setup complete!"
+echo "Original repo clone in $HOME can now be removed safely."
+echo "Run: rm -rf ~/saviour"

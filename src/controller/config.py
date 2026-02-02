@@ -20,78 +20,16 @@ from typing import Dict, Any, Optional, Union
 
 class Config:
     """Manages configuration for the habitat controller system"""
-    
-    # Default configuration values
-    DEFAULT_CONFIG = {
-        "controller": {
-            "max_buffer_size": 2000,
-            "manual_control": True,
-            "print_received_data": False,
-            "cli_commands": ["help", 
-            "quit", 
-            "list",
-            "zmq send", 
-            "health status", 
-            "health history"],
-            "zmq_commands": ["get_status",
-            "start_recording",
-            "stop_recording",
-            "export_recordings",
-            "update_settings",
-            "list_recordings",
-            "clear_recordings"
-        ]},
-        "zeroconf": {
-            "port": 5353,
-            "service_type": "_controller._tcp.local.",
-            "service_name": "controller._controller._tcp.local."
-        },
-        "zmq": {
-            "cmd_port": 5555,
-            "status_port": 5556,
-            "host": "0.0.0.0"
-        },
-        "health_monitor": {
-            "heartbeat_interval": 30,
-            "heartbeat_timeout": 90 
-        },
-        "data_export": {
-            "export_interval": 15,
-            "health_export_interval": 30
-        },
-        "database": {
-            "url": "",
-            "key": ""
-        },
-        "logging": {
-            "level": "INFO",
-            "format": "%(levelname)s - %(name)s - %(message)s",
-            "directory": "var/log/habitat",
-            "max_file_size_mb": 10,
-            "backup_count": 5
-        },
-        "interface": {
-            "web_interface_port": 5000
-        }
-    } 
-
-    
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {
-        "SUPABASE_URL": "database.url",
-        "SUPABASE_KEY": "database.key",
-        "NAS_IP": "nas.ip",
-        "NAS_SHARE_PATH": "nas.share_path",
-        "NAS_USERNAME": "nas.username",
-        "NAS_PASSWORD": "nas.password",
-        "NAS_LOCAL_MOUNT": "nas.local_mount",
-        "CONTROLLER_PORT": "service.port",
-        "CONTROLLER_MAX_BUFFER_SIZE": "controller.max_buffer_size",
-        "CONTROLLER_MANUAL_CONTROL": "controller.manual_control",
-        "CONTROLLER_LOG_LEVEL": "logging.level",
+
     }
     
-    def __init__(self, config_file_path: Optional[str] = None):
+    def __init__(
+        self, 
+        base_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/base_config.json",
+        active_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/active_config.json"
+    ):
         """
         Initialize the configuration manager
         
@@ -100,78 +38,172 @@ class Config:
             config_file_path: Path to configuration file (optional)
         """
         self.logger = logging.getLogger(__name__)
-        self.config_file_path = config_file_path or os.path.join(os.path.dirname(__file__), "config.json")
-        self.logger.info(f"Controller config file path set to: {self.config_file_path}")
-        self.config = self._load_config()
-        self.logger.info(f"Controller config loaded: {self.config}")
+        self.base_config_path = os.path.abspath(base_config_path) # Base config, i.e. defaults for SAVIOUR framework
+        self.active_config_path = os.path.abspath(active_config_path) # Active config, aggregates base config + controller specific config
+        self.config: Dict[str, Any] = {} # Where runtime config is stored in program
+
+        # Load or build config
+        if os.path.exists(self.active_config_path):
+            self.logger.info(f"Loading existing active config: {self.active_config_path}")
+            self.config = self._load_json(self.active_config_path)
+        else:
+            self.logger.info(f"No active config found - building from base config: {self.base_config_path}")
+            self.config = self._load_json(self.base_config_path)
+
+        self._apply_env_override()
+        self.logger.info(f"Controller config loaded - {len(self.config)} parameters")
         
-    def _load_config(self) -> Dict[str, Any]:
+
+    def _apply_env_override(self):
+        """Override config values using environment variables"""
+        for env_var, config_key in self.ENV_CONFIG_MAPPING.items():
+            if env_var in os.environ:
+                value = os.environ[env_var]
+                self._set_nested(config_key, value)
+
+
+    def _set_nested(self, dotted_key, value):
+        """Set a nested config value given a dotted key like 'a.b.c'."""
+        keys = dotted_key.split(".")
+        d = self.config
+        for k in keys[:-1]:
+            d = d.setdefault(k, {})
+        d[keys[-1]] = value
+
+
+    def load_controller_config(self, controller_config_path: str) -> None:
         """
-        Load configuration from default values, environment variables, and config file
-        
-        Returns:
-            Dict containing merged configuration
+        Load and merge controller-specific config, then persist active_config.json
+        Behaviour:
+        - If active config does not exist: full merge 
+        - If active config does exist: only fill in missing keys 
         """
-        # Start with default config
-        config = self.DEFAULT_CONFIG.copy()
+
+        controller_path = os.path.abspath(controller_config_path)
+        if not os.path.exists(controller_path):
+            self.logger.warning(f"controller config not found: {controller_path}")
+            return
+
+        controller_config = self._load_json(controller_path)
+
+        # Extract keys from config and flatten to dot notation for easy comparison
+        self.controller_config_keys = self._flatten_keys(controller_config)
         
-        # Override with environment variables
-        for env_var, config_path in self.ENV_CONFIG_MAPPING.items():
-            env_value = os.getenv(env_var)
-            if env_value is not None:
-                # Convert environment variable to appropriate type
-                path_parts = config_path.split('.')
-                
-                # Navigate to the proper nested dictionary
-                current = config
-                for i, part in enumerate(path_parts[:-1]):
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-                
-                # Convert value to appropriate type based on default if present
-                target_key = path_parts[-1]
-                if target_key in current:
-                    original_value = current[target_key]
-                    if isinstance(original_value, bool):
-                        env_value = env_value.lower() in ('true', 'yes', '1')
-                    elif isinstance(original_value, int):
-                        env_value = int(env_value)
-                    elif isinstance(original_value, float):
-                        env_value = float(env_value)
-                
-                # Set the value
-                current[path_parts[-1]] = env_value
-        
-        # Override with config file if it exists
-        if os.path.exists(self.config_file_path):
-            try:
-                with open(self.config_file_path, 'r') as f:
-                    file_config = json.load(f)
-                
-                # Recursively merge file config into config
-                self._merge_configs(config, file_config)
-                self.logger.info(f"Loaded configuration from {self.config_file_path}")
-            except Exception as e:
-                self.logger.error(f"Error loading config file: {e}")
-        
-        return config
-    
-    def _merge_configs(self, target: Dict, source: Dict) -> None:
-        """
-        Recursively merge source config into target config
-        
-        Args:
-            target: Target configuration dictionary
-            source: Source configuration dictionary to merge from
-        """
-        for key, value in source.items():
-            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                self._merge_configs(target[key], value)
+        self.logger.info(f"Loading controller config keys: {self.controller_config_keys}")
+
+        if os.path.exists(self.active_config_path):
+            # Active config exists: fill missing keys only
+            self.logger.info("Active config present — filling missing keys from controller defaults")
+            self._merge_defaults(self.config, controller_config)
+        else:
+            # First-time run: perform full merge and create active config
+            self.logger.info("No active config — performing full merge with controller defaults")
+            self._merge_dicts(self.config, controller_config)
+
+        self.logger.info(f"{len(self.controller_config_keys)} new config parameters loaded from {controller_config_path}")
+
+        # Persist active config after merging defaults
+        self.save_active()
+
+
+    def _flatten_keys(self, config: Dict[str, Any], parent_key=""):
+        """Return a set of all nested keys in dotted notation"""
+        keys = set()
+        for key, value in config.items():
+            full_key = f"{parent_key}.{key}" if parent_key else key
+            if isinstance(value, dict):
+                keys |= self._flatten_keys(value, full_key)
             else:
-                target[key] = value
+                keys.add(full_key)
+        return keys
     
-    def get(self, key_path: str, default: Any = None) -> Any:
+
+    def _load_json(self, path: str) -> Dict[str, Any]:
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger.error(f"Failed to load {path}: {e}")
+            return {}
+
+
+    def _merge_defaults(self, target: Dict[str, Any], defaults: Dict[str, Any]) -> None:
+        """
+        Recursively merge defualts into target only for missing keys
+        Does not overwrite existing values in target
+        """
+        for key, val in defaults.items():
+            if key not in target:
+                # Missing key - copy the default
+                target[key] = val
+            else:
+                # Both present and both dicts - recurse
+                if isinstance(target[key], dict) and isinstance(val, dict):
+                    self._merge_defaults(target[key], val)
+                # Otherwise target has a value, do not overwrite
+
+
+    def _merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
+        """Recursive merge - override values in base with override."""
+        for key, val in override.items():
+            # Check if current value is a dict, and recursively merge if so
+            if (
+                key in base
+                and isinstance(base[key], dict)
+                and isinstance(val, dict)
+            ):
+                self._merge_dicts(base[key], val)
+            # If current value is not dict, override base value with new val
+            else:
+                base[key] = val
+
+
+    def reset_to_defaults(self, controller_config_path: Optional[str] = None) -> None:
+        """
+        Delete active config (if exists) and rebuild from base + optional controller config.
+        Use this to intentionally discard runtime changes and reinstall defaults.
+        """
+        try:
+            if os.path.exists(self.active_config_path):
+                os.remove(self.active_config_path)
+                self.logger.info(f"Removed active config: {self.active_config_path}")
+        except Exception as e:
+            self.logger.error(f"Failed removing active config: {e}")
+
+        # rebuild
+        self.config = self._load_json(self.base_config_path)
+        if controller_config_path:
+            controller_config = self._load_json(controller_config_path)
+            self._merge_dicts(self.config, controller_config)
+        self.save_active()
+ 
+    
+    def _check_if_controller_config_updated(self, key_path: str) -> bool:
+        """
+        Runs within set() and checks if a parameter which has been set belongs to the subcontroller
+
+        args:
+            key_path: dot separated path to the parameter 
+        """
+        if hasattr(self, "controller_config_keys") and key_path in self.controller_config_keys:
+            self.logger.info(f"controller-specific param updated: {key_path}")
+            return True
+        else:
+            return False
+
+
+    def save_active(self) -> None:
+        """
+        Save the aggregated config to active_config.json
+        """
+        os.makedirs(os.path.dirname(self.active_config_path), exist_ok=True)
+        with open(self.active_config_path, "w") as f:
+            json.dump(self.config, f, indent=4)
+        self.logger.info(f"Saved active config to {self.active_config_path}")
+
+
+    """Get and Set methods"""
+    def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value by its key path
         
@@ -182,126 +214,44 @@ class Config:
         Returns:
             Configuration value or default if not found
         """
-        path_parts = key_path.split('.')
-        
-        # First try the exact path
-        current = self.config
-        for part in path_parts:
-            if part not in current:
-                # If not found, try looking in editable and non-editable sections
-                if "editable" in self.config:
-                    # Try editable section
-                    editable_current = self.config["editable"]
-                    for editable_part in path_parts:
-                        if editable_part not in editable_current:
-                            break
-                        editable_current = editable_current[editable_part]
-                    else:
-                        return editable_current
-                
-                if "non_editable" in self.config:
-                    # Try non-editable section
-                    non_editable_current = self.config["non_editable"]
-                    for non_editable_part in path_parts:
-                        if non_editable_part not in non_editable_current:
-                            break
-                        non_editable_current = non_editable_current[non_editable_part]
-                    else:
-                        return non_editable_current
-                
-                return default
-            current = current[part]
-        
-        return current
-    
-    def set(self, key_path: str, value: Any, persist: bool = False) -> bool:
-        """
-        Set a configuration value by its key path
-        
-        Args:
-            key_path: Dot-separated path to the configuration value
-            value: Value to set
-            persist: Whether to persist the change to the config file
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            path_parts = key_path.split('.')
-            
-            # First try to find if the key exists in editable or non-editable sections
-            target_section = None
-            target_path = None
-            
-            # Check if it exists in editable section
-            if "editable" in self.config:
-                editable_current = self.config["editable"]
-                for i, part in enumerate(path_parts):
-                    if part not in editable_current:
-                        break
-                    editable_current = editable_current[part]
-                else:
-                    target_section = "editable"
-                    target_path = path_parts
-            
-            # Check if it exists in non-editable section
-            if target_section is None and "non_editable" in self.config:
-                non_editable_current = self.config["non_editable"]
-                for i, part in enumerate(path_parts):
-                    if part not in non_editable_current:
-                        break
-                    non_editable_current = non_editable_current[part]
-                else:
-                    target_section = "non_editable"
-                    target_path = path_parts
-            
-            # If found in editable/non-editable, update there
-            if target_section is not None:
-                current = self.config[target_section]
-                for part in target_path[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-                current[target_path[-1]] = value
+        parts = key.split('.') # Split the . separated param into parts
+        config = self.config
+        for part in parts:
+            if part in config:
+                config = config[part]
+            elif f"_{part}" in config: # Check for leading underscore
+                config = config[f"_{part}"]
             else:
-                # Otherwise, set in the root config (backward compatibility)
-                current = self.config
-                for part in path_parts[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-                current[path_parts[-1]] = value
-            
-            # Persist to file if requested
-            if persist:
-                return self.save_config()
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Error setting config value {key_path}: {e}")
-            return False
+                config = default
+        if config == None:
+            self.logger.warning(f"config.get() returning None for {key}")
+        return config
     
-    def save_config(self) -> bool:
-        """
-        Save the current configuration to the config file
+    
+    def set(self, key_path: str, value: Any, persist: bool = True) -> bool:
+        """Set value unless key is private (starts with underscore)."""
+        parts = key_path.split('.')
+        current = self.config
+
+        for part in parts[:-1]:
+            if part not in current or not isinstance(current[part], dict):
+                current[part] = {}
+            current = current[part]
+
+        last = parts[-1]
+        if last.startswith('_'):
+            self.logger.warning(f"Attempt to modify read-only config key: {key_path}")
+            return False
+
+        if self._check_if_controller_config_updated(key_path):
+            self.on_controller_config_change([key_path]) # Put the key in a list to match what the function expects
+
+        current[last] = value
+        if persist:
+            self.save_active()
+        return True
         
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.config_file_path), exist_ok=True)
-            
-            # Write config to file
-            with open(self.config_file_path, 'w') as f:
-                json.dump(self.config, f, indent=4)
-            
-            self.logger.info(f"Configuration saved to {self.config_file_path}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Error saving configuration: {e}")
-            return False
-    
+
     def get_all(self) -> Dict[str, Any]:
         """
         Get the entire configuration
@@ -310,33 +260,43 @@ class Config:
             Dictionary containing the entire configuration
         """
         return self.config.copy()
-
-    def reset_config(self):
-        """
-        Reset settings to default values
-        """
-        self.config = self._load_config()
     
-    def validate(self) -> bool:
+    
+    def set_all(self, updates: dict, persist: bool = False) -> None:
         """
-        Validate the current configuration
-        
-        Returns:
-            True if configuration is valid, False otherwise
+        Update multiple config keys at once.
+
+        Args:
+            updates: dict with new values (can be nested)
+            persist: whether to save active_config after update
         """
-        # Implement validation logic here
-        # For now, just check if required values are present
-        try:
-            # Check required database settings if database section exists
-            if "database" in self.config:
-                if not self.get("database.url"):
-                    self.logger.warning("Missing database URL in configuration")
-                if not self.get("database.key"):
-                    self.logger.warning("Missing database API key in configuration")
-            
-            # More validation as needed
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Configuration validation error: {e}")
-            return False 
+    
+        self.logger.info("Set_all called for config")
+        controller_config_updated = False # Flag to track if we should notify that the controller settings were updated
+        controller_config_updated_keys = [] # Array to store updated controller configs
+
+        def _recursive_update(target, source, parent_key=""):
+            nonlocal controller_config_updated
+            for k, v in source.items():
+                full_key = f"{parent_key}.{k}" if parent_key else k
+                if isinstance(v, dict) and isinstance(target.get(k), dict):
+                    _recursive_update(target[k], v, full_key)
+                else:
+                    # Update the value
+                    if target[k] != v:
+                        target[k] = v
+                        # Track controller-specific changes
+                        if hasattr(self, "controller_config_keys") and full_key in self.controller_config_keys:
+                            self.logger.info(f"controller-specific config updated: {full_key}")
+                            controller_config_updated_keys.append(full_key)
+                            controller_config_updated = True
+                    else:
+                        pass
+
+        _recursive_update(self.config, updates)
+
+        if controller_config_updated == True:
+            self.on_controller_config_change(controller_config_updated_keys)
+
+        if persist:
+            self.save_active()

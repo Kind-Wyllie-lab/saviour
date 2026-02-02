@@ -17,41 +17,34 @@ from typing import Dict, Any, Optional
 import logging
 import threading
 import time
-
-from models import Module # Import the dataclass for Modules
+import subprocess
+from src.controller.models import Module # Import the dataclass for Modules
 
 class Network():
-    def __init__(self, config_manager=None):
+    def __init__(self, config=None):
         self.logger = logging.getLogger(__name__)
-        self.config_manager = config_manager
+        self.config = config
 
         # Module tracking
         self.discovered_modules = []
-        self.notify_module_update = None  # Callback for module discovery. Means that controller can do things with other managers when we discover a module here.
-        self.notify_module_removed = None  # Callback for module removal. Means that controller can do things with other managers when we remove a module here.
-        
+
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
         self.module_last_seen = {}
         
         # Get the ip address of the controller
+        self.interface = "eth0" # The interface connected to the SAVIOUR network
         self.ip_is_valid = False
         self.ip = self._wait_for_proper_ip()
 
         self.logger.info(f"Controller IP address: {self.ip}")
         
-        # Get service configuration from config manager if available
-        self.service_port = 5353 # Default value
-        self.service_type = "_controller._tcp.local."  # Use standard service type format
-        self.service_name = f"controller_{socket.gethostname()}._controller._tcp.local."
-        
-        if self.config_manager:
-            self.service_port = self.config_manager.get("zeroconf.port", self.service_port)
-            self.service_type = self.config_manager.get("zeroconf.service_type", self.service_type)
-            self.service_name = self.config_manager.get("zeroconf.service_name", self.service_name)
+        self.service_port = self.config.get("zeroconf.port", 5353)
+        self.service_type = self.config.get("zeroconf.service_type", "_controller._tcp.local.")
+        self.service_name = self.config.get("zeroconf.service_name", f"controller_{socket.gethostname()}._controller._tcp.local.")
 
         # Initialize zeroconf but don't register service yet
-        self.zeroconf = Zeroconf()
+        self.zeroconf = Zeroconf(interfaces=[self.ip])
         self.service_info = None
         self.browser = None
         self.service_registered = False
@@ -65,104 +58,42 @@ class Network():
         attempt = 0
         
         while True:
-            attempt += 1
-            self.logger.info(f"IP detection attempt {attempt} (waiting for DHCP)...")
-            
             # Try multiple methods to get the actual network IP address
             ip = None
             
             # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
             try:
-                import subprocess
-                result = subprocess.run(['ifconfig', 'eth0'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    # Parse ifconfig output to find eth0 IP
-                    for line in result.stdout.split('\n'):
-                        if 'inet ' in line:
-                            # Extract IP from "inet 192.168.1.197" format
-                            parts = line.strip().split()
-                            for i, part in enumerate(parts):
-                                if part == 'inet' and i + 1 < len(parts):
-                                    potential_ip = parts[i + 1]
-                                    if potential_ip.startswith('192.168.1.'):
-                                        ip = potential_ip
-                                        self.ip_is_valid = True
-                                        self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
-                                        break
-                            if ip:
-                                break
-                    
-                    if not ip:
-                        self.logger.warning(f"No eth0 IP found in ifconfig output")
-                else:
-                    self.logger.warning(f"ifconfig eth0 failed: {result.stderr}")
+                ip = self._get_eth0_ip_nm()
+                if not self._validate_ip(ip):
+                    self.logger.warning(f"{ip} could not be validated")
+                    return False
+                return ip
             except Exception as e:
                 self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
-            
-            # Method 2: Try socket.getaddrinfo with a connection to get local IP
-            if not ip or ip.startswith('127.'):
-                try:
-                    # Create a socket and connect to a remote address to get local IP
-                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.connect(("8.8.8.8", 80))
-                    potential_ip = s.getsockname()[0]
-                    s.close()
-                    
-                    # Only use eth0 IP
-                    if potential_ip.startswith('192.168.1.'):
-                        ip = potential_ip
-                        self.ip_is_valid = True
-                        self.logger.info(f"Selected eth0 IP from socket connection: {ip}")
-                    else:
-                        self.logger.warning(f"Socket connection returned non-eth0 IP: {potential_ip}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from socket connection: {e}")
-            
-            # Method 3: Try socket.gethostbyname but filter out loopback
-            if not ip or ip.startswith('127.'):
-                try:
-                    hostname_ip = socket.gethostbyname(socket.gethostname())
-                    if not hostname_ip.startswith('127.') and hostname_ip.startswith('192.168.1.'):
-                        ip = hostname_ip
-                        self.ip_is_valid = True
-                        self.logger.info(f"Selected eth0 IP from hostname resolution: {ip}")
-                    else:
-                        self.logger.warning(f"Hostname resolves to non-eth0 IP: {hostname_ip}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from hostname resolution: {e}")
-            
-            # Method 4: Try to get IP from network interfaces
-            if not ip or ip.startswith('127.'):
-                try:
-                    import subprocess
-                    result = subprocess.run(['ip', 'route', 'get', '8.8.8.8'], 
-                                          capture_output=True, text=True, timeout=5)
-                    if result.returncode == 0:
-                        # Parse the output to get the source IP
-                        lines = result.stdout.strip().split('\n')
-                        for line in lines:
-                            if 'src' in line:
-                                parts = line.split()
-                                src_index = parts.index('src')
-                                if src_index + 1 < len(parts):
-                                    potential_ip = parts[src_index + 1]
-                                    if not potential_ip.startswith('127.') and potential_ip.startswith('192.168.1.'):
-                                        ip = potential_ip
-                                        self.ip_is_valid = True
-                                        self.logger.info(f"Selected eth0 IP from ip route: {ip}")
-                                        break
-                                    else:
-                                        self.logger.warning(f"ip route returned non-eth0 IP: {potential_ip}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to get IP from ip route: {e}")
-            
-            # Check if we got a proper IP (eth0 only)
-            if ip and ip.startswith('192.168.1.'):
-                self.logger.info(f"Found proper eth0 IP: {ip}")
-                return ip
-            else:
-                self.logger.warning(f"No proper eth0 IP found yet (attempt {attempt}). Waiting for DHCP...")
-                time.sleep(5)  # Wait 5 seconds before next attempt
+
+
+    def _get_eth0_ip_nm(self) -> str:
+        """
+        SAVIOUR Controllers currently get assigned a static IP during setup, and act as DHCP servers (290126)
+        This method gets the static IP on interface eth0.
+        """
+        interface = "eth0"
+        cmd = ["nmcli", "-g", "IP4.ADDRESS", "device", "show", interface]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        ip = result.stdout.strip().split("/")[0]
+        return ip
+
+
+    def _validate_ip(self, potential_ip: str) -> bool:
+        """Check that the ip belongs to valid ranges"""
+        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0.0."):
+            ip = potential_ip
+            self.ip_is_valid = True
+            self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
+            return True
+        else:
+            return False
+
 
     def register_service(self):
         """Register the controller service"""
@@ -192,6 +123,7 @@ class Network():
             self.logger.error(f"Error registering service: {e}")
             return False
 
+
     def cleanup(self):
         """Cleanup zeroconf resources"""
         self.logger.info("Cleaning up service manager")
@@ -220,6 +152,7 @@ class Network():
         finally:
             self.logger.info("Service manager cleanup complete")
     
+
     def _validate_discovered_module(self, module):
         self.logger.info(f"Validating module {module.id}")
         if self.discovered_modules:
@@ -234,7 +167,7 @@ class Network():
                     existing_module.properties = module.properties
                     valid_module = False
                     self.logger.info(f"IP changed for module {module.id}, new IP: {module.ip}")
-                    self.notify_module_ip_change(module.id, module.ip)
+                    self.api.notify_module_ip_change(module.id, module.ip)
                     # self.notify_module_update(self.discovered_modules)
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
@@ -244,7 +177,7 @@ class Network():
                     existing_module.properties = module.properties
                     valid_module = False
                     self.logger.info(f"ID changed for module at IP {module.ip}, old ID: {existing_module} new ID: {module.id}")
-                    self.notify_module_id_change(old_module_id, module.id)
+                    self.api.notify_module_id_change(old_module_id, module.id)
                     # self.notify_module_update(self.discovered_modules)
                 else:
                     continue
@@ -254,7 +187,8 @@ class Network():
             self.logger.info("No modules yet discovered, adding this as first module")
             return True
 
-    # zeroconf methods
+    
+    """Zeroconf Methods"""
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
         self.logger.info(f"Discovered module: {name}")
@@ -265,7 +199,7 @@ class Network():
 
         module = Module(
             id = info.properties.get(b'id', b'unknown').decode(),
-            name = info.properties.get(b'id', b'unknown').decode(),
+            name = info.properties.get(b'name', b'unknown').decode(),
             zeroconf_name = name,
             type = info.properties.get(b'type', b'unknown').decode(),
             ip = socket.inet_ntoa(info.addresses[0]),
@@ -285,7 +219,8 @@ class Network():
         
         # Call the callback if it exists
         self.logger.info(f"Calling module discovery callback")
-        self.notify_module_update(self.discovered_modules)
+        self.api.notify_module_update(self.discovered_modules)
+
 
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
@@ -296,7 +231,8 @@ class Network():
             module_id = str(info.properties.get(b'id', b'unknown').decode())
             self.module_last_seen[module_id] = time.time()
             self.logger.info(f"Updated last seen time for module: {module_id}")
-            self.notify_module_update(self.discovered_modules)
+            self.api.notify_module_update(self.discovered_modules)
+
 
     def remove_service(self, zeroconf, service_type, name):
         """Remove a service from the list of discovered modules.
@@ -344,12 +280,14 @@ class Network():
             modules.append(module_dict)
         return modules
     
+
     def get_own_ip(self):
         if self.ip_is_valid:
             return self.ip
         else:
             self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")
             self._wait_for_proper_ip()
+
 
     def get_module_status(self, module_id: str) -> Optional[Dict]:
         """Get detailed status for a specific module"""

@@ -12,6 +12,12 @@ body {
   margin: 0;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
@@ -24,6 +30,7 @@ code {
   --text-color: #111111;          /* Main text */
   --secondary-text-color: #555555;/* Less prominent text, like labels or placeholders */
   --accent-color: #d50032;        /* Buttons, highlights (same as dark to keep brand color) */
+  --accent-color: cornflowerblue;
   --accent-color-alt: #041E42;
   --border-color: #ddd;           /* Card borders, dividers */
 }
@@ -35,6 +42,7 @@ body.dark-mode {
   --text-color: #e0e0e0;          /* Main text */
   --secondary-text-color: #a0a0a0;/* Less prominent text, like labels or placeholders */
   --accent-color: #d50032;        /* Buttons, highlights */
+  --accent-color: cornflowerblue;
   --accent-color-alt: #041E42;
   --border-color: #444;           /* Optional, card borders, dividers */
 }

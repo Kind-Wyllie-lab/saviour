@@ -52,7 +52,7 @@ function ModuleCard({ module }) {
     return (
         <div className="module-container">
             <div className={`module-card ${borderClass}`} onClick={() => {if (!showOptionsModal) setShowOptionsModal(true)}}>
-                <h3>{module.id}</h3>
+                <h3>{module.name}</h3>
                 <p>IP: {module.ip}</p>
                 <p>Type: {module.type}</p>
                 {module.status === "NOT_READY" ? (

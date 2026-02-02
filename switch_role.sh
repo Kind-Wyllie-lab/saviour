@@ -47,6 +47,7 @@ ask_module_type() {
         echo "4) RFID - For gathering data from RFID transponders (NOT YET IMPLEMENTED)"
         echo "5) APA CAMERA - Top mounted camera module that tracks rat location"
         echo "6) APA RIG - Arduino module that drives rig motor and shock generator"
+        echo "7) SOUND - HifiBerry sound producing module that can drive speakers"
         echo ""
         
         while true; do
@@ -74,6 +75,10 @@ ask_module_type() {
                     ;;
                 6)
                     DEVICE_TYPE="apa_arduino"
+                    break
+                    ;;
+                7)
+                    DEVICE_TYPE="sound"
                     break
                     ;;
                 *)
@@ -385,7 +390,6 @@ EOF
     echo "Controller will appear on network as saviour.local"
 
     echo "Configuring iptables to forward port 80 traffic to port 5000"
-    sudo apt-get install iptables-persistent -y
     sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
     sudo netfilter-persistent save
 }

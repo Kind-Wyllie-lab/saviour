@@ -78,7 +78,7 @@ class ModuleAPI():
 
 
     def get_filename_prefix(self) -> str:
-        """Return the prefix for all recorded files - typically looks like <recording_folder>/<experiment_name>_<recording_session_id> e.g. rec/habitat_wistar21_C2_1"""
+        """Return the prefix for all recorded files - typically looks like <recording_folder>/<session_name>_<recording_session_id> e.g. rec/habitat_wistar21_C2_1"""
         return self.module.recording.current_filename_prefix
 
 
@@ -119,8 +119,8 @@ class ModuleAPI():
 
 
     """File Export"""
-    def set_experiment_name(self, experiment_name: str) -> bool:
-        return self.module.export.set_experiment_name(experiment_name)
+    def set_session_name(self, session_name: str) -> bool:
+        return self.module.export.set_session_name(session_name)
 
 
     def export_staged(self):
@@ -145,7 +145,7 @@ class ModuleAPI():
                 session_files=files,
                 recording_folder=self.api.get_recording_folder(),
                 recording_session_id=self.api.get_recording_session_id(),
-                experiment_name=self.api.get_current_experiment_name()
+                session_name=self.api.get_current_session_name()
             ):
                 self.logger.info("Auto-export completed successfully")
 

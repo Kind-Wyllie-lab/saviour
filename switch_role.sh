@@ -94,7 +94,8 @@ ask_controller_type() {
         echo "Please specify the type of controller - this will affect the GUI primarily:"
         echo "1) Basic SAVIOUR"
         echo "2) APA - Active Place Avoidance"
-        echo "3) Habitat (NOT YET IMPLEMENTED)"
+        echo "3) Habitat"
+        echo "4) Acoustic Startle (NOT YET IMPLEMENTED)"
         echo ""
         
         while true; do
@@ -110,6 +111,10 @@ ask_controller_type() {
                     ;;
                 3) 
                     DEVICE_TYPE="habitat"
+                    break
+                    ;;
+                4) 
+                    DEVICE_TYPE="acoustic"
                     break
                     ;;
                 *)
@@ -253,9 +258,9 @@ configure_dhcp_server() {
     echo "Configuring DHCP Server"
     
     # Setup static ip
-    echo "Setting static IP to 192.168.1.1 with nmcli"
+    echo "Setting static IP to 10.0.0.1 with nmcli"
     sudo nmcli connection modify "Wired connection 1" ipv4.method manual
-    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.1/24
+    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 10.0.0.1/24
 
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
@@ -298,7 +303,7 @@ interface=eth0
 bind-interfaces
 
 # DHCP range for local network (adjust as needed)
-dhcp-range=192.168.1.100,192.168.1.200,12h
+dhcp-range=10.0.0.128,10.0.0.255,12h
 
 # Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
 dhcp-option=3
@@ -430,7 +435,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/ptp4l -i eth0 -m -l 6
+ExecStart=/usr/sbin/ptp4l -i eth0 -2 -m -l 6
 Restart=always
 RestartSec=5
 
@@ -487,7 +492,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/ptp4l -i eth0 -m -s
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -s -2
 Restart=always
 RestartSec=5
 

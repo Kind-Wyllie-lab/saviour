@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import socket from "../../../socket";
 import "./Debug.css";
-import LoginModal from "../../components/LoginModal/LoginModal";
+import LoginModal from "/src/basic/components/LoginModal/LoginModal";
 
 function Debug() {
     const [debugData, setDebugData] = useState(null);  

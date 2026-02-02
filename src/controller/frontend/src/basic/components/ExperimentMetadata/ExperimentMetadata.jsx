@@ -4,12 +4,12 @@ import "./ExperimentMetadata.css";
 
 function ExperimentMetadata( {experimentName} ) {
   const [metadata, setMetadata] = useState({
-    experiment: "demo",
-    rat_id: "001",
-    strain: "Wistar",
-    batch: "B1",
-    stage: "habituation",
-    trial: "1",
+    experiment: "Not Set",
+    rat_id: "",
+    strain: "",
+    batch: "",
+    stage: "",
+    trial: "",
   });
 
   // Effect: request current metadata on mount
@@ -105,7 +105,11 @@ function ExperimentMetadata( {experimentName} ) {
           />
         </div>
 
-        <div className="experiment-name-preview">{experimentName}</div>
+        {/* <div className="filename-preview">Filename preview:</p> */}
+        <div>
+          <p className="session-name-preview-title">Filename preview</p>
+          <p className="session-name-preview">{experimentName}</p>
+          </div>
       </div>
     </>
 

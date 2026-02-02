@@ -10,6 +10,10 @@ echo "======================================="
 set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
 trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
 
+echo "Updating package lists and upgrading installed packages..."
+sudo apt-get update -y
+sudo apt-get upgrade -y
+
 TARGET_DIR="/usr/local/src/saviour"
 
 # Resolve absolute path of this script

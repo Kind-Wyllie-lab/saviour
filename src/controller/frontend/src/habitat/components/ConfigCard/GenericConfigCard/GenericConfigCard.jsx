@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from "react";
 // import './ConfigCard.css';
 import LivestreamCard from "../../HabitatLivestreamCard/HabitatLivestreamCard";
+import socket from "../../../../socket";
 
 function GenericConfigCard({ id, module }) {
   const [formData, setFormData] = useState(module.config); // Component level config state
   const [collapsedSections, setCollapsedSections] = useState({}); // per-section collapse
+
+  // Get config for module
+  useEffect(() => {
+    socket.emit("get_module_config", {module_id: module.id});
+  }, []);
 
   // Keep formData synced if parent updates config
   useEffect(() => setFormData(module.config), [module.config]);

@@ -55,7 +55,7 @@ function CommandsPanel({ modules, experimentName }) {
           >
             <option value="all">All</option>
             {modules.map((m) => (
-              <option key={m.id} value={m.id}>{m.id}</option>
+              <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
         </div>

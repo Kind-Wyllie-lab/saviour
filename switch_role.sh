@@ -429,12 +429,13 @@ configure_ptp_timetransmitter() {
     sudo tee /etc/systemd/system/ptp4l.service > /dev/null <<EOF
 [Unit]
 Description=PTP4L (Precision Time Protocol daemon)
-After=network.target
-Wants=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
+ExecStartPre=/bin/sleep 5
 ExecStart=/usr/sbin/ptp4l -i eth0 -2 -m -l 6
 Restart=always
 RestartSec=5
@@ -486,12 +487,13 @@ configure_ptp_timereceiver() {
     sudo tee /etc/systemd/system/ptp4l.service > /dev/null <<EOF
 [Unit]
 Description=PTP4L (Precision Time Protocol daemon)
-After=network.target
-Wants=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
+ExecStartPre=/bin/sleep 5
 ExecStart=/usr/sbin/ptp4l -i eth0 -m -s -2
 Restart=always
 RestartSec=5

@@ -114,7 +114,7 @@ ask_controller_type() {
                     break
                     ;;
                 4) 
-                    DEVICE_TYPE="acoustic"
+                    DEVICE_TYPE="acoustic_startle"
                     break
                     ;;
                 *)

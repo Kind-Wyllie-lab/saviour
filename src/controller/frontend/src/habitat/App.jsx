@@ -3,14 +3,16 @@ import './App.css';
 import React,  { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
 
-
+// SAVIOUR Imports
 import Sidebar from '/src/basic/components/Sidebar/Sidebar';
-import Settings from "./pages/Settings/Settings";
-import Debug from "./pages/Debug/Debug";
-import Monitor from "./pages/Monitor/Monitor";
-import Recording from './pages/Recording/Recording';
+import Settings from "/src/basic/pages/Settings/Settings";
+import Debug from "/src/basic/pages/Debug/Debug";
+import Recording from '/src/basic/pages/Recording/Recording';
 
-import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
+
+// Habitat Imports
+import HabitatDashboard from "/src/habitat/pages/HabitatDashboard/HabitatDashboard";
+import Monitor from "/src/habitat/pages/Monitor/Monitor";
 
 
 document.title="Habitat GUI";

@@ -1,0 +1,25 @@
+.dashboard {
+    height: 100vh;
+    display: flex;
+    gap: 32px;
+    padding: 64px;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex: 3;
+  }
+  
+    .dashboard-left {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+    }
+  
+    .dashboard-right {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+    }

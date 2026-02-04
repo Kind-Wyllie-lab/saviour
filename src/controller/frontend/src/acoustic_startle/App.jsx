@@ -5,10 +5,11 @@ import { usePrefersDarkMode } from "/src/hooks/usePrefersDarkMode";
 
 
 import Sidebar from "/src/basic/components/Sidebar/Sidebar";
-import Dashboard from "/src/basic/pages/Dashboard/Dashboard";
 import Recording from "/src/basic/pages/Recording/Recording";
 import Settings from "/src/basic/pages/Settings/Settings";
 
+
+import Dashboard from "/src/acoustic_startle/pages/AcousticStartleDashboard/AcousticStartleDashboard";
 
 document.title="Acoustic Startle";
 

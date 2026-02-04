@@ -29,9 +29,9 @@ class SoundModule(Module):
 
 
     def _play_sound(self):
-        duration=1 # Duration in seconds to play for # TODO: Take from config
-        filename="dog_bark.wav" # The wav to be played # TODO: Take from config
-        volume=1 # The volume to play at (1 = 100%) # TODO: Take from config
+        duration = self.config.get("sound.duration") # Duration in seconds to play for # TODO: Take from config
+        filename = self.config.get("sound.filename") # The wav to be played # TODO: Take from config
+        volume = self.config.get("sound.volume") # The volume to play at (1 = 100%) # TODO: Take from config
         device = "plughw:2,0"
 
         ffmpeg_proc = subprocess.Popen([

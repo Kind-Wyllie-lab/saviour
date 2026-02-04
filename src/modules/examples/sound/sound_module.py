@@ -21,7 +21,43 @@ class SoundModule(Module):
             self._check_hifiberry
         }
 
+        self.sound_commands = {
+            "play_sound": self._play_sound
+        }
 
+        self.command.set_commands(self.sound_commands)
+
+
+    def _play_sound(self):
+        duration=1 # Duration in seconds to play for # TODO: Take from config
+        filename="dog_bark.wav" # The wav to be played # TODO: Take from config
+        volume=1 # The volume to play at (1 = 100%) # TODO: Take from config
+        device = "plughw:2,0"
+
+        ffmpeg_proc = subprocess.Popen([
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-t", str(duration),
+            "-i", filename,
+            "-filter:a",
+            f"volume={volume}",
+            "-f", "wav",
+            "-"
+        ],
+        stdout=subprocess.PIPE
+        )
+
+        aplay_proc = subprocess.Popen(
+            ["aplay", "-D", device],
+            stdin=ffmpeg_proc.stdout
+        )
+
+        ffmpeg_proc.stdout.close()
+        aplay_proc.communicate()
+
+
+    """Config"""
     def configure_module(self, updated_keys: Optional[list[str]]):
         # Configure self however necessary
         pass

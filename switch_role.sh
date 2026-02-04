@@ -629,6 +629,11 @@ if ! $ROLE_CHANGED && ! $TYPE_CHANGED; then
     exit 0
 fi
 
+echo ""
+echo "Writing new role to config file /etc/saviour/config"
+write_new_role_to_file
+
+
 if $ROLE_CHANGED; then
     if [ "$DEVICE_ROLE" = "controller" ]; then
         configure_ptp_timetransmitter
@@ -677,10 +682,6 @@ EOF
     sudo -u pi wireplumber &
 fi
 
-echo ""
-echo "Writing new role to config file /etc/saviour/config"
-write_new_role_to_file
-
 
 # Run pytest?
 echo ""
@@ -695,6 +696,6 @@ sudo systemctl restart saviour.service
 
 echo ""
 echo "Device successfully set to ${DEVICE}."
-if [ $ROLE_CHANGED == true]; then
+if [ $ROLE_CHANGED == true ]; then
     echo "Please reboot now."
 fi

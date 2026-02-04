@@ -136,6 +136,19 @@ class Controller(ABC):
         self.logger.warning("No implementation provided for abstract method configure_controller")
     
 
+    def _register_special_socket_events(self, socketio):
+        """
+        Use this in __init__() to add new socketio event handlers.
+
+        Example:
+        @socketio.on("special_event")
+        def handle_special_event(data):
+            print("Received special event:", data)
+            socketio.emit("special_response", {"status": "ok"})
+        """
+        raise NotImplementedError
+
+
     def _remove_module(self, module_id: str):
         self.logger.info(f"Removing {module_id}")
         self.modules.remove_module(module_id)
@@ -227,6 +240,8 @@ class Controller(ABC):
                     if not ready:
                         self.logger.info(f"Full message from non-ready module: {message}")
                     self.modules.notify_module_readiness_update(module_id, ready, message)
+                case "error":
+                    self.logger.warning(f"Received error from {module_id}: {message}")
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:

@@ -90,6 +90,11 @@ class Web(ABC):
         return name
 
 
+    def register_additional_socketio_events(self, handler_func):
+        """Allow extra socketio event handlers to be registered dynamically"""
+        handler_func(self.socketio)
+
+
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""
         modules = self.api.get_modules()

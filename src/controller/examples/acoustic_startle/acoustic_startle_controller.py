@@ -29,6 +29,7 @@ class HabitatController(Controller):
         self.config.load_controller_config("acoustic_startle_controller_config.json")
 
 
+        self.web.register_additional_socketio_events(self._register_special_socket_events)
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
 
 
@@ -41,6 +42,16 @@ class HabitatController(Controller):
             case _:
                 self.logger.warning(f"No logic for {status} from {module_id}")
                 return False    
+
+
+    def _register_special_socket_events(self, socketio):
+        @socketio.on("play_sound")
+        def handle_play_sound(data):
+            module_id = data.get("module_id")
+            self.logger.info(f"Playing sound on {module_id}")
+            self.api.send_command(module_id, "play_sound", {})
+
+
 
 if __name__ == "__main__":
     controller = HabitatController()

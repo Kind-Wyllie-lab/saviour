@@ -17,7 +17,6 @@ function ExperimentMetadata( {experimentName} ) {
     socket.emit("get_experiment_metadata");
 
     const handleResponse = (data) => {
-      console.log("Received experiment_metadata_update from backend: ", data);
       if (data.status === "success") {
         setMetadata(data.metadata);
       }
@@ -42,8 +41,9 @@ function ExperimentMetadata( {experimentName} ) {
 
   return (
     <>
-      <h2>Experiment Metadata</h2>
-      <div className="experiment-metadata-container">
+
+      <div className="experiment-metadata-container card">
+        <h2>Experiment Metadata</h2>
         <div className="metadata-form-row">
           <label htmlFor="experiment">Experiment</label>
           <input

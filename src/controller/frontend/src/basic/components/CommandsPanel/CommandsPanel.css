@@ -1,8 +1,4 @@
 .commands-panel {
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 10px;
-    background-color: var(--card-bg-color);
     display: flex;
     flex-direction: column;
     gap: 10px;

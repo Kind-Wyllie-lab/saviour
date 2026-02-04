@@ -6,13 +6,33 @@ set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit im
 trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
 
 USER=`whoami`
-DIR=`pwd`
+SCRIPT_PATH="$(readlink -f "$0")"
+DIR="$(dirname "$SCRIPT_PATH")"
 SHARENAME="controller_share"
 
 
+# Function to check current role
+get_current_role() {
+    if [ -f /etc/saviour/config ]; then
+        source /etc/saviour/config
+        CURRENT_ROLE=$ROLE
+        CURRENT_TYPE=$TYPE
+    else
+        CURRENT_ROLE=""
+        CURRENT_TYPE=""
+    fi
+}
+
+write_new_role_to_file() {
+    sudo tee /etc/saviour/config >/dev/null <<EOF
+ROLE=${DEVICE_ROLE}
+TYPE=${DEVICE_TYPE}
+EOF
+}
+
 # Function to ask user about their role
 ask_user_role() {
-    echo "Please specify the role of this device:"
+    echo "Please specify the new role of this device:"
     echo "1) Controller - Central device that coordinates other modules and presents a GUI"
     echo "2) Module - Peripheral device that connects to a controller and executes received commands"
     echo ""
@@ -535,13 +555,27 @@ EOF
 
 build_frontend() {
     echo "Installing nvm, Node.js, vite, and building frontend"
-    echo "Installing nvm"
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash # Install nvm
-    \. "$HOME/.nvm/nvm.sh" # Instead of restarting the shell - from Node.js
-    echo "Installing Node.js v22"
-    nvm install 22 # Install Node.js - make sure to keep version up to date
-    node -v # Should print v22. something
-    npm -v # Should print 10.9.3 or something
+    # Check if nvm is installed
+    if [ -d "$HOME/.nvm" ]; then
+        echo "[OK] nvm already installed"
+    else
+        echo "Installing nvm"
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+    fi
+    # Load nvm into the current shell session
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+    # Check if Node.js v22 is installed
+    if nvm ls 22 >/dev/null 2>&1; then
+        echo "[OK] Node.js v22 already installed"
+    else
+        echo "Installing Node.js v22"
+        nvm install 22
+    fi
+
+    echo "Node version: $(node -v)"
+    echo "NPM version: $(npm -v)"
 
     echo "Setting correct frontend for ${DEVICE}"
     sudo tee src/controller/frontend/src/main.jsx > /dev/null <<EOF
@@ -573,6 +607,8 @@ EOF
 # TODO: Configure ptp, ntp
 
 # Main Program
+get_current_role
+echo "Currently a $CURRENT_TYPE $CURRENT_ROLE";
 ask_user_role
 ask_module_type
 ask_controller_type
@@ -581,6 +617,38 @@ DEVICE="${DEVICE_TYPE}_${DEVICE_ROLE}"
 
 echo ""
 echo Device will be configured as a "${DEVICE}."
+
+ROLE_CHANGED=false
+TYPE_CHANGED=false
+
+[ "$DEVICE_ROLE" != "$CURRENT_ROLE" ] && ROLE_CHANGED=true
+[ "$DEVICE_TYPE" != "$CURRENT_TYPE" ] && TYPE_CHANGED=true
+
+if ! $ROLE_CHANGED && ! $TYPE_CHANGED; then
+    echo "No changes detected. Device is already configured as ${DEVICE_TYPE} ${DEVICE_ROLE}."
+    exit 0
+fi
+
+if $ROLE_CHANGED; then
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        configure_ptp_timetransmitter
+        configure_samba_share
+        configure_dhcp_server
+        configure_mdns
+    fi
+    if [ "$DEVICE_ROLE" = "module" ]; then
+        configure_ptp_timereceiver
+        disable_samba_share
+        disable_dhcp_server
+        disable_mdns
+    fi
+fi
+
+if $TYPE_CHANGED; then
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        build_frontend
+    fi
+fi
 
 get_python_directory
 
@@ -594,23 +662,6 @@ echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep savio
 
 
 echo ""
-
-if [ "$DEVICE_ROLE" = "controller" ]; then
-    configure_ptp_timetransmitter
-    configure_samba_share
-    configure_dhcp_server
-    configure_mdns
-    build_frontend
-
-fi
-
-if [ "$DEVICE_ROLE" = "module" ]; then
-    configure_ptp_timereceiver
-    disable_samba_share
-    disable_dhcp_server
-    disable_mdns
-
-fi
 
 if [ "$DEVICE_TYPE" = "microphone" ]; then
     sudo install -d /etc/pipewire/pipewire.conf.d
@@ -626,12 +677,24 @@ EOF
     sudo -u pi wireplumber &
 fi
 
+echo ""
+echo "Writing new role to config file /etc/saviour/config"
+write_new_role_to_file
+
 
 # Run pytest?
 echo ""
 echo "Running test suite"
 source env/bin/activate
-pytest
+pytest "src/$DEVICE_ROLE/"
 
 echo ""
-echo "Device successfully set to ${DEVICE}, please reboot now"
+echo "Restarting saviour.service"
+sudo systemctl restart saviour.service
+
+
+echo ""
+echo "Device successfully set to ${DEVICE}."
+if [ $ROLE_CHANGED == true]; then
+    echo "Please reboot now."
+fi

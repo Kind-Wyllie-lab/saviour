@@ -10,10 +10,7 @@ import Debug from "./pages/Debug/Debug";
 import Monitor from "./pages/Monitor/Monitor";
 import Recording from './pages/Recording/Recording';
 
-
-import HabitatSidebar from "./components/HabitatSidebar/HabitatSidebar";
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
-
 
 
 document.title="Habitat GUI";

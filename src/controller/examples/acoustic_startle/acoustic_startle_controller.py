@@ -26,7 +26,7 @@ class HabitatController(Controller):
         super().__init__()
 
         # Update config
-        self.config.load_controller_config("habitat_controller_config.json")
+        self.config.load_controller_config("acoustic_startle_controller_config.json")
 
 
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback

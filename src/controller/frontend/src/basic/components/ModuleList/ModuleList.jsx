@@ -6,11 +6,10 @@ function ModuleList({ modules }) {
 
     for (var i in modules) {
         module = modules[i];
-        console.log(module);
     }
 
     return (
-        <div className="module-list-container">
+        <div className="module-list-container card">
             <h2>Module List</h2>
             <div className="module-list">
             {modules.map((module, idx) => (

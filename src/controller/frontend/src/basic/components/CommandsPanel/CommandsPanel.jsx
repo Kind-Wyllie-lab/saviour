@@ -54,7 +54,7 @@ function CommandsPanel({ modules, experimentName }) {
     <>
 
       <div className="commands-panel card">
-        <h2>Commands</h2>
+        <h2>Recording</h2>
         {/* Target selection dropdown */}
         <div className="target-select">
           <label>Target Module(s):</label>

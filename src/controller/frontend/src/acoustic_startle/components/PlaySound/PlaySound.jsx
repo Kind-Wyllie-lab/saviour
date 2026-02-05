@@ -8,6 +8,7 @@ function PlaySound({ modules }) {
 
     // Selected module ID
     const [selectedId, setSelectedId] = useState("");
+    const [selectedFile, setSelectedFile] = useState("");
 
     // Update selectedId when modules load or change
     useEffect(() => {
@@ -29,6 +30,33 @@ function PlaySound({ modules }) {
         socket.emit("play_sound", { module_id: selectedId });
     };
 
+    // Get sound files
+    const [soundFiles, setSoundFiles] = useState([]);
+
+    useEffect(() => {
+        if (!selectedId) return;
+
+        socket.emit("list_sound_files", { module_id: selectedId });
+
+        const handleUpdate = (data) => {
+            console.log(data);
+            setSoundFiles(data.sound_files);
+            setSelectedFile(data.selected_file ?? "");
+        };
+
+        socket.on("list_sound_files", handleUpdate);
+        
+        return () => {
+            socket.off("list_sound_files", handleUpdate);
+        };
+    }, [selectedId]); // Wait until selectedId loads
+
+    // Update selection
+    const handleFileChange = (e) => {
+        setSelectedFile(e.target.value);
+        socket.emit("change_sound_file", { module_id: selectedId, selected_file: e.target.value });
+    };
+
     if (soundModules.length === 0) {
         return <p>No sound modules available.</p>;
     }
@@ -36,7 +64,7 @@ function PlaySound({ modules }) {
     return (
         <div className="play-sound card">
             <h2>Sound Player</h2>
-            <label htmlFor="sound-module-select">Select Sound Module:</label>
+            <label htmlFor="sound-module-select">Select Module</label>
             <select
             id="sound-module-select"
             value={selectedId}
@@ -45,6 +73,18 @@ function PlaySound({ modules }) {
             {soundModules.map((m) => (
                 <option key={m.id} value={m.id}>
                 {m.name || m.id}
+                </option>
+            ))}
+            </select>
+            <label htmlFor="sound-file-select">Select Sound</label>
+            <select
+            id="sound-file-select"
+            value={selectedFile}
+            onChange={handleFileChange}
+            >
+           {soundFiles.map((f) => (
+                <option key={f} value={f}>
+                    {f}
                 </option>
             ))}
             </select>

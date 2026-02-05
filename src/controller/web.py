@@ -681,6 +681,10 @@ class Web(ABC):
                         'module_id': module_id,
                         'status': status
                     })
+                
+                case "heartbeat":
+                    pass
+
 
                 case _:              
                     was_special_status = self.handle_special_module_status(module_id, status)

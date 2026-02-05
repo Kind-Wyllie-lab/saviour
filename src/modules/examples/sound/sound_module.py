@@ -96,7 +96,8 @@ class SoundModule(Module):
 
 
     def _get_available_sounds(self) -> list:
-        return os.listdir("sounds/")
+        files = [f for f in os.listdir("sounds/") if os.path.isfile(f"sounds/{f}")]
+        return files
 
 
     """Config"""

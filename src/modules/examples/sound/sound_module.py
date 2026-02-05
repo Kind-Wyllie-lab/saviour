@@ -40,9 +40,13 @@ class SoundModule(Module):
         self.command.set_commands(self.sound_commands)
 
 
+        # Sound files
         self.available_sounds = self._get_available_sounds()
         self.sound_to_play = self.available_sounds[0]
 
+        # Recording
+        self.current_sound_event_file = None
+        self._sound_file_handle = None
 
     @command()
     def _play_sound(self):
@@ -112,6 +116,12 @@ class SoundModule(Module):
 
 
     """Recording"""
+    def _get_sound_segment_filename(self) -> str:
+        """Return a filename for the current sound events segment""" 
+        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
+        return f"{self.api.get_filename_prefix()}_sound_events_({self.api.get_segment_id()}_{strtime}).csv"
+
+
     def _write_sound_event_to_file(self, timestamp_ns: int):
         # Use file handler 
         if self._sound_file_handle:
@@ -119,10 +129,9 @@ class SoundModule(Module):
 
 
     def _create_sound_event_file(self) ->  bool:
-        filename = f"{self.api.get_filename_prefix()}_sound_events_({self.api.get_segment_id()}_{self.api.get_segment_start_time()}).csv"
+        filename = self._get_sound_segment_filename()
         self.logger.info(f"Creating sound events file {filename}")
-        self.api.stage_file_for_export(filename)
-        self.api.add_session_file(filename)
+        self.current_sound_event_file = filename
         try:
             self._sound_file_handle = open(filename, "w", buffering=1)  # line-buffered
             # Write header with metadata
@@ -154,12 +163,24 @@ class SoundModule(Module):
 
     def _start_next_recording_segment(self):
         # Segment based recording - close file, open new one
+        # Stage current file for export
+        self.api.stage_file_for_export(self.current_sound_event_file)
+        self.api.add_session_file(self.current_sound_event_file)
+
+        # Close current file
         self._close_sound_event_file()
+
+        # Create new file
         self._create_sound_event_file()
         return True
 
 
     def _stop_recording(self):
+        # Stage current file for export
+        self.api.stage_file_for_export(self.current_sound_event_file)
+        self.api.add_session_file(self.current_sound_event_file)
+
+        # Close current file
         self._close_sound_event_file()
         return True
 

@@ -1,0 +1,7 @@
+{
+    "sound": {
+        "volume": 1,
+        "duration": 1,
+        "filename": "dog_bark.wav"
+    }
+}

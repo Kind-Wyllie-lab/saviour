@@ -51,6 +51,8 @@ class SoundModule(Module):
         volume = self.config.get("sound.volume") # The volume to play at (1 = 100%) 
         device = "plughw:2,0"
 
+        timestamp = time.time_ns()
+
         ffmpeg_proc = subprocess.Popen([
             "ffmpeg",
             "-hide_banner",
@@ -73,7 +75,10 @@ class SoundModule(Module):
         ffmpeg_proc.stdout.close()
         aplay_proc.communicate()
 
-        # TODO: Check if was successfull
+        if self.api.get_recording_status() == True:
+            self._write_sound_event_to_file(timestamp)
+
+        # TODO: Check if was successful
         return {"result": "success"}
 
 
@@ -105,19 +110,58 @@ class SoundModule(Module):
         # Configure self however necessary
         pass
 
+
     """Recording"""
+    def _write_sound_event_to_file(self, timestamp_ns: int):
+        # Use file handler 
+        if self._sound_file_handle:
+            self._sound_file_handle.write(f'{timestamp_ns},{self.sound_to_play},{self.config.get("sound.volume")},{self.config.get("sound.duration")}\n')
+
+
+    def _create_sound_event_file(self) ->  bool:
+        filename = f"{self.api.get_filename_prefix()}_sound_events_({self.api.get_segment_id()}_{self.api.get_segment_start_time()}).csv"
+        self.logger.info(f"Creating sound events file {filename}")
+        self.api.stage_file_for_export(filename)
+        self.api.add_session_file(filename)
+        try:
+            self._sound_file_handle = open(filename, "w", buffering=1)  # line-buffered
+            # Write header with metadata
+            f = self._sound_file_handle
+            f.write("# Sound Events Recording\n")
+            f.write(f"# Session ID / Segment: {self.api.get_recording_session_id()}_{self.api.get_segment_id()}\n")
+            f.write(f"# Segment Start: {self.api.get_segment_start_time()}\n")
+            f.write("#\n")
+            f.write("Timestamp (ns), sound played, volume factor, duration (s)\n")
+        except Exception as e:
+            self.logger.error(f"Failed to open sound events file: {e}")
+            self._sound_file_handle = None
+
+    
+    def _close_sound_event_file(self) -> bool:
+        """Close sound events file"""
+        try:
+            self._sound_file_handle = None
+            self.logger.info(f"Closed shock events file")
+        except Exception as e:
+            self.logger.warning(f"Error closing shock events file: {e}")
+
+
     def _start_new_recording(self):
         # Start recording session - probably tracking sounds produced in csv file
-        pass
+        self._create_sound_event_file()
+        return True
     
 
     def _start_next_recording_segment(self):
         # Segment based recording - close file, open new one
-        pass
+        self._close_sound_event_file()
+        self._create_sound_event_file()
+        return True
 
 
     def _stop_recording(self):
-        pass
+        self._close_sound_event_file()
+        return True
 
 
     """Self Check"""

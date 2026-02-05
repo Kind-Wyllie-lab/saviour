@@ -34,16 +34,21 @@ class SoundModule(Module):
         self.sound_commands = {
             "play_sound": self._play_sound,
             "list_sound_files": self._list_sound_files,
+            "use_this_sound_file": self._use_this_sound_file
         }
 
         self.command.set_commands(self.sound_commands)
 
 
+        self.available_sounds = self._get_available_sounds()
+        self.sound_to_play = self.available_sounds[0]
+
+
     @command()
     def _play_sound(self):
-        duration = self.config.get("sound.duration") # Duration in seconds to play for # TODO: Take from config
-        filename = "sounds/" + self.config.get("sound.filename") # The wav to be played # TODO: Take from config
-        volume = self.config.get("sound.volume") # The volume to play at (1 = 100%) # TODO: Take from config
+        duration = self.config.get("sound.duration") # Duration in seconds to play for 
+        filename = "sounds/" + self.sound_to_play # The wav to be played 
+        volume = self.config.get("sound.volume") # The volume to play at (1 = 100%) 
         device = "plughw:2,0"
 
         ffmpeg_proc = subprocess.Popen([
@@ -77,10 +82,17 @@ class SoundModule(Module):
         files = self._get_available_sounds()
 
         response = {
-            "sound_files": files
+            "sound_files": files,
+            "selected_file": self.sound_to_play
         }
 
         return response
+
+
+    @command()
+    def _use_this_sound_file(self, filename: str):
+        self.logger.info(f"Switching to use {filename}")
+        self.sound_to_play = filename
 
 
     def _get_available_sounds(self) -> list:

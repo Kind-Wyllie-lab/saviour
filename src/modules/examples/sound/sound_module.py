@@ -1,12 +1,22 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+SAVIOUR System - Sound Module Class
 
+This code supports enables a Pi 5 with a HifiBerry hat to play sounds on command.
+Sounds must be .wav, formatted to -3dB peak and located in the sounds/ folder.
 
-
+Author: Andrew SG
+Created: 27/01/2026
+"""
+# Base Imports
 import sys
 import os
 import subprocess
 from typing import Optional
 import time
 
+# Saviour Imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, command, check
 
@@ -22,15 +32,17 @@ class SoundModule(Module):
         }
 
         self.sound_commands = {
-            "play_sound": self._play_sound
+            "play_sound": self._play_sound,
+            "list_sound_files": self._list_sound_files,
         }
 
         self.command.set_commands(self.sound_commands)
 
 
+    @command()
     def _play_sound(self):
         duration = self.config.get("sound.duration") # Duration in seconds to play for # TODO: Take from config
-        filename = self.config.get("sound.filename") # The wav to be played # TODO: Take from config
+        filename = "sounds/" + self.config.get("sound.filename") # The wav to be played # TODO: Take from config
         volume = self.config.get("sound.volume") # The volume to play at (1 = 100%) # TODO: Take from config
         device = "plughw:2,0"
 
@@ -55,6 +67,24 @@ class SoundModule(Module):
 
         ffmpeg_proc.stdout.close()
         aplay_proc.communicate()
+
+        # TODO: Check if was successfull
+        return {"result": "success"}
+
+
+    @command()
+    def _list_sound_files(self):
+        files = self._get_available_sounds()
+
+        response = {
+            "sound_files": files
+        }
+
+        return response
+
+
+    def _get_available_sounds(self) -> list:
+        return os.listdir("sounds/")
 
 
     """Config"""

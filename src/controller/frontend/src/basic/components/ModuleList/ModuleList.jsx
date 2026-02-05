@@ -15,8 +15,11 @@ function ModuleList({ modules }) {
             {modules.map((module, idx) => (
                 // <div className={`module-list-item ${module.status.toLowerCase()}`}>
                 <div className="module-list-item">
-                    <div className={`status-icon ${module.status.toLowerCase()}`}></div>
-                    <p>{module.name} ({module.type}) - {module.status}</p>
+                    <div className="module-list-item-start">
+                        <div className={`status-icon ${module.status.toLowerCase()}`}></div>
+                        <p>{module.name} ({module.type})</p>            
+                    </div>
+                    <p>{module.status}</p>
                     <p>{module.ip}</p> 
                 </div>
             ))}

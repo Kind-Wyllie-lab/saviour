@@ -157,11 +157,7 @@ class Modules:
 
     def notify_recording_stopped(self, module_id:str, module_data: dict):
         self.logger.info(f"{module_id} stopped recording {module_data}")
-        if module_data["recording"] == False:
-            self.logger.info("Recording was false")
-            self.modules[module_id].status = ModuleStatus.DEFAULT
-        else:
-            self.logger.warning("Status stop_recording received but recording param was still True, some kind of error.") 
+        self.modules[module_id].status = ModuleStatus.DEFAULT
         self.broadcast_updated_modules()
 
 

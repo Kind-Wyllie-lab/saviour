@@ -14,6 +14,7 @@
   .play-sound label {
     font-weight: 600;
     margin-bottom: 4px;
+    text-align: center;
   }
   
   .play-sound select {
@@ -23,6 +24,7 @@
     font-size: 14px;
     outline: none;
     transition: border-color 0.2s;
+    text-align: center;
   }
   
   .play-sound select:focus {

@@ -37,11 +37,16 @@ class HabitatController(Controller):
         pass
 
 
-    def handle_special_module_status(self, module_id: str, status: str):
-        match status:
+    def handle_special_module_status(self, module_id: str, status: dict):
+        status_type = status.get("type")
+        match status_type:
+            case "list_sound_files":
+                data = dict((k, status[k]) for k in ("sound_files", "selected_file"))
+                self.web.socketio.emit("list_sound_files", data)
             case _:
                 self.logger.warning(f"No logic for {status} from {module_id}")
                 return False    
+        return True
 
 
     def _register_special_socket_events(self, socketio):
@@ -52,6 +57,20 @@ class HabitatController(Controller):
             self.api.send_command(module_id, "play_sound", {})
 
 
+        @socketio.on("list_sound_files")
+        def list_sound_files(data):
+            module_id = data.get("module_id")
+            self.logger.info(f"Requesting sound files from {module_id}")
+            self.api.send_command(module_id, "list_sound_files", {})
+
+
+        @socketio.on("change_sound_file")
+        def change_sound_file(data):
+            self.logger.info(f"change sound file received {data}")
+            module_id = data.get("module_id")
+            target_file = data.get("selected_file")
+            self.logger.info(f"Telling {module_id} to use {target_file}")
+            self.api.send_command(module_id, "use_this_sound_file", {"filename": target_file})
 
 if __name__ == "__main__":
     controller = HabitatController()

@@ -6,14 +6,14 @@ import "./AcousticStartleDashboard.css";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import ExperimentMetadata from "/src/basic/components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "/src/basic/components/CommandsPanel/CommandsPanel";
+import LivestreamSelector from "/src/basic/components/LivestreamSelector/LivestreamSelector";
 
 // Hooks
 import useModules from "/src/hooks/useModules";
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import socket from "/src/socket";
 
-
-import PlaySound from "../../components/PlaySound/PlaySound";
+import PlaySound from "/src/acoustic_startle/components/PlaySound/PlaySound";
 
 
 function Dashboard() {
@@ -29,6 +29,11 @@ function Dashboard() {
       <div className="dashboard-left">
         <section>
           <ModuleList modules = {moduleList} />
+        </section>
+      </div>
+      <div className="dashboard-middle">
+        <section className="livestream-section">
+          <LivestreamSelector modules = {moduleList} />
         </section>
       </div>
       <div className="dashboard-right">

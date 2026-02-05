@@ -15,8 +15,21 @@
       justify-content: flex-start;
       align-items: center;
       gap: 32px;
+      /* flex-grow: 1; */
     }
-  
+
+    .dashboard-middle {
+      height: 100%;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 32px;
+      flex-grow: 1;
+    }
+    
+          
     .dashboard-right {
       height: 100%;
       display: flex;

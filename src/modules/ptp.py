@@ -88,6 +88,7 @@ class PTP:
         self.ptp4l_threshold_flag = False
         self.phc2sys_threshold_flag = False
 
+
     def _check_required_packages(self):
         """Check if required PTP packages are installed."""
         required_packages = ['ptp4l', 'phc2sys']
@@ -102,6 +103,7 @@ class PTP:
         if missing_packages:
             raise PTPError(f"Missing required packages: {', '.join(missing_packages)}. "
                           f"Please install them using: sudo apt-get install linuxptp")
+
 
     def _validate_interface(self):
         """Check if the interface exists and supports PTP."""
@@ -126,6 +128,7 @@ class PTP:
         except subprocess.CalledProcessError:
             self.logger.warning(f"Could not check PTP support for {self.interface}")
 
+
     def _check_systemd_services(self):
         """Check if the required systemd services exist."""
         services = [self.ptp4l_service, self.phc2sys_service]
@@ -143,6 +146,7 @@ class PTP:
                                    f"Please run the setup script to configure PTP services.")
                 else:
                     self.logger.warning(f"Could not check {service} service status: {e}")
+
 
     def _stop_timesyncd(self):
         """
@@ -198,6 +202,7 @@ class PTP:
         except Exception as e:
             self.logger.error(f"Could not verify timesyncd status: {str(e)}")
     
+
     def _start_timesyncd(self):
         """
         Resume timesyncd and ntp on cleanup - clock will drift otherwise.
@@ -237,6 +242,7 @@ class PTP:
             self.logger.error(f"Failed to start timedatectl ntp: {str(e)}")
             raise
 
+
     def _get_service_status(self, service_name):
         """Get the status of a systemd service."""
         try:
@@ -246,6 +252,7 @@ class PTP:
         except subprocess.CalledProcessError:
             return 'unknown'
 
+
     def _get_service_logs(self, service_name, lines=10):
         """Get recent logs from a systemd service."""
         try:
@@ -254,6 +261,7 @@ class PTP:
             return result.stdout
         except subprocess.CalledProcessError:
             return ""
+
 
     def start(self):
         self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")

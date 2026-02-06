@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
-import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCard";
 import "./HabitatLivestreamGrid.css";
-
 import { NavLink } from "react-router-dom";
+
+
+import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCard";
+
 
 const STREAM_REFRESH_MS = 60 * 1000; // 1 minute in ms
 

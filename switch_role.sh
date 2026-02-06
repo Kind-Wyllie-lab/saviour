@@ -687,7 +687,11 @@ fi
 echo ""
 echo "Running test suite"
 source env/bin/activate
-pytest "src/$DEVICE_ROLE/"
+if [ $DEVICE_ROLE == "module" ]; then
+    pytest "src/modules"
+else
+    pytest "src/controller"
+fi
 
 echo ""
 echo "Restarting saviour.service"

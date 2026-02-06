@@ -16,6 +16,13 @@ sudo apt-get upgrade -y
 
 TARGET_DIR="/usr/local/src/saviour"
 
+sudo mkdir -p "/etc/saviour"
+
+sudo tee /etc/saviour/config > /dev/null <<EOF
+ROLE=none
+TYPE=none
+EOF
+
 # Resolve absolute path of this script
 SCRIPT_PATH="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"

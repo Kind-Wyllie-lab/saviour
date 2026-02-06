@@ -27,25 +27,16 @@ function Dashboard() {
   return (
     <main className="dashboard">
       <div className="dashboard-left">
-        <section>
-          <ModuleList modules = {moduleList} />
-        </section>
+
       </div>
       <div className="dashboard-middle">
-        <section className="livestream-section">
-          <LivestreamSelector modules = {moduleList} />
-        </section>
+        <LivestreamSelector modules = {moduleList} />
       </div>
       <div className="dashboard-right">
-        <section>
-          <ExperimentMetadata experimentName={experimentName} />
-        </section>
-        <section>
-          <CommandsPanel modules={moduleList} experimentName={experimentName} />
-        </section>
-        <section>
-          <PlaySound modules={moduleList} />
-        </section>
+        <ModuleList modules = {moduleList} />
+        {/* <ExperimentMetadata experimentName={experimentName} />
+        <CommandsPanel modules={moduleList} experimentName={experimentName} /> */}
+        <PlaySound modules={moduleList} />
       </div>
     </main>
   );

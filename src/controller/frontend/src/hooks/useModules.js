@@ -27,7 +27,6 @@ export default function useModules({ autoRequest = true } = {}) {
     }
 
     const handleUpdate = (data) => {
-      console.log("Received modules:", data);
       setModules(normaliseModules(data));
     };
 

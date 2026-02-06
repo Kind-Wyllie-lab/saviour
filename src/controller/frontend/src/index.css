@@ -33,6 +33,9 @@ code {
   --accent-color: cornflowerblue;
   --accent-color-alt: #041E42;
   --border-color: #ddd;           /* Card borders, dividers */
+  --button-color: #007bff; 
+  --ready-color: blue;
+  --recording-color: red;
 }
 
 /* Dark mode */
@@ -54,7 +57,7 @@ body.dark-mode {
 
   padding: 10px;
   min-width: 400px;
-  max-width: 600px;
+  /* max-width: 600px; */
 
   border: 1px solid var(--border-color);
   border-radius: 8px;

@@ -7,6 +7,7 @@ import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import ExperimentMetadata from "/src/basic/components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "/src/basic/components/CommandsPanel/CommandsPanel";
 import LivestreamSelector from "/src/basic/components/LivestreamSelector/LivestreamSelector";
+import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
 // Hooks
 import useModules from "/src/hooks/useModules";
@@ -24,13 +25,16 @@ function Dashboard() {
     socket.emit("get_module_configs"); // Ask backend for module configs
   }, []);
 
+  const cameraModules = (moduleList || []).filter(
+    (m) => m.type === "camera"
+  );
+
   return (
     <main className="dashboard">
       <div className="dashboard-left">
-
-      </div>
-      <div className="dashboard-middle">
-        <LivestreamSelector modules = {moduleList} />
+        {cameraModules.map((m) => (
+          <LivestreamCard module={ m } />
+        ))}
       </div>
       <div className="dashboard-right">
         <ModuleList modules = {moduleList} />

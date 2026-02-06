@@ -17,12 +17,10 @@ function Recording() {
 
     return (
         <div className="recording-page">
-            <div className="recording-left">
+            <div className="recording-container">
                 <ModuleList modules={moduleList} />
-            </div>
-            <div className="recording-right">
-                <ExperimentMetadata experimentName={experimentName} />
                 <CommandsPanel experimentName={experimentName} modules={moduleList} />
+                <ExperimentMetadata experimentName={experimentName} />
             </div>
         </div>
     )

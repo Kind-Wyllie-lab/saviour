@@ -7,8 +7,8 @@ function HabitatLivestreamCard({ module }) {
 
   return (
     <>
-      <div className="livestream-card">
-        <div className="stream-video">
+      <div className="habitat-livestream-card">
+        <div className="habitat-stream-video">
           {module.status === "RECORDING" && (
             <div
               className="recording-indicator"

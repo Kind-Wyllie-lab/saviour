@@ -7,21 +7,27 @@
         flex-direction: column;
         align-items: center;
         border-radius: 16px;
-        padding: 0 16px;
         gap: 8px;
-        min-width: 300px;
-        background-color: var(--card-bg-color);
-        border: 1px solid var(--border-color);
+        /* min-width: 400px; */
     }
 
         .module-list-item {
-            display: flex;
-            align-items: center;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 3fr 1fr 1fr;
             gap: 12px;
         } 
 
+        .module-list-item-start {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
 
-            
+        .module-list-item p {
+            text-align: center;
+        }
+
         .status-icon {
                 width: 12px;
                 height: 12px;

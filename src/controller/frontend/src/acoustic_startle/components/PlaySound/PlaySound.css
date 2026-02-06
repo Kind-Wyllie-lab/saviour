@@ -1,0 +1,57 @@
+/* PlaySound.css */
+
+.play-sound {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    max-width: 300px;
+    font-family: sans-serif;
+  }
+  
+  .play-sound label {
+    font-weight: 600;
+    margin-bottom: 4px;
+    text-align: center;
+  }
+  
+  .play-sound select {
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background-color: var(--card-bg-color);
+    color: var(--text-color);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+    text-align: center;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  
+  .play-sound select:focus {
+    border-color: #007bff;
+  }
+  
+  .play-sound button {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 4px;
+    background-color: #007bff;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  
+  .play-sound button:hover {
+    background-color: #0056b3;
+  }
+  
+  .play-sound p {
+    color: #555;
+    font-size: 14px;
+  }
+  

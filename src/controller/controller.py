@@ -82,39 +82,7 @@ class Controller(ABC):
         # Initialize config manager
         self.config = Config()
 
-        # Add logging file handler if none exists
-        if not self.logger.handlers:
-            # Add file handler for persistent logging (useful when running as systemd network)
-            try:
-                # Create logs directory if it doesn't exist
-                log_dir = self.config.get("logging.directory", "/var/log/habitat")
-                os.makedirs(log_dir, exist_ok=True)
-                
-                # Generate log filename with module info
-                log_filename = f"controller.log"
-                log_filepath = os.path.join(log_dir, log_filename)
-                
-                # Get config values for rotation
-                max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
-                backup_count = self.config.get("logging.backup_count", 5)
-                
-                # Add file handler with rotation
-                from logging.handlers import RotatingFileHandler
-                file_handler = RotatingFileHandler(
-                    log_filepath,
-                    maxBytes=max_bytes,
-                    backupCount=backup_count
-                )
-                file_handler.setLevel(logging.INFO)
-                self.logger.addHandler(file_handler)
-                
-                self.logger.info(f"File logging enabled: {log_filepath}")
-                self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
-
-            except Exception as e:
-                # If file logging fails, log the error but don't crash
-                self.logger.warning(f"Failed to setup file logging: {e}")
-                self.logger.info("Continuing with console logging only")
+        self._setup_logging()
         
         # Control flags 
         self.is_running = True  # Add flag for listener thread
@@ -167,6 +135,19 @@ class Controller(ABC):
         """Gets called when controller specific configuration changes - allows controllers to update their specific settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_controller")
     
+
+    def _register_special_socket_events(self, socketio):
+        """
+        Use this in __init__() to add new socketio event handlers.
+
+        Example:
+        @socketio.on("special_event")
+        def handle_special_event(data):
+            print("Received special event:", data)
+            socketio.emit("special_response", {"status": "ok"})
+        """
+        raise NotImplementedError
+
 
     def _remove_module(self, module_id: str):
         self.logger.info(f"Removing {module_id}")
@@ -250,6 +231,9 @@ class Controller(ABC):
                 case 'recording_stopped':
                     self.logger.info(f"{module_id} has stopped recording")
                     self.modules.notify_recording_stopped(module_id, status_data)
+                case 'recording_stop_failed':
+                    if status_data.get("error") == "Not recording":
+                        self.modules.notify_recording_stopped(module_id, status_data)
                 case 'validate_readiness':
                     # Handle readiness validation response
                     ready = status_data.get('ready', False)
@@ -259,6 +243,8 @@ class Controller(ABC):
                     if not ready:
                         self.logger.info(f"Full message from non-ready module: {message}")
                     self.modules.notify_module_readiness_update(module_id, ready, message)
+                case "error":
+                    self.logger.warning(f"Received error from {module_id}: {message}")
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:
@@ -281,6 +267,45 @@ class Controller(ABC):
         self.logger.info(f"Module {module_id} status is: {status}, online status: {online}")
 
         self.modules.notify_module_online_update(module_id, online)
+
+
+    def _setup_logging(self): 
+        # Add logging file handler if none exists
+        if not self.config.get("logging.file_logging", False):
+            return
+            
+        if not self.logger.handlers:
+            # Add file handler for persistent logging (useful when running as systemd network)
+            try:
+                # Create logs directory if it doesn't exist
+                log_dir = self.config.get("logging.directory", "/var/log/habitat")
+                os.makedirs(log_dir, exist_ok=True)
+                
+                # Generate log filename with module info
+                log_filename = f"controller.log"
+                log_filepath = os.path.join(log_dir, log_filename)
+                
+                # Get config values for rotation
+                max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
+                backup_count = self.config.get("logging.backup_count", 5)
+                
+                # Add file handler with rotation
+                from logging.handlers import RotatingFileHandler
+                file_handler = RotatingFileHandler(
+                    log_filepath,
+                    maxBytes=max_bytes,
+                    backupCount=backup_count
+                )
+                file_handler.setLevel(logging.INFO)
+                self.logger.addHandler(file_handler)
+                
+                self.logger.info(f"File logging enabled: {log_filepath}")
+                self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
+
+            except Exception as e:
+                # If file logging fails, log the error but don't crash
+                self.logger.warning(f"Failed to setup file logging: {e}")
+                self.logger.info("Continuing with console logging only")
 
 
     def stop(self) -> bool:

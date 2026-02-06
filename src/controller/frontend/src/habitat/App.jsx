@@ -1,16 +1,31 @@
 // import logo from './logo.svg';
 import './App.css';
 import React,  { useEffect, useState } from "react";
-
-import HabitatSidebar from "./components/HabitatSidebar/HabitatSidebar";
 import { Routes, Route } from "react-router-dom";
-import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
-import Settings from "./pages/Settings/Settings";
-import Debug from "./pages/Debug/Debug";
-import Monitor from "./pages/Monitor/Monitor";
-import Recording from './pages/Recording/Recording';
+
+// SAVIOUR Imports
+import Sidebar from '/src/basic/components/Sidebar/Sidebar';
+import Settings from "/src/basic/pages/Settings/Settings";
+import Debug from "/src/basic/pages/Debug/Debug";
+import Recording from '/src/basic/pages/Recording/Recording';
+
+
+// Habitat Imports
+import HabitatDashboard from "/src/habitat/pages/HabitatDashboard/HabitatDashboard";
+import Monitor from "/src/habitat/pages/Monitor/Monitor";
+
 
 document.title="Habitat GUI";
+
+
+const pages = [
+  { label: "Dashboard", path: "/" },
+  { label: "Settings", path: "/settings" },
+  { label: "Monitor", path: "/monitor" },
+  { label: "Recording", path: "/recording" },
+  // { label: "Debug", path: "/debug", disabled: true }
+];
+
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);
@@ -37,7 +52,7 @@ function App() {
 
   return (
     <div className="app">
-      <HabitatSidebar />
+      <Sidebar navItems={pages} />
       <div className="content">
         <Routes>
           <Route path="/" element={<HabitatDashboard />} />

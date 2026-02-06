@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Monitor.css";
 
-import socket from "/src/socket";
 import useModules from "/src/hooks/useModules";
 import HabitatLivestreamGrid from "/src/habitat/components/HabitatLivestreamGrid/HabitatLivestreamGrid";
 

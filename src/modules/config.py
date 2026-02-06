@@ -220,13 +220,18 @@ class Config:
         """
         parts = key.split('.') # Split the . separated param into parts
         config = self.config
+
         for part in parts:
-            if part in config:
-                config = config[part]
-            elif f"_{part}" in config: # Check for leading underscore
-                config = config[f"_{part}"]
+            if isinstance(config, dict):
+                if part in config:
+                    config = config[part]
+                elif f"_{part}" in config: # Check for leading underscore
+                    config = config[f"_{part}"]
+                else:
+                    config = default
             else:
-                config = default
+                return default
+
         if config == None:
             self.logger.warning(f"config.get() returning None for {key}")
         return config

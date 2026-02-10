@@ -25,11 +25,6 @@ function CommandsPanel({ modules, experimentName }) {
       duration: Number(duration),
       session_name: experimentName
     });
-    // socket.emit("send_command", {
-    //   type: "start_recording",
-    //   module_id: targetModule,
-    //   params: { experiment_name: experimentName, duration: Number(duration) },
-    // });
     setShowDurationModal(false);
   };
 
@@ -37,10 +32,6 @@ function CommandsPanel({ modules, experimentName }) {
     socket.emit("stop_recording", {
       target: targetModule
     });
-    // socket.emit("send_command", {
-    //   type: "stop_recording",
-    //   module_id: targetModule,
-    // });
   };
 
   const handleCheckReady = () => {

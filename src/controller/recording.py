@@ -1,5 +1,7 @@
 """
-Recording manager for the SAVIOUR Controller
+Recording manager for the SAVIOUR Controller.
+
+Each module can only be associated with one recording session.
 
 Author: Andrew SG
 Created: 26/01/2026
@@ -8,6 +10,18 @@ Created: 26/01/2026
 import logging
 from datetime import datetime
 from typing import Optional
+from dataclasses import dataclass, field
+
+
+@dataclass
+class RecordingSession():
+    """Dataclass to represent a SAVIOUR recording session"""
+    session_name: str # Name of the recording session
+    target: str # The target of recording e.g. all, group_3, camera_dc67
+    modules: list = field(default_factory=list) # The module_ids belonging to this recording session
+    start_time: int = None # Time the session was started at - None if not started
+    end_time: int = None # Time the session finished at - None if not started
+    active: bool = False# Bool indicating whether this session is currently recording
 
 
 class Recording():
@@ -15,8 +29,7 @@ class Recording():
         self.logger = logging.getLogger(__name__)
         self.current_session_name: str = None
         self.recording: bool = False
-
-        self.sessions = {} 
+        self.sessions = {} # Dict of recording sessions with session_name as key
 
 
     def start_recording(self, target, session_name: str, duration: int):
@@ -41,14 +54,26 @@ class Recording():
 
         # Append session
         self.logger.info(f"Telling {target} to start_recording for {duration}s as session {session_name}")
-        self.sessions[session_name] = {
-            "start_time": start_time,
-            "target": target, # "all" | "box_1" | "camera_dc76"
-            "duration": duration,
-            "recording": True
-        }
+
+
+        if target == "all":
+            modules = self.facade.get_modules()
+
+
+        session = RecordingSession(
+            session_name = session_name,
+            target = target,
+            modules = ["unknown", "unknown"],
+            active = True,
+            start_time = start_time,
+            end_time = None
+        )
+
+        self.sessions[session_name] = session
         self.current_session_name = session_name
         self.recording = True
+
+        self._write_session_to_file(session_name)
 
 
     def stop_recording(self, target: str):
@@ -87,6 +112,14 @@ class Recording():
     def get_recording_sessions(self) -> dict:
         return self.sessions
 
+
+    def _write_session_to_file(self, session_name: str) -> None:
+        with open(f"{session_name}.txt", "a") as f:
+            f.write(f"{session_name} targeting {self.sessions[session_name].target} (")
+            for module in self.sessions[session_name].modules:
+                f.write(f"{module}, ")
+            f.write(f") started at {self.sessions[session_name].start_time}, ended at {self.sessions[session_name].end_time}")
+        
     
     def get_active_recording_sessions(self) -> dict:
         return {

@@ -121,7 +121,8 @@ class Network:
                 properties={
                     'type': self.module_type,
                     'id': self.module_id,  # Important: Add module_id to properties
-                    'name': self.facade.get_module_name()
+                    'name': self.facade.get_module_name(),
+                    'group': self.facade.get_module_group()
                 } # the properties of the service
             )
             

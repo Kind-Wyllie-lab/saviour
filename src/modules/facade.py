@@ -29,6 +29,10 @@ class ModuleFacade():
         return self.module.get_module_name()
 
 
+    def get_module_group(self) -> str:
+        return self.module.get_module_group()
+
+
     def get_controller_ip(self) -> str:
         return self.module.network.controller_ip
 

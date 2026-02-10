@@ -24,7 +24,11 @@ class ControllerFacade():
     
     """Getter Methods"""
     def get_modules(self) -> dict:
-        return self.controller._get_modules_for_frontend()
+        return self.controller.modules.get_modules()
+
+
+    def get_modules_by_group(self, group_name: str) -> dict:
+        return self.controller.modules.get_modules_by_group(group_name)
 
 
     def get_module_health(self, module_id: Optional[str] = None):
@@ -64,6 +68,10 @@ class ControllerFacade():
         return self.controller.recording.get_recording_status()
 
 
+    def get_recording_sessions(self) -> dict:
+        return self.controller.recording.get_recording_sessions()
+
+
     def get_system_state(self) -> dict:
         return {
             "example": "This is an example system state object",
@@ -101,7 +109,6 @@ class ControllerFacade():
 
     def push_module_update_to_frontend(self, modules: dict):
         self.controller.web.push_module_update(modules)
-
 
 
     """Recording"""

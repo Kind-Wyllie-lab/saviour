@@ -182,6 +182,10 @@ class Module(ABC):
         return name
 
 
+    def get_module_group(self) -> str:
+        return self.config.get("module.group")
+
+
     def setup_logger_file_handling(self) -> None:
         # Add file handler if none exists
         if not self.logger.handlers:

@@ -230,6 +230,18 @@ class Modules:
         """Getter function for self.modules - importantly, converts them to dict."""
         return self._convert_modules_to_dict()
     
+
+    def get_modules_by_group(self, group_name: str) -> Dict[str, Any]:
+        if group_name == "":
+            self.logger.error("No group name supplied to modules.get_modules_by_group()")
+            return None
+        modules_in_group = {}
+        for module_id, module in self.modules.items():
+            if module.group == group_name:
+                self.logger.info(f"{module_id} is in {group_name}")
+                modules_in_group[module_id] = module
+        return modules_in_group
+
     
     def start(self):
         self.logger.info("Starting Modules manager")

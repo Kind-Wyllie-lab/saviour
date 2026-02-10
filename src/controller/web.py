@@ -406,6 +406,14 @@ class Web(ABC):
             })
 
 
+        """ Recording """
+        @self.socketio.on("get_recording_sessions")
+        def handle_get_recording_sessions():
+            sessions = self.facade.get_recording_sessions()
+            self.logger.info(f"Received {sessions}")
+            self.socketio.emit("recording_sessions", sessions)
+
+
         """ Debug """
         @self.socketio.on('get_debug_data')
         def handle_get_debug_info():

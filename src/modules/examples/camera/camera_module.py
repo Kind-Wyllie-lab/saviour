@@ -265,7 +265,7 @@ class CameraModule(Module):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
         # Reset positioning timestamps on recorded video prior to exporting it
-        self._fix_positioning_timestamps(self.last_video_segment)
+        # self._fix_positioning_timestamps(self.last_video_segment)
 
 
     def _fix_positioning_timestamps(self, filename: str) -> None:

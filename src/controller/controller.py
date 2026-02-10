@@ -177,13 +177,6 @@ class Controller(ABC):
             self.logger.info(f"Updated module_config key from {old_id} to {new_id}")
 
 
-    def _get_modules_for_frontend(self): 
-        """Get list of online modules from health monitor instead of service manager, append additional information"""
-        modules = self.modules.get_modules()
-        self.logger.info(f"get modules returning {modules}")
-        return modules
-
-
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         module_id = topic.split('/')[1] # get module id from topic

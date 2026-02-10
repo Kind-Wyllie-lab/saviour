@@ -88,7 +88,7 @@ class Export:
 
             export_path = self.export_path
             to_export = self.staged_for_export
-            source_folder = self.api.get_recording_folder()
+            source_folder = self.facade.get_recording_folder()
             self.logger.info(f"Will attempt to export {to_export}")
             
             # Export each session file
@@ -221,7 +221,7 @@ class Export:
 
     def _validate_export_path(self):
         """Ensure export path is up to date for todays date"""
-        export_path = f"{self.session_name}/{self.api.get_utc_date(time.time())}/{self.api.get_module_name()}"
+        export_path = f"{self.session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
         self.export_path = os.path.join(self.mount_point, export_path)
 
 
@@ -246,8 +246,8 @@ class Export:
                 "config.json",  # Generic config
                 "apa_arduino_config.json",  # APA Arduino config
                 "apa_camera_config.json",   # APA Camera config
-                os.path.join(os.path.dirname(self.api.get_recording_folder()), "config.json"),  # Parent directory
-                os.path.join(os.path.dirname(self.api.get_recording_folder()), f"{self.module_id}_config.json")  # Parent with module ID
+                os.path.join(os.path.dirname(self.facade.get_recording_folder()), "config.json"),  # Parent directory
+                os.path.join(os.path.dirname(self.facade.get_recording_folder()), f"{self.module_id}_config.json")  # Parent with module ID
             ]
             
             config_source = None
@@ -314,7 +314,7 @@ class Export:
                 for file in files_to_export:
                     f.write(f"- {file}\n")
                     # Add file size and modification time from source
-                    file_path = os.path.join(self.api.get_recording_folder(), file)
+                    file_path = os.path.join(self.facade.get_recording_folder(), file)
                     if os.path.exists(file_path):
                         stat = os.stat(file_path)
                         size_mb = stat.st_size / (1024 * 1024)  # Convert to MB

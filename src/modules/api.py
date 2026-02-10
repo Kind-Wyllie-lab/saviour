@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Module API
-
-This class is used to glue the various other classes that comprise a module together.
+Module Facade
 
 It provides an interface for module objects to interact with one another, e.g. the communication object getting module_id from the main program, or the export object querying controller_ip from the network object.
-
-Note this is an internal API for use between parts of the module program. An External API for the controller-module relationship would be a separate concern and does not yet exist.
 
 Author: Andrew SG
 Created: 12/01/2026
@@ -17,7 +13,7 @@ import logging
 import os
 from typing import Dict, Any, Optional
 
-class ModuleAPI():
+class ModuleFacade():
     def __init__(self, module):
         self.logger = logging.getLogger(__name__)
         self.logger.info("Instantiating ModuleAPI...")
@@ -143,9 +139,9 @@ class ModuleAPI():
             # Use the export manager's method for consistency
             if self.module.export.export_current_session_files(
                 session_files=files,
-                recording_folder=self.api.get_recording_folder(),
-                recording_session_id=self.api.get_recording_session_id(),
-                session_name=self.api.get_current_session_name()
+                recording_folder=self.facade.get_recording_folder(),
+                recording_session_id=self.facade.get_recording_session_id(),
+                session_name=self.facade.get_current_session_name()
             ):
                 self.logger.info("Auto-export completed successfully")
 

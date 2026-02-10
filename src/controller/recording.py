@@ -37,7 +37,7 @@ class Recording():
             "duration": duration,
             "session_name": session_name
         }
-        self.api.send_command(target, "start_recording", params)
+        self.facade.send_command(target, "start_recording", params)
 
         # Append session
         self.logger.info(f"Telling {target} to start_recording for {duration}s as session {session_name}")
@@ -62,7 +62,7 @@ class Recording():
 
 
         # Stop them recording
-        self.api.send_command(target, "stop_recording", {})
+        self.facade.send_command(target, "stop_recording", {})
 
         self.current_session_name = None
         self.recording = False

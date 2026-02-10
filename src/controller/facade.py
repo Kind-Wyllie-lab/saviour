@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Controller API
+Controller Facade
 
-This class is used to glue the various other classes that comprise a controller together.
-
-It provides an interface for controller objects to interact with one another.
-
-Note this is an internal API for use between parts of the controller program. An External API for the controller-module relationship would be a separate concern and does not yet exist.
+This class provides an interface for controller objects to interact with one another.
 
 Author: Andrew SG
 Created: 20/01/2026
@@ -19,7 +15,7 @@ from typing import Dict, Any, Optional
 import time
 
 
-class ControllerAPI():
+class ControllerFacade():
     def __init__(self, controller):
         self.logger = logging.getLogger(__name__)
         self.logger.info("Instantiating ControllerAPI...")

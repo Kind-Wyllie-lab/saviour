@@ -221,8 +221,8 @@ class CameraModule(Module):
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
         self.logger.info(f"Starting recording with filename {filename}")
         self.current_video_segment = filename
-        self.api.stage_file_for_export(filename)
-        self.api.add_session_file(filename)
+        self.facade.stage_file_for_export(filename)
+        self.facade.add_session_file(filename)
 
         # Start the camera 
         if not self.picam2.started:
@@ -240,8 +240,8 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
-        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        filename = f"{self.facade.get_filename_prefix()}_({self.facade.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
         return filename
 
 
@@ -251,12 +251,12 @@ class CameraModule(Module):
         """
         # Stage current recording for export
         self.last_video_segment = self.current_video_segment
-        self.api.stage_file_for_export(self.last_video_segment)
+        self.facade.stage_file_for_export(self.last_video_segment)
 
         # Create new segment name
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
         self.current_video_segment = filename
-        self.api.add_session_file(filename)
+        self.facade.add_session_file(filename)
 
         # Start recording to new segment
         self.file_output.split_output(PyavOutput(filename, format="mp4"))
@@ -288,7 +288,7 @@ class CameraModule(Module):
             # Use the export manager's method for consistency
             if self.export.export_current_session_files(
                 session_files=self.to_export,
-                recording_folder=self.api.get_recording_folder(),
+                recording_folder=self.facade.get_recording_folder(),
                 recording_session_id=self.recording_session_id,
                 experiment_name=self.current_experiment_name
             ):
@@ -360,7 +360,7 @@ class CameraModule(Module):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
             
-            self.api.stage_file_for_export(self.current_video_segment)
+            self.facade.stage_file_for_export(self.current_video_segment)
 
             return True
         
@@ -405,7 +405,7 @@ class CameraModule(Module):
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
             # alt: timestmap = str(dt)
-            timestamp = f"{self.api.get_module_name()} {timestamp}"
+            timestamp = f"{self.facade.get_module_name()} {timestamp}"
 
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:

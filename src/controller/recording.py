@@ -27,8 +27,6 @@ class RecordingSession():
 class Recording():
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.current_session_name: str = None
-        self.recording: bool = False
         self.sessions = {} # Dict of recording sessions with session_name as key
 
 
@@ -55,43 +53,39 @@ class Recording():
         # Append session
         self.logger.info(f"Telling {target} to start_recording for {duration}s as session {session_name}")
 
-
-        if target == "all":
-            modules = self.facade.get_modules()
-
+        modules = self.facade.get_modules_by_target(target).keys()
+        self.logger.info(f"{target} contains {modules}")
 
         session = RecordingSession(
             session_name = session_name,
             target = target,
-            modules = ["unknown", "unknown"],
+            modules = modules,
             active = True,
             start_time = start_time,
             end_time = None
         )
 
         self.sessions[session_name] = session
-        self.current_session_name = session_name
-        self.recording = True
 
         self._write_session_to_file(session_name)
 
 
     def stop_recording(self, target: str):
         """
-        Stops a recording session based on target or session name.
+        Stops a recording session based on target name.
         
         Args:
             - target: The module or modules to stop recording (e.g. all, camera_dc67, group_2)
         """
-        #TODO:  Find the corresponding session based on target
-
+        session_name = self.get_session_name_from_target(target)
+        self.logger.info(f"{target} corresponds to {session_name}")
 
         # Stop them recording
         self.facade.send_command(target, "stop_recording", {})
 
-        self.current_session_name = None
-        self.recording = False
-    
+        self.sessions[session_name].active = False
+        self.sessions[session_name].end_time = time.time()
+
 
     def get_session_name_from_target(self, target: str):
         """
@@ -101,12 +95,14 @@ class Recording():
         for session_name, session in self.sessions.items():
             if session.get("target") == target:
                 return session_name
-            return None
-
+            
 
     """Getter methods"""
     def get_recording_status(self) -> bool:
-        return self.recording
+        # If any session is active, system is recording
+        for session_name, session in self.sessions:
+            if session.active == True:
+                return True
 
     
     def get_recording_sessions(self) -> dict:
@@ -114,7 +110,7 @@ class Recording():
 
 
     def _write_session_to_file(self, session_name: str) -> None:
-        with open(f"{session_name}.txt", "a") as f:
+        with open(f"/tmp/{session_name}.txt", "a") as f:
             f.write(f"{session_name} targeting {self.sessions[session_name].target} (")
             for module in self.sessions[session_name].modules:
                 f.write(f"{module}, ")

@@ -27,8 +27,8 @@ class ControllerFacade():
         return self.controller.modules.get_modules()
 
 
-    def get_modules_by_group(self, group_name: str) -> dict:
-        return self.controller.modules.get_modules_by_group(group_name)
+    def get_modules_by_target(self, target: str) -> dict:
+        return self.controller.modules.get_modules_by_target(target)
 
 
     def get_module_health(self, module_id: Optional[str] = None):

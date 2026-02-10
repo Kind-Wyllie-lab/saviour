@@ -231,14 +231,21 @@ class Modules:
         return self._convert_modules_to_dict()
     
 
-    def get_modules_by_group(self, group_name: str) -> Dict[str, Any]:
-        if group_name == "":
-            self.logger.error("No group name supplied to modules.get_modules_by_group()")
+    def get_modules_by_target(self, target: str) -> Dict[str, Any]:
+        """Take a target (either "all", a group name, or a module_id) and return a dict of modules."""
+        # Handle bad or empty target
+        if target == "":
+            self.logger.error("No targetsupplied to modules.get_modules_by_group()")
             return None
+
+        # Handle all target
+        if target.lower() == "all":
+            return self.get_modules()
+        
         modules_in_group = {}
         for module_id, module in self.modules.items():
-            if module.group == group_name:
-                self.logger.info(f"{module_id} is in {group_name}")
+            if module.group == target:
+                self.logger.info(f"{module_id} is in {target}")
                 modules_in_group[module_id] = module
         return modules_in_group
 

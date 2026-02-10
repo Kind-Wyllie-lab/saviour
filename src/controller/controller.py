@@ -54,7 +54,7 @@ from src.controller.config import Config
 from src.controller.ptp import PTP, PTPRole
 from src.controller.web import Web
 from src.controller.modules import Modules
-from src.controller.api import ControllerAPI
+from src.controller.facade import ControllerFacade
 from src.controller.recording import Recording
 
 # Habitat Controller Class
@@ -106,15 +106,15 @@ class Controller(ABC):
         )
         self.modules = Modules()
         self.recording = Recording()
-        self.api = ControllerAPI(self)
+        self.facade = ControllerFacade(self)
 
-        # Register api/callbacks
-        self.network.api = self.api
-        self.health.api = self.api
-        self.communication.api = self.api
-        self.web.api = self.api
-        self.modules.api = self.api
-        self.recording.api = self.api
+        # Register facade/callbacks
+        self.network.facade = self.facade
+        self.health.facade = self.facade
+        self.communication.facade = self.facade
+        self.web.facade = self.facade
+        self.modules.facade = self.facade
+        self.recording.facade = self.facade
         self.config.on_controller_config_change = self.on_controller_config_change
 
         # Controller state

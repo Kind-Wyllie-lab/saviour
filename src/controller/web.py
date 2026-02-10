@@ -59,9 +59,9 @@ class Web(ABC):
         # Store module readiness state in memory 
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
 
-        self.rest_api = False
-        if self.rest_api == True:
-            self._register_rest_api_routes()
+        self.rest_facade = False
+        if self.rest_facade == True:
+            self._register_rest_facade_routes()
 
         # Running flag
         self._running = False
@@ -97,7 +97,7 @@ class Web(ABC):
 
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""
-        modules = self.api.get_modules()
+        modules = self.facade.get_modules()
         self.socketio.emit('module_update', {"modules": modules}) # Use socketio.emit instead of individual handlers to ensure proper context
 
 
@@ -132,7 +132,7 @@ class Web(ABC):
             self.logger.info(f"Client connected")
             
             # Send initial module list
-            modules = self.api.get_modules()
+            modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('module_update', {"modules": modules})
             
@@ -167,7 +167,7 @@ class Web(ABC):
                     params["experiment_name"] += ("_" + datetime.now().strftime("%Y%M%d_%H%m%s"))
                 
                 # Send command to module
-                self.api.send_command(module_id, command, params)
+                self.facade.send_command(module_id, command, params)
                     
             except Exception as e:
                 self.logger.error(f"Error handling command: {str(e)}")
@@ -185,7 +185,7 @@ class Web(ABC):
                 target = data.get("target")
                 session_name = data.get("session_name")
                 duration = data.get("duration")
-                self.api.start_recording(target, session_name, duration)
+                self.facade.start_recording(target, session_name, duration)
             except Exception as e:
                 self.logger.error(f"Error starting recording: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
@@ -194,7 +194,7 @@ class Web(ABC):
         def stop_recording(data):
             try:
                 target = data.get("target")
-                self.api.stop_recording(target)
+                self.facade.stop_recording(target)
             except Exception as e:
                 self.logger.error(f"Error stopping recording: {str(e)}")
                 self.socketio.emit('error', {'message': str(e)})
@@ -207,7 +207,7 @@ class Web(ABC):
             self.logger.info(f"Frontend called 'get_modules'")
             
             # Get current modules from callback
-            modules = self.api.get_modules()
+            modules = self.facade.get_modules()
             self.logger.info(f"Got {len(modules)} modules from callback")
             
             # Send module update to all clients
@@ -331,14 +331,14 @@ class Web(ABC):
         @self.socketio.on("get_module_config")
         def handle_get_module_config(data):
             module_id = data.get("module_id")
-            self.api.get_module_config(module_id)
+            self.facade.get_module_config(module_id)
 
 
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""
             self.logger.info(f"Get module configs called")
-            self.api.get_module_configs()
+            self.facade.get_module_configs()
 
 
         @self.socketio.on('save_module_config')
@@ -350,14 +350,14 @@ class Web(ABC):
             # Extract params from the data
             params = data.get("config", {})
             # Send the config update command to the relevant module
-            self.api.send_command(data['id'], command, params)
+            self.facade.send_command(data['id'], command, params)
 
 
         """Controller System State"""
         @self.socketio.on("get_system_state")
         def handle_get_system_state(data=None):
             """Handle a request for information about controller system state e.g. recording status ."""
-            state = self.api.get_system_state()
+            state = self.facade.get_system_state()
             self.socketio.emit("system_state", state)
 
 
@@ -365,7 +365,7 @@ class Web(ABC):
         @self.socketio.on('get_controller_config')
         def handle_get_controller_config(data=None):
             self.logger.info("Received request for controller config")
-            config = self.api.get_config()
+            config = self.facade.get_config()
             self.socketio.emit("controller_config_response", {
                 "config": config
             })
@@ -374,9 +374,9 @@ class Web(ABC):
         @self.socketio.on('save_controller_config')
         def handle_save_controller_config(data):
             self.logger.info("Saving controller config")
-            self.api.set_config(data.get("config", {}))
+            self.facade.set_config(data.get("config", {}))
             self.socketio.emit("controller_config_response", {
-                "config": self.api.get_controller_config()
+                "config": self.facade.get_controller_config()
             })
 
 
@@ -399,7 +399,7 @@ class Web(ABC):
         @self.socketio.on('get_module_health')
         def handle_get_module_health():
             """Handle request for module health status"""
-            health = self.api.get_module_health()
+            health = self.facade.get_module_health()
 
             self.socketio.emit('module_health_update', {
                 'module_health': health
@@ -411,10 +411,10 @@ class Web(ABC):
         def handle_get_debug_info():
             self.logger.info(f"Received request for debug data")
             debug_data = {}
-            debug_data["modules"] = self.api.get_modules()
-            debug_data["module_health"] = self.api.get_module_health()
-            debug_data["discovered_modules"] = self.api.get_discovered_modules()
-            debug_data["module_configs"] = self.api.get_module_configs()
+            debug_data["modules"] = self.facade.get_modules()
+            debug_data["module_health"] = self.facade.get_module_health()
+            debug_data["discovered_modules"] = self.facade.get_discovered_modules()
+            debug_data["module_configs"] = self.facade.get_module_configs()
             self.socketio.emit("debug_data", debug_data)
 
         """ Login """
@@ -434,7 +434,7 @@ class Web(ABC):
         @self.socketio.on('remove_module')
         def handle_remove_module(module):
             self.logger.info(f"Received request to remove module: {module['id']}")
-            self.api.remove_module(module['id'])        
+            self.facade.remove_module(module['id'])        
 
 
     def update_modules(self, modules: list):
@@ -494,7 +494,7 @@ class Web(ABC):
     def list_modules(self):
         """List all discovered modules"""
         self.logger.info("Listing modules")
-        modules = self.api.get_modules()
+        modules = self.facade.get_modules()
         return jsonify({"modules": modules})
 
 
@@ -694,19 +694,19 @@ class Web(ABC):
             self.logger.error(f"Error handling module status: {str(e)}")
 
 
-    def _register_rest_api_routes(self):
+    def _register_rest_facade_routes(self):
         """
         REST API endpoints - for use by external services e.g. a Matlab script running an experiment that wants to start recordings
         """
-        @self.app.route('/api/list_modules', methods=['GET'])
+        @self.app.route('/facade/list_modules', methods=['GET'])
         def list_modules():
-            self.logger.info(f"/api/list_modules endpoint called. Listing modules")
-            modules = self.api.get_modules()
+            self.logger.info(f"/facade/list_modules endpoint called. Listing modules")
+            modules = self.facade.get_modules()
             self.logger.info(f"Found {len(modules)} modules")
             return jsonify({"modules": modules})
 
 
-        @self.app.route('/api/send_command', methods=['POST'])
+        @self.app.route('/facade/send_command', methods=['POST'])
         def send_command():
             """
             Send a command to a module.
@@ -721,7 +721,7 @@ class Web(ABC):
             }
             
             Example:
-            curl -X POST http://192.168.0.98:5000/api/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
+            curl -X POST http://192.168.0.98:5000/facade/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
             """
             try:
                 if not request.is_json:
@@ -753,7 +753,7 @@ class Web(ABC):
                 
                 self.logger.info(f"Processing command: {command} for module: {module_id}")
                 
-                result = self.api.send_command(module_id, command, params)
+                result = self.facade.send_command(module_id, command, params)
                 return jsonify({
                     "status": "success",
                     "message": "Command sent successfully",
@@ -769,18 +769,18 @@ class Web(ABC):
                 }), 500
                 
 
-        @self.app.route('/api/module_health', methods=['GET'])
+        @self.app.route('/facade/module_health', methods=['GET'])
         def module_health():
             """Get the health status of all modules"""
-            self.logger.info(f"/api/module_health endpoint called. Getting module health")
-            health = self.api.get_module_health()
+            self.logger.info(f"/facade/module_health endpoint called. Getting module health")
+            health = self.facade.get_module_health()
             self.logger.info(f"Got module health for {len(health)} modules")
             return jsonify(health)
 
 
-        @self.app.route('/api/exported_recordings', methods=['GET'])
-        def get_exported_recordings_api():
+        @self.app.route('/facade/exported_recordings', methods=['GET'])
+        def get_exported_recordings_facade():
             """Get list of exported recordings"""
-            self.logger.info("/api/exported_recordings endpoint called")
+            self.logger.info("/facade/exported_recordings endpoint called")
             exported_recordings = self.get_exported_recordings()
             return jsonify({"exported_recordings": exported_recordings})

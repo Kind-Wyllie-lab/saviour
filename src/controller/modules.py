@@ -223,7 +223,7 @@ class Modules:
     def broadcast_updated_modules(self) -> None:
         # self.logger.info(f"Updated module list: {self.modules.keys()}")
         module_dict = self._convert_modules_to_dict()
-        self.api.push_module_update_to_frontend(module_dict)
+        self.facade.push_module_update_to_frontend(module_dict)
 
 
     def get_modules(self) -> Dict[str, Any]:

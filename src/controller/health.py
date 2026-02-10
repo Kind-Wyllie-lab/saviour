@@ -122,7 +122,7 @@ class Health:
             else:
                 self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
 
-            self.api.on_status_change(module_id, self.module_health[module_id]['status'])
+            self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
             return True
             
         except Exception as e:
@@ -306,7 +306,7 @@ class Health:
                         self.module_health[module_id]['status'] = 'offline'
                         # Trigger callback for offline status
                         try:
-                            self.api.on_status_change(module_id, 'offline')
+                            self.facade.on_status_change(module_id, 'offline')
                         except Exception as e:
                             self.logger.error(f"Error in status change callback: {e}")
                 else:
@@ -316,12 +316,12 @@ class Health:
                         self.module_health[module_id]['status'] = 'online'
                         # Trigger callback for online status
                         try:
-                            self.api.on_status_change(module_id, 'online')
+                            self.facade.on_status_change(module_id, 'online')
                         except Exception as e:
                             self.logger.error(f"Error in status change callback: {e}")
                 
                 self.logger.info(f"Module {module_id} is {self.module_health[module_id]['status']}")
-                self.api.on_status_change(module_id, self.module_health[module_id]['status'])
+                self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
             
             # Check PTP health periodically
             if cycle_count % 2 == 0:  # Check PTP health every couple cycles 
@@ -361,7 +361,7 @@ class Health:
                     self.module_health[module]["ptp_restarts"] += 1
                     if self.module_health[module]["ptp_restarts"] >= 5:
                         self.module_health[module]["ptp_restarts"] = 5
-                    self.api.send_command(module, "restart_ptp", {})
+                    self.facade.send_command(module, "restart_ptp", {})
 
 
     def start_monitoring(self):
@@ -405,7 +405,7 @@ class Health:
                 
                 # Trigger callback for offline status
                 try:
-                    self.api.on_status_change(module_id, 'offline')
+                    self.facade.on_status_change(module_id, 'offline')
                 except Exception as e:
                     self.logger.error(f"Error in status change callback: {e}")
             else:
@@ -429,7 +429,7 @@ class Health:
                     self.module_health[module_id]['status'] = 'online'
                     # Trigger callback for online status
                     try:
-                        self.api.on_status_change(module_id, 'online')
+                        self.facade.on_status_change(module_id, 'online')
                     except Exception as e:
                         self.logger.error(f"Error in status change callback: {e}")
                 else:

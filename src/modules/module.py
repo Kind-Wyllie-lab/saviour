@@ -50,7 +50,7 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 from src.modules.recording import Recording
-from src.modules.api import ModuleAPI
+from src.modules.facade import ModuleFacade
 
 def command(name=None):
     """
@@ -112,7 +112,7 @@ class Module(ABC):
         self.recording = Recording(config=self.config) # Recording object - sets up, maintains and manages recording sessions
         self.command = Command(config=self.config) # Command object - routes incoming commands
         self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type) # Network object - registers zeroconf service, discovers controller
-        self.api = ModuleAPI(module=self) # API object - provides internal routing between objects e.g. network and recording
+        self.facade = ModuleFacade(module=self) # API object - provides internal routing between objects e.g. network and recording
 
         # A registry of commands that the module can respond to
         self.command_callbacks = { 
@@ -128,14 +128,14 @@ class Module(ABC):
             'shutdown': self._shutdown,
         }
 
-        # Register callbacks and api
+        # Register callbacks and facade
         self.config.on_module_config_change = self.on_module_config_change
-        self.network.api = self.api
-        self.health.api = self.api
-        self.communication.api = self.api
-        self.command.api = self.api
-        self.export.api = self.api
-        self.recording.api = self.api
+        self.network.facade = self.facade
+        self.health.facade = self.facade
+        self.communication.facade = self.facade
+        self.command.facade = self.facade
+        self.export.facade = self.facade
+        self.recording.facade = self.facade
     
         # Register commands with command router
         self.command.set_commands(self.command_callbacks)
@@ -333,7 +333,7 @@ class Module(ABC):
     """File IO"""
     def _check_file_exists(self, filename: str) -> bool:
         """Check if a file exists in the recording folder."""
-        if filename in os.listdir(self.api.get_recording_folder()):
+        if filename in os.listdir(self.facade.get_recording_folder()):
             return True
         else:
             return False
@@ -641,12 +641,12 @@ class Module(ABC):
     @check()
     def _check_readwrite(self) -> tuple[bool, str]:
         try:
-            self.logger.debug(f"Checking can write to {self.api.get_recording_folder()}")
-            if not os.path.exists(self.api.get_recording_folder()):
-                os.makedirs(self.api.get_recording_folder(), exist_ok=True)
+            self.logger.debug(f"Checking can write to {self.facade.get_recording_folder()}")
+            if not os.path.exists(self.facade.get_recording_folder()):
+                os.makedirs(self.facade.get_recording_folder(), exist_ok=True)
             self.logger.debug("Created folder OK")
             # Test write access
-            test_file = os.path.join(self.api.get_recording_folder(), '.test_write')
+            test_file = os.path.join(self.facade.get_recording_folder(), '.test_write')
             self.logger.debug(f"Going to write to test file {test_file}")
             with open(test_file, 'w') as f:
                 self.logger.debug(f"Opened test file {f}")
@@ -665,7 +665,7 @@ class Module(ABC):
     @check()
     def _check_diskspace(self) -> tuple[bool, str]:
         try:
-            statvfs = os.statvfs(self.api.get_recording_folder())
+            statvfs = os.statvfs(self.facade.get_recording_folder())
             free_bytes = statvfs.f_frsize * statvfs.f_bavail
             free_mb = free_bytes / (1024 * 1024)
             required_mb = self._get_required_disk_space_mb()

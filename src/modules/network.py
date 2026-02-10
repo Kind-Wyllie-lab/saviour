@@ -121,7 +121,7 @@ class Network:
                 properties={
                     'type': self.module_type,
                     'id': self.module_id,  # Important: Add module_id to properties
-                    'name': self.api.get_module_name()
+                    'name': self.facade.get_module_name()
                 } # the properties of the service
             )
             
@@ -170,7 +170,7 @@ class Network:
             self.logger.info(f"Found controller zeroconf service at {self.controller_ip}:{self.controller_port}")
             
             # Notify module that controller was discovered
-            self.api.when_controller_discovered(self.controller_ip, self.controller_port)
+            self.facade.when_controller_discovered(self.controller_ip, self.controller_port)
 
 
     def update_service(self, zeroconf, service_type, name):
@@ -190,7 +190,7 @@ class Network:
         
         # Only trigger disconnect if we were actually connected
         if self.controller_ip and self.controller_port:
-            self.api.controller_disconnected()
+            self.facade.controller_disconnected()
             
             # Reset controller connection state
             self.controller_ip = None

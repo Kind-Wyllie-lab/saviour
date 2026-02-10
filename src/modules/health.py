@@ -50,7 +50,7 @@ class Health:
             self.logger.info("Heartbeats already active")
             return False
             
-        if not self.api.get_controller_ip():
+        if not self.facade.get_controller_ip():
             self.logger.error("Cannot start heartbeats: not connected to controller")
             return False
             
@@ -74,7 +74,7 @@ class Health:
             if (current_time - last_heartbeat_time) >= int(self.heartbeat_interval):
                 try:
                     # Check if communication manager is still valid
-                    if not self.api.get_controller_ip():
+                    if not self.facade.get_controller_ip():
                         self.logger.warning("Controller IP not available, stopping heartbeats")
                         self.heartbeats_active = False
                         break
@@ -82,7 +82,7 @@ class Health:
                     # self.logger.info("Sending heartbeat")
                     status = self.get_health()
                     status['type'] = 'heartbeat' # Add type field to identify heartbeat status
-                    self.api.send_status(status)
+                    self.facade.send_status(status)
                     last_heartbeat_time = current_time
                 except Exception as e:
                     self.logger.error(f"Error sending heartbeat: {e}")
@@ -95,7 +95,7 @@ class Health:
     
     def get_health(self) -> dict:
         """Get health metrics for the module"""
-        ptp_status = self.api.get_ptp_status()
+        ptp_status = self.facade.get_ptp_status()
         return {
             "timestamp": time.time(),
             'cpu_temp': self.get_cpu_temp(),
@@ -107,7 +107,7 @@ class Health:
             'ptp4l_freq': ptp_status.get('ptp4l_freq'),
             'phc2sys_offset': ptp_status.get('phc2sys_offset'),
             'phc2sys_freq': ptp_status.get('phc2sys_freq'),
-            'recording': self.api.get_recording_status()
+            'recording': self.facade.get_recording_status()
         }
 
     def get_cpu_temp(self):

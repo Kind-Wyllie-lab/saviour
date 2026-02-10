@@ -138,7 +138,7 @@ class Command:
             # 4. Send response to controller
             response = {"type": cmd}
             response.update(result)
-            self.api.send_status(response)
+            self.facade.send_status(response)
 
         except Exception as e:
             self._handle_error(e)
@@ -147,7 +147,7 @@ class Command:
     def _handle_error(self, error: Exception):
         """Standard error handling"""
         self.logger.error(f"Error handling command: {error}")
-        self.api.send_status({
+        self.facade.send_status({
             "type": "error",
             "timestamp": time.time(),
             "error": str(error)
@@ -157,7 +157,7 @@ class Command:
     def _unknown_command(self, command: str):
         """Handle unrecognized command"""
         self.logger.info(f"Command {command} not recognized")
-        self.api.send_status({
+        self.facade.send_status({
             "type": "error", 
             "error": f"Command {command} not recognized"
         })

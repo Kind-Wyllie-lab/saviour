@@ -115,7 +115,7 @@ ask_controller_type() {
         echo "1) Basic SAVIOUR"
         echo "2) APA - Active Place Avoidance"
         echo "3) Habitat"
-        echo "4) Acoustic Startle (NOT YET IMPLEMENTED)"
+        echo "4) Acoustic Startle"
         echo ""
         
         while true; do
@@ -148,7 +148,10 @@ ask_controller_type() {
 
 # Find the directory and name of the python script for the systemd service
 get_python_directory() {
-    if [ "$DEVICE_ROLE" = "controller" ]; then
+    : "${DEVICE_ROLE:?DEVICE_ROLE not set}"
+    : "${DEVICE_TYPE:?DEVICE_TYPE not set}"
+    : "${DEVICE:?DEVICE not set}"
+    if [ "${DEVICE_ROLE}" = "controller" ]; then
         PYTHON_PATH="src/controller/examples/${DEVICE_TYPE}"
         PYTHON_FILE="${DEVICE}.py"
     fi

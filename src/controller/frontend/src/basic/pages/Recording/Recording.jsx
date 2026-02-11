@@ -19,7 +19,7 @@ function Recording() {
     return (
         <div className="recording-page">
             <div className="recording-container">
-                <RecordingSessions />
+                {/* <RecordingSessions /> */}
                 <ModuleList modules={moduleList} />
                 <CommandsPanel experimentName={experimentName} modules={moduleList} />
                 <ExperimentMetadata experimentName={experimentName} />

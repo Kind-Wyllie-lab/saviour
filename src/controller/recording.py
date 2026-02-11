@@ -77,8 +77,11 @@ class Recording():
         Args:
             - target: The module or modules to stop recording (e.g. all, camera_dc67, group_2)
         """
-        session_name = self.get_session_name_from_target(target)
-        self.logger.info(f"{target} corresponds to {session_name}")
+        try: 
+            session_name = self.get_session_name_from_target(target)
+            self.logger.info(f"{target} corresponds to {session_name}")
+        except Exception as e:
+            self.logger.warning(f"Could not find session name from target {target}")
 
         # Stop them recording
         self.facade.send_command(target, "stop_recording", {})

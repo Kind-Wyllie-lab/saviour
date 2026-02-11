@@ -29,7 +29,7 @@ class Export:
         self.mount_point = "/mnt/export"  # This is where the samba share gets mounted
         
         # Samba details (configurable)
-        self.samba_share_ip = None # 192.168.1.1 for controller
+        self.samba_share_ip = None 
         self.samba_share_path = None # The name of the top level folder on the samba share
         self.samba_share_username = None 
         self.samba_share_password = None

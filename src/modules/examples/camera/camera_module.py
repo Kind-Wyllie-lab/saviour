@@ -230,7 +230,7 @@ class CameraModule(Module):
             time.sleep(0.1)  # Give camera time to start
         
         # Create file output
-        self.file_output = SplittableOutput(PyavOutput(filename, format="mp4")) # 7.2.4 and 7.2.6 in docs
+        self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
         
         # Start recording
@@ -241,7 +241,7 @@ class CameraModule(Module):
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
         strtime = self.api.get_utc_time(self.api.get_segment_start_time())
-        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
         return filename
 
 
@@ -259,7 +259,7 @@ class CameraModule(Module):
         self.api.add_session_file(filename)
 
         # Start recording to new segment
-        self.file_output.split_output(PyavOutput(filename, format="mp4"))
+        self.file_output.split_output(PyavOutput(filename, format="mpegts"))
         self.logger.info(f"Switched to new segment {filename}")
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
@@ -270,7 +270,7 @@ class CameraModule(Module):
 
     def _fix_positioning_timestamps(self, filename: str) -> None:
         """Take an mp4 file produced by picamera2 SplittableOutput and reset positioning timestamps"""
-        tmp_filename = f"{filename[:-4]}_formatted.mp4"
+        tmp_filename = f"{filename[:-4]}_formatted.ts"
         subprocess.run([
             "ffmpeg",
             "-i", filename,
@@ -356,7 +356,7 @@ class CameraModule(Module):
 
             # Preprocess video files for export
             for file in self.session_files:
-                if file.endswith(".mp4"):
+                if file.endswith(".ts"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
             

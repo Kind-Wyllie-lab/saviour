@@ -162,6 +162,48 @@ get_python_directory() {
 }
 
 
+get_mac_suffix() {
+    MAC=$(cat /sys/class/net/eth0/address 2>/dev/null)
+
+    # Remove colons
+    MAC_CLEAN=${MAC//:/}
+
+    # Last 8 hex chars = last 4 bytes
+    MAC_SUFFIX=${MAC_CLEAN: -4}
+
+    echo "$MAC_SUFFIX"
+}
+
+
+generate_hostname() {
+    MAC_SUFFIX=$(get_mac_suffix)
+    NEW_HOSTNAME="${DEVICE_TYPE}-${MAC_SUFFIX}"
+    echo "$NEW_HOSTNAME"
+}
+
+
+set_device_hostname() {
+    NEW_HOSTNAME=$(generate_hostname)
+
+    echo "Setting hostname to $NEW_HOSTNAME"
+
+    sudo hostnamectl set-hostname "$NEW_HOSTNAME"
+
+    # Rewrite 127.0.1.1 line safely
+    sudo awk -v hn="$NEW_HOSTNAME" '
+        $1=="127.0.1.1" {$2=hn}
+        {print}
+    ' /etc/hosts | sudo tee /etc/hosts >/dev/null
+}
+
+
+
+create_recording_folder() {
+    sudo mkdir -p /var/lib/saviour/recordings
+    sudo chown -R root:root /var/lib/saviour
+}
+
+
 # Function to configure systemd service
 configure_service() {
     echo "Configuring SAVIOUR Systemd Service"
@@ -632,9 +674,12 @@ if ! $ROLE_CHANGED && ! $TYPE_CHANGED; then
     exit 0
 fi
 
-echo ""
-echo "Writing new role to config file /etc/saviour/config"
-write_new_role_to_file
+if $TYPE_CHANGED; then
+    set_device_hostname
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        build_frontend
+    fi
+fi
 
 
 if $ROLE_CHANGED; then
@@ -649,14 +694,15 @@ if $ROLE_CHANGED; then
         disable_samba_share
         disable_dhcp_server
         disable_mdns
+
     fi
 fi
 
-if $TYPE_CHANGED; then
-    if [ "$DEVICE_ROLE" = "controller" ]; then
-        build_frontend
-    fi
+
+if [ "$DEVICE_ROLE" = "module" ]; then
+    create_recording_folder
 fi
+
 
 get_python_directory
 
@@ -703,6 +749,11 @@ sudo systemctl restart saviour.service
 
 echo ""
 echo "Device successfully set to ${DEVICE}."
+
+echo ""
+echo "Writing new role to config file /etc/saviour/config"
+write_new_role_to_file
+
 if [ $ROLE_CHANGED == true ]; then
     echo "Please reboot now."
 fi

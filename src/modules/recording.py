@@ -35,7 +35,7 @@ class Recording():
         self.config = config
         
         # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder", "rec") # Location that files will be recorded to 
+        self.recording_folder = self.config.get("recording.recording_folder", "/var/lib/saviour/recordings") # Location that files will be recorded to 
         if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
             os.makedirs(self.recording_folder, exist_ok=True)
         self.logger.info(f"Recording folder = {self.recording_folder}")

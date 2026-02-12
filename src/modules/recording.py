@@ -35,10 +35,9 @@ class Recording():
         self.config = config
         
         # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder", "/var/lib/saviour/recordings") # Location that files will be recorded to 
-        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
-            os.makedirs(self.recording_folder, exist_ok=True)
-        self.logger.info(f"Recording folder = {self.recording_folder}")
+        self.recording_folder = f'{self.config.get("recording.recording_folder", "/var/lib/saviour/recordings")}/pending' # Location that files will be recorded to 
+        self.logger.info(f"Recording folder: {self.recording_folder}")
+        os.makedirs(self.recording_folder, exist_ok=True)
 
         # State Flags
         self.is_recording = False
@@ -102,6 +101,7 @@ class Recording():
         else:
             self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
         
+        self.logger.info(f"Filenames will be prefixed {self.current_filename_prefix}")
         os.makedirs(self.recording_folder, exist_ok=True)
 
         # Set recording start time

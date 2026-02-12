@@ -12,7 +12,7 @@
         "bitrate": 5000000
     },
     "recording": {
-        "_recording_filetype": "mp4"
+        "_recording_filetype": "ts"
     }
 }
 

@@ -5,19 +5,26 @@ Module Export Manager
 
 This class is used to send files to either a controller or NAS running a samba server.
 
+Files are typically recorded to /var/lib/saviour/recordings/pending/
+Upon completion they are moved to /var/lib/saviour/recordings/to_export/
+Once exported they are moved to /var/lib/saviour/recordings/exported/
+Old, exported files may be deleted from there when required.
+
 Author: Andrew SG
 Created: 12/06/2025
 """
 
 import os
 import shutil
-from enum import Enum
+import pathlib
 import logging
 import subprocess
 import datetime
 import time
 
+
 from src.modules.config import Config
+
 
 class Export:
     """Manages Samba based file exports"""
@@ -25,11 +32,16 @@ class Export:
         self.module_id = module_id
         self.config = config
         self.logger = logging.getLogger(__name__)
-        self.current_mount = None
+
+        # Local SD card context
+        self.to_export_folder = f'{self.config.get("recording.recording_folder")}/to_export'
+        self.exported_folder = f'{self.config.get("recording.recording_folder")}/exported'
+        os.makedirs(self.to_export_folder, exist_ok=True)
+        os.makedirs(self.exported_folder, exist_ok=True)
         self.mount_point = "/mnt/export"  # This is where the samba share gets mounted
         
         # Samba details (configurable)
-        self.samba_share_ip = None # 192.168.1.1 for controller
+        self.samba_share_ip = None 
         self.samba_share_path = None # The name of the top level folder on the samba share
         self.samba_share_username = None 
         self.samba_share_password = None
@@ -72,12 +84,14 @@ class Export:
             self.logger.warning(f"Could not set permissions on experiment folder: {e}")
             return False
 
+
     def export_staged(self) -> bool:
         """Export all files in self.staged_for_export
 
         Returns:
             bool: True if export successful
         """
+        self.staged_for_export = os.listdir(self.to_export_folder)
         self.logger.info(f"Attempting to export {self.staged_for_export}")
         try:
             if not self._setup_export():
@@ -88,7 +102,7 @@ class Export:
 
             export_path = self.export_path
             to_export = self.staged_for_export
-            source_folder = self.facade.get_recording_folder()
+            source_folder = self.to_export_folder
             self.logger.info(f"Will attempt to export {to_export}")
             
             # Export each session file
@@ -96,22 +110,15 @@ class Export:
             exported = []
             for filename in to_export:
                 try:
+                    filename = pathlib.Path(filename).name
                     self.logger.info(f"Exporting {filename}")
-                    # Determine absolute source path
-                    if os.path.isabs(filename):
-                        source_path = filename
-                    else:
-                        # If the file is relative to recording_folder, resolve properly
-                        # Prevent double-prefix like 'rec/rec/...'
-                        rel_path = os.path.relpath(filename, start=source_folder)
-                        source_path = os.path.join(source_folder, rel_path)
 
-                    # Destination: flat structure, just filename
-                    dest_filename = os.path.basename(filename)
-                    dest_path = os.path.join(export_path, dest_filename)
+                    source_path = f"{source_folder}/{filename}"
+                    dest_path = f"{export_path}/{filename}"
 
                     shutil.copy2(source_path, dest_path)
-                    self.logger.info(f"Exported: {dest_filename}")
+                    shutil.move(source_path, f"{self.exported_folder}/{filename}") # Move it from to_export to exported
+                    self.logger.info(f"Exported: {dest_path}")
                     exported_count += 1
                     exported.append(filename)
 
@@ -147,11 +154,9 @@ class Export:
             return
         for filename in files:
             try:
-                if os.path.exists(filename):
-                    os.remove(filename)
+                if os.path.exists(f"{self.exported_folder}/{filename}"):
+                    os.remove(f"{self.exported_folder}/{filename}")
                     deleted_count += 1
-                    if filename in self.staged_for_export:
-                        self.staged_for_export.pop(self.staged_for_export.index(filename))
             except Exception as e:
                 self.logger.error(f"Error exporting {filename}: {e}")
         self.logger.info(f"Deleted {deleted_count} files")
@@ -168,12 +173,17 @@ class Export:
 
     
     def stage_file_for_export(self, filename: str) -> bool:
-        """Take a filename (abspath) and stage for export."""
-        self.logger.info(f"Staging {filename} for export")
-        filename = os.path.abspath(filename) # Make path absolute
-        self.staged_for_export.append(filename) # Add to staged files
-        self.logger.info(f"Staged files: {self.staged_for_export}")
-        return True
+        """Take a filename and stage it for export"""
+        current_path = os.path.abspath(filename)
+        path = pathlib.Path(current_path)
+        filename = path.name
+        destination_path = f"{self.to_export_folder}/{filename}"
+        try:
+            self.logger.info(f"Moving {filename}, from {current_path} to {destination_path}")
+            shutil.move(current_path, destination_path)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error moving {filename} to {destination_path}: {e}")
 
 
     def add_session_file(self, filename: str) -> bool:
@@ -286,6 +296,7 @@ class Export:
             self.logger.error(f"Error exporting config file: {e}")
             return False
 
+
     def _create_export_manifest(self, files_to_export: list, export_folder: str, session_name: str = None) -> str:
         """Create an export manifest file listing all files to be exported
         
@@ -374,18 +385,4 @@ class Export:
         
         except Exception as e:
             self.logger.warning(f"Error mounting share: {e}")
-            return False
-
-            
-    def unmount(self) -> bool:
-        """Unmount current destination"""
-        try:
-            if self.current_mount:
-                # Unmount using umount
-                # Example: umount /mnt/export
-                self.current_mount = None
-                return True
-            return True
-        except Exception as e:
-            self.logger.error(f"Unmount failed: {e}")
             return False

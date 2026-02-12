@@ -105,6 +105,17 @@ create_python_environment() {
     echo "Python dependencies installed"
 }
 
+
+configure_logging() {
+    # Make logging persistent
+    echo "Setting journald.conf to have persistent logging"
+    sudo tee /etc/systemd/journald.conf > /dev/null <<EOF
+[Journal]
+Storage=persistent
+EOF
+}
+
+
 # Function to configure NTP for PTP coexistence
 configure_ntp_for_ptp() {
     echo "Configuring NTP for PTP Coexistence"
@@ -162,6 +173,7 @@ EOF
 install_system_packages
 configure_ntp_for_ptp
 create_python_environment
+configure_logging
 
 echo ""
 echo "Setup complete!"

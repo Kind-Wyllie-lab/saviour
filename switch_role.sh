@@ -278,9 +278,9 @@ configure_dhcp_server() {
     echo "Configuring DHCP Server"
     
     # Setup static ip
-    echo "Setting static IP to 10.0.0.1 with nmcli"
+    echo "Setting static IP to 192.168.1.1 with nmcli"
     sudo nmcli connection modify "Wired connection 1" ipv4.method manual
-    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 10.0.0.1/24
+    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.1/24
 
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
@@ -323,7 +323,7 @@ interface=eth0
 bind-interfaces
 
 # DHCP range for local network (adjust as needed)
-dhcp-range=10.0.0.128,10.0.0.255,12h
+dhcp-range=192.168.1.128,192.168.1.255,12h
 
 # Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
 dhcp-option=3
@@ -553,6 +553,22 @@ EOF
     sudo systemctl enable phc2sys
 }
 
+
+configure_microphone() {
+    sudo install -d /etc/pipewire/pipewire.conf.d
+    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+    context.properties = {
+        default.clock.rate = 192000
+        default.clock.allowed-rates = [ 96000 192000 384000]
+    }
+EOF
+    sudo -u pi pkill -9 pipewire
+    sudo -u pi pkill -9 wireplumber
+    sudo -u pi pipewire &
+    sudo -u pi wireplumber &
+}
+
+
 build_frontend() {
     echo "Installing nvm, Node.js, vite, and building frontend"
     # Check if nvm is installed
@@ -604,36 +620,31 @@ EOF
     cd ../../../
 }
 
-# TODO: Configure ptp, ntp
-
 # Main Program
 get_current_role
-echo "Currently a $CURRENT_TYPE $CURRENT_ROLE";
+echo "Device is currently configured as a(n) $CURRENT_TYPE $CURRENT_ROLE";
+
+# Get the role (controller/module) and type (habitat, camera, sound etc)
 ask_user_role
 ask_module_type
 ask_controller_type
 
+# Parse the device e.g. apa_controller, camera_module
 DEVICE="${DEVICE_TYPE}_${DEVICE_ROLE}"
-
 echo ""
 echo Device will be configured as a "${DEVICE}."
 
+# Determine whether the device role has changed, and if so in what way
 ROLE_CHANGED=false
 TYPE_CHANGED=false
-
 [ "$DEVICE_ROLE" != "$CURRENT_ROLE" ] && ROLE_CHANGED=true
 [ "$DEVICE_TYPE" != "$CURRENT_TYPE" ] && TYPE_CHANGED=true
-
 if ! $ROLE_CHANGED && ! $TYPE_CHANGED; then
     echo "No changes detected. Device is already configured as ${DEVICE_TYPE} ${DEVICE_ROLE}."
     exit 0
 fi
 
-echo ""
-echo "Writing new role to config file /etc/saviour/config"
-write_new_role_to_file
-
-
+# Execute minimum required reconfiguration
 if $ROLE_CHANGED; then
     if [ "$DEVICE_ROLE" = "controller" ]; then
         configure_ptp_timetransmitter
@@ -649,12 +660,21 @@ if $ROLE_CHANGED; then
     fi
 fi
 
+# If controller type has changed, frontend must be rebuilt
 if $TYPE_CHANGED; then
     if [ "$DEVICE_ROLE" = "controller" ]; then
         build_frontend
     fi
 fi
 
+
+# Microphone has special pipewire configuration
+if [ "$DEVICE_TYPE" = "microphone" ]; then
+    configure_microphone
+fi
+
+
+# Get device specific path
 get_python_directory
 
 echo ""
@@ -666,24 +686,7 @@ echo ""
 echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep saviour`
 
 
-echo ""
-
-if [ "$DEVICE_TYPE" = "microphone" ]; then
-    sudo install -d /etc/pipewire/pipewire.conf.d
-    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
-    context.properties = {
-        default.clock.rate = 192000
-        default.clock.allowed-rates = [ 96000 192000 384000]
-    }
-EOF
-    sudo -u pi pkill -9 pipewire
-    sudo -u pi pkill -9 wireplumber
-    sudo -u pi pipewire &
-    sudo -u pi wireplumber &
-fi
-
-
-# Run pytest?
+# Run pytest
 echo ""
 echo "Running test suite"
 source env/bin/activate
@@ -700,6 +703,13 @@ sudo systemctl restart saviour.service
 
 echo ""
 echo "Device successfully set to ${DEVICE}."
+
+
+echo ""
+echo "Writing new role to config file /etc/saviour/config"
+write_new_role_to_file
+
+# Reboot required when switching from controller to module
 if [ $ROLE_CHANGED == true ]; then
     echo "Please reboot now."
 fi

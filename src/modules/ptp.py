@@ -269,16 +269,10 @@ class PTP:
         # Ensure timesyncd is disabled, or else phc2sys won't work!
         self._stop_timesyncd()
 
-        # Stop any active ptp processes
-        self.stop()
-
         try: 
             # Start ptp4l service
             self.logger.info("Starting ptp4l service")
             subprocess.run(["systemctl", "start", self.ptp4l_service], check=True)
-
-            # Give it a moment to start
-            time.sleep(2)
 
             # Check if ptp4l started successfully
             ptp4l_status = self._get_service_status(self.ptp4l_service)
@@ -291,9 +285,6 @@ class PTP:
             # Start phc2sys service
             self.logger.info("Starting phc2sys service")
             subprocess.run(["systemctl", "start", self.phc2sys_service], check=True)
-                
-            # Give it a moment to start
-            time.sleep(2)  
 
             # Check if phc2sys started successfully
             phc2sys_status = self._get_service_status(self.phc2sys_service)

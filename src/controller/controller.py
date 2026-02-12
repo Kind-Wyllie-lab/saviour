@@ -95,7 +95,7 @@ class Controller(ABC):
         self.communication = Communication(
             status_callback=self.handle_status_update,
         )
-        self.ptp = PTP(role=PTPRole.MASTER)
+        self.ptp = PTP(role=PTPRole.MASTER, config=self.config)
         self.web = Web(self.config)
         # Initialize health monitor with configuration
         heartbeat_interval = self.config.get("health_monitor.heartbeat_interval")
@@ -184,7 +184,7 @@ class Controller(ABC):
             import json
             status_data = json.loads(data)
             status_type = status_data.get('type', 'unknown')
-            self.web.handle_module_status(module_id, status_data) # Whatever web related functionality related to status update, process it
+            self.web.handle_module_status(module_id, status_data) # Whatever web related functionality related to status update, process it # TODO: remove this
             match status_type:
                 case 'heartbeat':
                     self.logger.info(f"Heartbeat received from {module_id}")

@@ -13,6 +13,7 @@ import logging
 import os
 from typing import Dict, Any, Optional
 import time
+from dataclasses import asdict
 
 
 class ControllerFacade():
@@ -111,6 +112,18 @@ class ControllerFacade():
     def stop_recording(self, target: str):
         return self.controller.recording.stop_recording(target)
 
+
+    def create_session(self, session_name: str, target: str) -> None:
+        return self.controller.recording.create_session(session_name, target)
+
+    
+    def stop_session(self, session_name: str) -> None:
+        return self.controller.recording.stop_session(session_name)
+
+    
+    def update_sessions(self, sessions: dict) -> None:
+        serializable_sessions = {k: asdict(v) for k, v in sessions.items()}
+        self.controller.web.socketio.emit("sessions_update", serializable_sessions)
 
     """Set config"""
     def set_config(self, new_config: dict) -> bool:

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import socket from "../../../socket";
+import socket from "/src/socket";
 import "./ExperimentMetadata.css";
 
 function ExperimentMetadata( {experimentName} ) {
@@ -107,8 +107,8 @@ function ExperimentMetadata( {experimentName} ) {
 
         {/* <div className="filename-preview">Filename preview:</p> */}
         <div>
-          <p className="session-name-preview-title">Filename preview</p>
-          <p className="session-name-preview">{experimentName}</p>
+          <p className="session-name-preview-title">Session Name</p>
+          <p className="session-name-preview">{experimentName}_(TIMESTAMP)</p>
           </div>
       </div>
     </>

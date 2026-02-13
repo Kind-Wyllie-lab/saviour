@@ -24,7 +24,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from abc import ABC
-
+from dataclasses import asdict
 
 from src.controller.config import Config
 
@@ -211,6 +211,32 @@ class Web(ABC):
             self.socketio.emit('modules_update', modules)
             self.logger.info(f"Sent module update to all clients: {modules}")
 
+
+        @self.socketio.on('get_sessions')
+        def handle_get_sessions():
+            sessions = self.facade.get_recording_sessions()
+            self.logger.info(f"{len(sessions)} recording sessions")
+
+            serializable_sessions = {k: asdict(v) for k, v in sessions.items()}
+
+            self.socketio.emit("sessions_update", serializable_sessions)
+            self.logger.info(f"Send sessions to clients: {serializable_sessions}")
+
+        
+        @self.socketio.on("create_session")
+        def handle_create_session(data):
+            target = data.get("target")
+            session_name = data.get("session_name")
+            self.logger.info(f"Received request to create session {session_name} targeting {target}")
+            self.facade.create_session(session_name, target)
+
+        
+        @self.socketio.on("stop_session")
+        def handle_stop_session(data):
+            session_name = data.get("session_name")
+            self.logger.info(f"Received request to create session {session_name}")
+            self.facade.stop_session(session_name)
+            
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
         def handle_module_status(data):

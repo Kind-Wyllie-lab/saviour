@@ -697,7 +697,8 @@ class Web(ABC):
                 case _:              
                     was_special_status = self.handle_special_module_status(module_id, status)
                     if not was_special_status:
-                        self.logger.warning(f"No logic for {status} from {module_id}")
+                        # self.logger.warning(f"No logic for {status} from {module_id}")
+                        pass
         except Exception as e:
             self.logger.error(f"Error handling module status: {str(e)}")
 

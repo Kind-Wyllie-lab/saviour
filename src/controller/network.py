@@ -167,8 +167,7 @@ class Network():
                     existing_module.properties = module.properties
                     valid_module = False
                     self.logger.info(f"IP changed for module {module.id}, new IP: {module.ip}")
-                    self.facade.notify_module_ip_change(module.id, module.ip)
-                    # self.notify_module_update(self.discovered_modules)
+                    self.facade.module_ip_changed(module.id, module.ip)
                 if existing_module.ip == module.ip:
                     self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
                     old_module_id = existing_module.id
@@ -177,8 +176,7 @@ class Network():
                     existing_module.properties = module.properties
                     valid_module = False
                     self.logger.info(f"ID changed for module at IP {module.ip}, old ID: {existing_module} new ID: {module.id}")
-                    self.facade.notify_module_id_change(old_module_id, module.id)
-                    # self.notify_module_update(self.discovered_modules)
+                    self.facade.module_id_changed(old_module_id, module.id)
                 else:
                     continue
             # Finish looping and return whether module was valid or not
@@ -216,10 +214,9 @@ class Network():
         current_time = time.time()
         self.module_discovery_times[module.id] = current_time
         self.module_last_seen[module.id] = current_time
-        
-        # Call the callback if it exists
-        self.logger.info(f"Calling module discovery callback")
-        self.facade.notify_module_update(self.discovered_modules)
+    
+        # Tell system about discovered modules
+        self.facade.module_discovery(self.discovered_modules)
 
 
     def update_service(self, zeroconf, service_type, name):
@@ -231,7 +228,7 @@ class Network():
             module_id = str(info.properties.get(b'id', b'unknown').decode())
             self.module_last_seen[module_id] = time.time()
             self.logger.info(f"Updated last seen time for module: {module_id}")
-            self.facade.notify_module_update(self.discovered_modules)
+            self.facade.module_discovery(self.discovered_modules)
 
 
     def remove_service(self, zeroconf, service_type, name):

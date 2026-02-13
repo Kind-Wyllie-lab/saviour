@@ -99,18 +99,6 @@ class ControllerFacade():
         self.controller.on_module_status_change(module_id, status)
 
 
-    def notify_module_update(self, discovered_modules: dict):
-        self.controller.network_notify_module_update(discovered_modules)
-
-
-    def notify_module_id_change(self, old_id: str, new_id: str):
-        self.controller.network_notify_module_id_change(old_id, new_id)
-
-
-    def notify_module_ip_change(self, id: str, new_ip: str):
-        pass
-
-
     def push_module_update_to_frontend(self, modules: dict):
         self.controller.web.push_module_update(modules)
 
@@ -132,4 +120,24 @@ class ControllerFacade():
             return False
         else: 
             return True
+
+
+    """Events"""
+    def module_offline(self, module_id: str) -> None:
+        # Tell anyone who cares that a module has gone offline
+        self.controller.recording.module_offline(module_id)
+
+
+    def module_discovery(self, discovered_modules: dict):
+        self.controller.modules.module_discovery(discovered_modules)
+        self.controller.health.module_discovery(discovered_modules)
+
+
+    def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:
+        self.controller.modules.module_id_changed(old_id, new_id)
+        self.controller.health.module_id_changed(old_id, new_id)
+    
+
+    def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
+        self.controller.modules.module_ip_changed(module_id, new_module_ip)
 

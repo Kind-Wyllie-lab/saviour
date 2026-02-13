@@ -95,7 +95,7 @@ class Recording():
         self._end_session(session_name)
 
 
-    def get_session_name_from_target(self, target: str):
+    def get_session_name_from_target(self, target: str) -> str:
         """
         Find which session the target belongs to.
         Assumption: one target can only belong to one recording session.
@@ -103,18 +103,19 @@ class Recording():
         active_sessions = self.get_active_recording_sessions()
 
         if target == "all":
+            # Check if more than one session is active - shouldn't be for target all
             return next(iter(active_sessions))
 
         else: 
             for session_name, session in self.sessions.items():
-                if session.get("target") == target:
+                if target in session.modules:
                     return session_name
             
 
     """Getter methods"""
     def get_recording_status(self) -> bool:
         # If any session is active, system is recording
-        for session_name, session in self.sessions:
+        for session_name, session in self.sessions.items():
             if session.active == True:
                 return True
 
@@ -137,8 +138,7 @@ class Recording():
 
 
     def _write_session_to_file(self, session_name: str) -> None:
-        session_folder = self.sessions[session_name].session_folder
-        filename = os.path.abspath(f"{session_folder}/SessionInfo.txt")
+        filename = self._get_session_info_file(session_name)
         self.logger.info(f"Creating {filename}")
         with open(filename, "a") as f:
             f.write(f"{session_name} targeting {self.sessions[session_name].target} (")
@@ -148,11 +148,16 @@ class Recording():
         
 
     def _end_session(self, session_name: str) -> None:
-        session_folder = self.sessions[session_name].session_folder
-        filename = os.path.abspath(f"{session_folder}/SessionInfo.txt")
+        filename = self._get_session_info_file(session_name)
         self.logger.info(f"Finishing and closing {filename}")
         with open(filename, "a") as f:
             f.write(f"\nEnded at {self.sessions[session_name].end_time}")
+
+
+    def _get_session_info_file(self, session_name: str) -> str:
+        session_folder = self.sessions[session_name].session_folder
+        filename = os.path.abspath(f"{session_folder}/SessionInfo.txt")
+        return filename
 
     
     def get_active_recording_sessions(self) -> dict:
@@ -160,3 +165,13 @@ class Recording():
             k: v for k, v in self.sessions.items() if v.active is True
         }
         return active_sessions
+
+
+    def module_offline(self, module_id: str) -> None:
+        """When a module goes offline, make a note of it"""
+        self.logger.info(f"{module_id} went offline, attempting to write to file")
+        session_name = self.get_session_name_from_target(module_id)
+        filename = self._get_session_info_file(session_name)
+        with open(filename, "a") as f:
+            f.write(f"\n{module_id} went offline at {datetime.now().strftime("%Y%m%d_%H%M%S")}")
+

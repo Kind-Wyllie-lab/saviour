@@ -102,7 +102,6 @@ class Web(ABC):
 
 
     def push_module_update(self, modules: dict):
-        self.logger.info(f"Pushing update module list to frontend: {modules.keys()}")
         self.socketio.emit('modules_update', modules)
 
 
@@ -203,12 +202,10 @@ class Web(ABC):
         """ Get Modules """
         @self.socketio.on('get_modules')
         def handle_module_update():
-            """Handle request for module data"""
-            self.logger.info(f"Frontend called 'get_modules'")
-            
+            """Handle request for module data"""     
             # Get current modules from callback
             modules = self.facade.get_modules()
-            self.logger.info(f"Got {len(modules)} modules from callback")
+            self.logger.info(f"{len(modules)} modules connected")
             
             # Send module update to all clients
             self.socketio.emit('modules_update', modules)
@@ -282,8 +279,6 @@ class Web(ABC):
         @self.socketio.on('update_experiment_metadata')
         def handle_update_experiment_metadata(data):
             """Handle experiment metadata updates from frontend"""
-            self.logger.info(f"Received experiment metadata update: {data}")
-
             # Update stored metadata
             if 'experiment' in data:
                 self.experiment_metadata['experiment'] = data['experiment']
@@ -297,12 +292,9 @@ class Web(ABC):
                 self.experiment_metadata['stage'] = data['stage']
             if 'trial' in data:
                 self.experiment_metadata['trial'] = data['trial']
-            
-            self.logger.info(f"Updated experiment metadata: {self.experiment_metadata}")
 
             # Rebuild experiment name
             self.current_experiment_name = self._generate_experiment_name()
-            self.logger.info(f"Generated new experiment name: {self.current_experiment_name}")
             
             # Send confirmation back to client
             self.socketio.emit('experiment_metadata_updated', {
@@ -310,21 +302,17 @@ class Web(ABC):
                 'metadata': self.experiment_metadata,
                 'experiment_name': self.current_experiment_name
             })
-            self.logger.info(f"Sent experiment metadata update confirmation")
 
 
         @self.socketio.on('get_experiment_metadata')
         def handle_get_experiment_metadata(data=None):
-            """Handle request for experiment metadata from frontend"""
-            self.logger.info(f"Client requested experiment metadata")
-            
+            """Handle request for experiment metadata from frontend"""     
             # Send current metadata to client
             self.socketio.emit('experiment_metadata_response', {
                 'status': 'success',
                 'metadata': self.experiment_metadata,
                 'experiment_name': self.current_experiment_name
             })
-            self.logger.info(f"Sent experiment metadata to client")
 
 
         """Settings Page"""
@@ -697,7 +685,6 @@ class Web(ABC):
                 case _:              
                     was_special_status = self.handle_special_module_status(module_id, status)
                     if not was_special_status:
-                        # self.logger.warning(f"No logic for {status} from {module_id}")
                         pass
         except Exception as e:
             self.logger.error(f"Error handling module status: {str(e)}")

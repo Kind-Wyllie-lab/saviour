@@ -21,20 +21,19 @@ from collections import deque
 from typing import Dict, Any, Optional, List
 
 class Health:
-    def __init__(self, heartbeat_interval: int = 30, heartbeat_timeout: int = 90, history_size: int = 100):
+    def __init__(self, config):
         """Initialize the health monitor
         
         Args:
             heartbeat_interval: Interval between health checks in seconds
             heartbeat_timeout: Time in seconds before marking a module as offline
-            history_size: Number of historical health records to keep per module
         """
 
         self.logger = logging.getLogger(__name__)
-        self.heartbeat_interval = heartbeat_interval
-        self.heartbeat_timeout = heartbeat_timeout
-        self.monitor_interval = 30 
-        self.history_size = history_size
+        self.config = config
+        self.heartbeat_interval = self.config.get("health.heartbeat_interval", 30)
+        self.heartbeat_timeout = self.config.get("health.heartbeat_timeout", 90)
+        self.monitor_interval = 30
         
         # Health data storage
         self.module_health = {}  # Current health data. module_id as primary key.
@@ -119,8 +118,6 @@ class Health:
             
             if was_new_module:
                 self.logger.info(f"New module {module_id} added to health tracking")
-            else:
-                self.logger.info(f"Module {module_id} health updated: {self.module_health[module_id]}")
 
             self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
             return True
@@ -130,7 +127,7 @@ class Health:
             return False
 
 
-    def network_notify_module_update(self, discovered_modules: dict):
+    def module_discovery(self, discovered_modules: dict):
         """Receive discovered modules from network manager
         Ensure health tracking is aware of all modules
         """
@@ -154,7 +151,7 @@ class Health:
                 }
     
 
-    def network_notify_module_id_change(self, old_module_id, new_module_id):
+    def module_id_changed(self, old_module_id, new_module_id):
         # Move the module data to the new key
         self.module_health[new_module_id] = self.module_health.pop(old_module_id)
         if old_module_id in self.module_health_history:
@@ -268,6 +265,8 @@ class Health:
         max_ptp_sync = 0
         for module_id in self.module_health:
             ptp_sync = self.module_health[module_id]["ptp4l_offset"]
+            if not ptp_sync: 
+                return None
             if abs(ptp_sync) > max_ptp_sync:
                 max_ptp_sync = abs(ptp_sync)
         return int(max_ptp_sync)
@@ -286,16 +285,12 @@ class Health:
             if cycle_count % 10 == 0:
                 self.logger.info(f"Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
             
-            self.logger.info(f"Tracking these modules: {self.module_health.keys()}")
             self.logger.info(f"Online modules: {self.get_online_modules()}, offline modules: {self.get_offline_modules()}")
             # self.logger.info(f"Module health: {self.module_health}")
             for module_id in list(self.module_health.keys()): # We will go through each module in the current module_health dict
                 last_heartbeat = self.module_health[module_id]['last_heartbeat'] # Get the time of the last heartbeat
                 time_diff = current_time - last_heartbeat
-                
-                # Debug logging for time calculations
-                # self.logger.info(f"Module {module_id}: current_time={current_time}, last_heartbeat={last_heartbeat}, time_diff={time_diff:.2f}s, timeout={self.heartbeat_timeout}s")
-                
+                 
                 # Find offline modules
                 if time_diff > self.heartbeat_timeout: # If heartbeat not received within timeout period
                     if self.module_health[module_id]['status'] == 'online': # If module is currently marked as online
@@ -307,6 +302,7 @@ class Health:
                         # Trigger callback for offline status
                         try:
                             self.facade.on_status_change(module_id, 'offline')
+                            self.facade.module_offline(module_id)
                         except Exception as e:
                             self.logger.error(f"Error in status change callback: {e}")
                 else:
@@ -320,7 +316,6 @@ class Health:
                         except Exception as e:
                             self.logger.error(f"Error in status change callback: {e}")
                 
-                self.logger.info(f"Module {module_id} is {self.module_health[module_id]['status']}")
                 self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
             
             # Check PTP health periodically
@@ -334,7 +329,6 @@ class Health:
         """
         Check received PTP stats and reset PTP if necessary
         """
-        self.logger.info(self.module_health)
         reset_flag = False
         for module in self.module_health:
             # TODO: Consider putting all ptp params in a nested dict here that we could loop through e.g. for param in self.module_health[module]["ptp"]:

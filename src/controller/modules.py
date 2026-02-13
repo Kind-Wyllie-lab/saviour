@@ -53,7 +53,7 @@ class Modules:
             # self.logger.info(f"Nothing to do on status check")
 
 
-    def network_notify_module_update(self, discovered_modules: list[Module]):
+    def module_discovery(self, discovered_modules: list[Module]):
         """
         When zeroconf adds a newly discovered module or updates an existing one, this gets called.
 
@@ -103,13 +103,13 @@ class Modules:
             time.sleep(5)
 
 
-    def network_notify_module_id_change(self, old_module_id, new_module_id):
+    def module_id_changed(self, old_module_id, new_module_id):
         # Move the module data to the new key
         self.modules[new_module_id] = self.modules.pop(old_module_id)
         self.broadcast_updated_modules()
 
 
-    def network_notify_module_ip_change(self, module_id, module_ip):
+    def module_ip_changed(self, module_id, module_ip):
         # IP changed for module
         self.modules["module_id"].ip = module_ip
         self.broadcast_updated_modules()
@@ -207,7 +207,6 @@ class Modules:
         """Return module name for given module_id"""
 
         
-
     def update_module_configs(self, configs: Dict):
         """
         Update configuration settings for existing modules.

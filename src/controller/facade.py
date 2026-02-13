@@ -52,7 +52,7 @@ class ControllerFacade():
 
 
     def get_share_path(self):
-        return "~/controller_share"
+        return "/home/pi/controller_share"
 
 
     def get_config(self) -> dict:

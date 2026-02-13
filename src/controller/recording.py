@@ -85,13 +85,14 @@ class Recording():
             session_name = self.get_session_name_from_target(target)
             self.logger.info(f"{target} corresponds to {session_name}")
         except Exception as e:
-            self.logger.warning(f"Could not find session name from target {target}")
+            self.logger.warning(f"Could not find session name from target {target}: {e}")
 
         # Stop them recording
         self.facade.send_command(target, "stop_recording", {})
 
         self.sessions[session_name].active = False
-        self.sessions[session_name].end_time = time.time()
+        self.sessions[session_name].end_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._end_session(session_name)
 
 
     def get_session_name_from_target(self, target: str):
@@ -99,9 +100,15 @@ class Recording():
         Find which session the target belongs to.
         Assumption: one target can only belong to one recording session.
         """
-        for session_name, session in self.sessions.items():
-            if session.get("target") == target:
-                return session_name
+        active_sessions = self.get_active_recording_sessions()
+
+        if target == "all":
+            return next(iter(active_sessions))
+
+        else: 
+            for session_name, session in self.sessions.items():
+                if session.get("target") == target:
+                    return session_name
             
 
     """Getter methods"""
@@ -121,6 +128,10 @@ class Recording():
         share_path = self.facade.get_share_path()
         session_folder_path = f"{share_path}/{session_name}"
         os.makedirs(session_folder_path, exist_ok=True)
+        import pwd, grp
+        uid = pwd.getpwnam("pi").pw_uid
+        gid = grp.getgrnam("pi").gr_gid
+        os.chown(session_folder_path, uid, gid)
         self.logger.info(f"Created session folder {session_folder_path}")
         return session_folder_path
 
@@ -133,10 +144,19 @@ class Recording():
             f.write(f"{session_name} targeting {self.sessions[session_name].target} (")
             for module in self.sessions[session_name].modules:
                 f.write(f"{module}, ")
-            f.write(f") started at {self.sessions[session_name].start_time}, ended at {self.sessions[session_name].end_time}")
+            f.write(f") started at {self.sessions[session_name].start_time}")
         
+
+    def _end_session(self, session_name: str) -> None:
+        session_folder = self.sessions[session_name].session_folder
+        filename = os.path.abspath(f"{session_folder}/SessionInfo.txt")
+        self.logger.info(f"Finishing and closing {filename}")
+        with open(filename, "a") as f:
+            f.write(f"\nEnded at {self.sessions[session_name].end_time}")
+
     
     def get_active_recording_sessions(self) -> dict:
-        return {
-            k: v for k, v in self.sessions.items() if v.get("recording") is True
+        active_sessions = {
+            k: v for k, v in self.sessions.items() if v.active is True
         }
+        return active_sessions

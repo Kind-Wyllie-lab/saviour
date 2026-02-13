@@ -17,7 +17,10 @@
     },
     "health_monitor": {
         "_heartbeat_interval": 30,
-        "_heartbeat_timeout": 60 
+        "_heartbeat_timeout": 60
+    },
+    "ptp": {
+        "_ptp_monitor_interval": 10
     },
     "data_export": {
         "_export_interval": 15,

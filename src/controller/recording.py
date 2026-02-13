@@ -7,6 +7,8 @@ Author: Andrew SG
 Created: 26/01/2026
 """
 
+
+import os
 import logging
 from datetime import datetime
 from typing import Optional
@@ -22,6 +24,7 @@ class RecordingSession():
     start_time: int = None # Time the session was started at - None if not started
     end_time: int = None # Time the session finished at - None if not started
     active: bool = False# Bool indicating whether this session is currently recording
+    session_folder: str = "" # The path on the controller's samba share where session files will be stored
 
 
 class Recording():
@@ -62,7 +65,8 @@ class Recording():
             modules = modules,
             active = True,
             start_time = start_time,
-            end_time = None
+            end_time = None,
+            session_folder = self._create_session_folder(session_name)
         )
 
         self.sessions[session_name] = session
@@ -112,8 +116,20 @@ class Recording():
         return self.sessions
 
 
+    def _create_session_folder(self, session_name: str) -> str:
+        # Create a folder for the session files to be written to in the samba share
+        share_path = self.facade.get_share_path()
+        session_folder_path = f"{share_path}/{session_name}"
+        os.makedirs(session_folder_path, exist_ok=True)
+        self.logger.info(f"Created session folder {session_folder_path}")
+        return session_folder_path
+
+
     def _write_session_to_file(self, session_name: str) -> None:
-        with open(f"/tmp/{session_name}.txt", "a") as f:
+        session_folder = self.sessions[session_name].session_folder
+        filename = os.path.abspath(f"{session_folder}/SessionInfo.txt")
+        self.logger.info(f"Creating {filename}")
+        with open(filename, "a") as f:
             f.write(f"{session_name} targeting {self.sessions[session_name].target} (")
             for module in self.sessions[session_name].modules:
                 f.write(f"{module}, ")

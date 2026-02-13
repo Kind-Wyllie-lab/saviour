@@ -205,7 +205,7 @@ class PTP:
             subprocess.run(['systemctl', 'restart', self.ptp4l_service], check=True)
             
             # Wait a moment for ptp4l to start
-            time.sleep(2)
+            #time.sleep(2)
             
             # Check if ptp4l started successfully
             ptp4l_status = self._get_service_status(self.ptp4l_service)
@@ -220,7 +220,7 @@ class PTP:
             subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)
             
             # Wait a moment for phc2sys to start
-            time.sleep(2)
+            #time.sleep(2)
             
             # Check if phc2sys started successfully
             phc2sys_status = self._get_service_status(self.phc2sys_service)

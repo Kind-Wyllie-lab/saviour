@@ -644,10 +644,10 @@ class Web(ABC):
             return False
 
 
-    # @abstractmethod # TODO: Should web be an abstract method?
     def handle_special_module_status(self, module_id, status):
         """To be overriden by rig specific functionality""" 
         pass
+
 
     def handle_module_status(self, module_id, status):
         """Handle status update from a module and emit to frontend"""

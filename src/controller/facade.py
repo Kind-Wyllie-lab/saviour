@@ -51,6 +51,10 @@ class ControllerFacade():
         return self.controller.get_samba_info()
 
 
+    def get_share_path(self):
+        return "~/controller_share"
+
+
     def get_config(self) -> dict:
         return self.controller.config.get_all()
 

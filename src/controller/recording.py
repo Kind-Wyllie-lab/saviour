@@ -56,7 +56,7 @@ class Recording():
         # Append session
         self.logger.info(f"Telling {target} to start_recording for {duration}s as session {session_name}")
 
-        modules = self.facade.get_modules_by_target(target).keys()
+        modules = list(self.facade.get_modules_by_target(target).keys())
         self.logger.info(f"{target} contains {modules}")
 
         session = RecordingSession(
@@ -71,7 +71,7 @@ class Recording():
 
         self.sessions[session_name] = session
 
-        self._write_session_to_file(session_name)
+        self._write_session_start_to_file(session_name)
 
 
     def stop_recording(self, target: str):
@@ -102,14 +102,19 @@ class Recording():
         """
         active_sessions = self.get_active_recording_sessions()
 
+        if not active_sessions:
+            raise ValueError("No active sessions")
+
         if target == "all":
-            # Check if more than one session is active - shouldn't be for target all
+            if len(active_sessions) != 1:
+                raise ValueError("Multiple active sessions for 'all'")
             return next(iter(active_sessions))
 
-        else: 
-            for session_name, session in self.sessions.items():
-                if target in session.modules:
-                    return session_name
+        for session_name, session in active_sessions.items():
+            if target in session.modules:
+                return session_name
+
+        raise ValueError(f"No session found for target {target}")
             
 
     """Getter methods"""
@@ -122,6 +127,81 @@ class Recording():
     
     def get_recording_sessions(self) -> dict:
         return self.sessions
+
+
+    def create_session(self, session_name: str, target: str):
+        # Add timestamp to session name
+        start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_name += ("_" + start_time)
+
+        self.logger.info(f"Creating recording session {session_name} targeting {target}")
+
+        modules = list(self.facade.get_modules_by_target(target).keys())
+
+        session = RecordingSession(
+            session_name = session_name,
+            target = target,
+            modules = modules,
+            active = True,
+            start_time = start_time,
+            end_time = None,
+            session_folder = self._create_session_folder(session_name)
+        )
+
+        self.sessions[session_name] = session
+
+        self._create_session_file(session_name)
+
+
+        params = {
+            "duration": 0,
+            "session_name": session_name
+        }
+        self.facade.send_command(target, "start_recording", params)
+
+        self.facade.update_sessions(self.sessions)
+
+        self._write_session_start_to_file(session_name)
+
+
+    def stop_session(self, session_name: str):
+        """
+        Stop a recording session by session_name.
+
+        This stops all modules in the session, marks the session inactive, 
+        sets the end time, and writes to the session info file.
+        """
+        if session_name not in self.sessions:
+            self.logger.warning(f"Tried to stop unknown session {session_name}")
+            return
+
+        session = self.sessions[session_name]
+
+        if not session.active:
+            self.logger.info(f"Session {session_name} is already stopped")
+            return
+
+        # Stop modules in the session
+        self.facade.send_command(session.target, "stop_recording", {})
+
+        # Update session status
+        session.active = False
+        session.end_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Write end time to session file
+        self.facade.update_sessions(self.sessions)
+        self._end_session(session_name)
+
+        self.logger.info(f"Session {session_name} stopped successfully")
+
+
+    def _create_session_file(self, session_name: str) -> None:
+        filename = self._get_session_info_file(session_name)
+        self.logger.info(f"Creating {filename}")
+        with open(filename, "a") as f:
+            f.write(f"Created {session_name} targeting {self.sessions[session_name].target} (")
+            for module in self.sessions[session_name].modules:
+                f.write(f"{module}, ")
 
 
     def _create_session_folder(self, session_name: str) -> str:
@@ -137,14 +217,11 @@ class Recording():
         return session_folder_path
 
 
-    def _write_session_to_file(self, session_name: str) -> None:
+    def _write_session_start_to_file(self, session_name: str) -> None:
         filename = self._get_session_info_file(session_name)
-        self.logger.info(f"Creating {filename}")
+        self.logger.info(f"Writing start time to {filename}")
         with open(filename, "a") as f:
-            f.write(f"{session_name} targeting {self.sessions[session_name].target} (")
-            for module in self.sessions[session_name].modules:
-                f.write(f"{module}, ")
-            f.write(f") started at {self.sessions[session_name].start_time}")
+            f.write(f"\nSession started at {self.sessions[session_name].start_time}")
         
 
     def _end_session(self, session_name: str) -> None:
@@ -173,5 +250,5 @@ class Recording():
         session_name = self.get_session_name_from_target(module_id)
         filename = self._get_session_info_file(session_name)
         with open(filename, "a") as f:
-            f.write(f"\n{module_id} went offline at {datetime.now().strftime("%Y%m%d_%H%M%S")}")
+            f.write(f"\n{module_id} went offline at {datetime.now().strftime('%Y%m%d_%H%M%S')}")
 

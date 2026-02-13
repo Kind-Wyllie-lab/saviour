@@ -1,0 +1,15 @@
+.recording-sessions {
+    display: flex;
+    gap: 24px;
+}
+
+  .recording-sessions-left {
+    display: flex;
+    gap: 24px;
+  }
+
+  .recording-sessions-right {
+    display: flex;
+    gap: 24px;
+  }
+

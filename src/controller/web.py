@@ -212,6 +212,12 @@ class Web(ABC):
             self.logger.info(f"Sent module update to all clients: {modules}")
 
 
+        @self.socketio.on("check_ready")
+        def handle_check_ready(data):
+            target = data.get("target")
+            self.facade.send_command(target, "validate_readiness", {})
+        
+
         @self.socketio.on('get_sessions')
         def handle_get_sessions():
             sessions = self.facade.get_recording_sessions()

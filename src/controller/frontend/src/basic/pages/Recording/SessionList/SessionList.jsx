@@ -2,13 +2,13 @@ import React from "react";
 import socket from "/src/socket";
 
 function SessionList({ sessionList }) {
-    console.log(sessionList);
   const handleStop = (sessionName) => {
     socket.emit("stop_session", { session_name: sessionName });
   };
 
   return (
-    <div className="session-list">
+    <div className="session-list card">
+      <h2>Session List</h2>
       {Object.values(sessionList).length === 0 ? (
         <p>No sessions yet</p>
       ) : (

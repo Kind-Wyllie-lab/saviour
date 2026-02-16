@@ -234,7 +234,7 @@ class Modules:
         """Take a target (either "all", a group name, or a module_id) and return a dict of modules."""
         # Handle bad or empty target
         if target == "":
-            self.logger.error("No targetsupplied to modules.get_modules_by_group()")
+            self.logger.error("No target supplied to modules.get_modules_by_group()")
             return None
 
         # Handle all target
@@ -243,6 +243,8 @@ class Modules:
         
         modules_in_group = {}
         for module_id, module in self.modules.items():
+            if module_id == target:
+                return {module_id: module}
             if module.group == target:
                 self.logger.info(f"{module_id} is in {target}")
                 modules_in_group[module_id] = module

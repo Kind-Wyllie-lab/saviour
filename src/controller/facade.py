@@ -28,6 +28,10 @@ class ControllerFacade():
         return self.controller.modules.get_modules()
 
 
+    def get_module_ip(self, module_id: str) -> str:
+        return self.controller.network.get_module_ip(module_id)
+
+
     def get_modules_by_target(self, target: str) -> dict:
         return self.controller.modules.get_modules_by_target(target)
 
@@ -139,6 +143,16 @@ class ControllerFacade():
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline
         self.controller.recording.module_offline(module_id)
+    
+
+    def module_back_online(self, module_id: str) -> None:
+        # What to do when a module comes back online
+        self.controller.recording.module_back_online(module_id)
+
+    
+    def module_rediscovered(self, module_id: str):
+        self.controller.health.module_rediscovered(module_id)
+        self.controller.modules.module_rediscovered(module_id)
 
 
     def module_discovery(self, discovered_modules: dict):

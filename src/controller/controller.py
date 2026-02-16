@@ -213,10 +213,13 @@ class Controller(ABC):
             module_id: String representing the module
             status: may be "online" or "offline"
         """
+        self.logger.info("On module status change called")
         if status == "online":
             online = True
+            self.facade.module_back_online(module_id)
         elif status == "offline":
             online = False
+            self.facade.module_offline(module_id)
             
         self.modules.notify_module_online_update(module_id, online)
 

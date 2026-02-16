@@ -26,7 +26,7 @@ class Network():
         self.config = config
 
         # Module tracking
-        self.discovered_modules = []
+        self.discovered_modules = [] # TODO: Switch to a dict keyed by module_id
 
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
@@ -228,6 +228,7 @@ class Network():
             module_id = str(info.properties.get(b'id', b'unknown').decode())
             self.module_last_seen[module_id] = time.time()
             self.logger.info(f"Updated last seen time for module: {module_id}")
+            self.facade.module_rediscovered(module_id)
             self.facade.module_discovery(self.discovered_modules)
 
 
@@ -284,6 +285,12 @@ class Network():
         else:
             self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")
             self._wait_for_proper_ip()
+
+    
+    def get_module_ip(self, module_id: str) -> str:
+        for module in self.discovered_modules:
+            if module.id == module_id:
+                return module.ip
 
 
     def get_module_status(self, module_id: str) -> Optional[Dict]:

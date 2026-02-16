@@ -17,6 +17,7 @@ Created: ?
 import time
 import threading
 import logging
+import os
 from collections import deque
 from typing import Dict, Any, Optional, List
 
@@ -91,7 +92,10 @@ class Health:
             else:
                 # Existing module - update heartbeat and status, preserve other fields
                 self.module_health[module_id]['last_heartbeat'] = time.time()  # Use controller's timestamp
-                self.module_health[module_id]['status'] = 'online'
+                if self.module_health[module_id]["status"] == "offline":
+                    self.module_health[module_id]['status'] = 'online'
+                    self.facade.on_status_change(module_id, "online")
+
                 # Update other metrics if provided
                 if 'cpu_temp' in status_data:
                     self.module_health[module_id]['cpu_temp'] = status_data['cpu_temp']
@@ -119,7 +123,7 @@ class Health:
             if was_new_module:
                 self.logger.info(f"New module {module_id} added to health tracking")
 
-            self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
+
             return True
             
         except Exception as e:
@@ -301,22 +305,25 @@ class Health:
                         self.module_health[module_id]['status'] = 'offline'
                         # Trigger callback for offline status
                         try:
+                            self.logger.info("Alerting status change line 307 monitor health")
                             self.facade.on_status_change(module_id, 'offline')
-                            self.facade.module_offline(module_id)
                         except Exception as e:
                             self.logger.error(f"Error in status change callback: {e}")
                 else:
                     # Module is responsive, ensure it's marked as online
                     if self.module_health[module_id]['status'] == 'offline':
                         self.logger.info(f"Module {module_id} is back online")
+                        self.logger.info("Alerting status change line 315 monitor health")
                         self.module_health[module_id]['status'] = 'online'
                         # Trigger callback for online status
                         try:
+                            # self.facade.module_back_online(module_id)
                             self.facade.on_status_change(module_id, 'online')
+
                         except Exception as e:
                             self.logger.error(f"Error in status change callback: {e}")
                 
-                self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
+                # self.facade.on_status_change(module_id, self.module_health[module_id]['status'])
             
             # Check PTP health periodically
             if cycle_count % 2 == 0:  # Check PTP health every couple cycles 
@@ -400,6 +407,7 @@ class Health:
                 # Trigger callback for offline status
                 try:
                     self.facade.on_status_change(module_id, 'offline')
+                    self.facade.module_offline(module_id)
                 except Exception as e:
                     self.logger.error(f"Error in status change callback: {e}")
             else:
@@ -407,7 +415,30 @@ class Health:
         else:
             self.logger.warning(f"Attempted to mark unknown module {module_id} as offline: {reason}")
     
-    
+
+    def module_rediscovered(self, module_id: str) -> None:  
+        if module_id in self.module_health:
+            if self.module_health[module_id]["status"] == "offline":
+                if self.check_module_offline(module_id):
+                    self.facade.module_back_online(module_id)
+
+
+    def check_module_offline(self, module_id: str) -> None:
+        # Ping test
+        module_ip = self.facade.get_module_ip(module_id)
+        cmd = f"ping -c 1 {module_ip} >/dev/null 2>&1"
+        response = os.system(cmd)
+        if response != 0:
+            self.logger.warning(f"{module_id} did not respond to a ping at {module_ip}")
+            return False
+        
+        # Communication test 
+        self.facade.send_command(module_id, "get_status", {})
+        
+        # Parse response
+        return True
+
+
     def handle_communication_test_response(self, module_id: str, success: bool):
         """Handle communication test response from a module
         

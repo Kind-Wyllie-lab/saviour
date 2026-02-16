@@ -20,10 +20,12 @@ class RecordingSession():
     """Dataclass to represent a SAVIOUR recording session"""
     session_name: str # Name of the recording session
     target: str # The target of recording e.g. all, group_3, camera_dc67
-    modules: list = field(default_factory=list) # The module_ids belonging to this recording session
+    modules: list = field(default_factory=list) # The module_ids belonging to this recording session. # TODO: Should this be a dict, with info about each module i.e. if they're recording still?
     start_time: int = None # Time the session was started at - None if not started
     end_time: int = None # Time the session finished at - None if not started
     active: bool = False# Bool indicating whether this session is currently recording
+    error: bool = False # Bool indicating whether the session is in an error state
+    error_message: str = "" # If fault state, error message here
     session_folder: str = "" # The path on the controller's samba share where session files will be stored
 
 
@@ -103,7 +105,7 @@ class Recording():
         active_sessions = self.get_active_recording_sessions()
 
         if not active_sessions:
-            raise ValueError("No active sessions")
+            return None
 
         if target == "all":
             if len(active_sessions) != 1:
@@ -114,7 +116,7 @@ class Recording():
             if target in session.modules:
                 return session_name
 
-        raise ValueError(f"No session found for target {target}")
+        return None
             
 
     """Getter methods"""
@@ -251,4 +253,22 @@ class Recording():
         filename = self._get_session_info_file(session_name)
         with open(filename, "a") as f:
             f.write(f"\n{module_id} went offline at {datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        
+        self.sessions[session_name].error=True
+        self.sessions[session_name].error_message = f"{module_id} is Offline"
+
+    
+    def module_back_online(self, module_id: str) -> None:
+        self.logger.info(f"{module_id} is back online, restarting recording")
+        session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            pass
+        if self.sessions[session_name].active == True:
+            # Tell it to resume recording
+            params = {
+                "duration": 0, # TODO: Refactor duration to be an end time instead of a duration in s
+                "session_name": session_name
+            }
+            self.facade.send_command(module_id, "start_recording", params) # TODO: Create "restart_recording" endpoint on module 
+
 

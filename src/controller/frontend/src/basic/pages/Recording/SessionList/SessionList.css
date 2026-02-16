@@ -3,7 +3,7 @@
     border-radius: 8px;
     padding: 0.8rem 1rem;
     margin-bottom: 0.8rem;
-    background: var(--bg-color);
+    background: var(--card-bg-color);
     transition: box-shadow 0.2s ease;
   }
   
@@ -12,7 +12,7 @@
   }
   
   .session.active {
-    border-left: 4px solid #2e7d32;
+    border-left: 4px solid red;
   }
   
   .session.stopped {

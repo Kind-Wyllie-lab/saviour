@@ -124,8 +124,11 @@ class Modules:
         # self.logger.info(f"Received update concerning module {module_id}, with ready status {ready}")
         self.modules[module_id].ready_message = message
         if ready == True:
-            self.modules[module_id].status = ModuleStatus.READY
-            self.modules[module_id].ready_time = time.time() 
+            if self.modules[module_id].status == ModuleStatus.RECORDING:
+                return
+            else:
+                self.modules[module_id].status = ModuleStatus.READY
+                self.modules[module_id].ready_time = time.time() 
         else:
             self.modules[module_id].status = ModuleStatus.NOT_READY
         self.broadcast_updated_modules()

@@ -9,7 +9,7 @@
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2,
-        "bitrate": 5000000
+        "bitrate_mb": 5
     },
     "recording": {
         "_recording_filetype": "ts"

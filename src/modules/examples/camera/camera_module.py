@@ -118,7 +118,7 @@ class CameraModule(Module):
                 "camera.fps",
                 "camera.width",
                 "camera.height",
-                "camera.bitrate"
+                "camera.bitrate_mb"
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -193,7 +193,7 @@ class CameraModule(Module):
             self.picam2.post_callback = self._stream_post_callback
             
             # Create encoders with current settings
-            bitrate = self.config.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate_mb", 5) * 1000000
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
@@ -203,7 +203,7 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error configuring camera: {e}")
             # Initialize encoders even if configuration fails
-            bitrate = self.config.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate_mb", 5) * 1000000
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
@@ -430,16 +430,29 @@ class CameraModule(Module):
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str) -> None:
         """Apply the frame timestamp to the image."""
-        x = int(self.width * 0.2)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = self.config.get("camera.text_scale", 2)
+        thickness = self.config.get("camera.text_thickness", 1)
+        
+        text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+
+        # Automatically resize if text is too long
+        if text_width > self.width:
+            scale = self.width / text_width
+            font_scale = font_scale * scale
+            text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+
+        x = int((self.width / 2) - (text_width / 2))
         y = 0 + int(self.height * 0.03) # TODO: Make origin reference lores dimensions
+        
         cv2.putText(
             img=m.array, 
             text=timestamp, 
             org=(x, y), 
-            fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
-            fontScale=self.config.get("camera.text_scale", 2), 
+            fontFace=font, 
+            fontScale=font_scale, 
             color=(50,255,50), 
-            thickness=self.config.get("camera.text_thickness", 1)
+            thickness=thickness
             ) 
 
 

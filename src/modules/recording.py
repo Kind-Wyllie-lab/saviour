@@ -230,7 +230,7 @@ class Recording():
         Runs in a thread and monitors length of current recording.
         If it exceeds segment length limit, stops and starts a new recording.
         """
-        segment_length = self.config.get("recording.segment_length_seconds", 30) # Default to 30 for debug for now 050126
+        segment_length = self.config.get("recording.segment_length_mins", 30) # Default to 30 for debug for now 050126
         self.logger.info(f"Segment started at {self.segment_start_time},  segment length {segment_length}")
 
         while not self.monitor_recording_segments_stop_flag.is_set():

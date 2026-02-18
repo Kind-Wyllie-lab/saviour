@@ -118,7 +118,7 @@ class CameraModule(Module):
                 "camera.fps",
                 "camera.width",
                 "camera.height",
-                "camera.bitrate"
+                "camera.bitrate_mb"
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -193,7 +193,7 @@ class CameraModule(Module):
             self.picam2.post_callback = self._stream_post_callback
             
             # Create encoders with current settings
-            bitrate = self.config.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate_mb", 5) * 1000000
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
@@ -203,7 +203,7 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error configuring camera: {e}")
             # Initialize encoders even if configuration fails
-            bitrate = self.config.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate_mb", 5) * 1000000
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False

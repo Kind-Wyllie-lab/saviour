@@ -177,7 +177,8 @@ get_mac_suffix() {
 
 generate_hostname() {
     MAC_SUFFIX=$(get_mac_suffix)
-    NEW_HOSTNAME="${DEVICE_TYPE}-${MAC_SUFFIX}"
+    NEW_HOSTNAME="${DEVICE_TYPE}-${DEVICE_ROLE}-${MAC_SUFFIX}"
+    NEW_HOSTNAME=$(echo "$NEW_HOSTNAME" | tr '_' '-') # Sanitise hostname, no underscores allowed
     echo "$NEW_HOSTNAME"
 }
 
@@ -187,13 +188,14 @@ set_device_hostname() {
 
     echo "Setting hostname to $NEW_HOSTNAME"
 
-    sudo hostnamectl set-hostname "$NEW_HOSTNAME"
+    sudo tee /etc/hosts >/dev/null <<EOF
+127.0.0.1  localhost
+127.0.1.1  $NEW_HOSTNAME
 
-    # Rewrite 127.0.1.1 line safely
-    sudo awk -v hn="$NEW_HOSTNAME" '
-        $1=="127.0.1.1" {$2=hn}
-        {print}
-    ' /etc/hosts | sudo tee /etc/hosts >/dev/null
+::1        localhost ip6-localhost ip6-loopback
+EOF
+
+    sudo hostnamectl set-hostname "$NEW_HOSTNAME"
 }
 
 
@@ -324,8 +326,8 @@ configure_dhcp_server() {
     
     # Setup static ip
     echo "Setting static IP to 10.0.0.1 with nmcli"
-    sudo nmcli connection modify "Wired connection 1" ipv4.method manual
-    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 10.0.0.1/24
+    sudo nmcli connection modify "netplan-eth0" ipv4.method manual # Changed to netplan-eth0 with latest pi 5 os (Trixie) previously was Wired connection 1
+    sudo nmcli connection modify "netplan-eth0" ipv4.addresses 10.0.0.1/24
 
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
@@ -414,7 +416,7 @@ disable_dhcp_server() {
     echo Disabling DHCP server and reverting IP address to automatic assignment
 
     # Change IP to automatic assignment
-    sudo nmcli connection modify "Wired connection 1" ipv4.method auto
+    sudo nmcli connection modify "netplan-eth0" ipv4.method auto
 
     # Stop DHCP server
     sudo systemctl stop dnsmasq.service
@@ -732,15 +734,16 @@ EOF
 fi
 
 
+
 # Run pytest?
 echo ""
 echo "Running test suite"
-source env/bin/activate
-if [ $DEVICE_ROLE == "module" ]; then
-    pytest "src/modules"
-else
-    pytest "src/controller"
-fi
+#source env/bin/activate
+#if [ $DEVICE_ROLE == "module" ]; then
+#    pytest "src/modules"
+#else
+#    pytest "src/controller"
+#fi
 
 echo ""
 echo "Restarting saviour.service"

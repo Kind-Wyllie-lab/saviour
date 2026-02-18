@@ -1,0 +1,84 @@
+.new-session-form {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    padding: 32px;
+}
+
+.session-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin-top: 1rem;
+  }
+  
+  .form-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  
+  .form-row label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var("--text-color");
+  }
+  
+  .form-row select {
+    flex-grow: 1;
+    padding: 0.6rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 0.95rem;
+    background: white;
+    transition: border 0.2s ease;
+  }
+  
+  .form-row select:focus {
+    outline: none;
+    border-color: #4a90e2;
+  }
+  
+  .button-row {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+  }
+  
+  .primary-button {
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    background-color: red;
+    color: white;
+    transition: background 0.2s ease;
+  }
+  
+  .primary-button:hover:not(:disabled) {
+    background-color: #256628;
+  }
+  
+  .primary-button:disabled {
+    background-color: #9e9e9e;
+    cursor: not-allowed;
+  }
+  
+  .secondary-button {
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    border: none;
+    background-color: blue;
+    color: white;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+  
+  .secondary-button:hover {
+    background-color: #f3f3f3;
+  }
+  

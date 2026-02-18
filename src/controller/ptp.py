@@ -134,8 +134,7 @@ class PTP:
         
         for service in services:
             try:
-                result = subprocess.run(['systemctl', 'status', service], 
-                                       capture_output=True, text=True)
+                result = subprocess.run(['systemctl', 'status', service], capture_output=True, text=True)
                 if result.returncode == 4:  # Unit not found
                     raise PTPError(f"Systemd service {service} not found. "
                                    f"Please run the setup script to configure PTP services.")
@@ -145,6 +144,7 @@ class PTP:
                                    f"Please run the setup script to configure PTP services.")
                 else:
                     self.logger.warning(f"Could not check {service} service status: {e}")
+
 
     def _stop_timesyncd(self):
         """Manage systemd-timesyncd for PTP coexistence."""
@@ -205,7 +205,7 @@ class PTP:
             subprocess.run(['systemctl', 'restart', self.ptp4l_service], check=True)
             
             # Wait a moment for ptp4l to start
-            time.sleep(2)
+            #time.sleep(2)
             
             # Check if ptp4l started successfully
             ptp4l_status = self._get_service_status(self.ptp4l_service)
@@ -220,7 +220,7 @@ class PTP:
             subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)
             
             # Wait a moment for phc2sys to start
-            time.sleep(2)
+            #time.sleep(2)
             
             # Check if phc2sys started successfully
             phc2sys_status = self._get_service_status(self.phc2sys_service)
@@ -285,7 +285,7 @@ class PTP:
             else:
                 if not self.last_ptp_restart_time:  # Catch first attempt
                     self.last_ptp_restart_time = time.time()
-                if time.time() - self.last_ptp_restart_time > self.ptp_stabilisation_timeout:
+                elif time.time() - self.last_ptp_restart_time > self.ptp_stabilisation_timeout:
                     self.logger.info(f"PTP seems to have stabilised, resetting retries")
                     self.ptp_restart_retries = 0
                 return

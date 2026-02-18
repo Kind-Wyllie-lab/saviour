@@ -15,9 +15,12 @@
         "_status_port": 5556,
         "_host": "0.0.0.0"
     },
-    "health_monitor": {
+    "health": {
         "_heartbeat_interval": 30,
-        "_heartbeat_timeout": 60 
+        "_heartbeat_timeout": 60
+    },
+    "ptp": {
+        "_ptp_monitor_interval": 10
     },
     "data_export": {
         "_export_interval": 15,

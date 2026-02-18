@@ -13,6 +13,7 @@ import logging
 import os
 from typing import Dict, Any, Optional
 import time
+from dataclasses import asdict
 
 
 class ControllerFacade():
@@ -25,6 +26,10 @@ class ControllerFacade():
     """Getter Methods"""
     def get_modules(self) -> dict:
         return self.controller.modules.get_modules()
+
+
+    def get_module_ip(self, module_id: str) -> str:
+        return self.controller.network.get_module_ip(module_id)
 
 
     def get_modules_by_target(self, target: str) -> dict:
@@ -49,6 +54,10 @@ class ControllerFacade():
     
     def get_samba_info(self):
         return self.controller.get_samba_info()
+
+
+    def get_share_path(self):
+        return "/home/pi/controller_share"
 
 
     def get_config(self) -> dict:
@@ -95,18 +104,6 @@ class ControllerFacade():
         self.controller.on_module_status_change(module_id, status)
 
 
-    def notify_module_update(self, discovered_modules: dict):
-        self.controller.network_notify_module_update(discovered_modules)
-
-
-    def notify_module_id_change(self, old_id: str, new_id: str):
-        self.controller.network_notify_module_id_change(old_id, new_id)
-
-
-    def notify_module_ip_change(self, id: str, new_ip: str):
-        pass
-
-
     def push_module_update_to_frontend(self, modules: dict):
         self.controller.web.push_module_update(modules)
 
@@ -120,6 +117,18 @@ class ControllerFacade():
         return self.controller.recording.stop_recording(target)
 
 
+    def create_session(self, session_name: str, target: str) -> None:
+        return self.controller.recording.create_session(session_name, target)
+
+    
+    def stop_session(self, session_name: str) -> None:
+        return self.controller.recording.stop_session(session_name)
+
+    
+    def update_sessions(self, sessions: dict) -> None:
+        serializable_sessions = {k: asdict(v) for k, v in sessions.items()}
+        self.controller.web.socketio.emit("sessions_update", serializable_sessions)
+
     """Set config"""
     def set_config(self, new_config: dict) -> bool:
         self.controller.config.set_all(new_config)
@@ -128,4 +137,34 @@ class ControllerFacade():
             return False
         else: 
             return True
+
+
+    """Events"""
+    def module_offline(self, module_id: str) -> None:
+        # Tell anyone who cares that a module has gone offline
+        self.controller.recording.module_offline(module_id)
+    
+
+    def module_back_online(self, module_id: str) -> None:
+        # What to do when a module comes back online
+        self.controller.recording.module_back_online(module_id)
+
+    
+    def module_rediscovered(self, module_id: str):
+        self.controller.health.module_rediscovered(module_id)
+        self.controller.modules.module_rediscovered(module_id)
+
+
+    def module_discovery(self, discovered_modules: dict):
+        self.controller.modules.module_discovery(discovered_modules)
+        self.controller.health.module_discovery(discovered_modules)
+
+
+    def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:
+        self.controller.modules.module_id_changed(old_id, new_id)
+        self.controller.health.module_id_changed(old_id, new_id)
+    
+
+    def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
+        self.controller.modules.module_ip_changed(module_id, new_module_ip)
 

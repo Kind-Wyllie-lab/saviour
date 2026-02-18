@@ -1,0 +1,62 @@
+.session {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.8rem;
+    background: var(--card-bg-color);
+    transition: box-shadow 0.2s ease;
+  }
+  
+  .session:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+  
+  .session.active {
+    border-left: 4px solid red;
+  }
+  
+  .session.stopped {
+    border-left: 4px solid #9e9e9e;
+  }
+  
+  .session-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    gap: 8px;
+  }
+  
+  .session-details {
+    margin-top: 0.8rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid #eee;
+  }
+  
+  .status-badge {
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  
+  .status-badge.recording {
+    color: #2e7d32;
+  }
+  
+  .status-badge.stopped {
+    color: #666;
+  }
+  
+  .stop-button {
+    margin-top: 0.8rem;
+    padding: 0.5rem 1rem;
+    background-color: #c62828;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  
+  .stop-button:hover {
+    background-color: #a61d1d;
+  }
+  

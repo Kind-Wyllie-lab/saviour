@@ -53,7 +53,7 @@ class Modules:
             # self.logger.info(f"Nothing to do on status check")
 
 
-    def network_notify_module_update(self, discovered_modules: list[Module]):
+    def module_discovery(self, discovered_modules: list[Module]):
         """
         When zeroconf adds a newly discovered module or updates an existing one, this gets called.
 
@@ -103,13 +103,13 @@ class Modules:
             time.sleep(5)
 
 
-    def network_notify_module_id_change(self, old_module_id, new_module_id):
+    def module_id_changed(self, old_module_id, new_module_id):
         # Move the module data to the new key
         self.modules[new_module_id] = self.modules.pop(old_module_id)
         self.broadcast_updated_modules()
 
 
-    def network_notify_module_ip_change(self, module_id, module_ip):
+    def module_ip_changed(self, module_id, module_ip):
         # IP changed for module
         self.modules["module_id"].ip = module_ip
         self.broadcast_updated_modules()
@@ -124,8 +124,11 @@ class Modules:
         # self.logger.info(f"Received update concerning module {module_id}, with ready status {ready}")
         self.modules[module_id].ready_message = message
         if ready == True:
-            self.modules[module_id].status = ModuleStatus.READY
-            self.modules[module_id].ready_time = time.time() 
+            if self.modules[module_id].status == ModuleStatus.RECORDING:
+                return
+            else:
+                self.modules[module_id].status = ModuleStatus.READY
+                self.modules[module_id].ready_time = time.time() 
         else:
             self.modules[module_id].status = ModuleStatus.NOT_READY
         self.broadcast_updated_modules()
@@ -207,7 +210,6 @@ class Modules:
         """Return module name for given module_id"""
 
         
-
     def update_module_configs(self, configs: Dict):
         """
         Update configuration settings for existing modules.
@@ -235,7 +237,7 @@ class Modules:
         """Take a target (either "all", a group name, or a module_id) and return a dict of modules."""
         # Handle bad or empty target
         if target == "":
-            self.logger.error("No targetsupplied to modules.get_modules_by_group()")
+            self.logger.error("No target supplied to modules.get_modules_by_group()")
             return None
 
         # Handle all target
@@ -244,6 +246,8 @@ class Modules:
         
         modules_in_group = {}
         for module_id, module in self.modules.items():
+            if module_id == target:
+                return {module_id: module}
             if module.group == target:
                 self.logger.info(f"{module_id} is in {target}")
                 modules_in_group[module_id] = module

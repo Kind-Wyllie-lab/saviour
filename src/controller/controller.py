@@ -89,21 +89,12 @@ class Controller(ABC):
 
         # Managers
         self.network = Network(self.config) 
-        self.network.on_module_discovered = self.on_module_discovered
+        self.network.on_module_discovered = self.on_module_discovered 
         self.network.on_module_removed = self.on_module_removed              
-        self.logger.info(f"Module discovery callback registered early")
-        self.communication = Communication(
-            status_callback=self.handle_status_update,
-        )
+        self.communication = Communication(status_callback=self.handle_status_update)
         self.ptp = PTP(role=PTPRole.MASTER, config=self.config)
         self.web = Web(self.config)
-        # Initialize health monitor with configuration
-        heartbeat_interval = self.config.get("health_monitor.heartbeat_interval")
-        heartbeat_timeout = self.config.get("health_monitor.heartbeat_timeout")
-        self.health = Health(
-            heartbeat_interval=heartbeat_interval,
-            heartbeat_timeout=heartbeat_timeout
-        )
+        self.health = Health(self.config)
         self.modules = Modules()
         self.recording = Recording()
         self.facade = ControllerFacade(self)
@@ -157,26 +148,6 @@ class Controller(ABC):
         self.communication.send_command(module_id, "shutdown", {})
 
 
-    def network_notify_module_update(self, discovered_modules: dict):
-        """Observer callback for when network manager detects a module update
-        Need to tell Modules and Health about this.
-        """
-        self.modules.network_notify_module_update(discovered_modules)
-        self.health.network_notify_module_update(discovered_modules)
-    
-    
-    def network_notify_module_id_change(self, old_id: str, new_id: str):
-        """Observer callback for when network manager detects a module ID change
-        Need to tell Modules and Health about this.
-        """
-        self.modules.network_notify_module_id_change(old_id, new_id)
-        self.health.network_notify_module_id_change(old_id, new_id)
-        # Also need to update module_config dict if old_id exists there
-        if old_id in self.module_config:
-            self.module_config[new_id] = self.module_config.pop(old_id)
-            self.logger.info(f"Updated module_config key from {old_id} to {new_id}")
-
-
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         module_id = topic.split('/')[1] # get module id from topic
@@ -187,7 +158,6 @@ class Controller(ABC):
             self.web.handle_module_status(module_id, status_data) # Whatever web related functionality related to status update, process it # TODO: remove this
             match status_type:
                 case 'heartbeat':
-                    self.logger.info(f"Heartbeat received from {module_id}")
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
                 case 'recordings_list':
@@ -199,15 +169,7 @@ class Controller(ABC):
                 case 'get_config':
                     self.logger.info(f"Config dict received from {module_id}")
                     config_data = status_data.get('config', {})
-                    # Extract the editable section if it exists, otherwise store the entire config
-                    if isinstance(config_data, dict) and 'editable' in config_data:
-                        self.modules.update_module_config(module_id, config_data["editable"])
-                        # self.module_config[module_id] = config_data['editable']
-                        self.logger.info(f"Stored editable config for {module_id}")
-                    else:
-                        self.modules.update_module_config(module_id, config_data)
-                        # self.module_config[module_id] = config_data
-                        self.logger.info(f"Stored full config for {module_id}")
+                    self.modules.update_module_config(module_id, config_data)
                 case 'set_config':
                     self.logger.info(f"Set config response received from {module_id}")
                     # If the set_config was successful, we should refresh the config
@@ -251,14 +213,14 @@ class Controller(ABC):
             module_id: String representing the module
             status: may be "online" or "offline"
         """
-        self.logger.info(f"on_module_status_change called for {module_id} with status {status}")
+        self.logger.info("On module status change called")
         if status == "online":
             online = True
+            self.facade.module_back_online(module_id)
         elif status == "offline":
             online = False
-
-        self.logger.info(f"Module {module_id} status is: {status}, online status: {online}")
-
+            self.facade.module_offline(module_id)
+            
         self.modules.notify_module_online_update(module_id, online)
 
 
@@ -452,7 +414,6 @@ class Controller(ABC):
         if hasattr(self, 'web'):
             self.web.update_modules(self.network.discovered_modules)
             self.web.notify_module_update()
-            self.module_config[module.id] = {}
 
 
     def on_module_removed(self, module):

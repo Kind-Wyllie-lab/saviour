@@ -88,7 +88,6 @@ class Recording():
         self.current_session_name = self._format_session_name(session_name)
 
         # Set the export folder based on the supplied experiment name
-        self.facade.set_session_name(session_name)
         self.facade.when_recording_starts()
         
         # Set up recording - filename and folder
@@ -179,7 +178,7 @@ class Recording():
 
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
             if self.config.get("export.auto_export") == True:
-                self.facade.export_staged()
+                self.facade.export_staged(self.current_session_name)
 
             return {"result": "Success"}
 
@@ -211,7 +210,7 @@ class Recording():
 
         # Start new actual recording segment 
         self.facade.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
-        self.facade.export_staged() # Export files that have been marked for export
+        self.facade.export_staged(self.current_session_name) # Export files that have been marked for export
 
 
     def _create_initial_recording_segment(self) -> None:

@@ -11,6 +11,7 @@ Created: 26/01/2026
 import os
 import logging
 from datetime import datetime
+import time
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -248,7 +249,7 @@ class Recording():
 
     def module_offline(self, module_id: str) -> None:
         """When a module goes offline, make a note of it"""
-        self.logger.info(f"{module_id} went offline, attempting to write to file")
+        self.logger.info(f"{module_id} went offline, recording in session log")
         session_name = self.get_session_name_from_target(module_id)
         filename = self._get_session_info_file(session_name)
         with open(filename, "a") as f:
@@ -264,11 +265,17 @@ class Recording():
         if not session_name:
             pass
         if self.sessions[session_name].active == True:
+            filename = self._get_session_info_file(session_name)
+            with open(filename, "a") as f:
+                f.write(f"\n{module_id} came back online at {datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
             # Tell it to resume recording
             params = {
                 "duration": 0, # TODO: Refactor duration to be an end time instead of a duration in s
                 "session_name": session_name
             }
             self.facade.send_command(module_id, "start_recording", params) # TODO: Create "restart_recording" endpoint on module 
+
+
 
 

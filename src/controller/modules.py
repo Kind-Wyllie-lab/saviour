@@ -72,6 +72,17 @@ class Modules:
         self.broadcast_updated_modules()
 
 
+    def module_rediscovered(self, module_id: str):
+        """When zeroconf re-discovers a module which was previously marked offline, this gets called."""
+        self.logger.info(f"Module {module_id} has been rediscovered by Network")
+        if module_id in self.modules.keys():
+            self.modules[module_id].online = True
+            self.modules[module_id].status = ModuleStatus.DEFAULT
+            self.broadcast_updated_modules()
+        else:
+            self.logger.warning(f"Received rediscovery notice for unknown module {module_id}")
+
+
     def add_module(self, module: Module):
         self.modules[module.id] = module
         self.logger.info(f"Module {self.modules[module.id].name} added")

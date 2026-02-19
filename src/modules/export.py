@@ -49,6 +49,7 @@ class Export:
 
         # Staged files for export
         self.session_files = [] # Record of all recorded files in the session
+        self.session_name = None
         self.staged_for_export = []
         self.recording_name = None # Should be set by recording manager - expect something akin to habitat6_cohort3/140126/camera_dc71/
         self.export_path = None # Set here - the full export path e.g. /mnt/export/habitat6_cohort3/140126/camera_dc71/
@@ -61,7 +62,7 @@ class Export:
             self.logger.error(f"Failed to create mount point directory: {e}")
 
 
-    def _setup_export(self) -> bool:
+    def _setup_export(self, export_path: str) -> bool:
         """Set up an export
         - Mount samba share
         - Create the export folder on the mounted share
@@ -72,20 +73,22 @@ class Export:
             return False
 
         # Create export folder on mounted share 
-        self._validate_export_path()
-        self._create_export_path()
+        export_path = self._format_export_path(export_path)
+        self._create_export_path(export_path)
+
+        self.logger.info(f"Attempting to set permissions on {export_path}")
 
         # Set write permissions on export path
         try:
-            os.chmod(self.export_path, 0o777)  # rwxrwxrwx - full permissions
-            self.logger.info(f"Set permissions on experiment folder: {self.export_path}")
-            return True
+            os.chmod(export_path, 0o777)  # rwxrwxrwx - full permissions
+            self.logger.info(f"Set permissions on experiment folder: {export_path}")
+            return export_path
         except Exception as e:
             self.logger.warning(f"Could not set permissions on experiment folder: {e}")
             return False
 
 
-    def export_staged(self) -> bool:
+    def export_staged(self, export_path: str = None) -> bool:
         """Export all files in self.staged_for_export
 
         Returns:
@@ -94,13 +97,15 @@ class Export:
         self.staged_for_export = os.listdir(self.to_export_folder)
         self.logger.info(f"Attempting to export {self.staged_for_export}")
         try:
-            if not self._setup_export():
+
+            export_path = self._setup_export(export_path)
+                
+            if not export_path:
                 return False
             
             # Create hierarchical export folder structure with conflict prevention
             export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
-            export_path = self.export_path
             to_export = self.staged_for_export
             source_folder = self.to_export_folder
             self.logger.info(f"Will attempt to export {to_export}")
@@ -128,7 +133,9 @@ class Export:
             
             # Create export manifest
             if self.config.get("export.manifest_enabled", False):
-                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, self.session_name)
+                if not self.session_name:
+                    session_name="NO_SESSION"
+                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, session_name)
                 if not manifest_filename:
                     self.logger.error("Failed to create export manifest")
                     return False
@@ -162,10 +169,10 @@ class Export:
         self.logger.info(f"Deleted {deleted_count} files")
 
 
-    def _create_export_path(self) -> bool:
+    def _create_export_path(self, export_path: str) -> bool:
         """Create the path for files to be exported to, which is the share mount point and the current export folder filename."""
         try:
-            os.makedirs(self.export_path, exist_ok=True)
+            os.makedirs(export_path, exist_ok=True)
             return True
         except Exception as e:
             self.logger.error(f"Error creating export path: {e}")
@@ -229,10 +236,11 @@ class Export:
         return True
 
 
-    def _validate_export_path(self):
-        """Ensure export path is up to date for todays date"""
-        export_path = f"{self.session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
-        self.export_path = os.path.join(self.mount_point, export_path)
+    def _format_export_path(self, export_path: str):
+        """Create nested"""
+        export_path = f"{export_path}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
+        export_path = os.path.join(self.mount_point, export_path)
+        return export_path
 
 
     def _export_config_file(self) -> bool:
@@ -245,10 +253,9 @@ class Export:
             bool: True if config file was exported successfully
         """
         try:
-            if not self._setup_export():
+            export_path = self.facade.get_current_session_name()
+            if not self._setup_export(export_path):
                 return False
-
-            export_path = self.export_path
 
             # Look for config files in common locations
             config_locations = [

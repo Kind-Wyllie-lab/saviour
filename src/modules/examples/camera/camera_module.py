@@ -443,7 +443,7 @@ class CameraModule(Module):
             text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
 
         x = int((self.width / 2) - (text_width / 2))
-        y = 0 + int(self.height * 0.03) # TODO: Make origin reference lores dimensions
+        y = 0 + int(self.height * 0.03) 
         
         cv2.putText(
             img=m.array, 

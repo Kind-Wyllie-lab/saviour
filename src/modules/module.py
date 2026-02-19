@@ -106,7 +106,7 @@ class Module(ABC):
         # Manager objects
         self.config = Config()
         self.export = Export(module_id=self.module_id, config=self.config) # Export object - exports to samba share
-        self.communication = Communication(self.module_id, config=self.config) # Communication object - handles ZMQ messaging
+        self.communication = Communication(config=self.config) # Communication object - handles ZMQ messaging
         self.health = Health(config=self.config) # Health object - monitors system health e.g. temperature, resource utilisation, ptp sync
         self.ptp = PTP(role=PTPRole.SLAVE) # PTP object - initialises ptp sync
         self.recording = Recording(config=self.config) # Recording object - sets up, maintains and manages recording sessions
@@ -173,6 +173,9 @@ class Module(ABC):
         # Log to file if enabled
         if self.config.get("logging.to_file", True):
             self.setup_logger_file_handling() 
+
+        
+        # self.check_interrupted_recordings()
 
 
     def get_module_name(self) -> str:
@@ -279,6 +282,8 @@ class Module(ABC):
 
             self.is_connected_to_controller = True
             
+            self.check_interrupted_recordings()
+
         except Exception as e:
             self.logger.error(f"Error during controller initialization: {e}")
             # Clean up any partial initialization
@@ -740,6 +745,41 @@ class Module(ABC):
         }
 
 
+    def check_interrupted_recordings(self):
+        files = self.check_recordings()
+        if len(files["pending"]) == 0:
+            return
+
+        self.logger.warning(f"Module has only just booted but incomplete recordings are present. Will attempt to export {len(files['pending'])} files.")
+        
+        incomplete_files = files["pending"]
+        for file in incomplete_files:
+            current_filepath = f"{self.facade.get_recording_folder()}/{file}"
+            new_filepath = f"{self.facade.get_recording_folder()}/PARTIAL_{file}" 
+            os.rename(current_filepath, new_filepath)
+            self.logger.info(f"Staging file for export: {new_filepath}")
+            self.facade.stage_file_for_export(new_filepath)
+            self.facade.export_staged(f"BACKUP_PARTIAL_FILES_{self.get_utc_time(time.time())}")
+
+
+
+    def check_recordings(self) -> dict:
+        recordings_folder = self.facade.get_recording_folder()
+        to_export_folder = self.facade.get_to_export_folder()
+        exported_folder = self.facade.get_exported_folder()
+
+        pending_files = os.listdir(recordings_folder)
+        to_export_files = os.listdir(to_export_folder)
+        exported_files = os.listdir(exported_folder)
+
+        files = {
+            "pending": pending_files,
+            "to_export": to_export_files,
+            "exported": exported_files
+        }
+        return files
+
+
 
     """Helper functions"""
     def generate_module_id(self, module_type: str) -> str:
@@ -760,6 +800,8 @@ class Module(ABC):
 
 
     def get_utc_time(self, timestamp: int):
+        if not timestamp:
+            timestamp = time.time()
         strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
         return strtime
 

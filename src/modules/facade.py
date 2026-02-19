@@ -28,6 +28,10 @@ class ModuleFacade():
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 
+    
+    def get_module_type(self) -> str:
+        return self.module.module_type
+
 
     def get_module_group(self) -> str:
         return self.module.get_module_group()
@@ -40,6 +44,14 @@ class ModuleFacade():
     def get_recording_folder(self) -> str:
         return self.module.recording.recording_folder
     
+
+    def get_to_export_folder(self) -> str:
+        return self.module.export.to_export_folder
+
+    
+    def get_exported_folder(self) -> str:
+        return self.module.export.exported_folder
+
 
     def get_recording_status(self) -> bool:
         return self.module.recording.is_recording
@@ -119,12 +131,12 @@ class ModuleFacade():
 
 
     """File Export"""
-    def set_session_name(self, session_name: str) -> bool:
-        return self.module.export.set_session_name(session_name)
+    def get_current_session_name(self) -> str:
+        return self.module.recording.current_session_name
 
 
-    def export_staged(self):
-        return self.module.export.export_staged()
+    def export_staged(self, export_path: str):
+        return self.module.export.export_staged(export_path)
 
     
     def stage_file_for_export(self, filename: str) -> None:
@@ -178,6 +190,15 @@ class ModuleFacade():
         self.module.export.when_recording_starts()        
     
 
+    """Network"""
+    def subscribe_to_topic(self, topic: str):
+        """Subscribe to commands for supplied topic."""
+        self.module.communication.subscribe_to_topic(topic)
+
+    
+    def unsubscribe_from_topic(self, topic: str):
+        """Unsubscribe from commands related to given topic. Typically used when module changes group."""
+        self.module.communication.unsubscribe_from_topic(topic)
 
 
 

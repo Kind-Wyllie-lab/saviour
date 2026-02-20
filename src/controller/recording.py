@@ -46,8 +46,8 @@ class Recording():
             - duration: Recording session duration in seconds
         """
         # Add timestamp to session name
-        start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_name += ("_" + start_time)
+        start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+        session_name += ("-" + start_time)
 
         # Send the command
         params = {
@@ -134,8 +134,8 @@ class Recording():
 
     def create_session(self, session_name: str, target: str):
         # Add timestamp to session name
-        start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_name += ("_" + start_time)
+        start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+        session_name += ("-" + start_time)
 
         self.logger.info(f"Creating recording session {session_name} targeting {target}")
 

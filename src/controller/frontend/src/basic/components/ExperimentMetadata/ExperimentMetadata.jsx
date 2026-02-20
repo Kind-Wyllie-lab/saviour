@@ -108,7 +108,7 @@ function ExperimentMetadata( {experimentName} ) {
         {/* <div className="filename-preview">Filename preview:</p> */}
         <div>
           <p className="session-name-preview-title">Session Name</p>
-          <p className="session-name-preview">{experimentName}_(TIMESTAMP)</p>
+          <p className="session-name-preview">{experimentName}-(TIMESTAMP)</p>
           </div>
       </div>
     </>

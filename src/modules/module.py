@@ -754,13 +754,24 @@ class Module(ABC):
         
         incomplete_files = files["pending"]
         for file in incomplete_files:
-            current_filepath = f"{self.facade.get_recording_folder()}/{file}"
-            new_filepath = f"{self.facade.get_recording_folder()}/PARTIAL_{file}" 
-            os.rename(current_filepath, new_filepath)
-            self.logger.info(f"Staging file for export: {new_filepath}")
-            self.facade.stage_file_for_export(new_filepath)
-            self.facade.export_staged(f"BACKUP_PARTIAL_FILES_{self.get_utc_time(time.time())}")
+            self.logger.info(f"Backing up {file}")
 
+            # Rename file to indicate that it is a partial recording
+            filename, filetype = file.split(".")
+            current_filepath = f"{self.facade.get_recording_folder()}/{file}"
+            new_filepath = f"{self.facade.get_recording_folder()}/{filename}_PARTIAL.{filetype}" 
+            os.rename(current_filepath, new_filepath)
+
+            # Get session name from filename
+            session_name = self.facade.get_session_from_filename(filename)
+            file_start_date = self.facade.get_start_time_from_filename(filename)[0:8] # 
+
+            # Create export path
+            export_path = f"{session_name}/{file_start_date}/{self.facade.get_module_name()}"
+
+            self.logger.info(f"Staging file for export: {new_filepath} from session {session_name}")
+            self.facade.stage_file_for_export(new_filepath)
+            self.facade.export_staged(export_path)
 
 
     def check_recordings(self) -> dict:
@@ -802,7 +813,7 @@ class Module(ABC):
     def get_utc_time(self, timestamp: int):
         if not timestamp:
             timestamp = time.time()
-        strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
+        strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d-%H%M%S")
         return strtime
 
     

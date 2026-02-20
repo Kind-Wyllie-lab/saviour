@@ -178,7 +178,8 @@ class Recording():
 
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
             if self.config.get("export.auto_export") == True:
-                self.facade.export_staged(self.current_session_name)
+                export_path = f"{self.current_session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
+                self.facade.export_staged(export_path)
 
             return {"result": "Success"}
 
@@ -210,7 +211,8 @@ class Recording():
 
         # Start new actual recording segment 
         self.facade.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
-        self.facade.export_staged(self.current_session_name) # Export files that have been marked for export
+        export_path = f"{self.current_session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
+        self.facade.export_staged(export_path) # Export files that have been marked for export
 
 
     def _create_initial_recording_segment(self) -> None:
@@ -229,7 +231,7 @@ class Recording():
         Runs in a thread and monitors length of current recording.
         If it exceeds segment length limit, stops and starts a new recording.
         """
-        segment_length = self.config.get("recording.segment_length_mins", 30) # Default to 30 for debug for now 050126
+        segment_length = self.config.get("recording.segment_length_mins", 30) * 60 # Get segment length in mins and convert to seconds
         self.logger.info(f"Segment started at {self.segment_start_time},  segment length {segment_length}")
 
         while not self.monitor_recording_segments_stop_flag.is_set():
@@ -342,3 +344,14 @@ class Recording():
                 # Wait for either a stop signal or timeout
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
+
+
+    """File handling"""
+    def get_session_from_filename(self, filename: str) -> str:
+        session_name = filename.split("_")[0]
+        return session_name
+
+    
+    def get_start_time_from_filename(self, filename: str) -> str:
+        start_time = filename.split("_")[-1][0:-1]
+        return start_time

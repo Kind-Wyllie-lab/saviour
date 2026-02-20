@@ -82,10 +82,10 @@ class Web(ABC):
                 parts.append(value)
 
         # Join non-empty parts with underscores
-        name = "_".join(parts)
+        name = "-".join(parts)
 
         if name == "":
-            name = "NO_NAME"
+            name = "NO-NAME"
 
         return name
 
@@ -163,7 +163,7 @@ class Web(ABC):
                 params = data.get('params', {})
 
                 if command == "start_recording":
-                    params["experiment_name"] += ("_" + datetime.now().strftime("%Y%M%d_%H%m%s"))
+                    params["experiment_name"] += ("-" + datetime.now().strftime("%Y%M%d_%H%m%s"))
                 
                 # Send command to module
                 self.facade.send_command(module_id, command, params)

@@ -268,3 +268,10 @@ class Modules:
     def start(self):
         self.logger.info("Starting Modules manager")
         self.ready_timeout_thread.start()   
+
+    
+    def is_module_recording(self, module_id: str) -> bool:
+        if self.modules[module_id].status == ModuleStatus.RECORDING:
+            return True
+        else:
+            return False

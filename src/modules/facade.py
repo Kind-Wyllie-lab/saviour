@@ -134,6 +134,14 @@ class ModuleFacade():
     def get_current_session_name(self) -> str:
         return self.module.recording.current_session_name
 
+    
+    def get_session_from_filename(self, filename: str) -> str:
+        return self.module.recording.get_session_from_filename(filename)
+
+    
+    def get_start_time_from_filename(self, filename: str) -> str:
+        return self.module.recording.get_start_time_from_filename(filename)
+
 
     def export_staged(self, export_path: str):
         return self.module.export.export_staged(export_path)

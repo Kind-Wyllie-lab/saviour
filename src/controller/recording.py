@@ -14,6 +14,7 @@ from datetime import datetime
 import time
 from typing import Optional
 from dataclasses import dataclass, field
+import threading
 
 
 @dataclass
@@ -34,6 +35,7 @@ class Recording():
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.sessions = {} # Dict of recording sessions with session_name as key
+        self.session_monitor_thread = threading.Thread(target=self._monitor_sessions, daemon=True)
 
 
     def start_recording(self, target, session_name: str, duration: int):
@@ -278,4 +280,28 @@ class Recording():
 
 
 
+    """Session Monitoring"""
+    def _monitor_sessions(self):
+        while True:
+            for session in self.sessions:
+                if not session.active:
+                    pass
 
+                healthy = True # Begin by assuming session is healthy
+                
+                # Check if all modules are recording
+                for module_id in session.modules:
+                    error_message = "Not recording modules: "
+                    if not self.facade.is_module_recording(module_id):
+                        self.logger.info(f"Error in {session}, {module_id} is not recording")
+                        healthy = False
+                        error_message.append(f"{module_id} ")
+                    
+                if not healthy:
+                    self.sessions[session].error = True
+                    self.sessions[session].error_message = error_message 
+                else:
+                    self.sessions[session].error = False
+                    self.sessions[session].error_message = ""
+
+        time.sleep(1)

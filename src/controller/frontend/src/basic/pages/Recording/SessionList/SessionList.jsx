@@ -47,9 +47,15 @@ function SessionList({ sessionList }) {
                 </div>
 
                 {session.active && (
-                  <span className="status-badge recording">
-                    Recording
-                  </span>
+                  session.error ? (
+                    <span className="status-badge error">
+                      ERROR
+                    </span>
+                  ) : (
+                    <span className="status-badge recording">
+                      Recording
+                    </span>
+                  )
                 )}
 
                 {!session.active && (
@@ -66,7 +72,9 @@ function SessionList({ sessionList }) {
                   <p><strong>Modules:</strong> {session.modules.join(", ")}</p>
                   <p><strong>Start:</strong> {session.start_time || "–"}</p>
                   <p><strong>End:</strong> {session.end_time || "–"}</p>
-
+                  {session.error && (
+                    <p><strong>ERROR:</strong> {session.error_message}</p>
+                  )}
                   {session.active && (
                     <button
                       className="stop-button"

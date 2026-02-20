@@ -42,9 +42,14 @@
     color: #2e7d32;
   }
   
+  .status-badge.error {
+    color: yellow;
+  }
+
   .status-badge.stopped {
     color: #666;
   }
+
   
   .stop-button {
     margin-top: 0.8rem;

@@ -138,6 +138,9 @@ class ControllerFacade():
         else: 
             return True
 
+    """Module Management"""
+    def is_module_recording(self, module_id: str) -> bool:
+        return self.controller.modules.is_module_recording(module_id)
 
     """Events"""
     def module_offline(self, module_id: str) -> None:

@@ -326,8 +326,11 @@ configure_dhcp_server() {
     
     # Setup static ip
     echo "Setting static IP to 10.0.0.1 with nmcli"
-    sudo nmcli connection modify "netplan-eth0" ipv4.method manual # Changed to netplan-eth0 with latest pi 5 os (Trixie) previously was Wired connection 1
-    sudo nmcli connection modify "netplan-eth0" ipv4.addresses 10.0.0.1/24
+    INTERFACE=`nmcli -t -f GENERAL.CONNECTION device show eth0 | cut -d: -f2-`
+    IP="10.0.0.1/24"
+    GATEWAY="10.0.0.2" # Server will act as gateway
+    echo "Setting IP to $IP on $INTERFACE with gateawy $GATEWAY"
+    sudo nmcli connection modify "$INTERFACE" ipv4.addresses $IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual 
 
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then

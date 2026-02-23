@@ -345,7 +345,16 @@ set_own_ip() {
         c="0"
     fi
     DEVICE_IP="$a.$b.$c.1/16" # Set controller IP
-    echo "Setting IP to $DEVICE_IP on $INTERFACE with gateway $GATEWAY"
+    echo "Detected IP: $DEVICE_IP on $INTERFACE with gateway $GATEWAY"
+    read -p "Do you want to set these manually? (y/n): " choice
+
+    if [ "$choice" = "y" ] || [ "$choice" = "Y" ]; then
+        read -p "Enter the desired IP address (e.g., 10.0.3.1/16): " DEVICE_IP
+        read -p "Enter the desired gateway (e.g., 10.0.3.2): " GATEWAY
+
+        IFS='.' read -r a b c d <<< "$DEVICE_IP"
+    fi
+
     sudo nmcli connection modify "$INTERFACE" ipv4.addresses $IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual 
 }
 

@@ -236,11 +236,21 @@ class Web(ABC):
             self.logger.info(f"Received request to create session {session_name} targeting {target}")
             self.facade.create_session(session_name, target)
 
-        
+
+        @self.socketio.on("create_scheduled_session")
+        def handle_create_scheduled_session(data):
+            target = data.get("target")
+            session_name = data.get("session_name")
+            start_time = data.get("start_time")
+            end_time = data.get("end_time")
+            self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time}")
+            self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+
+
         @self.socketio.on("stop_session")
         def handle_stop_session(data):
             session_name = data.get("session_name")
-            self.logger.info(f"Received request to create session {session_name}")
+            self.logger.info(f"Received request to stop session {session_name}")
             self.facade.stop_session(session_name)
             
 

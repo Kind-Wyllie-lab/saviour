@@ -31,6 +31,8 @@
     margin-top: 0.8rem;
     padding-top: 0.6rem;
     border-top: 1px solid #eee;
+    display: flex;
+    flex-direction: column;
   }
   
   .status-badge {
@@ -50,6 +52,18 @@
     color: #666;
   }
 
+  .status-icon {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    z-index: 2;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+  }
+
+  .status-icon.recording {
+    background-color: red;
+  }
+
   
   .stop-button {
     margin-top: 0.8rem;
@@ -59,6 +73,7 @@
     border: none;
     border-radius: 6px;
     cursor: pointer;
+    justify-self: flex-end;
   }
   
   .stop-button:hover {

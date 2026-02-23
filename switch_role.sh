@@ -320,18 +320,50 @@ disable_samba_share() {
     echo Stopped and disabled smbd and nmbd
 }
 
+check_for_gateway() {
+    # If the local network has a device at 192.168.x.2 or 10.0.x.2, SAVIOUR will assume this is gateway and configure it's own IP to match.
+    GATEWAY=""
+    for i in {1..254}; do
+        if ping -c 1 -w 1 10.0.$i.2 >/dev/null 2>&1 ; then 
+            GATEWAY="10.0.$i.2"
+            break 
+        fi
+        if ping -c 1 -w 1 192.168.$i.2 >/dev/null 2>&1; then 
+            GATEWAY="192.168.$i.2"
+            break
+        fi
+    done
+}
+
+set_own_ip() {
+    if [ -n "$GATEWAY" ]; then
+        # Extract subnet from gateway IP
+        IFS='.' read -r a b c d <<< "$GATEWAY"
+    else
+        a="10"
+        b="0"
+        c="0"
+    fi
+    DEVICE_IP="$a.$b.$c.1/16" # Set controller IP
+    echo "Setting IP to $DEVICE_IP on $INTERFACE with gateway $GATEWAY"
+    sudo nmcli connection modify "$INTERFACE" ipv4.addresses $IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual 
+}
+
+detect_interface_name() {
+    INTERFACE=$(nmcli -t -f GENERAL.CONNECTION device show eth0 | cut -d: -f2-)
+}
+
+
 # Function to configure DHCP server
 configure_dhcp_server() {
     echo "Configuring DHCP Server"
     
     # Setup static ip
-    echo "Setting static IP to 10.0.0.1 with nmcli"
-    INTERFACE=`nmcli -t -f GENERAL.CONNECTION device show eth0 | cut -d: -f2-`
-    IP="10.0.0.1/24"
-    GATEWAY="10.0.0.2" # Server will act as gateway
-    echo "Setting IP to $IP on $INTERFACE with gateawy $GATEWAY"
-    sudo nmcli connection modify "$INTERFACE" ipv4.addresses $IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual 
-
+    echo "Setting static IP with nmcli"
+    detect_interface_name
+    check_for_gateway
+    set_own_ip
+    
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
         echo "[INSTALLING] dnsmasq"
@@ -363,6 +395,12 @@ configure_dhcp_server() {
     
     # Create new dnsmasq configuration for local network only
     echo "Creating dnsmasq configuration for local network..."
+    if [ -n "$GATEWAY" ]; then
+        DHCP_OPTION="dhcp-option=3,$GATEWAY"
+    else
+        DHCP_OPTION="dhcp-option=3"
+    fi
+
     sudo tee /etc/dnsmasq.conf > /dev/null <<EOF
 # dnsmasq configuration for Saviour local network
 # This Pi acts as DHCP server for local network only
@@ -373,10 +411,10 @@ interface=eth0
 bind-interfaces
 
 # DHCP range for local network (adjust as needed)
-dhcp-range=10.0.0.128,10.0.0.255,12h
+dhcp-range=$a.$b.$c.128,$a.$b.$c.255,12h
 
 # Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
-dhcp-option=3
+$DHCP_OPTION
 
 # Disable DNS server functionality (we only want DHCP)
 port=0
@@ -394,7 +432,7 @@ EOF
     sudo mkdir -p /etc/systemd/system/dnsmasq.service.d
     sudo tee /etc/systemd/system/dnsmasq.service.d/override.conf > /dev/null <<EOF
 [Unit]
-Description=DHCP Server for Saviour Local Network
+Description=DHCP Server for SAVIOUR Local Network
 
 [Service]
 # Don't start automatically at boot

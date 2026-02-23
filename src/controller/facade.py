@@ -120,7 +120,11 @@ class ControllerFacade():
     def create_session(self, session_name: str, target: str) -> None:
         return self.controller.recording.create_session(session_name, target)
 
+
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str) -> None:
+        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time)
     
+
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
 

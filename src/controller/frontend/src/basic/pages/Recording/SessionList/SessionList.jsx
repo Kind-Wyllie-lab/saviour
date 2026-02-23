@@ -31,58 +31,58 @@ function SessionList({ sessionList }) {
           return (
             <div
               key={session.session_name}
-              className={`session ${session.active ? "active" : "stopped"}`}
+              className={`session ${session.stopped? "stopped" : ""}`}
             >
               {/* Header row */}
               <div
                 className="session-header"
                 onClick={() =>
-                  !session.active &&
+                  session.stopped &&
                   toggleExpand(session.session_name)
                 }
               >
                 <div>
                   <strong>{session.session_name}</strong>
-                  {!session.active && " - Stopped"}
+                  {session.stopped && " - Stopped"}
                 </div>
 
                 {session.active && (
                   session.error ? (
-                    <span className="status-badge error">
-                      ERROR
+                    <span className="status-icon error">
                     </span>
                   ) : (
-                    <span className="status-badge recording">
-                      Recording
+                    <span className="status-icon recording">
                     </span>
                   )
                 )}
 
-                {!session.active && (
-                  <span className="status-badge stopped">
+                {session.stopped && (
+                  <span>
                     {isExpanded ? "▲" : "▼"}
                   </span>
                 )}
               </div>
 
               {/* Details */}
-              {(session.active || isExpanded) && (
+              {(!session.stopped || isExpanded) && (
                 <div className="session-details">
                   <p><strong>Target:</strong> {session.target}</p>
                   <p><strong>Modules:</strong> {session.modules.join(", ")}</p>
-                  <p><strong>Start:</strong> {session.start_time || "–"}</p>
-                  <p><strong>End:</strong> {session.end_time || "–"}</p>
+                  <p><strong>Start:</strong> {session.start_time || "-"}</p>
+                  <p><strong>End:</strong> {session.end_time || "-"}</p>
                   {session.error && (
                     <p><strong>ERROR:</strong> {session.error_message}</p>
                   )}
-                  {session.active && (
+                  {session.stopped && (
+                    <p><strong>Status:</strong> Session is stopped</p>
+                  )}
+                  {session.scheduled && <p><strong>Scheduled Time:</strong> {session.scheduled_start_time} - {session.scheduled_end_time}</p>}
+                  {!session.stopped && (
                     <button
                       className="stop-button"
-                      onClick={() =>
-                        handleStop(session.session_name)
-                      }
+                      onClick={() => handleStop(session.session_name)}
                     >
-                      Stop Session
+                      End Session
                     </button>
                   )}
                 </div>

@@ -47,6 +47,8 @@ class Export:
         self.samba_share_password = None
         self._update_samba_settings()
 
+        self.exporting = False # Flag to indicate whether export in progress
+
         # Staged files for export
         self.session_files = [] # Record of all recorded files in the session
         self.session_name = None
@@ -96,6 +98,7 @@ class Export:
         """
         self.staged_for_export = os.listdir(self.to_export_folder)
         self.logger.info(f"Attempting to export {self.staged_for_export}")
+        self.exporting = True
         try:
 
             export_path = self._setup_export(export_path)
@@ -162,10 +165,12 @@ class Export:
             self.to_export = []
 
             self.logger.info(f"Successfully exported {exported_count} session files to {export_path}")
+            self.exporting = False
             return True
             
         except Exception as e:
             self.logger.error(f"Export error: {e}")
+            self.exporting = False
             return False
 
 
@@ -378,6 +383,15 @@ class Export:
             self._clear_traffic_control_filter()
             self._apply_traffic_control_filter()
 
+
+    def _samba_settings_changed(self):
+        self.samba_share_ip = self.config.get("export._share_ip", "10.0.0.1") 
+        self.samba_share_path = self.config.get("export._share_path", "controller_share")
+        self.samba_share_username = self.config.get("export._share_username", "pi") 
+        self.samba_share_password = self.config.get("export._share_password", "saviour")
+        self._clear_traffic_control_filter()
+        self._apply_traffic_control_filter()
+        
 
     def _clear_traffic_control_filter(self):
         self.logger.info("Clearing traffic control filters")

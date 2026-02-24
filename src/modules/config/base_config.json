@@ -24,8 +24,8 @@
         "_health_metadata_recording_interval": 5
     },
     "export": {
-        "_auto_export": true,
-        "_delete_on_export": true,
+        "auto_export": true,
+        "delete_on_export": true,
         "_manifest_enabled": false,
         "_share_path": "controller_share",
         "share_ip": "10.0.0.1",

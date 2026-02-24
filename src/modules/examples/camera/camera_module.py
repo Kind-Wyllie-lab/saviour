@@ -109,10 +109,9 @@ class CameraModule(Module):
             return True, "Picam2 object instantiated"
 
 
-    def configure_module(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
-            self.logger.info("Camera settings changed, restarting stream to apply new configuration")
             # Configure anything that doesn't require stream to restart
             restart_keys = [
                 "camera.fps",
@@ -126,6 +125,7 @@ class CameraModule(Module):
                     self._restarting_stream = True
             
             if self._restarting_stream == True:
+                self.logger.info("Restarting stream to apply new configuration")
                 self.stop_streaming()
                 time.sleep(1)
                 try:
@@ -144,7 +144,6 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
         elif not self.is_streaming:
-            self.logger.info("Camera settings changed but not streaming, going straight to applying new configuration")
             try:
                 self._configure_camera()
                 self.logger.info("Camera reconfigured successfully (not streaming)")

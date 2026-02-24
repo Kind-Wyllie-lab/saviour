@@ -159,7 +159,7 @@ class Export:
                     return False
         
             # Delete exported files
-            if self.config.get("export.auto_delete_on_export", True):
+            if self.config.get("export.delete_on_export", True):
                 self._delete_local_files(exported)
 
             self.to_export = []

@@ -129,7 +129,7 @@ class Module(ABC):
         }
 
         # Register callbacks and facade
-        self.config.on_module_config_change = self.on_module_config_change
+        self.config.configure_module = self.configure_module
         self.network.facade = self.facade
         self.health.facade = self.facade
         self.communication.facade = self.facade
@@ -227,20 +227,27 @@ class Module(ABC):
             self.logger.info("Logger file handler was not set up as handlers already exist")
 
 
-    def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
+    def configure_module(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
 
         # Check for special keys
         export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export._share_path"]
+        should_reconfigure_samba = False
         for key in export_keys:
             if key in updated_keys:
-                self.export._samba_settings_changed()
+                should_reconfigure_samba = True
+        if should_reconfigure_samba:
+            self.logger.info("Reconfiguring samba")
+            self.export._samba_settings_changed()
 
-        self.configure_module(updated_keys)
+        if "module.group" in updated_keys:
+            self.communication.group_changed()
+
+        self.configure_module_special(updated_keys)
 
 
     @abstractmethod
-    def configure_module(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
 

@@ -24,12 +24,14 @@
         "_health_metadata_recording_interval": 5
     },
     "export": {
-        "_auto_export": true,
-        "_delete_on_export": true,
+        "auto_export": true,
+        "delete_on_export": true,
         "_manifest_enabled": false,
         "_share_path": "controller_share",
-        "_share_ip": "10.0.0.1",
+        "share_ip": "10.0.0.1",
         "_share_username": "pi",
-        "_share_password": "saviour"
+        "_share_password": "saviour",
+        "max_bitrate_mb": 10,
+        "max_burst_kb": 30
     }
 }

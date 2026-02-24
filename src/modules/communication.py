@@ -30,9 +30,10 @@ class Communication:
         self.logger = logging.getLogger(__name__)
         self.config = config
         
+        self.group = self.config.get("module.group")
+        
         # Control flags
         self.command_listener_running = False
-        # self.heartbeats_active = False # TODO: move to health manager
         self.last_command = None
         
         # Controller connection info
@@ -94,7 +95,7 @@ class Communication:
             self.subscribe_to_topic(self.facade.get_module_id())
             self.subscribe_to_topic("all")
             self.subscribe_to_topic(self.facade.get_module_type())
-            group = self.config.get("module.group")
+            group = self.group
             if group is not None and len(group) > 0:
                 self.subscribe_to_topic(group)
             # self.logger.info(f"Module ID: {self.facade.get_module_id()}")
@@ -119,6 +120,18 @@ class Communication:
             self.logger.error(f"Error connecting to controller: {e}")
             self.connection_attempts += 1
             return False
+
+        
+    def group_changed(self):
+        old_group = self.group
+        self.group = self.config.get("module.group")
+        new_group = self.group
+
+        if old_group is not None and len(old_group) > 0:
+            self.unsubscribe_from_topic(old_group)
+
+        if new_group is not None and len(new_group) > 0:
+            self.subscribe_to_topic(new_group)
 
 
     def subscribe_to_topic(self, topic: str) -> None:

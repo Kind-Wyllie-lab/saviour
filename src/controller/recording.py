@@ -287,7 +287,7 @@ class Recording():
             for session_name, session in self.sessions.items():
                 try:
                     if session.stopped:
-                        pass
+                        continue
 
                     self.logger.info(f"{session_name} is not yet stopped")
             

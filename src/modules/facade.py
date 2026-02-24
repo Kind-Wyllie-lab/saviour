@@ -11,6 +11,7 @@ Created: 12/01/2026
 
 import logging
 import os
+import subprocess
 from typing import Dict, Any, Optional
 
 class ModuleFacade():
@@ -97,9 +98,20 @@ class ModuleFacade():
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 
+
     """Utility Methods"""
     def generate_session_id(self, module_id: str) -> str:
         return self.module.generate_session_id(module_id)
+
+
+    def run_shell_cmd(self, cmd: list) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+            self.logger.info(f"Command succeeded: {result.stdout}")
+            return True, result.stdout
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Command failed: {e.stderr}") 
+            return False, e.stderr
 
 
     """Communication Methods"""

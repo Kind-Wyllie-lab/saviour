@@ -439,8 +439,8 @@ class Export:
         # result = subprocess.run(add_qdisc_cmd, shell=True, check=True, text=True, capture_output=True)
         self._run_shell_command(add_qdisc_cmd)
 
-        max_bitrate_mb = self.config.get("export._max_bitrate_mb", 10)
-        max_burst_kb = self.config.get("export._max_burst_kb", 30)
+        max_bitrate_mb = self.config.get("export.max_bitrate_mb", 10)
+        max_burst_kb = self.config.get("export.max_burst_kb", 30)
         add_class_cmd = [
             "sudo", "tc", "class", "add", 
             "dev", "eth0", 

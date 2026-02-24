@@ -229,6 +229,13 @@ class Module(ABC):
 
     def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
+
+        # Check for special keys
+        export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export._share_path"]
+        for key in export_keys:
+            if key in updated_keys:
+                self.export._samba_settings_changed()
+
         self.configure_module(updated_keys)
 
 
@@ -585,7 +592,7 @@ class Module(ABC):
             if not isinstance(config, dict):
                 self.logger.error(f"set_config called with non-dict argument: {type(config)}")
                 return False
-            
+
             # Use the config manager's merge method to update the config
             self.config.set_all(config, persist=persist)
             return {"result": "success", "config": self.config.get_all()}

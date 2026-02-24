@@ -366,11 +366,92 @@ class Export:
     """Samba Methods"""
     def _update_samba_settings(self):
         """Check for updated samba settings from config"""
-        self.samba_share_ip = self.config.get("export._share_ip", "10.0.0.1") # These are not pulling from config for now and I don't know why.
+        old_samba_ip = self.samba_share_ip
+
+        self.samba_share_ip = self.config.get("export._share_ip", "10.0.0.1") 
         self.samba_share_path = self.config.get("export._share_path", "controller_share")
-        self.samba_share_username = self.config.get("export._share_username", "pi") # TODO: Make this more secure?
+        self.samba_share_username = self.config.get("export._share_username", "pi") 
         self.samba_share_password = self.config.get("export._share_password", "saviour")
 
+        # If IP has changed, reconfigure traffic control rules
+        if self.samba_share_ip != old_samba_ip: 
+            self._clear_traffic_control_filter()
+            self._apply_traffic_control_filter()
+
+
+    def _clear_traffic_control_filter(self):
+        self.logger.info("Clearing traffic control filters")
+        try:
+            # Check if the qdisc exists
+            check_cmd = ["sudo", "tc", "qdisc", "show", "dev", "eth0"]
+            check_result = subprocess.run(check_cmd, check=True, text=True, capture_output=True)
+
+            if "htb" in check_result.stdout:
+                # Proceed to delete the qdisc if it exists
+                cmd = [
+                    "sudo", "tc", "qdisc", "del", 
+                    "dev", "eth0", 
+                    "root"
+                ]
+                self._run_shell_command(cmd)
+                self.logger.info("Traffic control filters cleared successfully")
+            else:
+                self.logger.info("No traffic control filters found; nothing to clear")
+
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
+
+
+    def _run_shell_command(self, cmd: list):
+        try:
+            result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+            self.logger.info(f"Command succeeded: {result.stdout}")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Command failed: {e.stderr}")
+
+
+    def _apply_traffic_control_filter(self):
+        self.logger.info(f"Applying new traffic control filter for {self.samba_share_ip} on samba port 445")
+        
+        add_qdisc_cmd = [
+            "sudo", "tc", "qdisc", "add", 
+            "dev", "eth0", 
+            "root", # Create the root level queueing discipling
+            "handle", "1:0",  # Create new queueing discipline with handle 1:0
+            "htb", # Hierarchical token bucket
+            "default", "10" # Default class for packets that don't match any criteria
+        ] 
+
+        # result = subprocess.run(add_qdisc_cmd, shell=True, check=True, text=True, capture_output=True)
+        self._run_shell_command(add_qdisc_cmd)
+
+        max_bitrate_mb = self.config.get("export._max_bitrate_mb", 10)
+        max_burst_kb = self.config.get("export._max_burst_kb", 30)
+        add_class_cmd = [
+            "sudo", "tc", "class", "add", 
+            "dev", "eth0", 
+            "parent", "1:0",  # Apply to parent queueing discipline with handle 1:0 (root)
+            "classid", "1:1",  # Create new class with handle 1:1
+            "htb", # Hierarchical token bucket
+            "rate", f"{max_bitrate_mb}mbit", 
+            "burst", f"{max_burst_kb}k"
+        ]
+        # result = subprocess.run(add_class_cmd, shell=True, check=True, text=True, capture_output=True)
+        self._run_shell_command(add_class_cmd)
+
+        add_filter_cmd = [
+            "sudo", "tc", "filter", "add",
+            "dev", "eth0",
+            "protocol", "ip",
+            "parent", "1:0", # Apply to parent queueing discipline with handle 1:0 (root)
+            "u32", # Use u32 packet classifier
+            "match", "ip", "dst", self.samba_share_ip,
+            "match", "ip", "dport", "445",
+            "0xffff", # Bitmask for header - match exactly on port 445
+            "flowid", "1:1" # Direct matching traffic to the class with identifier 1:1 (the one that rate limits traffic)
+        ]
+        # result = subprocess.run(add_filter_cmd, shell=True, check=True, text=True, capture_output=True)
+        self._run_shell_command(add_filter_cmd)
 
     def _mount_share(self) -> bool:
         """Mount Samba share using preconfigured options"""

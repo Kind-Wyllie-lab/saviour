@@ -118,11 +118,26 @@ class Export:
                     filename = pathlib.Path(filename).name
                     self.logger.info(f"Exporting {filename}")
 
-                    source_path = f"{source_folder}/{filename}"
-                    dest_path = f"{export_path}/{filename}"
+                    # Rename file "PENDING"
+                    temp_filename = f"PENDING_{filename}"
 
-                    shutil.copy2(source_path, dest_path)
+                    source_path = f"{source_folder}/{filename}"
+                    temp_source_path = f"{source_folder}/{temp_filename}"
+                    temp_dest_path = f"{export_path}/{temp_filename}"
+                    dest_path = f"{export_path}/{filename}"
+                
+                    os.rename(source_path, temp_source_path)
+
+                    # Copy the file to samba share
+                    shutil.copy2(temp_source_path, temp_dest_path)
+
+                    # Remove "PENDING" from filename on local and remote copy
+                    os.rename(temp_dest_path, dest_path)
+                    os.rename(temp_source_path, source_path)
+
+                    # Move local copy of file from to_export/ to exported/
                     shutil.move(source_path, f"{self.exported_folder}/{filename}") # Move it from to_export to exported
+
                     self.logger.info(f"Exported: {dest_path}")
                     exported_count += 1
                     exported.append(filename)

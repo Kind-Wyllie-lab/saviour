@@ -1,6 +1,6 @@
 from collections import defaultdict
 import csv
-
+from datetime import datetime
 
 components = {
     "pi5": {
@@ -59,6 +59,9 @@ components = {
         "link": "https://thepihut.com/products/gpio-screw-terminal-hat",
         "price": 13.00
     },
+    "audiomoth": {
+        "name": "Audiomoth Microphone"
+    }
     "ethernet_cable": {
         "name": "Ethernet Cable",
         "link": "https://thepihut.com/products/cat6a-shielded-snagless-rj45-ethernet-cable-2m?variant=40638521704643&country=GB&currency=GBP&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&gad_source=1&gad_campaignid=11673057096&gbraid=0AAAAADfQ4GEC9FtD9xgscKJkD8ZGfEWVP&gclid=CjwKCAiAraXJBhBJEiwAjz7MZR3RhOtRWh0PaTDeGcQKzqcR_jbTVvi6cRdoKAOxcU7_G5725rGyQxoCxn8QAvD_BwE",
@@ -103,6 +106,12 @@ devices = {
         "ttl_hat": 1,
         "poe_hat": 1,
         "sd_card": 1
+    },
+    "usv": {
+        "pi5": 1,
+        "poe_hat": 1,
+        "sd_card": 1,
+        "audiomoth": 1
     }
 }
 
@@ -128,11 +137,26 @@ def get_input(prompt: str) -> int:
             print("Please enter an integer number")
 
 
-def export_shopping_list_csv(filename, totals, components):
+def export_shopping_list_csv(filename, totals, components, module_counts):
     grand_total = 0.0
+
+    # Build description
+    description_parts = []
+    for module, count in module_counts.items():
+        if count > 0:
+            description_parts.append(f"{count} {module}")
+    description_line = ", ".join(description_parts)
+
 
     with open(filename, mode="w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
+
+        # Description header
+        writer.writerow(["System Configuration"])
+        writer.writerow([description_line])
+        writer.writerow([f"Total Units: {total_units}"])
+        writer.writerow([f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"])
+        writer.writerow([])
 
         # Header
         writer.writerow(["Item", "Number", "Unit Price (£)", "Total Price (£)", "Link"])
@@ -224,4 +248,4 @@ if __name__ == "__main__":
     print(f"Processing (5%): £{processing_fee:.2f}")
     print(f"Final Total:     £{final_total:.2f}")
 
-    export_shopping_list_csv("shopping_list.csv", totals, components)
+    export_shopping_list_csv("shopping_list.csv", totals, components, module_counts)

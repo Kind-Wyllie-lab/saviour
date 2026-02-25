@@ -94,10 +94,19 @@ function GenericConfigCard({ id, module }) {
       );
     });
   };
+
+  const handleUpdate = () => {
+    // Send command to module to update saviour version
+    socket.emit("send_command", {
+      module_id: module.id,
+      type: "update_saviour",
+      params: {}
+    })
+  }
   
 
   const handleSave = () => {
-    import("../../../../socket").then(({ default: socket }) => {
+    import("/src/socket").then(({ default: socket }) => {
       const editableData = filterPrivateKeys(formData); // only send editable keys
       const wrappedData = { config: editableData };
       console.log("Saving config for module", id, wrappedData);
@@ -123,6 +132,10 @@ function GenericConfigCard({ id, module }) {
             <LivestreamCard module={module} />
           </div>
         )}
+
+      </div>
+      <div className="update-button-wrapper">
+        <button className="update-button" type="button" onClick={handleUpdate}>Update Saviour Version</button>
       </div>
     </div>
   );

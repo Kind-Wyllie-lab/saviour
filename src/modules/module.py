@@ -126,6 +126,7 @@ class Module(ABC):
             'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
+            "update_saviour": self.update_saviour
         }
 
         # Register callbacks and facade
@@ -187,6 +188,44 @@ class Module(ABC):
 
     def get_module_group(self) -> str:
         return self.config.get("module.group")
+
+
+    def update_saviour(self) -> bool:
+        """Update saviour to the latest version from git"""
+        try:
+            # Check internet connectivity before attempting git pull
+            self.logger.info("Checking internet connectivity before updating SAVIOUR")
+            try:
+                subprocess.run(["ping", "-c", "1", "github.com"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.logger.info("Internet connectivity confirmed")
+            except subprocess.CalledProcessError:
+                self.logger.warning("No internet connectivity, cannot update SAVIOUR")
+                return False
+            self.logger.info("Updating SAVIOUR to the latest version from git")
+
+            # Ensure main branch is checked out before pulling
+            # result = subprocess.run(["git", "checkout", "main"], capture_output=True, text=True)
+            # if result.returncode != 0:
+            #     self.logger.error(f"Failed to checkout main branch: {result.stderr}")
+            #     return False
+
+            # Still shows Host key verification failed when running as root under systemd, even after creating known_hosts file - workaround is to disable strict host key checking for github.com in global git config (only for root user, so should be safe)
+            result = subprocess.run(["git", "config", "--global", "--add", "ssh.github.com.strictHostKeyChecking", "no"], capture_output=True, text=True)   
+
+            # Can I run a subprocess command not as root user?
+            
+
+            # Pull the latest changes
+            result = subprocess.run(["git", "pull"], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.logger.info(f"SAVIOUR update successful: {result.stdout}")
+                return True
+            else:
+                self.logger.error(f"SAVIOUR update failed: {result.stderr}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error updating SAVIOUR: {e}")
+            return False
 
 
     def setup_logger_file_handling(self) -> None:

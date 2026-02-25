@@ -94,6 +94,7 @@ install_system_packages() {
 create_python_environment() {
     if [ ! -d "env" ]; then
         python3 -m venv env --system-site-packages
+        # python3 -m venv env 
     fi
 
     source env/bin/activate
@@ -101,6 +102,9 @@ create_python_environment() {
     pip install --upgrade pip
 
     pip install -e .
+
+    # Fix simplejpeg issue
+    pip install --force-reinstall simplejpeg
 
     echo "Python dependencies installed"
 }

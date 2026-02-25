@@ -109,16 +109,15 @@ class CameraModule(Module):
             return True, "Picam2 object instantiated"
 
 
-    def configure_module(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
-            self.logger.info("Camera settings changed, restarting stream to apply new configuration")
             # Configure anything that doesn't require stream to restart
             restart_keys = [
                 "camera.fps",
                 "camera.width",
                 "camera.height",
-                "camera.bitrate"
+                "camera.bitrate_mb"
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -126,6 +125,7 @@ class CameraModule(Module):
                     self._restarting_stream = True
             
             if self._restarting_stream == True:
+                self.logger.info("Restarting stream to apply new configuration")
                 self.stop_streaming()
                 time.sleep(1)
                 try:
@@ -144,7 +144,6 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
         elif not self.is_streaming:
-            self.logger.info("Camera settings changed but not streaming, going straight to applying new configuration")
             try:
                 self._configure_camera()
                 self.logger.info("Camera reconfigured successfully (not streaming)")
@@ -164,13 +163,15 @@ class CameraModule(Module):
             self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
             self.width = self.config.get("camera.width", 1280)
             self.height = self.config.get("camera.height", 720)
-            
+            self.lores_width = int(self.width/2)
+            self.lores_height = int(self.height/2)
+
             # Pick appropriate sensor mode - we will use mode 0 by default
             self.mode = self.camera_modes[0]
 
             sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
-            lores = {"size": (self.width, self.height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
+            lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
             controls = {"FrameRate": self.fps} # target framerate, in reality it might be lower.
             
             if self.config.get("camera.monochrome") is True:
@@ -193,7 +194,7 @@ class CameraModule(Module):
             self.picam2.post_callback = self._stream_post_callback
             
             # Create encoders with current settings
-            bitrate = self.config.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate_mb", 5) * 1000000
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
@@ -203,7 +204,7 @@ class CameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error configuring camera: {e}")
             # Initialize encoders even if configuration fails
-            bitrate = self.config.get("camera.bitrate", 10000000)
+            bitrate = self.config.get("camera.bitrate_mb", 5) * 1000000
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=bitrate/10)
             return False
@@ -218,11 +219,10 @@ class CameraModule(Module):
     def _start_new_recording(self) -> None:
         """Start a new recording session - set up SplittableOutput"""
         # Start video
-        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.ts
         self.logger.info(f"Starting recording with filename {filename}")
         self.current_video_segment = filename
-        self.api.stage_file_for_export(filename)
-        self.api.add_session_file(filename)
+        self.facade.add_session_file(filename)
 
         # Start the camera 
         if not self.picam2.started:
@@ -230,7 +230,7 @@ class CameraModule(Module):
             time.sleep(0.1)  # Give camera time to start
         
         # Create file output
-        self.file_output = SplittableOutput(PyavOutput(filename, format="mp4")) # 7.2.4 and 7.2.6 in docs
+        self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
         
         # Start recording
@@ -241,7 +241,7 @@ class CameraModule(Module):
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
         strtime = self.api.get_utc_time(self.api.get_segment_start_time())
-        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
         return filename
 
 
@@ -251,26 +251,26 @@ class CameraModule(Module):
         """
         # Stage current recording for export
         self.last_video_segment = self.current_video_segment
-        self.api.stage_file_for_export(self.last_video_segment)
+        self.facade.stage_file_for_export(self.last_video_segment)
 
         # Create new segment name
-        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.mp4
+        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.ts
         self.current_video_segment = filename
-        self.api.add_session_file(filename)
+        self.facade.add_session_file(filename)
 
         # Start recording to new segment
-        self.file_output.split_output(PyavOutput(filename, format="mp4"))
+        self.file_output.split_output(PyavOutput(filename, format="mpegts"))
         self.logger.info(f"Switched to new segment {filename}")
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
         # Reset positioning timestamps on recorded video prior to exporting it
-        self._fix_positioning_timestamps(self.last_video_segment)
+        # self._fix_positioning_timestamps(self.last_video_segment)
 
 
     def _fix_positioning_timestamps(self, filename: str) -> None:
         """Take an mp4 file produced by picamera2 SplittableOutput and reset positioning timestamps"""
-        tmp_filename = f"{filename[:-4]}_formatted.mp4"
+        tmp_filename = f"{filename[:-4]}_formatted.ts"
         subprocess.run([
             "ffmpeg",
             "-i", filename,
@@ -281,6 +281,7 @@ class CameraModule(Module):
         ], check=True)
         os.replace(tmp_filename, filename) 
 
+
     """Segment Export"""
     def _export_staged(self):
         """Exports all files in the to_export list"""
@@ -288,7 +289,7 @@ class CameraModule(Module):
             # Use the export manager's method for consistency
             if self.export.export_current_session_files(
                 session_files=self.to_export,
-                recording_folder=self.api.get_recording_folder(),
+                recording_folder=self.facade.get_recording_folder(),
                 recording_session_id=self.recording_session_id,
                 experiment_name=self.current_experiment_name
             ):
@@ -356,11 +357,11 @@ class CameraModule(Module):
 
             # Preprocess video files for export
             for file in self.session_files:
-                if file.endswith(".mp4"):
+                if file.endswith(".ts"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
             
-            self.api.stage_file_for_export(self.current_video_segment)
+            self.facade.stage_file_for_export(self.current_video_segment)
 
             return True
         
@@ -405,7 +406,7 @@ class CameraModule(Module):
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
             # alt: timestmap = str(dt)
-            timestamp = f"{self.api.get_module_name()} {timestamp}"
+            timestamp = f"{self.facade.get_module_name()} {timestamp}"
 
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
@@ -414,7 +415,7 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp)
+                self._apply_timestamp(m, timestamp, "main")
 
             # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
@@ -423,24 +424,46 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp)
+                self._apply_timestamp(m, timestamp, "lores")
 
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
 
-    def _apply_timestamp(self, m: MappedArray, timestamp: str) -> None:
+    def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
         """Apply the frame timestamp to the image."""
-        x = int(self.width * 0.2)
-        y = 0 + int(self.height * 0.03) # TODO: Make origin reference lores dimensions
+        if stream == "main":
+            width = self.width
+            height = self.height
+            font_scale = self.config.get("camera.text_scale", 2)
+            thickness = self.config.get("camera.text_thickness", 1)
+        elif stream == "lores":
+            width = self.lores_width
+            height = self.lores_height
+            font_scale = self.config.get("camera.text_scale", 2)
+            thickness = self.config.get("camera.text_thickness", 1)
+    
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+
+        # Automatically resize if text is too long
+        if text_width > width:
+            scale = width / text_width
+            font_scale = font_scale * scale
+            text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+
+        x = int((width / 2) - (text_width / 2))
+        y = 0 + int(height * 0.03) 
+        
         cv2.putText(
             img=m.array, 
             text=timestamp, 
             org=(x, y), 
-            fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
-            fontScale=self.config.get("camera.text_scale", 2), 
+            fontFace=font, 
+            fontScale=font_scale, 
             color=(50,255,50), 
-            thickness=self.config.get("camera.text_thickness", 1)
+            thickness=thickness
             ) 
 
 

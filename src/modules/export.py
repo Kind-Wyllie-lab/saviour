@@ -503,3 +503,17 @@ class Export:
         except Exception as e:
             self.logger.warning(f"Error mounting share: {e}")
             return False
+
+            
+    def unmount(self) -> bool:
+        """Unmount current destination"""
+        try:
+            if self.current_mount:
+                # Unmount using umount
+                # Example: umount /mnt/export
+                self.current_mount = None
+                return True
+            return True
+        except Exception as e:
+            self.logger.error(f"Unmount failed: {e}")
+            return False

@@ -230,7 +230,7 @@ class CameraModule(Module):
             time.sleep(0.1)  # Give camera time to start
         
         # Create file output
-        self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs
+        self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
         
         # Start recording
@@ -240,8 +240,8 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
-        filename = f"{self.facade.get_filename_prefix()}_({self.facade.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype')}" # Consider adding segment start time 
+        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
+        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
         return filename
 
 
@@ -269,7 +269,7 @@ class CameraModule(Module):
 
 
     def _fix_positioning_timestamps(self, filename: str) -> None:
-        """Take a .ts file produced by picamera2 SplittableOutput and reset positioning timestamps"""
+        """Take an mp4 file produced by picamera2 SplittableOutput and reset positioning timestamps"""
         tmp_filename = f"{filename[:-4]}_formatted.ts"
         subprocess.run([
             "ffmpeg",

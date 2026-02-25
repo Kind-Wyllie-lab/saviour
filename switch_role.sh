@@ -651,6 +651,22 @@ EOF
     sudo systemctl enable phc2sys
 }
 
+
+configure_microphone() {
+    sudo install -d /etc/pipewire/pipewire.conf.d
+    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+    context.properties = {
+        default.clock.rate = 192000
+        default.clock.allowed-rates = [ 96000 192000 384000]
+    }
+EOF
+    sudo -u pi pkill -9 pipewire
+    sudo -u pi pkill -9 wireplumber
+    sudo -u pi pipewire &
+    sudo -u pi wireplumber &
+}
+
+
 build_frontend() {
     echo "Installing nvm, Node.js, vite, and building frontend"
     # Check if nvm is installed
@@ -702,26 +718,25 @@ EOF
     cd ../../../
 }
 
-# TODO: Configure ptp, ntp
-
 # Main Program
 get_current_role
-echo "Currently a $CURRENT_TYPE $CURRENT_ROLE";
+echo "Device is currently configured as a(n) $CURRENT_TYPE $CURRENT_ROLE";
+
+# Get the role (controller/module) and type (habitat, camera, sound etc)
 ask_user_role
 ask_module_type
 ask_controller_type
 
+# Parse the device e.g. apa_controller, camera_module
 DEVICE="${DEVICE_TYPE}_${DEVICE_ROLE}"
-
 echo ""
 echo Device will be configured as a "${DEVICE}."
 
+# Determine whether the device role has changed, and if so in what way
 ROLE_CHANGED=false
 TYPE_CHANGED=false
-
 [ "$DEVICE_ROLE" != "$CURRENT_ROLE" ] && ROLE_CHANGED=true
 [ "$DEVICE_TYPE" != "$CURRENT_TYPE" ] && TYPE_CHANGED=true
-
 if ! $ROLE_CHANGED && ! $TYPE_CHANGED; then
     echo "No changes detected. Device is already configured as ${DEVICE_TYPE} ${DEVICE_ROLE}."
     exit 0

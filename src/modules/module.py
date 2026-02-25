@@ -50,7 +50,7 @@ from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 from src.modules.recording import Recording
-from src.modules.api import ModuleAPI
+from src.modules.facade import ModuleFacade
 
 def command(name=None):
     """
@@ -106,13 +106,13 @@ class Module(ABC):
         # Manager objects
         self.config = Config()
         self.export = Export(module_id=self.module_id, config=self.config) # Export object - exports to samba share
-        self.communication = Communication(self.module_id, config=self.config) # Communication object - handles ZMQ messaging
+        self.communication = Communication(config=self.config) # Communication object - handles ZMQ messaging
         self.health = Health(config=self.config) # Health object - monitors system health e.g. temperature, resource utilisation, ptp sync
         self.ptp = PTP(role=PTPRole.SLAVE) # PTP object - initialises ptp sync
         self.recording = Recording(config=self.config) # Recording object - sets up, maintains and manages recording sessions
         self.command = Command(config=self.config) # Command object - routes incoming commands
         self.network = Network(self.config, module_id=self.module_id, module_type=self.module_type) # Network object - registers zeroconf service, discovers controller
-        self.api = ModuleAPI(module=self) # API object - provides internal routing between objects e.g. network and recording
+        self.facade = ModuleFacade(module=self) # API object - provides internal routing between objects e.g. network and recording
 
         # A registry of commands that the module can respond to
         self.command_callbacks = { 
@@ -126,16 +126,17 @@ class Module(ABC):
             'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
+            "update_saviour": self.update_saviour
         }
 
-        # Register callbacks and api
-        self.config.on_module_config_change = self.on_module_config_change
-        self.network.api = self.api
-        self.health.api = self.api
-        self.communication.api = self.api
-        self.command.api = self.api
-        self.export.api = self.api
-        self.recording.api = self.api
+        # Register callbacks and facade
+        self.config.configure_module = self.configure_module
+        self.network.facade = self.facade
+        self.health.facade = self.facade
+        self.communication.facade = self.facade
+        self.command.facade = self.facade
+        self.export.facade = self.facade
+        self.recording.facade = self.facade
     
         # Register commands with command router
         self.command.set_commands(self.command_callbacks)
@@ -174,12 +175,57 @@ class Module(ABC):
         if self.config.get("logging.to_file", True):
             self.setup_logger_file_handling() 
 
+        
+        # self.check_interrupted_recordings()
+
 
     def get_module_name(self) -> str:
         name = self.config.get("module.name")
         if name == "":
             name = self.module_id
         return name
+
+
+    def get_module_group(self) -> str:
+        return self.config.get("module.group")
+
+
+    def update_saviour(self) -> bool:
+        """Update saviour to the latest version from git"""
+        try:
+            # Check internet connectivity before attempting git pull
+            self.logger.info("Checking internet connectivity before updating SAVIOUR")
+            try:
+                subprocess.run(["ping", "-c", "1", "github.com"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.logger.info("Internet connectivity confirmed")
+            except subprocess.CalledProcessError:
+                self.logger.warning("No internet connectivity, cannot update SAVIOUR")
+                return False
+            self.logger.info("Updating SAVIOUR to the latest version from git")
+
+            # Ensure main branch is checked out before pulling
+            # result = subprocess.run(["git", "checkout", "main"], capture_output=True, text=True)
+            # if result.returncode != 0:
+            #     self.logger.error(f"Failed to checkout main branch: {result.stderr}")
+            #     return False
+
+            # Still shows Host key verification failed when running as root under systemd, even after creating known_hosts file - workaround is to disable strict host key checking for github.com in global git config (only for root user, so should be safe)
+            result = subprocess.run(["git", "config", "--global", "--add", "ssh.github.com.strictHostKeyChecking", "no"], capture_output=True, text=True)   
+
+            # Can I run a subprocess command not as root user?
+            
+
+            # Pull the latest changes
+            result = subprocess.run(["git", "pull"], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.logger.info(f"SAVIOUR update successful: {result.stdout}")
+                return True
+            else:
+                self.logger.error(f"SAVIOUR update failed: {result.stderr}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error updating SAVIOUR: {e}")
+            return False
 
 
     def setup_logger_file_handling(self) -> None:
@@ -220,13 +266,27 @@ class Module(ABC):
             self.logger.info("Logger file handler was not set up as handlers already exist")
 
 
-    def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
+    def configure_module(self, updated_keys: Optional[list[str]]) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
-        self.configure_module(updated_keys)
+
+        # Check for special keys
+        export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export._share_path"]
+        should_reconfigure_samba = False
+        for key in export_keys:
+            if key in updated_keys:
+                should_reconfigure_samba = True
+        if should_reconfigure_samba:
+            self.logger.info("Reconfiguring samba")
+            self.export._samba_settings_changed()
+
+        if "module.group" in updated_keys:
+            self.communication.group_changed()
+
+        self.configure_module_special(updated_keys)
 
 
     @abstractmethod
-    def configure_module(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
 
@@ -275,6 +335,8 @@ class Module(ABC):
 
             self.is_connected_to_controller = True
             
+            self.check_interrupted_recordings()
+
         except Exception as e:
             self.logger.error(f"Error during controller initialization: {e}")
             # Clean up any partial initialization
@@ -333,7 +395,7 @@ class Module(ABC):
     """File IO"""
     def _check_file_exists(self, filename: str) -> bool:
         """Check if a file exists in the recording folder."""
-        if filename in os.listdir(self.api.get_recording_folder()):
+        if filename in os.listdir(self.facade.get_recording_folder()):
             return True
         else:
             return False
@@ -576,7 +638,7 @@ class Module(ABC):
             if not isinstance(config, dict):
                 self.logger.error(f"set_config called with non-dict argument: {type(config)}")
                 return False
-            
+
             # Use the config manager's merge method to update the config
             self.config.set_all(config, persist=persist)
             return {"result": "success", "config": self.config.get_all()}
@@ -641,12 +703,12 @@ class Module(ABC):
     @check()
     def _check_readwrite(self) -> tuple[bool, str]:
         try:
-            self.logger.debug(f"Checking can write to {self.api.get_recording_folder()}")
-            if not os.path.exists(self.api.get_recording_folder()):
-                os.makedirs(self.api.get_recording_folder(), exist_ok=True)
+            self.logger.debug(f"Checking can write to {self.facade.get_recording_folder()}")
+            if not os.path.exists(self.facade.get_recording_folder()):
+                os.makedirs(self.facade.get_recording_folder(), exist_ok=True)
             self.logger.debug("Created folder OK")
             # Test write access
-            test_file = os.path.join(self.api.get_recording_folder(), '.test_write')
+            test_file = os.path.join(self.facade.get_recording_folder(), '.test_write')
             self.logger.debug(f"Going to write to test file {test_file}")
             with open(test_file, 'w') as f:
                 self.logger.debug(f"Opened test file {f}")
@@ -665,7 +727,7 @@ class Module(ABC):
     @check()
     def _check_diskspace(self) -> tuple[bool, str]:
         try:
-            statvfs = os.statvfs(self.api.get_recording_folder())
+            statvfs = os.statvfs(self.facade.get_recording_folder())
             free_bytes = statvfs.f_frsize * statvfs.f_bavail
             free_mb = free_bytes / (1024 * 1024)
             required_mb = self._get_required_disk_space_mb()
@@ -736,6 +798,52 @@ class Module(ABC):
         }
 
 
+    def check_interrupted_recordings(self):
+        files = self.check_recordings()
+        if len(files["pending"]) == 0:
+            return
+
+        self.logger.warning(f"Module has only just booted but incomplete recordings are present. Will attempt to export {len(files['pending'])} files.")
+        
+        incomplete_files = files["pending"]
+        for file in incomplete_files:
+            self.logger.info(f"Backing up {file}")
+
+            # Rename file to indicate that it is a partial recording
+            filename, filetype = file.split(".")
+            current_filepath = f"{self.facade.get_recording_folder()}/{file}"
+            new_filepath = f"{self.facade.get_recording_folder()}/{filename}_PARTIAL.{filetype}" 
+            os.rename(current_filepath, new_filepath)
+
+            # Get session name from filename
+            session_name = self.facade.get_session_from_filename(filename)
+            file_start_date = self.facade.get_start_time_from_filename(filename)[0:8] # 
+
+            # Create export path
+            export_path = f"{session_name}/{file_start_date}/{self.facade.get_module_name()}"
+
+            self.logger.info(f"Staging file for export: {new_filepath} from session {session_name}")
+            self.facade.stage_file_for_export(new_filepath)
+            self.facade.export_staged(export_path)
+
+
+    def check_recordings(self) -> dict:
+        recordings_folder = self.facade.get_recording_folder()
+        to_export_folder = self.facade.get_to_export_folder()
+        exported_folder = self.facade.get_exported_folder()
+
+        pending_files = os.listdir(recordings_folder)
+        to_export_files = os.listdir(to_export_folder)
+        exported_files = os.listdir(exported_folder)
+
+        files = {
+            "pending": pending_files,
+            "to_export": to_export_files,
+            "exported": exported_files
+        }
+        return files
+
+
 
     """Helper functions"""
     def generate_module_id(self, module_type: str) -> str:
@@ -756,7 +864,9 @@ class Module(ABC):
 
 
     def get_utc_time(self, timestamp: int):
-        strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
+        if not timestamp:
+            timestamp = time.time()
+        strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d-%H%M%S")
         return strtime
 
     

@@ -31,13 +31,15 @@ class PTPError(Exception):
 class PTP:
     def __init__(self,
                  role=PTPRole.MASTER,
-                 interface='eth0'):
+                 interface='eth0',
+                 config=None):
 
         """Initialize the PTP manager
 
         Args:
             interface: The network interface, typically eth0
             role: The PTP role - slave for modules, master for controllers
+            config: Config object
         """
 
         # Check for root privileges first
@@ -47,6 +49,7 @@ class PTP:
         # Assign basic params
         self.role = role
         self.interface = interface
+        self.config = config
         self.logger = logging.getLogger(__name__)
 
         # Check for required packages
@@ -131,8 +134,7 @@ class PTP:
         
         for service in services:
             try:
-                result = subprocess.run(['systemctl', 'status', service], 
-                                       capture_output=True, text=True)
+                result = subprocess.run(['systemctl', 'status', service], capture_output=True, text=True)
                 if result.returncode == 4:  # Unit not found
                     raise PTPError(f"Systemd service {service} not found. "
                                    f"Please run the setup script to configure PTP services.")
@@ -142,6 +144,7 @@ class PTP:
                                    f"Please run the setup script to configure PTP services.")
                 else:
                     self.logger.warning(f"Could not check {service} service status: {e}")
+
 
     def _stop_timesyncd(self):
         """Manage systemd-timesyncd for PTP coexistence."""
@@ -202,7 +205,7 @@ class PTP:
             subprocess.run(['systemctl', 'restart', self.ptp4l_service], check=True)
             
             # Wait a moment for ptp4l to start
-            time.sleep(2)
+            #time.sleep(2)
             
             # Check if ptp4l started successfully
             ptp4l_status = self._get_service_status(self.ptp4l_service)
@@ -217,7 +220,7 @@ class PTP:
             subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)
             
             # Wait a moment for phc2sys to start
-            time.sleep(2)
+            #time.sleep(2)
             
             # Check if phc2sys started successfully
             phc2sys_status = self._get_service_status(self.phc2sys_service)
@@ -245,6 +248,9 @@ class PTP:
                 ptp4l_status = self._get_service_status(self.ptp4l_service)
                 phc2sys_status = self._get_service_status(self.phc2sys_service)
 
+                if not ptp4l_status or not phc2sys_status:
+                    self.logger.error(f"Bad ptp4l ({ptp4l_status}) or phc2sys ({phc2sys_status})")
+
                 if ptp4l_status != 'active' or phc2sys_status != 'active':
                     self.status = f'ptp4l:{ptp4l_status}, phc2sys:{phc2sys_status}'
                     self.logger.error(f"PTP services not active: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
@@ -262,9 +268,9 @@ class PTP:
                 self._check_ptp_offsets()
 
             except Exception as e:
-                self.logger.error(f"Error in monitor thread: {e}")
+                self.logger.error(f"Error in PTP monitoring thread: {e}")
 
-            time.sleep(10)  # Check every second
+            time.sleep(self.config.get("ptp.ptp_monitor_interval"))  # Check every second
 
     def _check_ptp_offsets(self):
         if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset is None:
@@ -277,7 +283,9 @@ class PTP:
                 self.last_ptp_restart_time = time.time()
                 self._reset_ptp()
             else:
-                if time.time() - self.last_ptp_restart_time > self.ptp_stabilisation_timeout:
+                if not self.last_ptp_restart_time:  # Catch first attempt
+                    self.last_ptp_restart_time = time.time()
+                elif time.time() - self.last_ptp_restart_time > self.ptp_stabilisation_timeout:
                     self.logger.info(f"PTP seems to have stabilised, resetting retries")
                     self.ptp_restart_retries = 0
                 return

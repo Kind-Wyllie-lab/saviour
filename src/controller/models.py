@@ -30,7 +30,7 @@ class Module:
     ip: str # Ip of connected module
     zeroconf_name: str = "" # Zeroconf service name of connected module
     port: int = 5353 # The port that zeroconf is operating on?
-    groups: list = field(default_factory=list) # Groups the module belongs to
+    group: str = "" # Group the module belongs to
     online: bool = True # Default to assuming it's online
     status: ModuleStatus = ModuleStatus.DEFAULT # Default to NOT_READY
     config: Dict[str, Any] = field(default_factory=dict)

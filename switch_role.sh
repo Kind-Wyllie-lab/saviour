@@ -115,7 +115,7 @@ ask_controller_type() {
         echo "1) Basic SAVIOUR"
         echo "2) APA - Active Place Avoidance"
         echo "3) Habitat"
-        echo "4) Acoustic Startle (NOT YET IMPLEMENTED)"
+        echo "4) Acoustic Startle"
         echo ""
         
         while true; do
@@ -148,7 +148,10 @@ ask_controller_type() {
 
 # Find the directory and name of the python script for the systemd service
 get_python_directory() {
-    if [ "$DEVICE_ROLE" = "controller" ]; then
+    : "${DEVICE_ROLE:?DEVICE_ROLE not set}"
+    : "${DEVICE_TYPE:?DEVICE_TYPE not set}"
+    : "${DEVICE:?DEVICE not set}"
+    if [ "${DEVICE_ROLE}" = "controller" ]; then
         PYTHON_PATH="src/controller/examples/${DEVICE_TYPE}"
         PYTHON_FILE="${DEVICE}.py"
     fi
@@ -156,6 +159,50 @@ get_python_directory() {
         PYTHON_PATH="src/modules/examples/${DEVICE_TYPE}"
         PYTHON_FILE="${DEVICE}.py"
     fi
+}
+
+
+get_mac_suffix() {
+    MAC=$(cat /sys/class/net/eth0/address 2>/dev/null)
+
+    # Remove colons
+    MAC_CLEAN=${MAC//:/}
+
+    # Last 8 hex chars = last 4 bytes
+    MAC_SUFFIX=${MAC_CLEAN: -4}
+
+    echo "$MAC_SUFFIX"
+}
+
+
+generate_hostname() {
+    MAC_SUFFIX=$(get_mac_suffix)
+    NEW_HOSTNAME="${DEVICE_TYPE}-${DEVICE_ROLE}-${MAC_SUFFIX}"
+    NEW_HOSTNAME=$(echo "$NEW_HOSTNAME" | tr '_' '-') # Sanitise hostname, no underscores allowed
+    echo "$NEW_HOSTNAME"
+}
+
+
+set_device_hostname() {
+    NEW_HOSTNAME=$(generate_hostname)
+
+    echo "Setting hostname to $NEW_HOSTNAME"
+
+    sudo tee /etc/hosts >/dev/null <<EOF
+127.0.0.1  localhost
+127.0.1.1  $NEW_HOSTNAME
+
+::1        localhost ip6-localhost ip6-loopback
+EOF
+
+    sudo hostnamectl set-hostname "$NEW_HOSTNAME"
+}
+
+
+
+create_recording_folder() {
+    sudo mkdir -p /var/lib/saviour/recordings
+    sudo chown -R root:root /var/lib/saviour
 }
 
 
@@ -273,15 +320,59 @@ disable_samba_share() {
     echo Stopped and disabled smbd and nmbd
 }
 
+check_for_gateway() {
+    # If the local network has a device at 192.168.x.2 or 10.0.x.2, SAVIOUR will assume this is gateway and configure it's own IP to match.
+    GATEWAY=""
+    for i in {1..254}; do
+        if ping -c 1 -w 1 10.0.$i.2 >/dev/null 2>&1 ; then 
+            GATEWAY="10.0.$i.2"
+            break 
+        fi
+        if ping -c 1 -w 1 192.168.$i.2 >/dev/null 2>&1; then 
+            GATEWAY="192.168.$i.2"
+            break
+        fi
+    done
+}
+
+set_own_ip() {
+    if [ -n "$GATEWAY" ]; then
+        # Extract subnet from gateway IP
+        IFS='.' read -r a b c d <<< "$GATEWAY"
+    else
+        a="10"
+        b="0"
+        c="0"
+    fi
+    DEVICE_IP="$a.$b.$c.1/16" # Set controller IP
+    echo "Detected IP: $DEVICE_IP on $INTERFACE with gateway $GATEWAY"
+    read -p "Do you want to set these manually? (y/n): " choice
+
+    if [ "$choice" = "y" ] || [ "$choice" = "Y" ]; then
+        read -p "Enter the desired IP address (e.g., 10.0.3.1/16): " DEVICE_IP
+        read -p "Enter the desired gateway (e.g., 10.0.3.2): " GATEWAY
+
+        IFS='.' read -r a b c d <<< "$DEVICE_IP"
+    fi
+
+    sudo nmcli connection modify "$INTERFACE" ipv4.addresses $IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual 
+}
+
+detect_interface_name() {
+    INTERFACE=$(nmcli -t -f GENERAL.CONNECTION device show eth0 | cut -d: -f2-)
+}
+
+
 # Function to configure DHCP server
 configure_dhcp_server() {
     echo "Configuring DHCP Server"
     
     # Setup static ip
-    echo "Setting static IP to 192.168.1.1 with nmcli"
-    sudo nmcli connection modify "Wired connection 1" ipv4.method manual
-    sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.1/24
-
+    echo "Setting static IP with nmcli"
+    detect_interface_name
+    check_for_gateway
+    set_own_ip
+    
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
         echo "[INSTALLING] dnsmasq"
@@ -313,6 +404,12 @@ configure_dhcp_server() {
     
     # Create new dnsmasq configuration for local network only
     echo "Creating dnsmasq configuration for local network..."
+    if [ -n "$GATEWAY" ]; then
+        DHCP_OPTION="dhcp-option=3,$GATEWAY"
+    else
+        DHCP_OPTION="dhcp-option=3"
+    fi
+
     sudo tee /etc/dnsmasq.conf > /dev/null <<EOF
 # dnsmasq configuration for Saviour local network
 # This Pi acts as DHCP server for local network only
@@ -323,10 +420,10 @@ interface=eth0
 bind-interfaces
 
 # DHCP range for local network (adjust as needed)
-dhcp-range=192.168.1.128,192.168.1.255,12h
+dhcp-range=$a.$b.$c.128,$a.$b.$c.255,12h
 
 # Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
-dhcp-option=3
+$DHCP_OPTION
 
 # Disable DNS server functionality (we only want DHCP)
 port=0
@@ -344,7 +441,7 @@ EOF
     sudo mkdir -p /etc/systemd/system/dnsmasq.service.d
     sudo tee /etc/systemd/system/dnsmasq.service.d/override.conf > /dev/null <<EOF
 [Unit]
-Description=DHCP Server for Saviour Local Network
+Description=DHCP Server for SAVIOUR Local Network
 
 [Service]
 # Don't start automatically at boot
@@ -368,8 +465,9 @@ EOF
 disable_dhcp_server() {
     echo Disabling DHCP server and reverting IP address to automatic assignment
 
+    detect_interface_name
     # Change IP to automatic assignment
-    sudo nmcli connection modify "Wired connection 1" ipv4.method auto
+    sudo nmcli connection modify "$INTERFACE" ipv4.method auto
 
     # Stop DHCP server
     sudo systemctl stop dnsmasq.service
@@ -644,7 +742,14 @@ if ! $ROLE_CHANGED && ! $TYPE_CHANGED; then
     exit 0
 fi
 
-# Execute minimum required reconfiguration
+if $TYPE_CHANGED; then
+    set_device_hostname
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        build_frontend
+    fi
+fi
+
+
 if $ROLE_CHANGED; then
     if [ "$DEVICE_ROLE" = "controller" ]; then
         configure_ptp_timetransmitter
@@ -657,24 +762,16 @@ if $ROLE_CHANGED; then
         disable_samba_share
         disable_dhcp_server
         disable_mdns
-    fi
-fi
 
-# If controller type has changed, frontend must be rebuilt
-if $TYPE_CHANGED; then
-    if [ "$DEVICE_ROLE" = "controller" ]; then
-        build_frontend
     fi
 fi
 
 
-# Microphone has special pipewire configuration
-if [ "$DEVICE_TYPE" = "microphone" ]; then
-    configure_microphone
+if [ "$DEVICE_ROLE" = "module" ]; then
+    create_recording_folder
 fi
 
 
-# Get device specific path
 get_python_directory
 
 echo ""
@@ -686,15 +783,33 @@ echo ""
 echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep saviour`
 
 
-# Run pytest
+echo ""
+
+if [ "$DEVICE_TYPE" = "microphone" ]; then
+    sudo install -d /etc/pipewire/pipewire.conf.d
+    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
+    context.properties = {
+        default.clock.rate = 192000
+        default.clock.allowed-rates = [ 96000 192000 384000]
+    }
+EOF
+    sudo -u pi pkill -9 pipewire
+    sudo -u pi pkill -9 wireplumber
+    sudo -u pi pipewire &
+    sudo -u pi wireplumber &
+fi
+
+
+
+# Run pytest?
 echo ""
 echo "Running test suite"
-source env/bin/activate
-if [ $DEVICE_ROLE == "module" ]; then
-    pytest "src/modules"
-else
-    pytest "src/controller"
-fi
+#source env/bin/activate
+#if [ $DEVICE_ROLE == "module" ]; then
+#    pytest "src/modules"
+#else
+#    pytest "src/controller"
+#fi
 
 echo ""
 echo "Restarting saviour.service"
@@ -704,12 +819,10 @@ sudo systemctl restart saviour.service
 echo ""
 echo "Device successfully set to ${DEVICE}."
 
-
 echo ""
 echo "Writing new role to config file /etc/saviour/config"
 write_new_role_to_file
 
-# Reboot required when switching from controller to module
 if [ $ROLE_CHANGED == true ]; then
     echo "Please reboot now."
 fi

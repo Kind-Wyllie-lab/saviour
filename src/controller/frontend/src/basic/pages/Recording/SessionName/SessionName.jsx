@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import socket from "/src/socket";
-import "./ExperimentMetadata.css";
+import "./SessionName.css";
 
-function ExperimentMetadata( {experimentName} ) {
+function SessionName( {experimentName} ) {
   const [metadata, setMetadata] = useState({
     experiment: "Not Set",
     rat_id: "",
@@ -41,9 +41,7 @@ function ExperimentMetadata( {experimentName} ) {
 
   return (
     <>
-
-      <div className="experiment-metadata-container card">
-        <h2>Experiment Metadata</h2>
+      <div className="experiment-metadata-container">
         <div className="metadata-form-row">
           <label htmlFor="experiment">Experiment</label>
           <input
@@ -116,4 +114,4 @@ function ExperimentMetadata( {experimentName} ) {
   );
 }
 
-export default ExperimentMetadata;
+export default SessionName;

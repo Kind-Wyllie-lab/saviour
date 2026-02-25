@@ -53,7 +53,7 @@ class Modules:
             # self.logger.info(f"Nothing to do on status check")
 
 
-    def network_notify_module_update(self, discovered_modules: list[Module]):
+    def module_discovery(self, discovered_modules: list[Module]):
         """
         When zeroconf adds a newly discovered module or updates an existing one, this gets called.
 
@@ -70,6 +70,17 @@ class Modules:
             # self.modules[module.id] = module
             self.add_module(module)
         self.broadcast_updated_modules()
+
+
+    def module_rediscovered(self, module_id: str):
+        """When zeroconf re-discovers a module which was previously marked offline, this gets called."""
+        self.logger.info(f"Module {module_id} has been rediscovered by Network")
+        if module_id in self.modules.keys():
+            self.modules[module_id].online = True
+            self.modules[module_id].status = ModuleStatus.DEFAULT
+            self.broadcast_updated_modules()
+        else:
+            self.logger.warning(f"Received rediscovery notice for unknown module {module_id}")
 
 
     def add_module(self, module: Module):
@@ -103,13 +114,13 @@ class Modules:
             time.sleep(5)
 
 
-    def network_notify_module_id_change(self, old_module_id, new_module_id):
+    def module_id_changed(self, old_module_id, new_module_id):
         # Move the module data to the new key
         self.modules[new_module_id] = self.modules.pop(old_module_id)
         self.broadcast_updated_modules()
 
 
-    def network_notify_module_ip_change(self, module_id, module_ip):
+    def module_ip_changed(self, module_id, module_ip):
         # IP changed for module
         self.modules["module_id"].ip = module_ip
         self.broadcast_updated_modules()
@@ -124,8 +135,11 @@ class Modules:
         # self.logger.info(f"Received update concerning module {module_id}, with ready status {ready}")
         self.modules[module_id].ready_message = message
         if ready == True:
-            self.modules[module_id].status = ModuleStatus.READY
-            self.modules[module_id].ready_time = time.time() 
+            if self.modules[module_id].status == ModuleStatus.RECORDING:
+                return
+            else:
+                self.modules[module_id].status = ModuleStatus.READY
+                self.modules[module_id].ready_time = time.time() 
         else:
             self.modules[module_id].status = ModuleStatus.NOT_READY
         self.broadcast_updated_modules()
@@ -207,7 +221,6 @@ class Modules:
         """Return module name for given module_id"""
 
         
-
     def update_module_configs(self, configs: Dict):
         """
         Update configuration settings for existing modules.
@@ -223,14 +236,42 @@ class Modules:
     def broadcast_updated_modules(self) -> None:
         # self.logger.info(f"Updated module list: {self.modules.keys()}")
         module_dict = self._convert_modules_to_dict()
-        self.api.push_module_update_to_frontend(module_dict)
+        self.facade.push_module_update_to_frontend(module_dict)
 
 
     def get_modules(self) -> Dict[str, Any]:
         """Getter function for self.modules - importantly, converts them to dict."""
         return self._convert_modules_to_dict()
     
+
+    def get_modules_by_target(self, target: str) -> Dict[str, Any]:
+        """Take a target (either "all", a group name, or a module_id) and return a dict of modules."""
+        # Handle bad or empty target
+        if target == "":
+            self.logger.error("No target supplied to modules.get_modules_by_group()")
+            return None
+
+        # Handle all target
+        if target.lower() == "all":
+            return self.get_modules()
+        
+        modules_in_group = {}
+        for module_id, module in self.modules.items():
+            if module_id == target:
+                return {module_id: module}
+            if module.group == target:
+                self.logger.info(f"{module_id} is in {target}")
+                modules_in_group[module_id] = module
+        return modules_in_group
+
     
     def start(self):
         self.logger.info("Starting Modules manager")
         self.ready_timeout_thread.start()   
+
+    
+    def is_module_recording(self, module_id: str) -> bool:
+        if self.modules[module_id].status == ModuleStatus.RECORDING:
+            return True
+        else:
+            return False

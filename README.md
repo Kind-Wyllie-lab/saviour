@@ -93,28 +93,22 @@ Each system includes:
 - An external storage device, e.g., Synology NAS DS1522+, or perhaps a controller Pi with NVME/SSD storage 
 
 ### Installation
-1. Clone the repository
-   ```sh
-   # Navigate to /usr/local/src (standard folder for userspace source code)
-   cd /usr/local/src/
-   
-   # Create folder and give permissions
-   sudo mkdir -p saviour
-   sudo chown -R pi:pi saviour/
+1. Manual Install
 
-   # Clone the repository
-   git clone https://github.com/Kind-Wyllie-lab/saviour.git
-   cd saviour
-   ```
+```sh
+# Clone the repository
+$ git clone https://github.com/Kind-Wyllie-lab/saviour.git
+$ cd saviour
+$ ./setup.sh
+# Once this has completed, you can select the role of the device.
+$ ./switch_role.sh
+# Reboot the pi and setup will have completed.
+```
 
-2. Run the setup script
-    ```sh
-    # Make sure you're in the correct directory
-    cd /usr/local/src/saviour/
-    ./primary_setup.sh
-    # Once this has completed, you can select the role of the device.
-    ./switch_role.sh
-    # Reboot the pi and setup will have completed.
+2. Using a pre-baked image
+
+Not yet available. Eventually an OS image will be available which can be copied on to an SD card. 
+
 
 <!-- USAGE -->
 ## Usage
@@ -132,20 +126,36 @@ Detailed usage instructions can be found in the [System Requirements Specificati
 - [X] Reliable PTP synchronisation
 - [ ] Pre-baked SAVIOUR distributions
 - [ ] Basler camera modules
+- [ ] MJPEG stream peak-meter for microphone modules, viewable in frontend
 - [ ] Real time rat tracking for camera modules
 - [ ] REST endpoints for synchronisation with webapp and other apps
 - [ ] Add documentation
 
-
 <!-- CONTRIBUTING -->
 ## Contributing
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+SAVIOUR is designed to be easily extensible to new types of modules and new user interfaces to control them in experiment specific ways.
+Any contributions you make are **greatly appreciated**.
 
+### Branches
+- main - The latest release of saviour e.g. v1.2
+- staging - This branch is used for final testing of new releases and adding a descriptive tag to new releases.
+- develop - Changes are accumulated here which result in new releases.
+- fix/ - Prefix for a branch in which a fix is developed
+- feat/ - Prefix for a branch in which a new feature is developed
+- refactor/ - Prefix for a branch in which a refactor is implemented
+
+### Commits
+Use the conventional commits framework wherever possible
+https://www.conventionalcommits.org/en/v1.0.0/#summary 
+
+### Workflow 
 1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingNewModule`)
-3. Commit your Changes (`git commit -m 'Add some AmazingNewModule'`)
-4. Push to the Branch (`git push origin feature/AmazingNewModule`)
-5. Open a Pull Request
+2. Create your Feature Branch (`git checkout -b feat/AmazingNewModule`)
+3. Commit your Changes (`git commit -m 'feat: Create AmazingNewModule'`)
+4. Push to the Branch (`git push origin feat/AmazingNewModule`)
+5. Open a Pull Request between your branch and the "develop" branch
+6. When a number of changes have been accumulated in the "develop" branch, this will be merged with "staging"
+7. When the changes are stable, staging will be given a tag for a new release and this will be merged with main - your AmazingNewModule is now part of SAVIOUR!
 
 <!-- LICENSE -->
 ## License

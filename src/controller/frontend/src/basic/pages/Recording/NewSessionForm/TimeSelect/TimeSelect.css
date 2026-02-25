@@ -1,0 +1,21 @@
+.time-select-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Space between elements */
+    margin-bottom: 16px; /* Space between rows */
+}
+
+.time-select-form-row label {
+    width: 100px; /* Consistent label width */
+}
+
+.time-select-form-row select {
+    padding: 8px;
+    font-size: 1em;
+    width: 60px; /* Consistent select box width */
+    box-sizing: border-box;
+}
+
+.time-select-form-row select:focus {
+    outline-color: #007BFF; /* Focus color */
+}

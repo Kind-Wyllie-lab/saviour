@@ -163,13 +163,15 @@ class CameraModule(Module):
             self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
             self.width = self.config.get("camera.width", 1280)
             self.height = self.config.get("camera.height", 720)
-            
+            self.lores_width = int(self.width/2)
+            self.lores_height = int(self.height/2)
+
             # Pick appropriate sensor mode - we will use mode 0 by default
             self.mode = self.camera_modes[0]
 
             sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
-            lores = {"size": (self.width, self.height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
+            lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
             controls = {"FrameRate": self.fps} # target framerate, in reality it might be lower.
             
             if self.config.get("camera.monochrome") is True:
@@ -278,6 +280,7 @@ class CameraModule(Module):
             tmp_filename
         ], check=True)
         os.replace(tmp_filename, filename) 
+
 
     """Segment Export"""
     def _export_staged(self):
@@ -412,7 +415,7 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp)
+                self._apply_timestamp(m, timestamp, "main")
 
             # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
@@ -421,28 +424,37 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp)
+                self._apply_timestamp(m, timestamp, "lores")
 
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
 
-    def _apply_timestamp(self, m: MappedArray, timestamp: str) -> None:
+    def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
         """Apply the frame timestamp to the image."""
+        if stream == "main":
+            width = self.width
+            height = self.height
+            font_scale = self.config.get("camera.text_scale", 2)
+            thickness = self.config.get("camera.text_thickness", 1)
+        elif stream == "lores":
+            width = self.lores_width
+            height = self.lores_height
+            font_scale = self.config.get("camera.text_scale", 2)
+            thickness = self.config.get("camera.text_thickness", 1)
+    
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = self.config.get("camera.text_scale", 2)
-        thickness = self.config.get("camera.text_thickness", 1)
-        
+
         text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
 
         # Automatically resize if text is too long
-        if text_width > self.width:
-            scale = self.width / text_width
+        if text_width > width:
+            scale = width / text_width
             font_scale = font_scale * scale
             text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
 
-        x = int((self.width / 2) - (text_width / 2))
-        y = 0 + int(self.height * 0.03) 
+        x = int((width / 2) - (text_width / 2))
+        y = 0 + int(height * 0.03) 
         
         cv2.putText(
             img=m.array, 

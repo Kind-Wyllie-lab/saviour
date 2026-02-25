@@ -465,8 +465,9 @@ EOF
 disable_dhcp_server() {
     echo Disabling DHCP server and reverting IP address to automatic assignment
 
+    detect_interface_name
     # Change IP to automatic assignment
-    sudo nmcli connection modify "netplan-eth0" ipv4.method auto
+    sudo nmcli connection modify "$INTERFACE" ipv4.method auto
 
     # Stop DHCP server
     sudo systemctl stop dnsmasq.service

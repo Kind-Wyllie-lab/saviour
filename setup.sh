@@ -94,6 +94,7 @@ install_system_packages() {
 create_python_environment() {
     if [ ! -d "env" ]; then
         python3 -m venv env --system-site-packages
+        # python3 -m venv env 
     fi
 
     source env/bin/activate
@@ -102,8 +103,22 @@ create_python_environment() {
 
     pip install -e .
 
+    # Fix simplejpeg issue
+    pip install --force-reinstall simplejpeg
+
     echo "Python dependencies installed"
 }
+
+
+configure_logging() {
+    # Make logging persistent
+    echo "Setting journald.conf to have persistent logging"
+    sudo tee /etc/systemd/journald.conf > /dev/null <<EOF
+[Journal]
+Storage=persistent
+EOF
+}
+
 
 # Function to configure NTP for PTP coexistence
 configure_ntp_for_ptp() {
@@ -162,6 +177,7 @@ EOF
 install_system_packages
 configure_ntp_for_ptp
 create_python_environment
+configure_logging
 
 echo ""
 echo "Setup complete!"

@@ -281,11 +281,11 @@ class Config:
         """
     
         self.logger.info("Set_all called for config")
-        module_config_updated = False # Flag to track if we should notify that the module settings were updated
-        module_config_updated_keys = [] # Array to store updated module configs
+        config_updated = False
+        updated_keys = []
 
         def _recursive_update(target, source, parent_key=""):
-            nonlocal module_config_updated
+            nonlocal config_updated
             for k, v in source.items():
                 full_key = f"{parent_key}.{k}" if parent_key else k
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
@@ -294,18 +294,25 @@ class Config:
                     # Update the value
                     if target[k] != v:
                         target[k] = v
-                        # Track module-specific changes
-                        if hasattr(self, "module_config_keys") and full_key in self.module_config_keys:
-                            self.logger.info(f"Module-specific config updated: {full_key}")
-                            module_config_updated_keys.append(full_key)
-                            module_config_updated = True
+                        config_updated = True
+                        updated_keys.append(full_key)
                     else:
                         pass
 
         _recursive_update(self.config, updates)
 
-        if module_config_updated == True:
-            self.on_module_config_change(module_config_updated_keys)
+        self.logger.info(f"Finished updating config. Updated keys: {updated_keys}")
+
+        module_config_updated_keys = [] # Array to store updated module configs
+        if self.module_config_keys:
+            for key in updated_keys:
+                if key in self.module_config_keys:
+                    self.logger.info(f"Module specific config updated")
+                    module_config_updated_keys.append(key)
+
+        if config_updated == True:
+            self.logger.info("Config updated was True")
+            self.configure_module(updated_keys)
 
         if persist:
             self.save_active()

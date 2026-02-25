@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Module API
-
-This class is used to glue the various other classes that comprise a module together.
+Module Facade
 
 It provides an interface for module objects to interact with one another, e.g. the communication object getting module_id from the main program, or the export object querying controller_ip from the network object.
-
-Note this is an internal API for use between parts of the module program. An External API for the controller-module relationship would be a separate concern and does not yet exist.
 
 Author: Andrew SG
 Created: 12/01/2026
@@ -15,9 +11,10 @@ Created: 12/01/2026
 
 import logging
 import os
+import subprocess
 from typing import Dict, Any, Optional
 
-class ModuleAPI():
+class ModuleFacade():
     def __init__(self, module):
         self.logger = logging.getLogger(__name__)
         self.logger.info("Instantiating ModuleAPI...")
@@ -32,6 +29,14 @@ class ModuleAPI():
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 
+    
+    def get_module_type(self) -> str:
+        return self.module.module_type
+
+
+    def get_module_group(self) -> str:
+        return self.module.get_module_group()
+
 
     def get_controller_ip(self) -> str:
         return self.module.network.controller_ip
@@ -40,6 +45,14 @@ class ModuleAPI():
     def get_recording_folder(self) -> str:
         return self.module.recording.recording_folder
     
+
+    def get_to_export_folder(self) -> str:
+        return self.module.export.to_export_folder
+
+    
+    def get_exported_folder(self) -> str:
+        return self.module.export.exported_folder
+
 
     def get_recording_status(self) -> bool:
         return self.module.recording.is_recording
@@ -85,9 +98,20 @@ class ModuleAPI():
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 
+
     """Utility Methods"""
     def generate_session_id(self, module_id: str) -> str:
         return self.module.generate_session_id(module_id)
+
+
+    def run_shell_cmd(self, cmd: list) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+            self.logger.info(f"Command succeeded: {result.stdout}")
+            return True, result.stdout
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Command failed: {e.stderr}") 
+            return False, e.stderr
 
 
     """Communication Methods"""
@@ -119,12 +143,20 @@ class ModuleAPI():
 
 
     """File Export"""
-    def set_session_name(self, session_name: str) -> bool:
-        return self.module.export.set_session_name(session_name)
+    def get_current_session_name(self) -> str:
+        return self.module.recording.current_session_name
+
+    
+    def get_session_from_filename(self, filename: str) -> str:
+        return self.module.recording.get_session_from_filename(filename)
+
+    
+    def get_start_time_from_filename(self, filename: str) -> str:
+        return self.module.recording.get_start_time_from_filename(filename)
 
 
-    def export_staged(self):
-        return self.module.export.export_staged()
+    def export_staged(self, export_path: str):
+        return self.module.export.export_staged(export_path)
 
     
     def stage_file_for_export(self, filename: str) -> None:
@@ -143,9 +175,9 @@ class ModuleAPI():
             # Use the export manager's method for consistency
             if self.module.export.export_current_session_files(
                 session_files=files,
-                recording_folder=self.api.get_recording_folder(),
-                recording_session_id=self.api.get_recording_session_id(),
-                session_name=self.api.get_current_session_name()
+                recording_folder=self.facade.get_recording_folder(),
+                recording_session_id=self.facade.get_recording_session_id(),
+                session_name=self.facade.get_current_session_name()
             ):
                 self.logger.info("Auto-export completed successfully")
 
@@ -178,6 +210,15 @@ class ModuleAPI():
         self.module.export.when_recording_starts()        
     
 
+    """Network"""
+    def subscribe_to_topic(self, topic: str):
+        """Subscribe to commands for supplied topic."""
+        self.module.communication.subscribe_to_topic(topic)
+
+    
+    def unsubscribe_from_topic(self, topic: str):
+        """Unsubscribe from commands related to given topic. Typically used when module changes group."""
+        self.module.communication.unsubscribe_from_topic(topic)
 
 
 

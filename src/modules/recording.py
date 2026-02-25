@@ -35,10 +35,9 @@ class Recording():
         self.config = config
         
         # Parameters from config
-        self.recording_folder = self.config.get("recording.recording_folder", "rec") # Location that files will be recorded to 
-        if not os.path.exists(self.recording_folder):         # Create recording folder if it doesn't exist
-            os.makedirs(self.recording_folder, exist_ok=True)
-        self.logger.info(f"Recording folder = {self.recording_folder}")
+        self.recording_folder = f'{self.config.get("recording.recording_folder", "/var/lib/saviour/recordings")}/pending' # Location that files will be recorded to 
+        self.logger.info(f"Recording folder: {self.recording_folder}")
+        os.makedirs(self.recording_folder, exist_ok=True)
 
         # State Flags
         self.is_recording = False
@@ -79,7 +78,7 @@ class Recording():
         # Check not already recording
         if self.is_recording:
             self.logger.info("Already recording")
-            self.api.send_status({
+            self.facade.send_status({
                 "type": "recording_start_failed",
                 "error": "Already recording"
             })
@@ -89,12 +88,11 @@ class Recording():
         self.current_session_name = self._format_session_name(session_name)
 
         # Set the export folder based on the supplied experiment name
-        self.api.set_session_name(session_name)
-        self.api.when_recording_starts()
+        self.facade.when_recording_starts()
         
         # Set up recording - filename and folder
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_session_id = f"{self.api.get_module_name()}"
+        self.recording_session_id = f"{self.facade.get_module_name()}"
         
         # Use experiment name in filename if provided
         if session_name:
@@ -102,6 +100,7 @@ class Recording():
         else:
             self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
         
+        self.logger.info(f"Filenames will be prefixed {self.current_filename_prefix}")
         os.makedirs(self.recording_folder, exist_ok=True)
 
         # Set recording start time
@@ -129,7 +128,7 @@ class Recording():
         self.is_recording = True
 
         self.logger.info("Sending recording started message to controller")
-        self.api.send_status({
+        self.facade.send_status({
             "type": "recording_started",
             "status": "success",
             "recording": True
@@ -140,12 +139,12 @@ class Recording():
 
     def stop_recording(self) -> bool:
         """Stop recording. Returns True if stopped, False otherwise."""
-        self.logger.info(f"Stop recording called. to_export contains: {self.api.get_staged_files()}")
+        self.logger.info(f"Stop recording called. to_export contains: {self.facade.get_staged_files()}")
         try:
             # Check if recording
             if not self.is_recording:
                 self.logger.info("Already stopped recording")
-                self.api.send_status({
+                self.facade.send_status({
                     "type": "recording_stop_failed",
                     "error": "Not recording"
                 })
@@ -155,9 +154,9 @@ class Recording():
             self._stop_recording_segment_monitoring()
 
             # Stop recording in general
-            if not self.api.stop_recording(): # Module specific implementation of stop_recording
+            if not self.facade.stop_recording(): # Module specific implementation of stop_recording
                 self.logger.warning(f"Something went wrong stopping recording.")
-                self.api.send_status({
+                self.facade.send_status({
                     "type": "recording_stopped",
                     "status": "error",
                 })
@@ -165,10 +164,10 @@ class Recording():
             
             # Stop recording health metadata
             self._stop_recording_health_metadata()
-            self.api.stage_file_for_export(self.current_health_segment)
+            self.facade.stage_file_for_export(self.current_health_segment)
             self.logger.info("Made it past stop_recording_health_metadata call")
 
-            self.api.send_status({
+            self.facade.send_status({
                 "type": "recording_stopped",
                 "status": "success",
                 "recording": False,
@@ -179,7 +178,8 @@ class Recording():
 
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
             if self.config.get("export.auto_export") == True:
-                self.api.export_staged()
+                export_path = f"{self.current_session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
+                self.facade.export_staged(export_path)
 
             return {"result": "Success"}
 
@@ -210,8 +210,9 @@ class Recording():
         self._start_next_health_metadata_segment()
 
         # Start new actual recording segment 
-        self.api.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
-        self.api.export_staged() # Export files that have been marked for export
+        self.facade.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
+        export_path = f"{self.current_session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
+        self.facade.export_staged(export_path) # Export files that have been marked for export
 
 
     def _create_initial_recording_segment(self) -> None:
@@ -221,7 +222,7 @@ class Recording():
         self.logger.info(f"Segment {self.segment_id} started at {self.segment_start_time}")
 
         # Start video
-        self.api.start_new_recording()
+        self.facade.start_new_recording()
 
 
     """Segment Length Monitoring"""
@@ -230,7 +231,7 @@ class Recording():
         Runs in a thread and monitors length of current recording.
         If it exceeds segment length limit, stops and starts a new recording.
         """
-        segment_length = self.config.get("recording.segment_length_seconds", 30) # Default to 30 for debug for now 050126
+        segment_length = self.config.get("recording.segment_length_mins", 30) * 60 # Get segment length in mins and convert to seconds
         self.logger.info(f"Segment started at {self.segment_start_time},  segment length {segment_length}")
 
         while not self.monitor_recording_segments_stop_flag.is_set():
@@ -301,7 +302,7 @@ class Recording():
         # Get new filename and stage last file for export
         self.last_health_segment = self.current_health_segment
         self.current_health_segment = self._get_health_segment_filename()
-        self.api.stage_file_for_export(self.last_health_segment)
+        self.facade.stage_file_for_export(self.last_health_segment)
 
         # Start new thread
         self._start_health_metadata_thread()
@@ -309,7 +310,7 @@ class Recording():
 
     def _get_health_segment_filename(self) -> str:
         """Return a filename for the current health metadata segment""" 
-        strtime = self.api.get_utc_time(self.segment_start_time)
+        strtime = self.facade.get_utc_time(self.segment_start_time)
         return f"{self.current_filename_prefix}_health_metadata_({self.segment_id}_{strtime}).csv"
 
 
@@ -332,14 +333,25 @@ class Recording():
         """Retrieve health metadata and write to csv tile"""
         interval = self.config.get("health_metadata_recording_interval", 5)
         csv_filename = self.current_health_segment 
-        fieldnames = list(self.api.get_health().keys())
+        fieldnames = list(self.facade.get_health().keys())
         with open(csv_filename, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             while not self.health_stop_event.is_set():
-                data = self.api.get_health()
+                data = self.facade.get_health()
                 writer.writerow(data)
                 f.flush() # Ensure each line is written
                 # Wait for either a stop signal or timeout
                 if self.health_stop_event.wait(timeout=interval): # "Sleeps" for duration of interval if it shouldn't exit
                     break
+
+
+    """File handling"""
+    def get_session_from_filename(self, filename: str) -> str:
+        session_name = filename.split("_")[0]
+        return session_name
+
+    
+    def get_start_time_from_filename(self, filename: str) -> str:
+        start_time = filename.split("_")[-1][0:-1]
+        return start_time

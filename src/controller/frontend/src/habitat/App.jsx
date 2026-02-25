@@ -15,7 +15,7 @@ import HabitatDashboard from "/src/habitat/pages/HabitatDashboard/HabitatDashboa
 import Monitor from "/src/habitat/pages/Monitor/Monitor";
 
 
-document.title="Habitat GUI";
+document.title="Habitat";
 
 
 const pages = [

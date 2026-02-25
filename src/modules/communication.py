@@ -19,7 +19,6 @@ from typing import Callable, Dict, Any, Optional
 
 class Communication:
     def __init__(self,
-                 module_id: str,
                  config = None):
         """Initialize the communication manager
         
@@ -29,12 +28,12 @@ class Communication:
             config: Configuration manager for retrieving settings
         """
         self.logger = logging.getLogger(__name__)
-        self.module_id = module_id
         self.config = config
+        
+        self.group = self.config.get("module.group")
         
         # Control flags
         self.command_listener_running = False
-        # self.heartbeats_active = False # TODO: move to health manager
         self.last_command = None
         
         # Controller connection info
@@ -92,11 +91,18 @@ class Communication:
                 status_port = 5556
             
             # Set up command subscription
-            self.logger.info(f"Module ID: {self.module_id}")
-            self.logger.info(f"Subscribing to topic: cmd/{self.module_id}")
-            self.command_socket.subscribe(f"cmd/{self.module_id}")
-            self.logger.info(f"Subscribing to topic: cmd/all")
-            self.command_socket.subscribe(f"cmd/all")
+            self.subscribed_topics = []
+            self.subscribe_to_topic(self.facade.get_module_id())
+            self.subscribe_to_topic("all")
+            self.subscribe_to_topic(self.facade.get_module_type())
+            group = self.group
+            if group is not None and len(group) > 0:
+                self.subscribe_to_topic(group)
+            # self.logger.info(f"Module ID: {self.facade.get_module_id()}")
+            # self.logger.info(f"Subscribing to topic: cmd/{self.facade.get_module_id()}")
+            # self.command_socket.subscribe(f"cmd/{self.facade.get_module_id()}")
+            # self.logger.info(f"Subscribing to topic: cmd/all")
+            # self.command_socket.subscribe(f"cmd/all")
             
             # Connect sockets with timeout
             self.logger.info(f"Attempting to connect command socket to tcp://{controller_ip}:{command_port}")
@@ -114,6 +120,33 @@ class Communication:
             self.logger.error(f"Error connecting to controller: {e}")
             self.connection_attempts += 1
             return False
+
+        
+    def group_changed(self):
+        old_group = self.group
+        self.group = self.config.get("module.group")
+        new_group = self.group
+
+        if old_group is not None and len(old_group) > 0:
+            self.unsubscribe_from_topic(old_group)
+
+        if new_group is not None and len(new_group) > 0:
+            self.subscribe_to_topic(new_group)
+
+
+    def subscribe_to_topic(self, topic: str) -> None:
+        full_topic = f"cmd/{topic}"
+        self.logger.info(f"Subscribing to {full_topic}")
+        self.command_socket.subscribe(full_topic)
+        self.subscribed_topics.append(full_topic)
+
+    
+    def unsubscribe_from_topic(self, topic: str) -> None:
+        if topic in self.subscribed_topics:
+            self.subscribed_topics.pop(self.subscribed_topics.index(topic))
+        self.command_socket.unsubscribe(topic)
+        self.logger.info(f"Unsubscribed from {topic}")
+
 
     def start_command_listener(self) -> bool:
         """Start the command listener thread
@@ -134,6 +167,7 @@ class Communication:
         self.command_thread.start()
         self.logger.info("Command listener thread started")
         return True
+
 
     def listen_for_commands(self):
         """Listen for commands from the controller"""
@@ -157,7 +191,7 @@ class Communication:
                 
                 # Call the command handler
                 try:
-                    self.api.handle_command(command)
+                    self.facade.handle_command(command)
                 except Exception as e:
                     self.logger.error(f"Error handling command: {e}")
 
@@ -175,6 +209,7 @@ class Communication:
                         self._schedule_reconnection()
                 time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
+
     def _schedule_reconnection(self):
         """Schedule a reconnection attempt"""
         if self.connection_attempts < self.max_connection_attempts:
@@ -191,6 +226,7 @@ class Communication:
             threading.Thread(target=delayed_reconnect, daemon=True).start()
         else:
             self.logger.warning(f"Max reconnection attempts ({self.max_connection_attempts}) reached")
+
 
     def _attempt_reconnection(self):
         """Attempt to reconnect to the controller"""
@@ -210,6 +246,7 @@ class Communication:
         except Exception as e:
             self.logger.error(f"Error during reconnection attempt: {e}")
 
+
     def send_status(self, status_data: Dict[str, Any]) -> None:
         """Send status information to the controller
         
@@ -223,15 +260,15 @@ class Communication:
             
             # Add timestamp and module ID to status data
             status_data['timestamp'] = time.time()
-            status_data['module_id'] = self.module_id
-            status_data['module_name'] = self.api.get_module_name()
+            status_data['module_id'] = self.facade.get_module_id()
+            status_data['module_name'] = self.facade.get_module_name()
             
             # Convert to JSON string
             import json
             message = json.dumps(status_data)
             
             # Send status
-            self.status_socket.send_string(f"status/{self.module_id} {message}")
+            self.status_socket.send_string(f"status/{self.facade.get_module_id()} {message}")
             # self.logger.info(f"Status sent: {message}")
             
         except Exception as e:
@@ -240,10 +277,11 @@ class Communication:
             if "Connection refused" in str(e) or "No route to host" in str(e):
                 self.logger.warning("Connection error while sending status, will attempt reconnection")
                 self._schedule_reconnection()
-        
+
+
     def cleanup(self):
         """Clean up ZMQ connections"""
-        self.logger.info(f"Cleaning up communication manager for module {self.module_id}")
+        self.logger.info(f"Cleaning up communication manager for module {self.facade.get_module_id()}")
         
         # Stop threads
         self.command_listener_running = False

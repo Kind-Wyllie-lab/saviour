@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Import habitat controller
 from controller.controller import Controller
 
-class HabitatController(Controller):
+class AcousticStartleController(Controller):
     def __init__(self):
         super().__init__()
 
@@ -44,7 +44,7 @@ class HabitatController(Controller):
                 data = dict((k, status[k]) for k in ("sound_files", "selected_file"))
                 self.web.socketio.emit("list_sound_files", data)
             case _:
-                self.logger.warning(f"No logic for {status} from {module_id}")
+                # self.logger.warning(f"No logic for {status} from {module_id}")
                 return False    
         return True
 
@@ -72,8 +72,9 @@ class HabitatController(Controller):
             self.logger.info(f"Telling {module_id} to use {target_file}")
             self.api.send_command(module_id, "use_this_sound_file", {"filename": target_file})
 
+
 if __name__ == "__main__":
-    controller = HabitatController()
+    controller = AcousticStartleController()
     try:
         # Start the main loop
         controller.start()

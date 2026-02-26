@@ -126,7 +126,8 @@ class Module(ABC):
             'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
-            "update_saviour": self.update_saviour
+            "update_saviour": self.update_saviour,
+            "reboot": self.reboot
         }
 
         # Register callbacks and facade
@@ -188,6 +189,10 @@ class Module(ABC):
 
     def get_module_group(self) -> str:
         return self.config.get("module.group")
+
+
+    def reboot(self) -> None:
+        os.system("sudo reboot now")
 
 
     def update_saviour(self) -> bool:

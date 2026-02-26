@@ -1,85 +1,104 @@
 from collections import defaultdict
 import csv
 from datetime import datetime
+from typing import Optional
 
 components = {
     "pi5": {
         "name": "Pi 5",
         "link": "https://thepihut.com/products/raspberry-pi-5?variant=42531604922563",
+        "supplier": "PiHut",
         "price": 74.40
     },
     "metal_case": {
         "name": "Metal Case",
         "link": "https://thepihut.com/products/industrial-grade-metal-case-for-raspberry-pi-5",
+        "supplier": "PiHut",
         "price": 5.80
     },
     "nvme_poe_hat": {
         "name": "NVMe Hat",
         "link": "https://thepihut.com/products/52pi-m-2-nvme-2280-poe-hat-for-raspberry-pi-5",
+        "supplier": "PiHut",
         "price": 28.80
     },
     "hq_camera": {
         "name": "HQ Camera",
         "link": "https://thepihut.com/products/raspberry-pi-high-quality-camera-module",
+        "supplier": "PiHut",
         "price": 45
     },
     # Add missing components so we don't get KeyErrors
     "nvme_ssd": {
         "name": "NVMe SSD",
         "link": "https://uk.insight.com/en_GB/shop/product/SDBPNTY-512G-IN/integral/SDBPNTY-512G-IN/Integral-SSD-512-GB-internal-M2-2280-PCIe-30-x4-NVMe/",
+        "supplier": "UK Insight",
         "price": 86.39
     },
     "active_cooler": {
         "name": "Active Cooler",
         "link": "https://thepihut.com/products/active-cooler-for-raspberry-pi-5",
+        "supplier": "PiHut",
         "price": 4.50
     },
     "rtc_battery": {
         "name": "RTC Battery",
         "link": "https://amzn.eu/d/02OrSOBT",
+        "supplier": "Amazon",
         "price": 5.88
     },
     "lens": {
         "name": "Lens",
         "link": "https://thepihut.com/products/raspberry-pi-high-quality-camera-lens",
+        "supplier": "PiHut",
         "price": 22
     },
     "sd_card": {
         "name": "SD Card",
         "link": "https://uk.insight.com/en_GB/shop/product/SDCS3%2F64GB/kingston%20technology/SDCS3%2F64GB/Kingston-Canvas-Select-Plus-flash-memory-card-64-GB-microSDXC-UHSI/",
+        "supplier": "UK Insight",
         "price": 8.39
     },
     "poe_hat": {
         "name": "PoE Hat",
         "link": "https://thepihut.com/products/poe-hat-for-raspberry-pi-5-with-cooling-fan",
+        "supplier": "PiHut",
         "price": 19.20
     },
     "ttl_hat": {
         "name": "TTL Hat",
         "link": "https://thepihut.com/products/gpio-screw-terminal-hat",
+        "supplier": "PiHut",
         "price": 13.00
     },
     "audiomoth": {
-        "name": "Audiomoth Microphone"
-    }
+        "name": "Audiomoth Microphone",
+        "link": "https://www.openacousticdevices.info/product-page/audiomoth-usb-microphone",
+        "supplier": "Open Acoustic Devices",
+        "price": 60
+    },
     "ethernet_cable": {
         "name": "Ethernet Cable",
         "link": "https://thepihut.com/products/cat6a-shielded-snagless-rj45-ethernet-cable-2m?variant=40638521704643&country=GB&currency=GBP&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&gad_source=1&gad_campaignid=11673057096&gbraid=0AAAAADfQ4GEC9FtD9xgscKJkD8ZGfEWVP&gclid=CjwKCAiAraXJBhBJEiwAjz7MZR3RhOtRWh0PaTDeGcQKzqcR_jbTVvi6cRdoKAOxcU7_G5725rGyQxoCxn8QAvD_BwE",
+        "supplier": "PiHut",
         "price": 3
     },
     "poe_switch_5": {
         "name": "TPLink 5 Port PoE Switch",
         "link": "https://uk.insight.com/en_GB/shop/product/TL-SF1005P/tp-link/TL-SF1005P/TPLink-TLSF1005P-switch-5-ports-unmanaged/",
+        "supplier": "UK Insight",
         "price": 37.19
     },
     "poe_switch_8": {
         "name": "DLink 8 Port PoE Switch",
         "link": "https://uk.insight.com/en_GB/shop/product/DGS-1100-08PV2%2FB/d-link/DGS-1100-08PV2%2FB/DLink-DGS-110008PV2-switch-8-ports-smart/#tab-specifications#",
+        "supplier": "UK Insight",
         "price": 67.19
     },
     "poe_switch_16": {
         "name": "TPLink 16 Port PoE+ Switch",
         "link": "https://uk.insight.com/en_GB/shop/product/TL-SG1016PE/tp-link/TL-SG1016PE/TPLink-TLSG1016PE-switch-16-ports-smart-rackmountable/",
+        "supplier": "UK Insight",
         "price": 157.19
     },
 }
@@ -107,7 +126,7 @@ devices = {
         "poe_hat": 1,
         "sd_card": 1
     },
-    "usv": {
+    "usv_mic": {
         "pi5": 1,
         "poe_hat": 1,
         "sd_card": 1,
@@ -137,7 +156,7 @@ def get_input(prompt: str) -> int:
             print("Please enter an integer number")
 
 
-def export_shopping_list_csv(filename, totals, components, module_counts):
+def export_shopping_list_csv(filename, totals, components, module_counts, description: Optional[str] = None):
     grand_total = 0.0
 
     # Build description
@@ -153,6 +172,8 @@ def export_shopping_list_csv(filename, totals, components, module_counts):
 
         # Description header
         writer.writerow(["System Configuration"])
+        if description:
+            writer.writerow([description])
         writer.writerow([description_line])
         writer.writerow([f"Total Units: {total_units}"])
         writer.writerow([f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"])
@@ -184,14 +205,17 @@ def export_shopping_list_csv(filename, totals, components, module_counts):
 
 
 if __name__ == "__main__":
+    order_name = input("Order Name/Descriptor: ")
     n_controllers = get_input("How many controllers: ")
     n_cameras = get_input("How many camera modules: ")
     n_ttl = get_input("How many TTL modules: ")  # placeholder for future
+    n_usv = get_input("How many USV microphone modules (NOTE: One of these modules can technically support up to 4 microphones): ")
 
     module_counts = {
         "controller": n_controllers,
         "camera": n_cameras,
-        "ttl": n_ttl
+        "ttl": n_ttl,
+        "usv_mic": n_usv
     }
 
     totals = calculate_totals(devices, module_counts)
@@ -248,4 +272,7 @@ if __name__ == "__main__":
     print(f"Processing (5%): £{processing_fee:.2f}")
     print(f"Final Total:     £{final_total:.2f}")
 
-    export_shopping_list_csv("shopping_list.csv", totals, components, module_counts)
+    filename = "shopping_list.csv"
+    if len(order_name) > 0:
+        filename = f"{order_name}.csv"
+    export_shopping_list_csv(filename, totals, components, module_counts, order_name)

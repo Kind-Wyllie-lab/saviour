@@ -103,7 +103,15 @@ function GenericConfigCard({ id, module }) {
       params: {}
     })
   }
-  
+
+  const handleReboot = () => {
+    console.log("Sending reboot");
+    socket.emit("send_command", {
+      module_id: module.id,
+      type: "reboot",
+      params: {}
+    })
+  }  
 
   const handleSave = () => {
     import("/src/socket").then(({ default: socket }) => {
@@ -136,6 +144,9 @@ function GenericConfigCard({ id, module }) {
       </div>
       <div className="update-button-wrapper">
         <button className="update-button" type="button" onClick={handleUpdate}>Update Saviour Version</button>
+      </div>
+      <div className="update-button-wrapper">
+        <button className="update-button" type="button" onClick={handleReboot}>Reboot Module</button>
       </div>
     </div>
   );

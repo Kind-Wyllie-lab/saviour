@@ -94,7 +94,7 @@ class Communication:
             self.subscribed_topics = []
             self.subscribe_to_topic(self.facade.get_module_id())
             self.subscribe_to_topic("all")
-            self.subscribe_to_topic(self.facade.get_module_type())
+            #self.subscribe_to_topic(self.facade.get_module_type())
             group = self.group
             if group is not None and len(group) > 0:
                 self.subscribe_to_topic(group)

@@ -50,6 +50,7 @@ class CameraModule(Module):
         self.width = None
         self.fps = None
         self.mode = None
+        self.gain = None
 
         # Get camera modes
         self.camera_modes = self.picam2.sensor_modes
@@ -64,6 +65,7 @@ class CameraModule(Module):
         self.register_routes()
 
         self.latest_frame = None
+        self.last_frame_timestamp = None
         self.frame_lock = threading.Lock()
 
         # Configure camera
@@ -114,10 +116,9 @@ class CameraModule(Module):
         if self.is_streaming:
             # Configure anything that doesn't require stream to restart
             restart_keys = [
-                "camera.fps",
                 "camera.width",
                 "camera.height",
-                "camera.bitrate_mb"
+                "camera.bitrate_mb",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -143,6 +144,14 @@ class CameraModule(Module):
                     self.logger.error(f"Error restarting streaming: {e}")
             
             self._restarting_stream = False # Reset the "restarting stream" flag
+
+            self.picam2.set_controls({
+                "AnalogueGain": self.config.get("camera.gain", 1), 
+                "ExposureTime": self.config.get("camera.exposure_time"),
+                "Brightness": self.config.get("camera.brightness"),
+                "FrameRate": self.config.get("camera.fps")
+            })
+
         elif not self.is_streaming:
             try:
                 self._configure_camera()
@@ -172,7 +181,12 @@ class CameraModule(Module):
             sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
             lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
-            controls = {"FrameRate": self.fps} # target framerate, in reality it might be lower.
+            controls = {
+                "FrameRate": self.fps, 
+                "AnalogueGain": self.config.get("camera.gain"), 
+                "ExposureTime": self.config.get("camera.exposure_time"), 
+                "Brightness": self.config.get("camera.brightness")
+            } # target framerate, in reality it might be lower.
             
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
@@ -403,6 +417,17 @@ class CameraModule(Module):
             if not timestamp:
                 self.logger.warning("No data returned by frame wall clock")
                 return
+
+            # Calculate actual framerate
+            actual_fps = None
+            if self.last_frame_timestamp:
+                actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 1)
+                self.last_frame_timestamp = timestamp
+            else:
+                self.last_frame_timestamp = timestamp
+
+
+
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
             # alt: timestmap = str(dt)
@@ -425,9 +450,49 @@ class CameraModule(Module):
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                 self._apply_timestamp(m, timestamp, "lores")
+                if actual_fps:
+                    self._apply_framerate(m, str(actual_fps), "lores")
 
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+
+
+    def _apply_framerate(self, m:MappedArray, framerate: str, stream: str = "main") -> None:
+        """Apply the framerate to the image."""
+        framerate = f"{framerate}fps"
+        if stream == "main":
+            width = self.width
+            height = self.height
+            font_scale = self.config.get("camera.text_scale", 2)
+            thickness = self.config.get("camera.text_thickness", 1)
+        elif stream == "lores":
+            width = self.lores_width
+            height = self.lores_height
+            font_scale = self.config.get("camera.text_scale", 2)
+            thickness = self.config.get("camera.text_thickness", 1)
+    
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
+
+        # Automatically resize if text is too long
+        if text_width > width:
+            scale = width / text_width
+            font_scale = font_scale * scale
+            text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
+
+        x = int((width / 2) - (text_width / 2))
+        y = 0 + int(height * 0.97) 
+        
+        cv2.putText(
+            img=m.array, 
+            text=framerate, 
+            org=(x, y), 
+            fontFace=font, 
+            fontScale=font_scale, 
+            color=(50,255,50), 
+            thickness=thickness
+            ) 
 
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:

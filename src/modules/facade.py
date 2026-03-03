@@ -26,6 +26,10 @@ class ModuleFacade():
         return self.module.module_id
 
 
+    def get_saviour_version(self) -> str:
+        return self.module.version
+
+
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 

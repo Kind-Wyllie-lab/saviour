@@ -254,8 +254,8 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
-        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        filename = f"{self.facade.get_filename_prefix()}_({self.facade.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
         return filename
 
 
@@ -421,7 +421,7 @@ class CameraModule(Module):
             # Calculate actual framerate
             actual_fps = None
             if self.last_frame_timestamp:
-                actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 1)
+                actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 3)
                 self.last_frame_timestamp = timestamp
             else:
                 self.last_frame_timestamp = timestamp

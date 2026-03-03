@@ -9,6 +9,7 @@
         "gain": 1,
         "exposure_time": 10000,
         "brightness": 1,
+        "overlay_framerate_on_preview": true,
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2,

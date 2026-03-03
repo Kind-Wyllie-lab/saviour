@@ -53,7 +53,7 @@ class CameraModule(Module):
         self.gain = None
 
         # Get camera modes
-        self.camera_modes = self.picam2.sensor_modes
+        self.sensor_modes = self.picam2.sensor_modes
         time.sleep(0.1)
     
         # Streaming variables
@@ -81,7 +81,8 @@ class CameraModule(Module):
         # Set up camera-specific callbacks for the command handler
         self.camera_commands = {
             'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming
+            'stop_streaming': self.stop_streaming,
+            "get_sensor_modes": self.get_sensor_modes
         }
         self.command.set_commands(self.camera_commands) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.commands}")
@@ -110,6 +111,18 @@ class CameraModule(Module):
         else:
             return True, "Picam2 object instantiated"
 
+
+    @command()
+    def get_sensor_modes(self):
+        if self.sensor_modes:
+            sensor_modes = [
+                {key: str(value) if key == 'format' else value for key, value in mode.items()}
+                for mode in self.sensor_modes
+            ]
+            return {
+                "sensor_modes": sensor_modes
+            }
+        
 
     def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
@@ -176,7 +189,7 @@ class CameraModule(Module):
             self.lores_height = int(self.height/2)
 
             # Pick appropriate sensor mode - we will use mode 0 by default
-            self.mode = self.camera_modes[0]
+            self.mode = self.sensor_modes[0]
 
             sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
@@ -450,7 +463,7 @@ class CameraModule(Module):
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                 self._apply_timestamp(m, timestamp, "lores")
-                if actual_fps:
+                if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
                     self._apply_framerate(m, str(actual_fps), "lores")
 
         except Exception as e:

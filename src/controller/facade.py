@@ -167,9 +167,9 @@ class ControllerFacade():
         self.controller.modules.module_rediscovered(module_id)
 
 
-    def module_discovery(self, discovered_modules: dict):
-        self.controller.modules.module_discovery(discovered_modules)
-        self.controller.health.module_discovery(discovered_modules)
+    def module_discovery(self, module):
+        self.controller.modules.module_discovery(module)
+        self.controller.health.module_discovery(module)
 
 
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:

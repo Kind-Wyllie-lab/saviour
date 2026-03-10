@@ -248,6 +248,8 @@ class Recording():
         """When a module goes offline, make a note of it"""
         self.logger.info(f"{module_id} went offline, recording in session log")
         session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            return
         filename = self._get_session_info_file(session_name)
         with open(filename, "a") as f:
             f.write(f"\n{module_id} went offline at {datetime.now().strftime('%Y%m%d_%H%M%S')}")
@@ -260,7 +262,7 @@ class Recording():
         self.logger.info(f"{module_id} is back online, restarting recording")
         session_name = self.get_session_name_from_target(module_id)
         if not session_name:
-            pass
+            return
         if self.sessions[session_name].active == True:
             filename = self._get_session_info_file(session_name)
             with open(filename, "a") as f:
@@ -280,7 +282,9 @@ class Recording():
         cycle_count = 0
         while True:
             cycle_count += 1
-
+            if cycle_count % 10 == 0:
+                # self.logger.info(f"Recording Monitor cycle {cycle_count}")
+                pass
 
             current_time = datetime.now().strftime("%H:%M")
             for session_name, session in self.sessions.items():

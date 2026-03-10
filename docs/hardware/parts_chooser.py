@@ -84,10 +84,10 @@ components = {
         "price": 3
     },
     "poe_switch_5": {
-        "name": "TPLink 5 Port PoE Switch",
-        "link": "https://uk.insight.com/en_GB/shop/product/TL-SF1005P/tp-link/TL-SF1005P/TPLink-TLSF1005P-switch-5-ports-unmanaged/",
+        "name": "D Link 5 Port PoE+ Switch",
+        "link": "https://uk.insight.com/en_GB/shop/product/DGS-1005P%2FB/d-link/DGS-1005P%2FB/DLink-DGS-1005P-switch-5-ports/",
         "supplier": "UK Insight",
-        "price": 37.19
+        "price": 41.99
     },
     "poe_switch_8": {
         "name": "DLink 8 Port PoE Switch",
@@ -97,9 +97,9 @@ components = {
     },
     "poe_switch_16": {
         "name": "TPLink 16 Port PoE+ Switch",
-        "link": "https://uk.insight.com/en_GB/shop/product/TL-SG1016PE/tp-link/TL-SG1016PE/TPLink-TLSG1016PE-switch-16-ports-smart-rackmountable/",
+        "link": "https://uk.insight.com/en_GB/shop/product/TL-SG1218MPE/tp-link/TL-SG1218MPE/TPLink-JetStream-TLSG1218MPE-switch-16-ports-smart-rackmountable/",
         "supplier": "UK Insight",
-        "price": 157.19
+        "price": 220.79
     },
 }
 

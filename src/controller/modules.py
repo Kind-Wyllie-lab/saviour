@@ -293,6 +293,18 @@ class Modules:
         """Return all modules serialised to dicts, ready for the frontend."""
         return self._serialise_modules()
 
+    def get_module_configs(self) -> Dict[str, Any]:
+        """Return config state for all modules, keyed by module_id."""
+        result = {}
+        for module_id, state in self._config_states.items():
+            result[module_id] = {
+                'true_config': state.true_config,
+                'target_config': state.target_config,
+                'status': state.status.value,
+                'diffs': state.diffs,
+            }
+        return result
+
 
     def get_modules_by_target(self, target: str) -> Dict[str, Any]:
         """

@@ -354,8 +354,8 @@ class Controller(ABC):
             self.web.start() # This will start a thread to serve a webapp and listen for commands from user
             
             # Update web interface with initial module list
-            if hasattr(self, 'network'):
-                self.web.update_modules(self.network.discovered_modules)
+            if hasattr(self, 'modules'):
+                self.web.update_modules(self.modules.get_modules())
 
 
         # Start the modules manager
@@ -427,7 +427,7 @@ class Controller(ABC):
         
         # Update web interface
         if hasattr(self, 'web'):
-            self.web.update_modules(self.network.discovered_modules)
+            self.web.update_modules(self.modules.get_modules())
             self.web.notify_module_update()
 
 

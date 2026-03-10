@@ -672,6 +672,37 @@ EOF
     systemctl --user restart pipewire
     systemctl --user restart pipewire-pulse
     systemctl --user restart wireplumber
+
+    # Update the service file with necessary environment variables
+    sudo tee /etc/systemd/system/saviour.service >/dev/null <<'EOF'
+[Unit]
+Description=Saviour Service
+After=network.target ptp4l.service phc2sys.service
+Wants=network.target ptp4l.service phc2sys.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${DIR}/${PYTHON_PATH}
+ExecStart=${DIR}/env/bin/python ${PYTHON_FILE}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH=${DIR}/src
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    # Reload systemd and enable service
+    sudo systemctl daemon-reload
+    sudo systemctl enable saviour.service
+
+    echo "Microphone SAVIOUR service updated."
 }
 
 

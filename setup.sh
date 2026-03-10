@@ -38,6 +38,9 @@ if [[ "$SCRIPT_DIR" != "$TARGET_DIR" ]]; then
     # Fix ownership so pi can work there
     sudo chown -R "$USER:$USER" "$TARGET_DIR"
 
+    # Mark it as safe
+    sudo git config --global --add safe.directory /usr/local/src/saviour
+
     echo "Re-running setup from $TARGET_DIR"
     exec "$TARGET_DIR/$(basename "$SCRIPT_PATH")"
 fi

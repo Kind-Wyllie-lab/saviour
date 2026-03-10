@@ -160,35 +160,47 @@ class Controller(ABC):
                 case 'heartbeat':
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
+
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
+
                 case 'status':
                     self.logger.info(f"{module_id} sent status type message likely response to get status command")
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
+
                 case 'get_config':
                     self.logger.info(f"Config dict received from {module_id}")
                     config_data = status_data.get('config', {})
-                    self.modules.update_module_config(module_id, config_data)
+                    self.modules.received_module_config(module_id, config_data)
+
                 case 'set_config':
                     self.logger.info(f"Set config response received from {module_id}")
-                    # If the set_config was successful, we should refresh the config
                     if status_data.get('result') == 'success':
-                        if not status_data.get('config'):
-                            self.communication.send_command(module_id, "get_config", {})
+                        config_data = status_data.get('config')
+                        if config_data:
+                            # Module echoed back its full config - use it to confirm sync
+                            self.modules.received_module_config(module_id, config_data)
                         else:
-                            self.modules.update_module_config(module_id, status_data.get('config'))
+                            # Module acknowledged but didn't echo config - request it explicitly
+                            self.communication.send_command(module_id, "get_config", {})
                     else:
-                        self.logger.error(f"Set config failed for {module_id}: {status_data.get('message', 'Unknown error')}")
+                        error_msg = status_data.get('result', 'Unknown error')
+                        self.logger.error(f"set_config failed for {module_id}: {error_msg}")
+                        self.modules.handle_set_config_failed(module_id, error_msg)
+
                 case 'recording_started':
                     self.logger.info(f"{module_id} has started recording")
                     self.modules.notify_recording_started(module_id, status_data)
+
                 case 'recording_stopped':
                     self.logger.info(f"{module_id} has stopped recording")
                     self.modules.notify_recording_stopped(module_id, status_data)
+
                 case 'recording_stop_failed':
                     if status_data.get("error") == "Not recording":
                         self.modules.notify_recording_stopped(module_id, status_data)
+
                 case 'validate_readiness':
                     # Handle readiness validation response
                     ready = status_data.get('ready', False)
@@ -198,8 +210,11 @@ class Controller(ABC):
                     if not ready:
                         self.logger.info(f"Full message from non-ready module: {message}")
                     self.modules.notify_module_readiness_update(module_id, ready, message)
+
                 case "error":
+                    message = status_data.get('message', 'No message...')
                     self.logger.warning(f"Received error from {module_id}: {message}")
+
                 case _:
                     self.logger.info(f"Unknown status type from {module_id}: {status_type}")
         except Exception as e:

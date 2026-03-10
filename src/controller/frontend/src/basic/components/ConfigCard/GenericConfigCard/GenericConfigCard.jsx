@@ -116,11 +116,18 @@ function GenericConfigCard({ id, module }) {
   const handleSave = () => {
     import("/src/socket").then(({ default: socket }) => {
       const editableData = filterPrivateKeys(formData); // only send editable keys
-      const wrappedData = { config: editableData };
-      console.log("Saving config for module", id, wrappedData);
-      socket.emit("save_module_config", { id: id, config: wrappedData });
+      console.log("Saving config for module", id, editableData);
+      socket.emit("save_module_config", { id: id, config: editableData });
     });
   };
+
+  const getModes = () => {
+    socket.emit("send_command", {
+      module_id: module.id,
+      type: "get_sensor_modes",
+      params: {}
+    } )
+  }
 
   return (
     <div className="config-card">
@@ -138,6 +145,7 @@ function GenericConfigCard({ id, module }) {
         {module.type.includes("camera") && (
           <div className="livestream-wrapper">
             <LivestreamCard module={module} />
+            <button onClick={getModes}>Get Modes</button>
           </div>
         )}
 

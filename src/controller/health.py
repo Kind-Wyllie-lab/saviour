@@ -21,6 +21,8 @@ import os
 from collections import deque
 from typing import Dict, Any, Optional, List
 
+from src.controller.models import Module
+
 class Health:
     def __init__(self, config):
         """Initialize the health monitor
@@ -131,29 +133,27 @@ class Health:
             return False
 
 
-    def module_discovery(self, discovered_modules: dict):
+    def module_discovery(self, module: Module):
         """Receive discovered modules from network manager
         Ensure health tracking is aware of all modules
         """
-        self.logger.info(f"Received discovered modules from Network: {discovered_modules}")
-        for module in discovered_modules:
-            if module.id not in self.module_health:
-                self.logger.info(f"Discovered new module {module.id}, adding to health tracking")
-                self.module_health[module.id] = {
-                    'timestamp': time.time(),
-                    'last_heartbeat': 0,  # No heartbeat yet
-                    'status': 'offline',  # Start as offline until first heartbeat
-                    'cpu_temp': None,
-                    'cpu_usage': None,
-                    'memory_usage': None,
-                    'uptime': None,
-                    'disk_space': None,
-                    'ptp4l_offset': None,
-                    'ptp4l_freq': None,
-                    'phc2sys_offset': None,
-                    'phc2sys_freq': None
-                }
-    
+        if module.id not in self.module_health:
+            self.logger.info(f"Discovered new module {module.id}, adding to health tracking")
+            self.module_health[module.id] = {
+                'timestamp': time.time(),
+                'last_heartbeat': 0,  # No heartbeat yet
+                'status': 'offline',  # Start as offline until first heartbeat
+                'cpu_temp': None,
+                'cpu_usage': None,
+                'memory_usage': None,
+                'uptime': None,
+                'disk_space': None,
+                'ptp4l_offset': None,
+                'ptp4l_freq': None,
+                'phc2sys_offset': None,
+                'phc2sys_freq': None
+            }
+
 
     def module_id_changed(self, old_module_id, new_module_id):
         # Move the module data to the new key

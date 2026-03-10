@@ -374,14 +374,14 @@ class Web(ABC):
         @self.socketio.on('save_module_config')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
-            self.logger.info(f"Received request to save config to module {data['id']} with data {data['config']}")
-            # Format command with parameters
-            command = "set_config"
-            # Extract params from the data
-            params = data.get("config", {})
-            # Send the config update command to the relevant module
-            self.facade.send_command(data['id'], command, params)
-
+            module_id = data['id']
+            config = data.get("config", {})
+            self.logger.info(f"Received request to save config to module {module_id} with data {config}")
+            # Record intent on controller before sending - this sets status to PENDING
+            # and stores the target so we can verify the round-trip when the module responds
+            self.facade.set_target_module_config(module_id, config)
+            # Send the config update command to the module
+            self.facade.send_command(module_id, "set_config", config)
 
         """Controller System State"""
         @self.socketio.on("get_system_state")
@@ -451,7 +451,6 @@ class Web(ABC):
             debug_data = {}
             debug_data["modules"] = self.facade.get_modules()
             debug_data["module_health"] = self.facade.get_module_health()
-            debug_data["discovered_modules"] = self.facade.get_discovered_modules()
             debug_data["module_configs"] = self.facade.get_module_configs()
             self.socketio.emit("debug_data", debug_data)
 

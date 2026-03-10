@@ -653,17 +653,25 @@ EOF
 
 
 configure_microphone() {
-    sudo install -d /etc/pipewire/pipewire.conf.d
+    echo "Installing pipewire"
+
+    # Make the config directory if it doesn't already exist
+    sudo mkdir -p /etc/pipewire/pipewire.conf.d
+
+    # Write the samplerate configuration
     sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
-    context.properties = {
-        default.clock.rate = 192000
-        default.clock.allowed-rates = [ 96000 192000 384000]
-    }
+context.properties = {
+    default.clock.rate = 192000
+    default.clock.allowed-rates = [ 96000 192000 384000]
+}
 EOF
-    sudo -u pi pkill -9 pipewire
-    sudo -u pi pkill -9 wireplumber
-    sudo -u pi pipewire &
-    sudo -u pi wireplumber &
+    # Restart PipeWire and related services at the user level
+    systemctl --user enable pipewire
+    systemctl --user enable pipewire-pulse
+    systemctl --user enable wireplumber
+    systemctl --user restart pipewire
+    systemctl --user restart pipewire-pulse
+    systemctl --user restart wireplumber
 }
 
 
@@ -786,17 +794,8 @@ echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep savio
 echo ""
 
 if [ "$DEVICE_TYPE" = "microphone" ]; then
-    sudo install -d /etc/pipewire/pipewire.conf.d
-    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
-    context.properties = {
-        default.clock.rate = 192000
-        default.clock.allowed-rates = [ 96000 192000 384000]
-    }
-EOF
-    sudo -u pi pkill -9 pipewire
-    sudo -u pi pkill -9 wireplumber
-    sudo -u pi pipewire &
-    sudo -u pi wireplumber &
+    echo "Configuring microphone"
+    configure_microphone
 fi
 
 

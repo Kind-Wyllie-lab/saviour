@@ -114,14 +114,38 @@ class CameraModule(Module):
 
     @command()
     def get_sensor_modes(self):
-        if self.sensor_modes:
-            sensor_modes = [
-                {key: str(value) if key == 'format' else value for key, value in mode.items()}
-                for mode in self.sensor_modes
-            ]
-            return {
-                "sensor_modes": sensor_modes
-            }
+        if not self.sensor_modes:
+            return {"sensor_modes": []}
+
+        # Identify the largest crop area across all modes to distinguish full-FoV modes.
+        max_area = max(
+            m['crop_limits'][2] * m['crop_limits'][3]
+            for m in self.sensor_modes
+        )
+
+        enriched = []
+        for i, mode in enumerate(self.sensor_modes):
+            crop = mode['crop_limits']
+            mode_area = crop[2] * crop[3]
+            if mode_area >= max_area:
+                fov = "Full FoV"
+            else:
+                pct = round(100 * mode_area / max_area)
+                fov = f"Partial FoV ({pct}%)"
+
+            w, h = mode['size']
+            fps = mode['fps']
+            enriched.append({
+                "index": i,
+                "size": [w, h],
+                "fps": round(fps, 1),
+                "bit_depth": mode['bit_depth'],
+                "crop_limits": list(crop),
+                "format": str(mode['format']),
+                "label": f"Mode {i}: {w}×{h} @ {fps:.0f}fps — {fov}",
+            })
+
+        return {"sensor_modes": enriched}
         
 
     def configure_module_special(self, updated_keys: Optional[list[str]]):
@@ -129,6 +153,7 @@ class CameraModule(Module):
         if self.is_streaming:
             # Configure anything that doesn't require stream to restart
             restart_keys = [
+                "camera.sensor_mode_index",
                 "camera.width",
                 "camera.height",
                 "camera.bitrate_mb",
@@ -188,10 +213,24 @@ class CameraModule(Module):
             self.lores_width = int(self.width/2)
             self.lores_height = int(self.height/2)
 
-            # Pick appropriate sensor mode - we will use mode 0 by default
-            self.mode = self.sensor_modes[0]
+            # Pick sensor mode from config (clamped to valid range)
+            mode_index = self.config.get("camera.sensor_mode_index", 0)
+            mode_index = max(0, min(int(mode_index), len(self.sensor_modes) - 1))
+            self.mode = self.sensor_modes[mode_index]
 
-            sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
+            # Clamp output size to the selected mode's maximum output dimensions
+            max_w, max_h = self.mode["size"]
+            if self.width > max_w or self.height > max_h:
+                self.logger.warning(
+                    f"Requested output {self.width}×{self.height} exceeds sensor mode {mode_index} "
+                    f"max {max_w}×{max_h} — clamping."
+                )
+                self.width = min(self.width, max_w)
+                self.height = min(self.height, max_h)
+                self.lores_width = int(self.width / 2)
+                self.lores_height = int(self.height / 2)
+
+            sensor = {"output_size": self.mode["size"], "bit_depth": self.mode["bit_depth"]}
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
             lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
             controls = {

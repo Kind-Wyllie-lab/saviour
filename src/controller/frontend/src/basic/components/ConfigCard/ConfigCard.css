@@ -8,7 +8,6 @@
   max-width: 800px;
   display: flex;
   flex-direction: column;
-  align-items: center;
   align-items: stretch;   /* <-- make children stretch horizontally */
   align-self: flex-start; /* <-- let card shrink to its content height */
   /* box-shadow: 0 0 20px black; */
@@ -111,4 +110,22 @@ max-width: 600px;
   color: white;
   cursor: pointer;
   font-weight: bold;
+}
+
+.fov-label {
+  font-size: 0.85em;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.fov-full {
+  background-color: color-mix(in srgb, green 20%, var(--card-bg-color));
+  color: green;
+}
+
+.fov-cropped {
+  background-color: color-mix(in srgb, orange 20%, var(--card-bg-color));
+  color: orange;
 }

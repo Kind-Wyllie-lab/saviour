@@ -280,8 +280,7 @@ class Recording():
         cycle_count = 0
         while True:
             cycle_count += 1
-            if cycle_count % 10 == 0:
-                self.logger.info(f"Recording Monitor cycle {cycle_count}")
+
 
             current_time = datetime.now().strftime("%H:%M")
             for session_name, session in self.sessions.items():

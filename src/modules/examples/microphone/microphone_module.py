@@ -51,26 +51,29 @@ class AudiomothModule(Module):
         self.config.load_module_config("microphone_config.json")
 
         # Set up audiomoth-specific callbacks for the command handler
-        self.audiomoth_callbacks = {
+        self.audiomoth_commands = {
             'monitor': self.monitor,
             'list_audiomoths': self.list_audiomoths
         }
-        self.command.set_callbacks(self.audiomoth_callbacks) # Append new audiomoth callbacks
-        self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
+        self.command.set_commands(self.audiomoth_commands) # Append new audiomoth callbacks
+
 
     def configure_module(self):
         self.logger.info("No implementation yet for configure_module in audiomoth")
+
 
     @command
     def list_audiomoths(self):
         """Returns dict containing list of audiomoths""" 
         return {"result": "Success", "audiomoths": self.audiomoths}
 
+
     @command
     def monitor(self):
         """Command method for monitoring the output of the audiomoth microphones"""
         self.logger.warning("No implementation yet for monitor method")
         return {"result": "Failure", "message": "No implementation for monitor method"}
+
 
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()
@@ -79,6 +82,7 @@ class AudiomothModule(Module):
                 serial = re.split(r"-|_", mic.id)[-3] # Serial code, unique identifier for each audiomoth
                 self.audiomoths[serial] = mic.id
         self.logger.info(f"Found {len(self.audiomoths.items())} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
+
 
     def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit, experiment_name: str):
         self.logger.info(f"Starting recording thread for serial {serial}, unit {unit}")
@@ -131,9 +135,17 @@ class AudiomothModule(Module):
         timestamps_writer.close()      
 
     
-    def clear_recordings(self):
+    def _start_new_recording(self):
         pass
+
     
+    def _start_next_recording_segment(self):
+        pass
+
+    
+    def configure_module_special(self):
+        pass
+
 
     def start_streaming(self):
         # TODO: Could monitor stuff go here? It's basically streaming but for audio

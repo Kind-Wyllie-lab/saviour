@@ -9,8 +9,6 @@ Author: Andrew SG / Domagoj Anticic
 Created: 18/08/2025
 
 Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicrophone_setup by Domagoj Anticic
-
-# TODO: Refactor to override abstract methods configure_module, _start_recording, _stop_recording
 """
 
 import datetime
@@ -20,7 +18,7 @@ import time
 import logging
 import numpy as np
 import threading
-import soundfile 
+import soundfile
 import soundcard
 import re
 
@@ -33,21 +31,24 @@ class AudiomothModule(Module):
     def __init__(self, module_type="microphone"):
         # Call the parent class constructor
         super().__init__(module_type)
-    
+
         # Initialize audiomoth
-        self.mics = [] # An empty list for discovering all connected mics 
+        self.mics = [] # An empty list for discovering all connected mics
         self.audiomoths = {} # An empty dict for discovering connected audiomoths
         self._find_audiomoths() # Discover any and all connected microphones
 
-        # Microphone recording threads
-        self._recording_threads = [] # One per microphone
+        # Per-segment recording threads and state
+        self.audiomoth_threads = []
+        self.current_recording_files = {}  # serial -> current filename
+        self._segment_stop_event = threading.Event()
+        self._recording_stop_event = threading.Event()
 
         # State flags
         self.is_recording = False
         self.latest_recording = None
         self.recording_start_time = None
 
-        # Update config 
+        # Update config
         self.config.load_module_config("microphone_config.json")
 
         # Set up audiomoth-specific callbacks for the command handler
@@ -64,7 +65,7 @@ class AudiomothModule(Module):
 
     @command
     def list_audiomoths(self):
-        """Returns dict containing list of audiomoths""" 
+        """Returns dict containing list of audiomoths"""
         return {"result": "Success", "audiomoths": self.audiomoths}
 
 
@@ -84,65 +85,98 @@ class AudiomothModule(Module):
         self.logger.info(f"Found {len(self.audiomoths.items())} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
 
 
-    def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit, experiment_name: str):
-        self.logger.info(f"Starting recording thread for serial {serial}, unit {unit}")
+    def _get_audio_filename(self, serial: str) -> str:
+        """Build a per-audiomoth filename for the current recording segment."""
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        filetype = self.config.get("recording.recording_filetype", "flac")
+        return f"{self.facade.get_filename_prefix()}_{serial}_({self.facade.get_segment_id()}_{strtime}).{filetype}"
+
+
+    def _start_new_recording(self) -> None:
+        """Start initial recording segments for all connected audiomoths."""
+        self._recording_stop_event.clear()
+        self._segment_stop_event.clear()
+        self.audiomoth_threads = []
+        self.current_recording_files = {}
+        self.recording_start_time = time.time()
+
+        if not self.audiomoths:
+            self.logger.warning("No audiomoths connected, cannot start recording")
+            return
+
+        for serial, mic_id in self.audiomoths.items():
+            filename = self._get_audio_filename(serial)
+            self.current_recording_files[serial] = filename
+            self.facade.add_session_file(filename)
+            thread = threading.Thread(
+                target=self._record_microphone_segment,
+                args=(serial, mic_id, filename),
+                daemon=True,
+                name=f"audiomoth-{serial}"
+            )
+            self.audiomoth_threads.append(thread)
+            thread.start()
+
+        self.logger.info(f"Started {len(self.audiomoth_threads)} audiomoth recording threads")
+
+
+    def _start_next_recording_segment(self) -> None:
+        """Stage current files for export and start new recording segment for all audiomoths."""
+        # Stage current segment files for export
+        for filename in self.current_recording_files.values():
+            self.facade.stage_file_for_export(filename)
+
+        # Signal current threads to stop after their current audio block
+        self._segment_stop_event.set()
+        for thread in self.audiomoth_threads:
+            thread.join(timeout=10)
+
+        # Start new segment
+        self._segment_stop_event.clear()
+        self.audiomoth_threads = []
+        self.current_recording_files = {}
+
+        for serial, mic_id in self.audiomoths.items():
+            filename = self._get_audio_filename(serial)
+            self.current_recording_files[serial] = filename
+            self.facade.add_session_file(filename)
+            thread = threading.Thread(
+                target=self._record_microphone_segment,
+                args=(serial, mic_id, filename),
+                daemon=True,
+                name=f"audiomoth-{serial}"
+            )
+            self.audiomoth_threads.append(thread)
+            thread.start()
+
+        self.logger.info(f"Switched to recording segment {self.facade.get_segment_id()}")
+
+
+    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str) -> None:
+        """Record audio from one audiomoth to a single file until segment stop or recording stop."""
         sample_rate = self.config.get("microphone.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
         block_size = self.config.get("microphone.block_size", 1024 * 128)
-        file_duration = self.config.get("recording.file_duration", 60)*60  # config in mins, convert to secs
-        frame_batches_per_file = file_duration * sample_rate // frame_num
-        
-        start_time = datetime.datetime.now().strftime("%Y-%m-%d-H%M%S-%f")
-        # TODO centralise timestamp naming - check if name sanitised before being passed here
-        timestamps_file = f"{self.recording_folder}/{experiment_name}_{unit}_timestamps.txt"
-        self.add_session_file(timestamps_file)
-        timestamps_writer = open(timestamps_file, 'w')
 
-        microphone = soundcard.get_microphone(microphone)
-        file_counter = 0
-        with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
-            while self.is_recording:
-                # Get time of new file creation
-                mic_start_time = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S-%f") # Add _%f to include microseconds
-                self.logger.info(
-                    f"Created new recording file for {serial} at {mic_start_time}")
-                # Create new file
-                batch_counter = 0
-                # TODO: Tie this in with experiment filename creation in start_recording method.
-                filename = f"{self.recording_folder}/{experiment_name}_{unit}_{file_counter}_{mic_start_time}.flac" 
-                self.add_session_file(filename)
-                # Run new file writing
-                with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1,
-                                         subtype="PCM_16") as file:
-                    while self.is_recording:
-                        data = recorder.record(numframes=frame_num)
-                        # from docs:
-                        """
-                        The data will be returned as a [frames x channels] float32 numpy array.
-                        This function will wait until numframes frames have been recorded.
-                        If numframes is given, it will return exactly `numframes` frames,
-                        and buffer the rest for later.
-                        """
-                        batch_counter += 1
-                        #data += recorder.flush()
-                        timestamps_writer.write(str(time.time()) + "\n")
-                        file.write(data)
-                        # If all frames written
-                        if (batch_counter == frame_batches_per_file):
-                            file_counter += 1
-                            break
+        timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
+        self.facade.add_session_file(timestamps_filename)
 
-        timestamps_writer.close()      
+        self.logger.info(f"Recording thread started for audiomoth {serial}: {filename}")
+        try:
+            microphone = soundcard.get_microphone(mic_id)
+            with open(timestamps_filename, 'w') as timestamps_writer:
+                with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
+                    with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
+                        while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():
+                            data = recorder.record(numframes=frame_num)
+                            timestamps_writer.write(str(time.time()) + "\n")
+                            f.write(data)
+        except Exception as e:
+            self.logger.error(f"Recording thread error for audiomoth {serial}: {e}")
 
-    
-    def _start_new_recording(self):
-        pass
+        self.logger.info(f"Recording thread finished for audiomoth {serial}")
 
-    
-    def _start_next_recording_segment(self):
-        pass
 
-    
     def configure_module_special(self):
         pass
 
@@ -156,87 +190,32 @@ class AudiomothModule(Module):
         pass
 
 
-    def _start_recording(self) -> bool:
-        """Start continuous audio recording"""
-        self.logger.info("Executing audiomoth specific recording functionality...")
-
-        # Store experiment name for use in timestamps filename
-        self.logger.info(f"Recording will use {self.current_experiment_name} for filenames ")
-
-        try: 
-            # If there are audiomoths connected
-            if len(self.audiomoths) > 0:
-                self.audiomoth_threads = []
-                self.recording_start_time = time.time()
-                for serial, mic in self.audiomoths.items():
-                    #try:
-                    #    unit = audiomoth_to_unit[serial]
-                    #except KeyError:
-                    if True:
-                        self.logger.info(f"Unit not specified, using audiomoth serial instead [{serial}]")
-                    unit = serial
-                    # create recording thread
-                    experiment_name = self.current_experiment_name
-                    recording_thread = threading.Thread(target=self._record_microphone, args=(serial, mic, unit, experiment_name))
-                    self.audiomoth_threads.append(recording_thread)
-                    recording_thread.start()
-
-                    # join recording threads
-                    #for thread in self.audiomoth_threads:
-                    #    thread.join()
-                # self.stopper_thread = threading.Thread(target=self._duration_process_stopper, args=(duration))
-                # self.stopper_thread.start()
-
-            else:
-                self.logger.info("No audiomoths detected, cannot record")
-            
-            self.is_recording = True
-
-            # Send status response after successful recording start
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-
-                self.communication.send_status({
-                    "type": "recording_started",
-                    "filename": "Multiple filenames exist for each microphone",
-                    "recording": True,
-                    "session_id": self.recording_session_id
-                })
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_start_failed",
-                    "error": str(e)
-                })
-            return False
-
     def _stop_recording(self) -> bool:
         """Stop continuous recording with audiomoth-specific code"""
-        response = {}
         try:
-            # Stop capture thread
-            self.is_recording = False # This gets checked in each _record_microphone thread, so they should exit.
-            
-            # Calculate recording duration
+            self.is_recording = False
+            self._recording_stop_event.set()
+
+            # Stage the current segment's files for export
+            for filename in self.current_recording_files.values():
+                self.facade.stage_file_for_export(filename)
+
+            # Wait for recording threads to finish their current block
+            for thread in self.audiomoth_threads:
+                thread.join(timeout=10)
+            self.audiomoth_threads = []
+
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
-
-                
-                # Send status response after successful recording stop
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
                         "duration": duration,
                         "status": "success",
                         "recording": False,
-                        "message": f"Recording completed successfully"
+                        "message": "Recording completed successfully"
                     })
-
-                self.logger.info("Concluded audiomoth _stop_recording, waiting to exit")
-
+                self.logger.info("Concluded audiomoth _stop_recording")
                 return True
             else:
                 self.logger.error("Error: recording_start_time was None")
@@ -247,7 +226,7 @@ class AudiomothModule(Module):
                         "error": "Recording start time was not set, so could not create timestamps."
                     })
                 return False
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -258,12 +237,15 @@ class AudiomothModule(Module):
                 })
             return False
 
+
     def get_latest_recording(self):
         """Get the latest recording"""
         return self.latest_recording
 
+
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         super().when_controller_discovered(controller_ip, controller_port)
+
 
     def start(self) -> bool:
         """Start the audiomoth module - including streaming"""
@@ -278,16 +260,17 @@ class AudiomothModule(Module):
             self.logger.error(f"Error starting module: {e}")
             return False
 
+
     def stop(self) -> bool:
         """Stop the module and cleanup"""
         try:
             # Stop streaming if active
             if self.is_streaming:
                 self.stop_streaming()
-                
+
             # Call parent stop
             return super().stop()
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
             return False
@@ -307,4 +290,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

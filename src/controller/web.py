@@ -164,9 +164,13 @@ class Web(ABC):
 
                 if command == "start_recording":
                     params["experiment_name"] += ("-" + datetime.now().strftime("%Y%M%d_%H%m%s"))
-                
-                # Send command to module
-                self.facade.send_command(module_id, command, params)
+
+                # Broadcast to every connected module when module_id is "all"
+                if module_id == "all":
+                    for mid in list(self.facade.get_modules().keys()):
+                        self.facade.send_command(mid, command, params)
+                else:
+                    self.facade.send_command(module_id, command, params)
                     
             except Exception as e:
                 self.logger.error(f"Error handling command: {str(e)}")
@@ -374,14 +378,21 @@ class Web(ABC):
         @self.socketio.on('save_module_config')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
-            self.logger.info(f"Received request to save config to module {data['id']} with data {data['config']}")
-            # Format command with parameters
-            command = "set_config"
-            # Extract params from the data
-            params = data.get("config", {})
-            # Send the config update command to the relevant module
-            self.facade.send_command(data['id'], command, params)
+            module_id = data['id']
+            config = data.get("config", {})
+            self.logger.info(f"Received request to save config to module {module_id} with data {config}")
+            # Record intent on controller before sending - this sets status to PENDING
+            # and stores the target so we can verify the round-trip when the module responds
+            self.facade.set_target_module_config(module_id, config)
+            # Send the config update command to the module
+            self.facade.send_command(module_id, "set_config", config)
 
+        @self.socketio.on('reset_module_config')
+        def handle_reset_module_config(data):
+            """Handle reset-to-defaults request from frontend"""
+            module_id = data.get('module_id')
+            self.logger.info(f"Received reset_module_config request for {module_id}")
+            self.facade.send_command(module_id, "reset_config", {})
 
         """Controller System State"""
         @self.socketio.on("get_system_state")
@@ -451,7 +462,6 @@ class Web(ABC):
             debug_data = {}
             debug_data["modules"] = self.facade.get_modules()
             debug_data["module_health"] = self.facade.get_module_health()
-            debug_data["discovered_modules"] = self.facade.get_discovered_modules()
             debug_data["module_configs"] = self.facade.get_module_configs()
             self.socketio.emit("debug_data", debug_data)
 
@@ -723,8 +733,13 @@ class Web(ABC):
                 case "heartbeat":
                     pass
 
+                case "get_sensor_modes":
+                    self.socketio.emit("sensor_modes_response", {
+                        "module_id": module_id,
+                        "sensor_modes": status.get("sensor_modes", [])
+                    })
 
-                case _:              
+                case _:
                     was_special_status = self.handle_special_module_status(module_id, status)
                     if not was_special_status:
                         pass

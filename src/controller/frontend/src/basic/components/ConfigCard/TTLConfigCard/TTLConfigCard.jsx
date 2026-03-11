@@ -1,50 +1,16 @@
-import React, { useState, useEffect } from "react";
+import { useState } from "react";
 import socket from "../../../../socket";
 import "./TTLConfigCard.css";
+import { useConfigForm } from "../useConfigForm";
+import { filterPrivateKeys } from "../configUtils";
 
 /* Draft for a TTL config card that dynamically updates form based on schema, for adding and removing pins. Not currently working.*/
 
 function TTLConfigCard({ module }) {
-  const [formData, setFormData] = useState(module.config);
-  const [collapsed, setCollapsed] = useState(false); // top-level collapse
-  const [collapsedSections, setCollapsedSections] = useState({}); // for nested fields
+  const { formData, setFormData, handleChange } = useConfigForm(module.config);
+  const [collapsed, setCollapsed] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState({});
   const [newPin, setNewPin] = useState("");
-
-  // Keep formData synced if parent updates config
-  useEffect(() => setFormData(module.config), [module.config]);
-
-  // Recursively filter out private keys
-  const filterPrivateKeys = (obj) => {
-    if (!obj || typeof obj !== "object") return obj;
-    const filtered = {};
-    for (const [k, v] of Object.entries(obj)) {
-      if (!k.startsWith("_")) {
-        const val = typeof v === "object" ? filterPrivateKeys(v) : v;
-        if (
-          val !== undefined &&
-          val !== null &&
-          (typeof val !== "object" || Object.keys(val).length > 0)
-        ) {
-          filtered[k] = val;
-        }
-      }
-    }
-    return Object.keys(filtered).length > 0 ? filtered : undefined;
-  };
-
-  const handleChange = (path, e) => {
-    const newData = { ...formData };
-    let pointer = newData;
-    for (let i = 0; i < path.length - 1; i++) pointer = pointer[path[i]];
-    const lastKey = path[path.length - 1];
-    const oldValue = pointer[lastKey];
-
-    if (typeof oldValue === "boolean") pointer[lastKey] = e.target.checked;
-    else if (typeof oldValue === "number") pointer[lastKey] = Number(e.target.value);
-    else pointer[lastKey] = e.target.value;
-
-    setFormData(newData);
-  };
 
   const renderFields = (obj, path = []) => {
     const filteredObj = filterPrivateKeys(obj);
@@ -179,9 +145,7 @@ function TTLConfigCard({ module }) {
 
   const saveConfig = () => {
     const editableData = filterPrivateKeys(formData);
-    const wrappedData = { config: editableData };
-    console.log("Saving config for module", module.id, wrappedData);
-    socket.emit("save_module_config", { id: module.id, config: wrappedData });
+    socket.emit("save_module_config", { id: module.id, config: editableData });
   };
 
   return (

@@ -108,6 +108,10 @@ function CameraConfigCard({ id, module }) {
     socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
   };
 
+  const handleReset = () => {
+    socket.emit("reset_module_config", { module_id: module.id });
+  };
+
   const currentWidth  = formData?.camera?.width;
   const currentHeight = formData?.camera?.height;
   const currentFps    = formData?.camera?.fps;
@@ -122,11 +126,15 @@ function CameraConfigCard({ id, module }) {
   const maxFpsAll = sensorModes.length ? Math.max(...sensorModes.map(m => m.fps)) : 999;
 
   const overlayTimestamp = formData?.camera?.overlay_timestamp ?? true;
+  const brightness = formData?.camera?.brightness ?? 0;
+  const bitrateMb = formData?.camera?.bitrate_mb ?? 0;
+  // GB/hr = bitrate_mb Mbits/s × 3600 s/hr ÷ 8 bits/byte ÷ 1000 MB/GB
+  const gbPerHour = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
   // Strip fields handled explicitly so ConfigFields doesn't render duplicates.
   const configFieldsData = (() => {
     if (!formData?.camera) return formData;
-    const { sensor_mode_index, width, height, fps, overlay_timestamp, text_size, ...rest } = formData.camera;
+    const { sensor_mode_index, width, height, fps, overlay_timestamp, text_size, brightness, bitrate_mb, ...rest } = formData.camera;
     return { ...formData, camera: rest };
   })();
 
@@ -234,14 +242,44 @@ function CameraConfigCard({ id, module }) {
             </div>
           )}
 
+          {/* ── Brightness ── */}
+          <div className="form-field">
+            <label>Brightness: {Number(brightness).toFixed(2)}</label>
+            <input
+              type="range"
+              min="-1" max="1" step="0.05"
+              value={brightness}
+              className="brightness-slider"
+              onChange={e => handleChange(["camera", "brightness"], e)}
+            />
+          </div>
+
+          {/* ── Bitrate + filesize preview ── */}
+          <div className="form-field">
+            <label>Bitrate (Mbps):</label>
+            <input
+              type="number" min="1" max="50" step="1"
+              value={bitrateMb}
+              onChange={e => handleChange(["camera", "bitrate_mb"], e)}
+            />
+          </div>
+          <div className="filesize-preview">
+            ~{gbPerHour} GB / hr at {bitrateMb} Mbps
+          </div>
+
           {/* ── Remaining config fields ── */}
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange} />
           </form>
 
-          <button className="save-button" type="button" onClick={handleSave}>
-            Save Config
-          </button>
+          <div className="config-action-buttons">
+            <button className="save-button" type="button" onClick={handleSave}>
+              Save Config
+            </button>
+            <button className="reset-button" type="button" onClick={handleReset}>
+              Reset to Default
+            </button>
+          </div>
         </div>
 
         <div className="livestream-wrapper">

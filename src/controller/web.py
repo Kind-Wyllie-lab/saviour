@@ -383,6 +383,13 @@ class Web(ABC):
             # Send the config update command to the module
             self.facade.send_command(module_id, "set_config", config)
 
+        @self.socketio.on('reset_module_config')
+        def handle_reset_module_config(data):
+            """Handle reset-to-defaults request from frontend"""
+            module_id = data.get('module_id')
+            self.logger.info(f"Received reset_module_config request for {module_id}")
+            self.facade.send_command(module_id, "reset_config", {})
+
         """Controller System State"""
         @self.socketio.on("get_system_state")
         def handle_get_system_state(data=None):

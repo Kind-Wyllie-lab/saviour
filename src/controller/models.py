@@ -27,6 +27,7 @@ class Module:
     id: str # ID of connected module which is combination of type and last 4 digits of MAC e.g. camera_dc67
     name: str # Current name of the module - probably defaults to ID but can be renamed e.g. camera_dc67 -> Top_Camera
     type: str # Module type e.g. camera, TTL
+    version: str # SAVIOUR version the module is running with
     ip: str # Ip of connected module
     zeroconf_name: str = "" # Zeroconf service name of connected module
     port: int = 5353 # The port that zeroconf is operating on?

@@ -39,17 +39,13 @@ class ControllerFacade():
     def get_module_health(self, module_id: Optional[str] = None):
         return self.controller.health.get_module_health(module_id)
 
-    
-    def get_discovered_modules(self) -> dict:
-        return self.controller.network.get_modules()
-
 
     def get_module_config(self, module_id: str) -> dict:
         return self.controller.get_module_config(module_id)
         
     
     def get_module_configs(self) -> dict:
-        return self.controller.get_module_configs()
+        return self.controller.modules.get_module_configs()
 
     
     def get_samba_info(self):
@@ -146,6 +142,15 @@ class ControllerFacade():
     def is_module_recording(self, module_id: str) -> bool:
         return self.controller.modules.is_module_recording(module_id)
 
+
+    def received_module_config(self, module_id: str, module_config: dict) -> None:
+        self.controller.modules.received_module_config(module_id, module_config)
+
+
+    def set_target_module_config(self, module_id: str, module_config: dict) -> None:
+        self.controller.modules.set_target_module_config(module_id, module_config)
+        
+
     """Events"""
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline
@@ -162,14 +167,14 @@ class ControllerFacade():
         self.controller.modules.module_rediscovered(module_id)
 
 
-    def module_discovery(self, discovered_modules: dict):
-        self.controller.modules.module_discovery(discovered_modules)
-        self.controller.health.module_discovery(discovered_modules)
+    def module_discovery(self, module):
+        self.controller.modules.module_discovery(module)
+        self.controller.health.module_discovery(module)
 
 
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:
-        self.controller.modules.module_id_changed(old_id, new_id)
-        self.controller.health.module_id_changed(old_id, new_id)
+        self.controller.modules.module_id_changed(old_module_id, new_module_id)
+        self.controller.health.module_id_changed(old_module_id, new_module_id)
     
 
     def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:

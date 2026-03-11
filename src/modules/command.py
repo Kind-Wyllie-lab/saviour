@@ -128,12 +128,12 @@ class Command:
             # self.logger.info(f"Command handler returned {result}")
 
             if result == True:
-                result = {"message": "success"}
+                result = {"result": "success"}
             elif result == False:
-                result = {"message": "error"}
+                result = {"result": "error"}
             elif result == None:
                 self.logger.warning(f"Make sure {cmd} returns a dict")
-                result = {"message": f"NoneType result from {cmd} callback"}
+                result = {"result": f"error: NoneType result from {cmd} callback"}
 
             # 4. Send response to controller
             response = {"type": cmd}

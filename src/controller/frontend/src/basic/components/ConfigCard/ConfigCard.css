@@ -129,3 +129,99 @@ max-width: 600px;
   background-color: color-mix(in srgb, orange 20%, var(--card-bg-color));
   color: orange;
 }
+
+/* Camera config card — preset buttons */
+.camera-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  width: 100%;
+}
+
+.preset-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  min-width: 72px;
+  gap: 2px;
+}
+
+.preset-btn.active {
+  background-color: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.preset-label {
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.preset-sub {
+  font-size: 0.78em;
+  opacity: 0.8;
+}
+
+.fov-badge {
+  font-size: 0.7em;
+  font-weight: 500;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-top: 2px;
+}
+
+.fov-badge--full {
+  background-color: color-mix(in srgb, green 20%, transparent);
+  color: green;
+}
+
+.preset-btn.active .fov-badge--full {
+  background-color: color-mix(in srgb, white 20%, transparent);
+  color: white;
+}
+
+.fov-badge--partial {
+  background-color: color-mix(in srgb, orange 20%, transparent);
+  color: orange;
+}
+
+.preset-btn.active .fov-badge--partial {
+  background-color: color-mix(in srgb, white 20%, transparent);
+  color: white;
+}
+
+.fov-badge--unsupported {
+  background-color: color-mix(in srgb, red 15%, transparent);
+  color: red;
+  opacity: 0.7;
+}
+
+.camera-output-summary {
+  font-size: 0.85em;
+  opacity: 0.75;
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.sensor-mode-info {
+  font-size: 0.78em;
+  opacity: 0.6;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.sensor-mode-info--muted {
+  opacity: 0.4;
+  font-style: italic;
+}
+
+.input-warning {
+  border: 1px solid orange !important;
+}

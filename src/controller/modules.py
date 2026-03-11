@@ -353,11 +353,10 @@ class Modules:
 
 
     def _update_module_name(self, module_id: str) -> None:
-        """Sync Module.name from the 'module.name' key in its config, if present."""
+        """Sync Module.name from the 'module.name' key in its config."""
         config = self._modules[module_id].config
         name = config.get("module", {}).get("name", "").strip()
-        if name:
-            self._modules[module_id].name = name
+        self._modules[module_id].name = name if name else module_id
 
 
     def _serialise_modules(self) -> Dict[str, Dict[str, Any]]:

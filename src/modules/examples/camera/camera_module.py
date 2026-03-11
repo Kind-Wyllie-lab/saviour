@@ -210,13 +210,26 @@ class CameraModule(Module):
             self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
             self.width = self.config.get("camera.width", 1280)
             self.height = self.config.get("camera.height", 720)
-            self.lores_width = int(self.width/2)
-            self.lores_height = int(self.height/2)
+            if self.width > 2000 or self.height > 2000:
+                self.lores_width = int(self.width/1.5)
+                self.lores_height = int(self.height/1.5)
+            else:
+                self.lores_width = self.width
+                self.lores_height = self.height
 
             # Pick sensor mode from config (clamped to valid range)
             mode_index = self.config.get("camera.sensor_mode_index", 0)
             mode_index = max(0, min(int(mode_index), len(self.sensor_modes) - 1))
             self.mode = self.sensor_modes[mode_index]
+
+            # Clamp fps to the selected mode's maximum
+            max_fps = float(self.mode.get("fps", float("inf")))
+            if self.fps > max_fps:
+                self.logger.warning(
+                    f"Requested fps {self.fps} exceeds sensor mode {mode_index} "
+                    f"max {max_fps:.1f}fps — clamping."
+                )
+                self.fps = max_fps
 
             # Clamp output size to the selected mode's maximum output dimensions
             max_w, max_h = self.mode["size"]
@@ -485,6 +498,8 @@ class CameraModule(Module):
             # alt: timestmap = str(dt)
             timestamp = f"{self.facade.get_module_name()} {timestamp}"
 
+            overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
+
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
                 if self.config.get("camera.monochrome") is True:
@@ -492,7 +507,8 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp, "main")
+                if overlay_timestamp:
+                    self._apply_timestamp(m, timestamp, "main")
 
             # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
@@ -501,7 +517,8 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp, "lores")
+                if overlay_timestamp:
+                    self._apply_timestamp(m, timestamp, "lores")
                 if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
                     self._apply_framerate(m, str(actual_fps), "lores")
 
@@ -509,79 +526,65 @@ class CameraModule(Module):
             self.logger.error(f"Error capturing frame metadata: {e}")
 
 
-    def _apply_framerate(self, m:MappedArray, framerate: str, stream: str = "main") -> None:
-        """Apply the framerate to the image."""
+    # Target fraction of image width the timestamp string should occupy per size preset.
+    _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
+
+    def _apply_framerate(self, m: MappedArray, framerate: str, stream: str = "main") -> None:
+        """Apply the framerate to the image. Size is fixed and independent of text_size config."""
         framerate = f"{framerate}fps"
-        if stream == "main":
-            width = self.width
-            height = self.height
-            font_scale = self.config.get("camera.text_scale", 2)
-            thickness = self.config.get("camera.text_thickness", 1)
-        elif stream == "lores":
-            width = self.lores_width
-            height = self.lores_height
-            font_scale = self.config.get("camera.text_scale", 2)
-            thickness = self.config.get("camera.text_thickness", 1)
-    
+        width  = self.width  if stream == "main" else self.lores_width
+        height = self.height if stream == "main" else self.lores_height
         font = cv2.FONT_HERSHEY_SIMPLEX
+        thickness = 1
+        # Fixed small size: target ~3% of image height.
+        font_scale = max(0.2, height * 0.02 / 18)
 
         text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
 
-        # Automatically resize if text is too long
-        if text_width > width:
-            scale = width / text_width
-            font_scale = font_scale * scale
-            text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
+        x = int((width - text_width) / 2)
+        # org is the text baseline; keep a small margin above the bottom edge.
+        y = height - max(4, int(height * 0.01))
 
-        x = int((width / 2) - (text_width / 2))
-        y = 0 + int(height * 0.97) 
-        
         cv2.putText(
-            img=m.array, 
-            text=framerate, 
-            org=(x, y), 
-            fontFace=font, 
-            fontScale=font_scale, 
-            color=(50,255,50), 
-            thickness=thickness
-            ) 
-
+            img=m.array,
+            text=framerate,
+            org=(x, y),
+            fontFace=font,
+            fontScale=font_scale,
+            color=(50, 255, 50),
+            thickness=thickness,
+        )
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
         """Apply the frame timestamp to the image."""
-        if stream == "main":
-            width = self.width
-            height = self.height
-            font_scale = self.config.get("camera.text_scale", 2)
-            thickness = self.config.get("camera.text_thickness", 1)
-        elif stream == "lores":
-            width = self.lores_width
-            height = self.lores_height
-            font_scale = self.config.get("camera.text_scale", 2)
-            thickness = self.config.get("camera.text_thickness", 1)
-    
+        width  = self.width  if stream == "main" else self.lores_width
+        height = self.height if stream == "main" else self.lores_height
         font = cv2.FONT_HERSHEY_SIMPLEX
+
+        size_preset = self.config.get("camera.text_size", "medium")
+        target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
+        thickness = 2 if size_preset == "large" else 1
+
+        # Scale font so the timestamp string fills target_fraction of the image width.
+        ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
+        font_scale = max(0.3, (target_fraction * width) / ref_width)
 
         text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
 
-        # Automatically resize if text is too long
-        if text_width > width:
-            scale = width / text_width
-            font_scale = font_scale * scale
-            text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+        x = int((width - text_width) / 2)
+        # org is the text baseline; offset down by text_height + small padding from top.
+        padding = max(4, int(height * 0.01))
+        y = text_height + padding
 
-        x = int((width / 2) - (text_width / 2))
-        y = 0 + int(height * 0.03) 
-        
         cv2.putText(
-            img=m.array, 
-            text=timestamp, 
-            org=(x, y), 
-            fontFace=font, 
-            fontScale=font_scale, 
-            color=(50,255,50), 
-            thickness=thickness
-            ) 
+            img=m.array,
+            text=timestamp,
+            org=(x, y),
+            fontFace=font,
+            fontScale=font_scale,
+            color=(50, 255, 50),
+            thickness=thickness,
+        )
 
 
     def _apply_frame_count(self, m: MappedArray, frame_count: int) -> None:

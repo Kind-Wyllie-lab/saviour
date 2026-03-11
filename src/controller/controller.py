@@ -174,6 +174,11 @@ class Controller(ABC):
                     config_data = status_data.get('config', {})
                     self.modules.received_module_config(module_id, config_data)
 
+                case 'reset_config':
+                    self.logger.info(f"Reset config response received from {module_id}")
+                    config_data = status_data.get('config', {})
+                    self.modules.received_module_config(module_id, config_data)
+
                 case 'set_config':
                     self.logger.info(f"Set config response received from {module_id}")
                     if status_data.get('result') == 'success':

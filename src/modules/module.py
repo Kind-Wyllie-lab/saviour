@@ -117,7 +117,7 @@ class Module(ABC):
         self.facade = ModuleFacade(module=self) # API object - provides internal routing between objects e.g. network and recording
 
         # A registry of commands that the module can respond to
-        self.command_callbacks = { 
+        self.command_callbacks = {
             'restart_ptp': self.ptp.restart, # Restart PTP services
             'get_health': self.health.get_health,
             'start_recording': self.recording.start_recording,
@@ -130,7 +130,8 @@ class Module(ABC):
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
             "update_saviour": self.update_saviour,
-            "reboot": self.reboot
+            "reboot": self.reboot,
+            "reset_config": self.reset_config,
         }
 
         # Register callbacks and facade
@@ -657,6 +658,21 @@ class Module(ABC):
         except Exception as e:
             self.logger.error(f"Error setting all config: {e}")
             return {"result": f"Error setting all config: {e}"}
+
+
+    @command()
+    def reset_config(self) -> dict:
+        """
+        Reset config to defaults (base + module defaults) and reconfigure the module.
+        Returns the new config so the controller can confirm the reset.
+        """
+        self.logger.info("reset_config called — restoring defaults")
+        self.config.reset_to_defaults()
+        # Re-register the configure_module callback (reset rebuilds the dict in-place
+        # but the callback reference on the Config object is preserved).
+        module_keys = list(getattr(self.config, 'module_config_keys', []))
+        self.configure_module(module_keys)
+        return {"config": self.config.get_all()}
 
 
     def _get_required_disk_space_mb(self) -> float:

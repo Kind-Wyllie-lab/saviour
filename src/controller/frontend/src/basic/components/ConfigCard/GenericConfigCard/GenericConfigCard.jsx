@@ -18,6 +18,10 @@ function GenericConfigCard({ id, module }) {
     socket.emit("save_module_config", { id, config: editableData });
   };
 
+  const handleReset = () => {
+    socket.emit("reset_module_config", { module_id: module.id });
+  };
+
   const handleUpdate = () => {
     socket.emit("send_command", { module_id: module.id, type: "update_saviour", params: {} });
   };
@@ -41,9 +45,14 @@ function GenericConfigCard({ id, module }) {
           <form>
             <ConfigFields data={formData} handleChange={handleChange} />
           </form>
-          <button className="save-button" type="button" onClick={handleSave}>
-            Save Config
-          </button>
+          <div className="config-action-buttons">
+            <button className="save-button" type="button" onClick={handleSave}>
+              Save Config
+            </button>
+            <button className="reset-button" type="button" onClick={handleReset}>
+              Reset to Default
+            </button>
+          </div>
         </div>
 
         {module.type.includes("camera") && (

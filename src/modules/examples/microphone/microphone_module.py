@@ -9,8 +9,6 @@ Author: Andrew SG / Domagoj Anticic
 Created: 18/08/2025
 
 Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicrophone_setup by Domagoj Anticic
-
-# TODO: Refactor to override abstract methods configure_module, _start_recording, _stop_recording
 """
 
 import datetime
@@ -20,9 +18,11 @@ import time
 import logging
 import numpy as np
 import threading
-import soundfile 
+import soundfile
 import soundcard
 import re
+import cv2
+from flask import Flask, Response
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -33,21 +33,35 @@ class AudiomothModule(Module):
     def __init__(self, module_type="microphone"):
         # Call the parent class constructor
         super().__init__(module_type)
-    
+
         # Initialize audiomoth
-        self.mics = [] # An empty list for discovering all connected mics 
+        self.mics = [] # An empty list for discovering all connected mics
         self.audiomoths = {} # An empty dict for discovering connected audiomoths
         self._find_audiomoths() # Discover any and all connected microphones
 
-        # Microphone recording threads
-        self._recording_threads = [] # One per microphone
+        # Per-segment recording threads and state
+        self.audiomoth_threads = []
+        self.current_recording_files = {}  # serial -> current filename
+        self._segment_stop_event = threading.Event()
+        self._recording_stop_event = threading.Event()
 
         # State flags
         self.is_recording = False
         self.latest_recording = None
         self.recording_start_time = None
 
-        # Update config 
+        # Monitoring stream state
+        self.monitoring_app = Flask(__name__)
+        self.monitoring_server = None
+        self.monitoring_server_thread = None
+        self.should_stop_monitoring_stream = False
+        self.monitor_threads = []
+        # {serial: {'level_db': float, 'peak_db': float, 'spectrum_db': ndarray, 'freqs': ndarray}}
+        self.monitor_data = {}
+        self.monitor_data_lock = threading.Lock()
+        self._register_monitoring_routes()
+
+        # Update config
         self.config.load_module_config("microphone_config.json")
 
         # Set up audiomoth-specific callbacks for the command handler
@@ -55,7 +69,7 @@ class AudiomothModule(Module):
             'monitor': self.monitor,
             'list_audiomoths': self.list_audiomoths
         }
-        self.command.set_commands(self.audiomoth_commands) # Append new audiomoth callbacks
+        self.command.set_commands(self.audiomoth_commands)
 
 
     def configure_module(self):
@@ -64,15 +78,20 @@ class AudiomothModule(Module):
 
     @command
     def list_audiomoths(self):
-        """Returns dict containing list of audiomoths""" 
+        """Returns dict containing list of audiomoths"""
         return {"result": "Success", "audiomoths": self.audiomoths}
 
 
     @command
     def monitor(self):
-        """Command method for monitoring the output of the audiomoth microphones"""
-        self.logger.warning("No implementation yet for monitor method")
-        return {"result": "Failure", "message": "No implementation for monitor method"}
+        """Returns the URL of the monitoring MJPEG stream"""
+        port = self.config.get("monitoring.port", 8081)
+        ip = self.network.ip if hasattr(self.network, 'ip') and self.network.ip else "unknown"
+        return {
+            "result": "Success",
+            "streaming": self.is_streaming,
+            "url": f"http://{ip}:{port}/video_feed"
+        }
 
 
     def _find_audiomoths(self):
@@ -81,162 +100,129 @@ class AudiomothModule(Module):
             if "AudioMoth" in mic.name.split(" "):
                 serial = re.split(r"-|_", mic.id)[-3] # Serial code, unique identifier for each audiomoth
                 self.audiomoths[serial] = mic.id
-        self.logger.info(f"Found {len(self.audiomoths.items())} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
+        self.logger.info(f"Found {len(self.audiomoths)} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
 
 
-    def _record_microphone(self, serial, microphone: soundcard.pulseaudio._Microphone, unit, experiment_name: str):
-        self.logger.info(f"Starting recording thread for serial {serial}, unit {unit}")
+    """Recording"""
+
+    def _get_audio_filename(self, serial: str) -> str:
+        """Build a per-audiomoth filename for the current recording segment."""
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        filetype = self.config.get("recording.recording_filetype", "flac")
+        return f"{self.facade.get_filename_prefix()}_{serial}_({self.facade.get_segment_id()}_{strtime}).{filetype}"
+
+
+    def _start_new_recording(self) -> None:
+        """Start initial recording segments for all connected audiomoths."""
+        self._recording_stop_event.clear()
+        self._segment_stop_event.clear()
+        self.audiomoth_threads = []
+        self.current_recording_files = {}
+        self.recording_start_time = time.time()
+
+        if not self.audiomoths:
+            self.logger.warning("No audiomoths connected, cannot start recording")
+            return
+
+        for serial, mic_id in self.audiomoths.items():
+            filename = self._get_audio_filename(serial)
+            self.current_recording_files[serial] = filename
+            self.facade.add_session_file(filename)
+            thread = threading.Thread(
+                target=self._record_microphone_segment,
+                args=(serial, mic_id, filename),
+                daemon=True,
+                name=f"audiomoth-{serial}"
+            )
+            self.audiomoth_threads.append(thread)
+            thread.start()
+
+        self.logger.info(f"Started {len(self.audiomoth_threads)} audiomoth recording threads")
+
+
+    def _start_next_recording_segment(self) -> None:
+        """Stage current files for export and start new recording segment for all audiomoths."""
+        # Stage current segment files for export
+        for filename in self.current_recording_files.values():
+            self.facade.stage_file_for_export(filename)
+
+        # Signal current threads to stop after their current audio block
+        self._segment_stop_event.set()
+        for thread in self.audiomoth_threads:
+            thread.join(timeout=10)
+
+        # Start new segment
+        self._segment_stop_event.clear()
+        self.audiomoth_threads = []
+        self.current_recording_files = {}
+
+        for serial, mic_id in self.audiomoths.items():
+            filename = self._get_audio_filename(serial)
+            self.current_recording_files[serial] = filename
+            self.facade.add_session_file(filename)
+            thread = threading.Thread(
+                target=self._record_microphone_segment,
+                args=(serial, mic_id, filename),
+                daemon=True,
+                name=f"audiomoth-{serial}"
+            )
+            self.audiomoth_threads.append(thread)
+            thread.start()
+
+        self.logger.info(f"Switched to recording segment {self.facade.get_segment_id()}")
+
+
+    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str) -> None:
+        """Record audio from one audiomoth to a single file until segment stop or recording stop."""
         sample_rate = self.config.get("microphone.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
         block_size = self.config.get("microphone.block_size", 1024 * 128)
-        file_duration = self.config.get("recording.file_duration", 60)*60  # config in mins, convert to secs
-        frame_batches_per_file = file_duration * sample_rate // frame_num
-        
-        start_time = datetime.datetime.now().strftime("%Y-%m-%d-H%M%S-%f")
-        # TODO centralise timestamp naming - check if name sanitised before being passed here
-        timestamps_file = f"{self.recording_folder}/{experiment_name}_{unit}_timestamps.txt"
-        self.add_session_file(timestamps_file)
-        timestamps_writer = open(timestamps_file, 'w')
 
-        microphone = soundcard.get_microphone(microphone)
-        file_counter = 0
-        with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
-            while self.is_recording:
-                # Get time of new file creation
-                mic_start_time = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S-%f") # Add _%f to include microseconds
-                self.logger.info(
-                    f"Created new recording file for {serial} at {mic_start_time}")
-                # Create new file
-                batch_counter = 0
-                # TODO: Tie this in with experiment filename creation in start_recording method.
-                filename = f"{self.recording_folder}/{experiment_name}_{unit}_{file_counter}_{mic_start_time}.flac" 
-                self.add_session_file(filename)
-                # Run new file writing
-                with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1,
-                                         subtype="PCM_16") as file:
-                    while self.is_recording:
-                        data = recorder.record(numframes=frame_num)
-                        # from docs:
-                        """
-                        The data will be returned as a [frames x channels] float32 numpy array.
-                        This function will wait until numframes frames have been recorded.
-                        If numframes is given, it will return exactly `numframes` frames,
-                        and buffer the rest for later.
-                        """
-                        batch_counter += 1
-                        #data += recorder.flush()
-                        timestamps_writer.write(str(time.time()) + "\n")
-                        file.write(data)
-                        # If all frames written
-                        if (batch_counter == frame_batches_per_file):
-                            file_counter += 1
-                            break
+        timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
+        self.facade.add_session_file(timestamps_filename)
 
-        timestamps_writer.close()      
-
-    
-    def _start_new_recording(self):
-        pass
-
-    
-    def _start_next_recording_segment(self):
-        pass
-
-    
-    def configure_module_special(self):
-        pass
-
-
-    def start_streaming(self):
-        # TODO: Could monitor stuff go here? It's basically streaming but for audio
-        pass
-
-
-    def stop_streaming(self):
-        pass
-
-
-    def _start_recording(self) -> bool:
-        """Start continuous audio recording"""
-        self.logger.info("Executing audiomoth specific recording functionality...")
-
-        # Store experiment name for use in timestamps filename
-        self.logger.info(f"Recording will use {self.current_experiment_name} for filenames ")
-
-        try: 
-            # If there are audiomoths connected
-            if len(self.audiomoths) > 0:
-                self.audiomoth_threads = []
-                self.recording_start_time = time.time()
-                for serial, mic in self.audiomoths.items():
-                    #try:
-                    #    unit = audiomoth_to_unit[serial]
-                    #except KeyError:
-                    if True:
-                        self.logger.info(f"Unit not specified, using audiomoth serial instead [{serial}]")
-                    unit = serial
-                    # create recording thread
-                    experiment_name = self.current_experiment_name
-                    recording_thread = threading.Thread(target=self._record_microphone, args=(serial, mic, unit, experiment_name))
-                    self.audiomoth_threads.append(recording_thread)
-                    recording_thread.start()
-
-                    # join recording threads
-                    #for thread in self.audiomoth_threads:
-                    #    thread.join()
-                # self.stopper_thread = threading.Thread(target=self._duration_process_stopper, args=(duration))
-                # self.stopper_thread.start()
-
-            else:
-                self.logger.info("No audiomoths detected, cannot record")
-            
-            self.is_recording = True
-
-            # Send status response after successful recording start
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-
-                self.communication.send_status({
-                    "type": "recording_started",
-                    "filename": "Multiple filenames exist for each microphone",
-                    "recording": True,
-                    "session_id": self.recording_session_id
-                })
-            
-            return True
-            
+        self.logger.info(f"Recording thread started for audiomoth {serial}: {filename}")
+        try:
+            microphone = soundcard.get_microphone(mic_id)
+            with open(timestamps_filename, 'w') as timestamps_writer:
+                with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
+                    with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
+                        while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():
+                            data = recorder.record(numframes=frame_num)
+                            timestamps_writer.write(str(time.time()) + "\n")
+                            f.write(data)
         except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_start_failed",
-                    "error": str(e)
-                })
-            return False
+            self.logger.error(f"Recording thread error for audiomoth {serial}: {e}")
+
+        self.logger.info(f"Recording thread finished for audiomoth {serial}")
+
 
     def _stop_recording(self) -> bool:
         """Stop continuous recording with audiomoth-specific code"""
-        response = {}
         try:
-            # Stop capture thread
-            self.is_recording = False # This gets checked in each _record_microphone thread, so they should exit.
-            
-            # Calculate recording duration
+            self.is_recording = False
+            self._recording_stop_event.set()
+
+            # Stage the current segment's files for export
+            for filename in self.current_recording_files.values():
+                self.facade.stage_file_for_export(filename)
+
+            # Wait for recording threads to finish their current block
+            for thread in self.audiomoth_threads:
+                thread.join(timeout=10)
+            self.audiomoth_threads = []
+
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
-
-                
-                # Send status response after successful recording stop
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
                         "type": "recording_stopped",
                         "duration": duration,
                         "status": "success",
                         "recording": False,
-                        "message": f"Recording completed successfully"
+                        "message": "Recording completed successfully"
                     })
-
-                self.logger.info("Concluded audiomoth _stop_recording, waiting to exit")
-
+                self.logger.info("Concluded audiomoth _stop_recording")
                 return True
             else:
                 self.logger.error("Error: recording_start_time was None")
@@ -247,7 +233,7 @@ class AudiomothModule(Module):
                         "error": "Recording start time was not set, so could not create timestamps."
                     })
                 return False
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -258,36 +244,311 @@ class AudiomothModule(Module):
                 })
             return False
 
-    def get_latest_recording(self):
-        """Get the latest recording"""
-        return self.latest_recording
 
-    def when_controller_discovered(self, controller_ip: str, controller_port: int):
-        super().when_controller_discovered(controller_ip, controller_port)
+    """Monitoring stream"""
 
-    def start(self) -> bool:
-        """Start the audiomoth module - including streaming"""
+    def _monitor_audiomoth(self, serial: str, mic_id: str) -> None:
+        """
+        Continuously read short audio blocks from one audiomoth and compute
+        level (dBFS) and FFT spectrum. Writes results to self.monitor_data.
+
+        Runs as a separate recorder from the recording thread — PulseAudio/
+        PipeWire supports multiple simultaneous readers on the same device.
+        """
+        sample_rate = self.config.get("microphone.sample_rate", 192000)
+        fft_size = self.config.get("monitoring.fft_size", 4096)  # ~21ms at 192kHz
+
+        self.logger.info(f"Monitor thread started for audiomoth {serial}")
         try:
-            # Start the parent module first
-            if not super().start():
+            microphone = soundcard.get_microphone(mic_id)
+            window = np.hanning(fft_size)
+            with microphone.recorder(samplerate=sample_rate, blocksize=fft_size) as recorder:
+                while not self.should_stop_monitoring_stream:
+                    data = recorder.record(numframes=fft_size)
+                    mono = data[:, 0] if data.ndim > 1 else data
+
+                    # RMS level in dBFS
+                    rms = np.sqrt(np.mean(mono ** 2))
+                    level_db = float(20 * np.log10(max(rms, 1e-10)))
+
+                    # Peak level in dBFS
+                    peak = np.max(np.abs(mono))
+                    peak_db = float(20 * np.log10(max(peak, 1e-10)))
+
+                    # Windowed FFT magnitude spectrum in dBFS
+                    fft_vals = np.abs(np.fft.rfft(mono * window))
+                    # Normalise by window sum so full-scale sine = 0 dBFS
+                    spectrum_db = 20 * np.log10(fft_vals / (np.sum(window) / 2) + 1e-10)
+                    freqs = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
+
+                    with self.monitor_data_lock:
+                        self.monitor_data[serial] = {
+                            'level_db': level_db,
+                            'peak_db': peak_db,
+                            'spectrum_db': spectrum_db,
+                            'freqs': freqs,
+                        }
+        except Exception as e:
+            self.logger.error(f"Monitor thread error for audiomoth {serial}: {e}")
+
+        self.logger.info(f"Monitor thread finished for audiomoth {serial}")
+
+
+    def _render_monitor_frame(self) -> bytes | None:
+        """
+        Render a combined monitoring image for all audiomoths.
+
+        Layout per audiomoth (stacked vertically):
+          - Header: serial number + current dBFS reading
+          - Spectrum plot: 0–Nyquist Hz on X, -80–0 dBFS on Y
+          - Level bar: colour-coded RMS dBFS meter
+        Returns JPEG bytes, or None on error.
+        """
+        try:
+            with self.monitor_data_lock:
+                data_snapshot = dict(self.monitor_data)
+
+            sample_rate = self.config.get("microphone.sample_rate", 192000)
+            nyquist = sample_rate / 2
+
+            WIDTH = 800
+            ROW_H = 290        # pixels per audiomoth row
+            PLOT_H = 200       # height of spectrum plot area
+            PADDING = 15
+            DB_MIN, DB_MAX = -80, 0
+
+            if not data_snapshot:
+                frame = np.zeros((200, WIDTH, 3), dtype=np.uint8)
+                cv2.putText(frame, "Waiting for audiomoth data...",
+                            (PADDING, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (140, 140, 140), 1)
+                _, jpeg = cv2.imencode('.jpg', frame)
+                return jpeg.tobytes()
+
+            frame = np.zeros((ROW_H * len(data_snapshot), WIDTH, 3), dtype=np.uint8)
+
+            for row, (serial, data) in enumerate(data_snapshot.items()):
+                y0 = row * ROW_H
+                level_db = data.get('level_db', DB_MIN)
+                peak_db  = data.get('peak_db', DB_MIN)
+                spectrum = data.get('spectrum_db')
+                freqs    = data.get('freqs')
+
+                # ── Header ──────────────────────────────────────────────────
+                label = f"Audiomoth {serial}    RMS {level_db:.1f} dBFS    Peak {peak_db:.1f} dBFS"
+                cv2.putText(frame, label, (PADDING, y0 + 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+
+                # ── Spectrum plot ────────────────────────────────────────────
+                px0 = PADDING + 25   # leave room for dB axis labels
+                px1 = WIDTH - PADDING
+                py0 = y0 + 30
+                py1 = py0 + PLOT_H
+                pw  = px1 - px0
+
+                # dB grid lines
+                for db_tick in range(-80, 10, 20):
+                    gy = int(py1 - (db_tick - DB_MIN) / (DB_MAX - DB_MIN) * PLOT_H)
+                    cv2.line(frame, (px0, gy), (px1, gy), (45, 45, 45), 1)
+                    cv2.putText(frame, f"{db_tick}", (PADDING - 25, gy + 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.32, (90, 90, 90), 1)
+
+                # Frequency tick marks and labels (kHz)
+                freq_ticks_khz = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, int(nyquist // 1000)]
+                for fk in freq_ticks_khz:
+                    fx = int(px0 + (fk * 1000 / nyquist) * pw)
+                    cv2.line(frame, (fx, py1), (fx, py1 + 4), (70, 70, 70), 1)
+                    cv2.putText(frame, f"{fk}k", (fx - 8, py1 + 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (90, 90, 90), 1)
+
+                # Spectrum polyline — downsample to one point per pixel column
+                if spectrum is not None and len(spectrum) > 1:
+                    n_bins = len(spectrum)
+                    # Build one (x,y) point per pixel column for efficiency
+                    xs = np.linspace(0, n_bins - 1, pw, dtype=int)
+                    ys_db = np.clip(spectrum[xs], DB_MIN, DB_MAX)
+                    ys_px = (py1 - (ys_db - DB_MIN) / (DB_MAX - DB_MIN) * PLOT_H).astype(int)
+                    pts = np.stack([np.arange(px0, px0 + pw), ys_px], axis=1).reshape(-1, 1, 2).astype(np.int32)
+                    cv2.polylines(frame, [pts], False, (0, 210, 170), 1)
+
+                # ── Level bar ───────────────────────────────────────────────
+                bx0, bx1 = PADDING, WIDTH - PADDING
+                by0, by1 = y0 + 245, y0 + 275
+                bw = bx1 - bx0
+                level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
+                bar_w = int(level_norm * bw)
+
+                if level_norm > 0.85:
+                    bar_colour = (0, 50, 220)    # red (BGR)
+                elif level_norm > 0.65:
+                    bar_colour = (0, 140, 230)   # orange
+                else:
+                    bar_colour = (0, 200, 80)    # green
+
+                cv2.rectangle(frame, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
+                cv2.rectangle(frame, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
+
+                # Row separator
+                if row < len(data_snapshot) - 1:
+                    cv2.line(frame, (0, y0 + ROW_H - 1), (WIDTH, y0 + ROW_H - 1), (55, 55, 55), 1)
+
+            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return jpeg.tobytes()
+
+        except Exception as e:
+            self.logger.error(f"Frame render error: {e}")
+            return None
+
+
+    def _generate_monitor_frames(self):
+        """MJPEG generator — yields frames at ~10 fps."""
+        while not self.should_stop_monitoring_stream:
+            frame = self._render_monitor_frame()
+            if frame is not None:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" +
+                    frame +
+                    b"\r\n"
+                )
+            time.sleep(0.1)
+
+
+    def _register_monitoring_routes(self):
+        @self.monitoring_app.route('/')
+        def index():
+            return "Audiomoth Monitoring Server"
+
+        @self.monitoring_app.route('/video_feed')
+        def video_feed():
+            return Response(
+                self._generate_monitor_frames(),
+                mimetype='multipart/x-mixed-replace; boundary=frame'
+            )
+
+
+    def run_monitoring_server(self, port: int = 8081) -> None:
+        try:
+            from werkzeug.serving import make_server
+            self.monitoring_server = make_server('0.0.0.0', port, self.monitoring_app, threaded=True)
+            self.logger.info(f"Monitoring server listening on port {port}")
+            self.monitoring_server.serve_forever()
+        except Exception as e:
+            self.logger.error(f"Monitoring server error: {e}")
+            self.monitoring_server = None
+            self.is_streaming = False
+
+
+    def start_streaming(self) -> bool:
+        """Start the MJPEG monitoring stream for all connected audiomoths."""
+        try:
+            if self.is_streaming:
+                self.logger.warning("Monitoring stream already running")
                 return False
+
+            if not self.audiomoths:
+                self.logger.warning("No audiomoths found, cannot start monitoring stream")
+                return False
+
+            port = self.config.get("monitoring.port", 8081)
+            self.should_stop_monitoring_stream = False
+
+            # One monitor thread per audiomoth
+            self.monitor_threads = []
+            for serial, mic_id in self.audiomoths.items():
+                t = threading.Thread(
+                    target=self._monitor_audiomoth,
+                    args=(serial, mic_id),
+                    daemon=True,
+                    name=f"monitor-{serial}"
+                )
+                self.monitor_threads.append(t)
+                t.start()
+
+            # Flask server thread
+            self.monitoring_server_thread = threading.Thread(
+                target=self.run_monitoring_server,
+                args=(port,),
+                daemon=True,
+                name="monitoring-server"
+            )
+            self.monitoring_server_thread.start()
+
+            self.is_streaming = True
+            self.logger.info(f"Monitoring stream started — http://{getattr(self.network, 'ip', '?')}:{port}/video_feed")
+
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
+                    'type': 'streaming_started',
+                    'port': port,
+                    'status': 'success',
+                })
 
             return True
 
         except Exception as e:
+            self.logger.error(f"Error starting monitoring stream: {e}")
+            return False
+
+
+    def stop_streaming(self) -> bool:
+        """Stop the MJPEG monitoring stream."""
+        try:
+            if not self.is_streaming:
+                return False
+
+            self.should_stop_monitoring_stream = True
+
+            # Stop monitor threads (each will exit after its current record() call, ~21ms)
+            for t in self.monitor_threads:
+                t.join(timeout=3)
+            self.monitor_threads = []
+
+            # Stop Flask server
+            if self.monitoring_server:
+                self.monitoring_server.shutdown()
+                self.monitoring_server = None
+
+            self.is_streaming = False
+            self.logger.info("Monitoring stream stopped")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error stopping monitoring stream: {e}")
+            return False
+
+
+    """Module lifecycle"""
+
+    def configure_module_special(self, updated_keys=None):
+        pass
+
+
+    def get_latest_recording(self):
+        return self.latest_recording
+
+
+    def when_controller_discovered(self, controller_ip: str, controller_port: int):
+        super().when_controller_discovered(controller_ip, controller_port)
+
+
+    def start(self) -> bool:
+        """Start the audiomoth module."""
+        try:
+            if not super().start():
+                return False
+            self.start_streaming()
+            return True
+        except Exception as e:
             self.logger.error(f"Error starting module: {e}")
             return False
 
+
     def stop(self) -> bool:
-        """Stop the module and cleanup"""
+        """Stop the module and cleanup."""
         try:
-            # Stop streaming if active
             if self.is_streaming:
                 self.stop_streaming()
-                
-            # Call parent stop
             return super().stop()
-            
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
             return False
@@ -297,7 +558,6 @@ def main():
     audiomoth = AudiomothModule()
     audiomoth.start()
 
-    # Keep running until interrupted
     try:
         while True:
             time.sleep(1)
@@ -307,4 +567,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

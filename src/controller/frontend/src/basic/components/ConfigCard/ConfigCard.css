@@ -263,3 +263,5 @@ max-width: 600px;
 .reset-button:hover {
   background-color: color-mix(in srgb, red 15%, var(--card-bg-color));
 }
+
+/* Modal styles live in index.css (global) */

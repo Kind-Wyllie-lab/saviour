@@ -122,7 +122,8 @@ class Network:
                     'type': self.module_type,
                     'id': self.module_id,  # Important: Add module_id to properties
                     'name': self.facade.get_module_name(),
-                    'group': self.facade.get_module_group()
+                    'group': self.facade.get_module_group(),
+                    "version": self.facade.get_saviour_version()
                 } # the properties of the service
             )
             

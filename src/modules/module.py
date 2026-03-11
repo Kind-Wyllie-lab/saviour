@@ -93,14 +93,16 @@ class Module(ABC):
 
     """
     def __init__(self, module_type: str):
+        # Setup logging first
+        self.logger = logging.getLogger(__name__)
+
         # Module type
         self.module_type = module_type
         self.module_id = self.generate_module_id(self.module_type)
         self.description = "No description" # A human readable description to be overridden by child classes
         self.version = self._get_version()
         
-        # Setup logging first
-        self.logger = logging.getLogger(__name__)
+
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}, SAVIOUR {self.version}")
 
         # Manager objects
@@ -115,7 +117,7 @@ class Module(ABC):
         self.facade = ModuleFacade(module=self) # API object - provides internal routing between objects e.g. network and recording
 
         # A registry of commands that the module can respond to
-        self.command_callbacks = { 
+        self.command_callbacks = {
             'restart_ptp': self.ptp.restart, # Restart PTP services
             'get_health': self.health.get_health,
             'start_recording': self.recording.start_recording,
@@ -123,11 +125,13 @@ class Module(ABC):
             'list_recordings': self.list_recordings,
             'list_commands': self.list_commands,
             'get_config': self.get_config, # Gets the complete config from
-            'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
+            'set_config': self._handle_set_config,
+            # 'set_config': lambda config: self.set_config(config, persist=True), # Uses a dict to update the config manager
             'validate_readiness': self.validate_readiness, # Validate module readiness for recording
             'shutdown': self._shutdown,
             "update_saviour": self.update_saviour,
-            "reboot": self.reboot
+            "reboot": self.reboot,
+            "reset_config": self.reset_config,
         }
 
         # Register callbacks and facade
@@ -231,6 +235,10 @@ class Module(ABC):
         except Exception as e:
             self.logger.error(f"Error updating SAVIOUR: {e}")
             return False
+
+
+    def _handle_set_config(self, **kwargs) -> dict:
+        return self.set_config(kwargs, persist=True)
 
 
     def setup_logger_file_handling(self) -> None:
@@ -652,6 +660,21 @@ class Module(ABC):
             return {"result": f"Error setting all config: {e}"}
 
 
+    @command()
+    def reset_config(self) -> dict:
+        """
+        Reset config to defaults (base + module defaults) and reconfigure the module.
+        Returns the new config so the controller can confirm the reset.
+        """
+        self.logger.info("reset_config called — restoring defaults")
+        self.config.reset_to_defaults()
+        # Re-register the configure_module callback (reset rebuilds the dict in-place
+        # but the callback reference on the Config object is preserved).
+        module_keys = list(getattr(self.config, 'module_config_keys', []))
+        self.configure_module(module_keys)
+        return {"config": self.config.get_all()}
+
+
     def _get_required_disk_space_mb(self) -> float:
         """
         Get the required disk space in MB for this module.
@@ -879,12 +902,38 @@ class Module(ABC):
         strdate = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d")
         return strdate
 
-    
+
     def _get_version(self) -> str:
         """Get the current saviour version"""
-        # TODO: Seems to return nothing - possibly due to the working directory of the systemd service not being the git repo?
-        s = subprocess.run(["git", "describe", "--tags"], capture_output=True)
-        vers = s.stdout.decode("utf-8")[:-1]
-        if not vers:
+        try:
+            # Get version
+            s = subprocess.run(
+                ["git", "describe", "--tags"],
+                cwd="/usr/local/src/saviour",
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            vers = s.stdout.strip()
+            self.logger.info(f"Retrieved version: {vers}")
+        except subprocess.CalledProcessError as e:
             vers = "UNKNOWN_VERSION"
+            self.logger.error(f"Error getting saviour version: {e.stderr.strip()}")
+        return vers
+
+
+    def _parse_version(self, long_version: str) -> str:
+        # Take a long version e.g. v0.1.6-6-g15d6e731 and convert to 0.1.6
+        parts = long_version.split(".")
+        if parts[0].startswith("v"):
+            v1 = parts[0][1]
+        else:
+            v1 = parts[0]
+
+        v2 = parts[1]
+
+        v3 = parts[2].split("-")[0]
+
+        vers = f"{v1}.{v2}.{v3}"
+        
         return vers

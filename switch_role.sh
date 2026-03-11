@@ -653,17 +653,56 @@ EOF
 
 
 configure_microphone() {
-    sudo install -d /etc/pipewire/pipewire.conf.d
+    echo "Installing pipewire"
+
+    # Make the config directory if it doesn't already exist
+    sudo mkdir -p /etc/pipewire/pipewire.conf.d
+
+    # Write the samplerate configuration
     sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
-    context.properties = {
-        default.clock.rate = 192000
-        default.clock.allowed-rates = [ 96000 192000 384000]
-    }
+context.properties = {
+    default.clock.rate = 192000
+    default.clock.allowed-rates = [ 96000 192000 384000]
+}
 EOF
-    sudo -u pi pkill -9 pipewire
-    sudo -u pi pkill -9 wireplumber
-    sudo -u pi pipewire &
-    sudo -u pi wireplumber &
+    # Restart PipeWire and related services at the user level
+    systemctl --user enable pipewire
+    systemctl --user enable pipewire-pulse
+    systemctl --user enable wireplumber
+    systemctl --user restart pipewire
+    systemctl --user restart pipewire-pulse
+    systemctl --user restart wireplumber
+
+    # Update the service file with necessary environment variables
+    sudo tee /etc/systemd/system/saviour.service >/dev/null <<'EOF'
+[Unit]
+Description=Saviour Service
+After=network.target ptp4l.service phc2sys.service
+Wants=network.target ptp4l.service phc2sys.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${DIR}/${PYTHON_PATH}
+ExecStart=${DIR}/env/bin/python ${PYTHON_FILE}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH=${DIR}/src
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    # Reload systemd and enable service
+    sudo systemctl daemon-reload
+    sudo systemctl enable saviour.service
+
+    echo "Microphone SAVIOUR service updated."
 }
 
 
@@ -786,17 +825,8 @@ echo File was created: /etc/systemd/system/`ls /etc/systemd/system/ | grep savio
 echo ""
 
 if [ "$DEVICE_TYPE" = "microphone" ]; then
-    sudo install -d /etc/pipewire/pipewire.conf.d
-    sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
-    context.properties = {
-        default.clock.rate = 192000
-        default.clock.allowed-rates = [ 96000 192000 384000]
-    }
-EOF
-    sudo -u pi pkill -9 pipewire
-    sudo -u pi pkill -9 wireplumber
-    sudo -u pi pipewire &
-    sudo -u pi wireplumber &
+    echo "Configuring microphone"
+    configure_microphone
 fi
 
 

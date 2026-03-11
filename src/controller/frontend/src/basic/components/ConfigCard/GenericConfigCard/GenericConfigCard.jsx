@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
@@ -7,6 +7,7 @@ import ConfigFields from "../ConfigFields";
 
 function GenericConfigCard({ id, module }) {
   const { formData, handleChange } = useConfigForm(module.config);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
@@ -20,6 +21,7 @@ function GenericConfigCard({ id, module }) {
 
   const handleReset = () => {
     socket.emit("reset_module_config", { module_id: module.id });
+    setShowResetConfirm(false);
   };
 
   const handleUpdate = () => {
@@ -49,7 +51,7 @@ function GenericConfigCard({ id, module }) {
             <button className="save-button" type="button" onClick={handleSave}>
               Save Config
             </button>
-            <button className="reset-button" type="button" onClick={handleReset}>
+            <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
               Reset to Default
             </button>
           </div>
@@ -73,6 +75,23 @@ function GenericConfigCard({ id, module }) {
           Reboot Module
         </button>
       </div>
+
+      {showResetConfirm && (
+        <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reset <strong>{module.name}</strong> to default settings?</p>
+            <p className="modal-subtext">All unsaved changes and any custom configuration will be lost.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleReset}>
+                Reset
+              </button>
+              <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

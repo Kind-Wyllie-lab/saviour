@@ -14,8 +14,6 @@ const PRESETS = [
   { key: "custom",   label: "Custom",       sub: null,      width: null, height: null, fps: null },
 ];
 
-// Pick the smallest sensor mode that can output the requested size at the requested fps.
-// "Smallest" means least sensor area — the most efficient mode that still covers the request.
 function bestSensorMode(sensorModes, width, height, fps) {
   if (!sensorModes.length) return null;
   const candidates = sensorModes.filter(
@@ -27,7 +25,6 @@ function bestSensorMode(sensorModes, width, height, fps) {
   );
 }
 
-// If the current w/h/fps exactly matches a known preset, return that key; otherwise "custom".
 function detectPreset(width, height, fps) {
   return PRESETS.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
 }
@@ -36,6 +33,7 @@ function CameraConfigCard({ id, module }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [sensorModes, setSensorModes] = useState([]);
   const [activePreset, setActivePreset] = useState("custom");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -48,7 +46,6 @@ function CameraConfigCard({ id, module }) {
     return () => socket.off("sensor_modes_response", onSensorModes);
   }, [module.id]);
 
-  // When sensor modes first arrive, auto-select the best mode for current config.
   useEffect(() => {
     if (!sensorModes.length || !formData?.camera) return;
     const { width, height, fps } = formData.camera;
@@ -64,7 +61,6 @@ function CameraConfigCard({ id, module }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sensorModes]);
 
-  // Detect which preset matches the loaded config.
   useEffect(() => {
     if (formData?.camera) {
       const { width, height, fps } = formData.camera;
@@ -92,7 +88,6 @@ function CameraConfigCard({ id, module }) {
     setFormData(prev => {
       const cloned = structuredClone(prev);
       cloned.camera[field] = value;
-      // Auto-select best sensor mode whenever all three fields are filled.
       const w = field === "width"  ? value : cloned.camera.width;
       const h = field === "height" ? value : cloned.camera.height;
       const f = field === "fps"    ? value : cloned.camera.fps;
@@ -110,13 +105,14 @@ function CameraConfigCard({ id, module }) {
 
   const handleReset = () => {
     socket.emit("reset_module_config", { module_id: module.id });
+    setShowResetConfirm(false);
   };
 
-  const currentWidth  = formData?.camera?.width;
-  const currentHeight = formData?.camera?.height;
-  const currentFps    = formData?.camera?.fps;
-  const selectedModeIndex = formData?.camera?.sensor_mode_index ?? 0;
-  const selectedMode  = sensorModes[selectedModeIndex];
+  const cam = formData?.camera ?? {};
+  const currentWidth  = cam.width;
+  const currentHeight = cam.height;
+  const currentFps    = cam.fps;
+  const selectedMode  = sensorModes[cam.sensor_mode_index ?? 0];
 
   const maxFps    = selectedMode?.fps ?? null;
   const fpsOverMax = maxFps != null && currentFps != null && Number(currentFps) > maxFps;
@@ -125,16 +121,21 @@ function CameraConfigCard({ id, module }) {
   const maxHeight = sensorModes.length ? Math.max(...sensorModes.map(m => m.size[1])) : 9999;
   const maxFpsAll = sensorModes.length ? Math.max(...sensorModes.map(m => m.fps)) : 999;
 
-  const overlayTimestamp = formData?.camera?.overlay_timestamp ?? true;
-  const brightness = formData?.camera?.brightness ?? 0;
-  const bitrateMb = formData?.camera?.bitrate_mb ?? 0;
-  // GB/hr = bitrate_mb Mbits/s × 3600 s/hr ÷ 8 bits/byte ÷ 1000 MB/GB
-  const gbPerHour = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
+  const overlayTimestamp = cam.overlay_timestamp ?? true;
+  const brightness       = cam.brightness ?? 0;
+  const bitrateMb        = cam.bitrate_mb ?? 0;
+  const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
-  // Strip fields handled explicitly so ConfigFields doesn't render duplicates.
+  // Strip all explicitly-rendered camera fields so ConfigFields doesn't duplicate them.
   const configFieldsData = (() => {
     if (!formData?.camera) return formData;
-    const { sensor_mode_index, width, height, fps, overlay_timestamp, text_size, brightness, bitrate_mb, ...rest } = formData.camera;
+    const {
+      sensor_mode_index, width, height, fps,
+      overlay_timestamp, text_size,
+      monochrome, brightness, gain, exposure_time, overlay_framerate_on_preview,
+      bitrate_mb,
+      ...rest
+    } = formData.camera;
     return { ...formData, camera: rest };
   })();
 
@@ -147,7 +148,7 @@ function CameraConfigCard({ id, module }) {
       <div className="config-card-body">
         <div className="config-form">
 
-          {/* ── Presets ── */}
+          {/* ── Resolution / mode ── */}
           <div className="form-field">
             <label>Mode:</label>
             <select
@@ -165,32 +166,25 @@ function CameraConfigCard({ id, module }) {
             </select>
           </div>
 
-          {/* ── Custom inputs ── */}
           {activePreset === "custom" ? (
             <>
               <div className="form-field">
                 <label>Width (px):</label>
-                <input
-                  type="number" min="64" max={maxWidth} step="2"
+                <input type="number" min="64" max={maxWidth} step="2"
                   value={currentWidth ?? ""}
-                  onChange={e => handleCustomChange("width", e.target.value)}
-                />
+                  onChange={e => handleCustomChange("width", e.target.value)} />
               </div>
               <div className="form-field">
                 <label>Height (px):</label>
-                <input
-                  type="number" min="64" max={maxHeight} step="2"
+                <input type="number" min="64" max={maxHeight} step="2"
                   value={currentHeight ?? ""}
-                  onChange={e => handleCustomChange("height", e.target.value)}
-                />
+                  onChange={e => handleCustomChange("height", e.target.value)} />
               </div>
               <div className="form-field">
                 <label>FPS:</label>
-                <input
-                  type="number" min="1" max={maxFpsAll} step="1"
+                <input type="number" min="1" max={maxFpsAll} step="1"
                   value={currentFps ?? ""}
-                  onChange={e => handleCustomChange("fps", e.target.value)}
-                />
+                  onChange={e => handleCustomChange("fps", e.target.value)} />
               </div>
             </>
           ) : (
@@ -201,7 +195,6 @@ function CameraConfigCard({ id, module }) {
             )
           )}
 
-          {/* ── Auto-selected sensor mode ── */}
           {selectedMode ? (
             <div className="sensor-mode-info">
               Sensor mode: {selectedMode.label}
@@ -212,27 +205,62 @@ function CameraConfigCard({ id, module }) {
             </div>
           )}
 
-          {/* ── FPS warning ── */}
           {fpsOverMax && (
             <div className="fov-label fov-cropped">
               {currentFps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
             </div>
           )}
 
-          {/* ── Timestamp overlay ── */}
+          {/* ── Image ── */}
+          <div className="form-field">
+            <label>Monochrome:</label>
+            <input type="checkbox"
+              checked={cam.monochrome ?? false}
+              onChange={e => handleChange(["camera", "monochrome"], e)} />
+          </div>
+          <div className="form-field">
+            <label>Brightness: {Number(brightness).toFixed(2)}</label>
+            <input type="range" min="-1" max="1" step="0.05"
+              value={brightness}
+              className="brightness-slider"
+              onChange={e => handleChange(["camera", "brightness"], e)} />
+          </div>
+          <div className="form-field">
+            <label>Gain:</label>
+            <input type="number" min="1" step="1"
+              value={cam.gain ?? ""}
+              onChange={e => handleChange(["camera", "gain"], e)} />
+          </div>
+          <div className="form-field">
+            <label>Exposure time (µs):</label>
+            <input type="number" min="1" step="100"
+              value={cam.exposure_time ?? ""}
+              onChange={e => handleChange(["camera", "exposure_time"], e)} />
+          </div>
+
+          {/* ── Recording ── */}
+          <div className="form-field">
+            <label>Bitrate (Mbps):</label>
+            <input type="number" min="1" max="50" step="1"
+              value={bitrateMb}
+              onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
+          </div>
+          <div className="filesize-preview">
+            ~{gbPerHour} GB / hr at {bitrateMb} Mbps
+          </div>
+
+          {/* ── Overlays ── */}
           <div className="form-field">
             <label>Timestamp overlay:</label>
-            <input
-              type="checkbox"
+            <input type="checkbox"
               checked={overlayTimestamp}
-              onChange={e => handleChange(["camera", "overlay_timestamp"], e)}
-            />
+              onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
           </div>
           {overlayTimestamp && (
             <div className="form-field">
               <label>Text size:</label>
               <select
-                value={formData?.camera?.text_size ?? "medium"}
+                value={cam.text_size ?? "medium"}
                 onChange={e => handleChange(["camera", "text_size"], e)}
               >
                 <option value="small">Small</option>
@@ -241,33 +269,14 @@ function CameraConfigCard({ id, module }) {
               </select>
             </div>
           )}
-
-          {/* ── Brightness ── */}
           <div className="form-field">
-            <label>Brightness: {Number(brightness).toFixed(2)}</label>
-            <input
-              type="range"
-              min="-1" max="1" step="0.05"
-              value={brightness}
-              className="brightness-slider"
-              onChange={e => handleChange(["camera", "brightness"], e)}
-            />
+            <label>Overlay framerate (preview):</label>
+            <input type="checkbox"
+              checked={cam.overlay_framerate_on_preview ?? false}
+              onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
           </div>
 
-          {/* ── Bitrate + filesize preview ── */}
-          <div className="form-field">
-            <label>Bitrate (Mbps):</label>
-            <input
-              type="number" min="1" max="50" step="1"
-              value={bitrateMb}
-              onChange={e => handleChange(["camera", "bitrate_mb"], e)}
-            />
-          </div>
-          <div className="filesize-preview">
-            ~{gbPerHour} GB / hr at {bitrateMb} Mbps
-          </div>
-
-          {/* ── Remaining config fields ── */}
+          {/* ── Remaining config fields (non-camera sections) ── */}
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange} />
           </form>
@@ -276,7 +285,7 @@ function CameraConfigCard({ id, module }) {
             <button className="save-button" type="button" onClick={handleSave}>
               Save Config
             </button>
-            <button className="reset-button" type="button" onClick={handleReset}>
+            <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
               Reset to Default
             </button>
           </div>
@@ -303,6 +312,24 @@ function CameraConfigCard({ id, module }) {
           Reboot Module
         </button>
       </div>
+
+      {/* ── Reset confirmation modal ── */}
+      {showResetConfirm && (
+        <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reset <strong>{module.name}</strong> to default settings?</p>
+            <p className="modal-subtext">All unsaved changes and any custom configuration will be lost.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleReset}>
+                Reset
+              </button>
+              <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

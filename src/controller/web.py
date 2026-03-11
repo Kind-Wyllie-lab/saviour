@@ -164,9 +164,13 @@ class Web(ABC):
 
                 if command == "start_recording":
                     params["experiment_name"] += ("-" + datetime.now().strftime("%Y%M%d_%H%m%s"))
-                
-                # Send command to module
-                self.facade.send_command(module_id, command, params)
+
+                # Broadcast to every connected module when module_id is "all"
+                if module_id == "all":
+                    for mid in list(self.facade.get_modules().keys()):
+                        self.facade.send_command(mid, command, params)
+                else:
+                    self.facade.send_command(module_id, command, params)
                     
             except Exception as e:
                 self.logger.error(f"Error handling command: {str(e)}")

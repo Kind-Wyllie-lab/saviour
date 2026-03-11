@@ -88,6 +88,7 @@ class Config:
             self.logger.warning(f"Module config not found: {module_path}")
             return
 
+        self.module_config_path = module_path
         module_config = self._load_json(module_path)
 
         # Extract keys from config and flatten to dot notation for easy comparison
@@ -166,6 +167,7 @@ class Config:
         """
         Delete active config (if exists) and rebuild from base + optional module config.
         Use this to intentionally discard runtime changes and reinstall defaults.
+        Falls back to self.module_config_path if no path is provided.
         """
         try:
             if os.path.exists(self.active_config_path):
@@ -174,10 +176,11 @@ class Config:
         except Exception as e:
             self.logger.error(f"Failed removing active config: {e}")
 
-        # rebuild
+        # Rebuild from base, then overlay module defaults
         self.config = self._load_json(self.base_config_path)
-        if module_config_path:
-            module_config = self._load_json(module_config_path)
+        path = module_config_path or getattr(self, 'module_config_path', None)
+        if path:
+            module_config = self._load_json(path)
             self._merge_dicts(self.config, module_config)
         self.save_active()
  

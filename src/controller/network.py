@@ -25,9 +25,6 @@ class Network():
         self.logger = logging.getLogger(__name__)
         self.config = config
 
-        # Module tracking
-        self.discovered_modules = [] # TODO: Switch to a dict keyed by module_id
-
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
         self.module_last_seen = {}
@@ -143,7 +140,6 @@ class Network():
                 self.logger.info("Closed zeroconf")
                 
                 # Clear module list
-                self.discovered_modules.clear()
                 self.module_discovery_times.clear()
                 self.module_last_seen.clear()
                 self.logger.info("Cleared module tracking")
@@ -151,42 +147,9 @@ class Network():
             self.logger.error(f"Error during cleanup: {e}")
         finally:
             self.logger.info("Service manager cleanup complete")
-    
-
-    def _validate_discovered_module(self, module):
-        self.logger.info(f"Validating module {module.id}")
-        if self.discovered_modules:
-            self.logger.info(f"Validing against {self.discovered_modules}")
-            valid_module = True # Flag which will get set false if module turns out to be a duplicate
-            for existing_module in self.discovered_modules:
-                self.logger.info(f"Comparing {existing_module.id} to {module.id}")
-                if existing_module.id == module.id:
-                    self.logger.info(f"ID {module.id} is already in known modules, updating service info")
-                    existing_module.ip = module.ip
-                    existing_module.port = module.port
-                    existing_module.properties = module.properties
-                    valid_module = False
-                    self.logger.info(f"IP changed for module {module.id}, new IP: {module.ip}")
-                    self.facade.module_ip_changed(module.id, module.ip)
-                if existing_module.ip == module.ip:
-                    self.logger.info(f"IP {module.ip} is already in known modules, updating service info")
-                    old_module_id = existing_module.id
-                    existing_module.id = module.id
-                    existing_module.port = module.port
-                    existing_module.properties = module.properties
-                    valid_module = False
-                    self.logger.info(f"ID changed for module at IP {module.ip}, old ID: {existing_module} new ID: {module.id}")
-                    self.facade.module_id_changed(old_module_id, module.id)
-                else:
-                    continue
-            # Finish looping and return whether module was valid or not
-            return valid_module
-        else:
-            self.logger.info("No modules yet discovered, adding this as first module")
-            return True
 
     
-    """Zeroconf Methods"""
+    """Zeroconf Required Methods"""
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
         self.logger.info(f"Discovered module: {name}")
@@ -195,28 +158,26 @@ class Network():
             self.logger.warning("add_service was called with no service info") 
             return
 
+        module_id = id = info.properties.get(b'id', b'unknown').decode()
+
         module = Module(
-            id = info.properties.get(b'id', b'unknown').decode(),
+            id = module_id,
             name = info.properties.get(b'name', b'unknown').decode(),
+            version = info.properties.get(b'version', b'unknown').decode(),
             zeroconf_name = name,
             type = info.properties.get(b'type', b'unknown').decode(),
             ip = socket.inet_ntoa(info.addresses[0]),
             port = info.port,
         )
-        
-        if self._validate_discovered_module(module) == True:
-            self.discovered_modules.append(module)
-            self.logger.info(f"Added new module: {module}")
-        
-        self.logger.info(f"New module list: {self.discovered_modules}")
+
+        self.logger.info(f"Module {module.id} {module.version} discovered")
         
         # Update tracking information
         current_time = time.time()
         self.module_discovery_times[module.id] = current_time
         self.module_last_seen[module.id] = current_time
     
-        # Tell system about discovered modules
-        self.facade.module_discovery(self.discovered_modules)
+        self.facade.module_discovery(module)
 
 
     def update_service(self, zeroconf, service_type, name):
@@ -224,12 +185,26 @@ class Network():
         self.logger.info(f"Service updated: {name}")
         # Update the last seen time for this module
         info = zeroconf.get_service_info(service_type, name)
-        if info:
-            module_id = str(info.properties.get(b'id', b'unknown').decode())
-            self.module_last_seen[module_id] = time.time()
-            self.logger.info(f"Updated last seen time for module: {module_id}")
-            self.facade.module_rediscovered(module_id)
-            self.facade.module_discovery(self.discovered_modules)
+        if not info: 
+            self.logger.warning("update_service was called with no service info") 
+            return
+
+        module_id = str(info.properties.get(b'id', b'unknown').decode())
+        
+        module = Module(
+            id = module_id,
+            name = info.properties.get(b'name', b'unknown').decode(),
+            version = info.properties.get(b'version', b'unknown'.decode()),
+            zeroconf_name = name,
+            type = info.properties.get(b'type', b'unknown').decode(),
+            ip = socket.inet_ntoa(info.addresses[0]),
+            port = info.port,
+        )
+
+        self.module_last_seen[module_id] = time.time()
+        self.logger.info(f"Updated last seen time for module: {module_id}")
+        self.facade.module_rediscovered(module_id)
+        self.facade.module_discovery(module)
 
 
     def remove_service(self, zeroconf, service_type, name):
@@ -239,44 +214,20 @@ class Network():
         self.logger.info(f"Removing module: {name}")
         try:
             # Find the module being removed
-            module_to_remove = next((module for module in self.discovered_modules if module.name == name), None)
-            if module_to_remove:
-                
-                # Clean up tracking information
-                if module_to_remove.id in self.module_discovery_times:
-                    del self.module_discovery_times[module_to_remove.id]
-                if module_to_remove.id in self.module_last_seen:
-                    del self.module_last_seen[module_to_remove.id]
-                
-                # Remove from modules list
-                self.discovered_modules = [module for module in self.discovered_modules if module.name != name]
-                self.logger.info(f"Module {module_to_remove.id} removed from tracking")
-
-                # Call the callback if it exists
-                if self.on_module_removed:
-                    self.logger.info(f"Calling module removal callback")
-                    self.on_module_removed(module_to_remove)
+            info = zeroconf.get_service_info(service_type, name)
+            if not info: 
+                self.logger.warning("update_service was called with no service info") 
+                return
+            module_to_remove = str(info.properties.get(b'id', b'unknown').decode())
+            
+            # Call the callback if it exists
+            if self.on_module_removed:
+                self.logger.info(f"Calling module removal callback")
+                self.on_module_removed(module_to_remove)
             else:
-                self.logger.warning(f"Attempted to remove unknown module: {name}")
+                self.logger.warning(f"No callback to remove module: {module_to_remove}")
         except Exception as e:
             self.logger.error(f"Error removing module {name}: {e}")
-
-    def get_modules(self):
-        """Return module list"""
-        modules = []
-        for module in self.discovered_modules:
-            # Convert module to dict and ensure all keys are strings
-            module_dict = {
-                'id': module.id,
-                'type': module.type,
-                'ip': module.ip,
-                'port': module.port,
-                'properties': {k.decode() if isinstance(k, bytes) else k: 
-                             v.decode() if isinstance(v, bytes) else v 
-                             for k, v in module.properties.items()}
-            }
-            modules.append(module_dict)
-        return modules
     
 
     def get_own_ip(self):
@@ -286,28 +237,15 @@ class Network():
             self.logger.warning("Own IP requested but not known to be valid, scanning for own ip again")
             self._wait_for_proper_ip()
 
-    
-    def get_module_ip(self, module_id: str) -> str:
-        for module in self.discovered_modules:
-            if module.id == module_id:
-                return module.ip
-
 
     def get_module_status(self, module_id: str) -> Optional[Dict]:
         """Get detailed status for a specific module"""
-        module = next((m for m in self.discovered_modules if m.id == module_id), None)
-        if module:
-            current_time = time.time()
-            last_seen = self.module_last_seen.get(module_id, 0)
-            discovery_time = self.module_discovery_times.get(module_id, 0)
-            
-            return {
-                'id': module.id,
-                'type': module.type,
-                'ip': module.ip,
-                'port': module.port,
-                'last_seen': last_seen,
-                'discovery_time': discovery_time,
-                'uptime': current_time - discovery_time if discovery_time > 0 else 0
-            }
-        return None
+        current_time = time.time()
+        last_seen = self.module_last_seen.get(module_id, None)
+        discovery_time = self.module_discovery_times.get(module_id, None)
+        
+        return {
+            'last_seen': last_seen,
+            'discovery_time': discovery_time,
+            'uptime': current_time - discovery_time if discovery_time > 0 else None
+        }

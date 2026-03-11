@@ -50,9 +50,10 @@ class CameraModule(Module):
         self.width = None
         self.fps = None
         self.mode = None
+        self.gain = None
 
         # Get camera modes
-        self.camera_modes = self.picam2.sensor_modes
+        self.sensor_modes = self.picam2.sensor_modes
         time.sleep(0.1)
     
         # Streaming variables
@@ -64,6 +65,7 @@ class CameraModule(Module):
         self.register_routes()
 
         self.latest_frame = None
+        self.last_frame_timestamp = None
         self.frame_lock = threading.Lock()
 
         # Configure camera
@@ -79,7 +81,8 @@ class CameraModule(Module):
         # Set up camera-specific callbacks for the command handler
         self.camera_commands = {
             'start_streaming': self.start_streaming,
-            'stop_streaming': self.stop_streaming
+            'stop_streaming': self.stop_streaming,
+            "get_sensor_modes": self.get_sensor_modes
         }
         self.command.set_commands(self.camera_commands) # Append new camera callbacks
         self.logger.info(f"Command handler callbacks: {self.command.commands}")
@@ -109,15 +112,51 @@ class CameraModule(Module):
             return True, "Picam2 object instantiated"
 
 
+    @command()
+    def get_sensor_modes(self):
+        if not self.sensor_modes:
+            return {"sensor_modes": []}
+
+        # Identify the largest crop area across all modes to distinguish full-FoV modes.
+        max_area = max(
+            m['crop_limits'][2] * m['crop_limits'][3]
+            for m in self.sensor_modes
+        )
+
+        enriched = []
+        for i, mode in enumerate(self.sensor_modes):
+            crop = mode['crop_limits']
+            mode_area = crop[2] * crop[3]
+            if mode_area >= max_area:
+                fov = "Full FoV"
+            else:
+                pct = round(100 * mode_area / max_area)
+                fov = f"Partial FoV ({pct}%)"
+
+            w, h = mode['size']
+            fps = mode['fps']
+            enriched.append({
+                "index": i,
+                "size": [w, h],
+                "fps": round(fps, 1),
+                "bit_depth": mode['bit_depth'],
+                "crop_limits": list(crop),
+                "format": str(mode['format']),
+                "label": f"Mode {i}: {w}×{h} @ {fps:.0f}fps — {fov}",
+            })
+
+        return {"sensor_modes": enriched}
+        
+
     def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
             # Configure anything that doesn't require stream to restart
             restart_keys = [
-                "camera.fps",
+                "camera.sensor_mode_index",
                 "camera.width",
                 "camera.height",
-                "camera.bitrate_mb"
+                "camera.bitrate_mb",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -143,6 +182,14 @@ class CameraModule(Module):
                     self.logger.error(f"Error restarting streaming: {e}")
             
             self._restarting_stream = False # Reset the "restarting stream" flag
+
+            self.picam2.set_controls({
+                "AnalogueGain": self.config.get("camera.gain", 1), 
+                "ExposureTime": self.config.get("camera.exposure_time"),
+                "Brightness": self.config.get("camera.brightness"),
+                "FrameRate": self.config.get("camera.fps")
+            })
+
         elif not self.is_streaming:
             try:
                 self._configure_camera()
@@ -163,16 +210,48 @@ class CameraModule(Module):
             self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
             self.width = self.config.get("camera.width", 1280)
             self.height = self.config.get("camera.height", 720)
-            self.lores_width = int(self.width/2)
-            self.lores_height = int(self.height/2)
+            if self.width > 2000 or self.height > 2000:
+                self.lores_width = int(self.width/1.5)
+                self.lores_height = int(self.height/1.5)
+            else:
+                self.lores_width = self.width
+                self.lores_height = self.height
 
-            # Pick appropriate sensor mode - we will use mode 0 by default
-            self.mode = self.camera_modes[0]
+            # Pick sensor mode from config (clamped to valid range)
+            mode_index = self.config.get("camera.sensor_mode_index", 0)
+            mode_index = max(0, min(int(mode_index), len(self.sensor_modes) - 1))
+            self.mode = self.sensor_modes[mode_index]
 
-            sensor = {"output_size": self.mode["size"], "bit_depth":self.mode["bit_depth"]} # Here we specify the correct camera mode for our application, I use mode 0 because it is capable of the highest framerates.
+            # Clamp fps to the selected mode's maximum
+            max_fps = float(self.mode.get("fps", float("inf")))
+            if self.fps > max_fps:
+                self.logger.warning(
+                    f"Requested fps {self.fps} exceeds sensor mode {mode_index} "
+                    f"max {max_fps:.1f}fps — clamping."
+                )
+                self.fps = max_fps
+
+            # Clamp output size to the selected mode's maximum output dimensions
+            max_w, max_h = self.mode["size"]
+            if self.width > max_w or self.height > max_h:
+                self.logger.warning(
+                    f"Requested output {self.width}×{self.height} exceeds sensor mode {mode_index} "
+                    f"max {max_w}×{max_h} — clamping."
+                )
+                self.width = min(self.width, max_w)
+                self.height = min(self.height, max_h)
+                self.lores_width = int(self.width / 2)
+                self.lores_height = int(self.height / 2)
+
+            sensor = {"output_size": self.mode["size"], "bit_depth": self.mode["bit_depth"]}
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
             lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
-            controls = {"FrameRate": self.fps} # target framerate, in reality it might be lower.
+            controls = {
+                "FrameRate": self.fps, 
+                "AnalogueGain": self.config.get("camera.gain"), 
+                "ExposureTime": self.config.get("camera.exposure_time"), 
+                "Brightness": self.config.get("camera.brightness")
+            } # target framerate, in reality it might be lower.
             
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
@@ -240,8 +319,8 @@ class CameraModule(Module):
 
     def _get_video_filename(self) -> str:
         """Shorthand way to create a filename"""
-        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
-        filename = f"{self.api.get_filename_prefix()}_({self.api.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        filename = f"{self.facade.get_filename_prefix()}_({self.facade.get_segment_id()}_{strtime}).{self.config.get('recording.recording_filetype', 'ts')}" 
         return filename
 
 
@@ -403,10 +482,23 @@ class CameraModule(Module):
             if not timestamp:
                 self.logger.warning("No data returned by frame wall clock")
                 return
+
+            # Calculate actual framerate
+            actual_fps = None
+            if self.last_frame_timestamp:
+                actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 3)
+                self.last_frame_timestamp = timestamp
+            else:
+                self.last_frame_timestamp = timestamp
+
+
+
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
             # alt: timestmap = str(dt)
             timestamp = f"{self.facade.get_module_name()} {timestamp}"
+
+            overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
 
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
@@ -415,7 +507,8 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp, "main")
+                if overlay_timestamp:
+                    self._apply_timestamp(m, timestamp, "main")
 
             # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
@@ -424,47 +517,74 @@ class CameraModule(Module):
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                self._apply_timestamp(m, timestamp, "lores")
+                if overlay_timestamp:
+                    self._apply_timestamp(m, timestamp, "lores")
+                if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
+                    self._apply_framerate(m, str(actual_fps), "lores")
 
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
 
 
+    # Target fraction of image width the timestamp string should occupy per size preset.
+    _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
+
+    def _apply_framerate(self, m: MappedArray, framerate: str, stream: str = "main") -> None:
+        """Apply the framerate to the image. Size is fixed and independent of text_size config."""
+        framerate = f"{framerate}fps"
+        width  = self.width  if stream == "main" else self.lores_width
+        height = self.height if stream == "main" else self.lores_height
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        thickness = 1
+        # Fixed small size: target ~3% of image height.
+        font_scale = max(0.2, height * 0.02 / 18)
+
+        text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
+
+        x = int((width - text_width) / 2)
+        # org is the text baseline; keep a small margin above the bottom edge.
+        y = height - max(4, int(height * 0.01))
+
+        cv2.putText(
+            img=m.array,
+            text=framerate,
+            org=(x, y),
+            fontFace=font,
+            fontScale=font_scale,
+            color=(50, 255, 50),
+            thickness=thickness,
+        )
+
     def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
         """Apply the frame timestamp to the image."""
-        if stream == "main":
-            width = self.width
-            height = self.height
-            font_scale = self.config.get("camera.text_scale", 2)
-            thickness = self.config.get("camera.text_thickness", 1)
-        elif stream == "lores":
-            width = self.lores_width
-            height = self.lores_height
-            font_scale = self.config.get("camera.text_scale", 2)
-            thickness = self.config.get("camera.text_thickness", 1)
-    
+        width  = self.width  if stream == "main" else self.lores_width
+        height = self.height if stream == "main" else self.lores_height
         font = cv2.FONT_HERSHEY_SIMPLEX
+
+        size_preset = self.config.get("camera.text_size", "medium")
+        target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
+        thickness = 2 if size_preset == "large" else 1
+
+        # Scale font so the timestamp string fills target_fraction of the image width.
+        ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
+        font_scale = max(0.3, (target_fraction * width) / ref_width)
 
         text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
 
-        # Automatically resize if text is too long
-        if text_width > width:
-            scale = width / text_width
-            font_scale = font_scale * scale
-            text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+        x = int((width - text_width) / 2)
+        # org is the text baseline; offset down by text_height + small padding from top.
+        padding = max(4, int(height * 0.01))
+        y = text_height + padding
 
-        x = int((width / 2) - (text_width / 2))
-        y = 0 + int(height * 0.03) 
-        
         cv2.putText(
-            img=m.array, 
-            text=timestamp, 
-            org=(x, y), 
-            fontFace=font, 
-            fontScale=font_scale, 
-            color=(50,255,50), 
-            thickness=thickness
-            ) 
+            img=m.array,
+            text=timestamp,
+            org=(x, y),
+            fontFace=font,
+            fontScale=font_scale,
+            color=(50, 255, 50),
+            thickness=thickness,
+        )
 
 
     def _apply_frame_count(self, m: MappedArray, frame_count: int) -> None:

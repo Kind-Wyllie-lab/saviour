@@ -22,8 +22,7 @@
         }
     },
     "recording": {
-        "_recording_filetype": "flac",
-        "segment_length_seconds": 600
+        "_recording_filetype": "flac"
     },
     "_recording_folder": "rec",
     "_auto_export": true

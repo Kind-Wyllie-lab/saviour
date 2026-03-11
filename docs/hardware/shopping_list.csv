@@ -1,0 +1,21 @@
+System Configuration
+"1 controller, 2 camera, 1 ttl"
+Total Units: 5
+Generated: 2026-02-25 14:38
+
+Item,Number,Unit Price (£),Total Price (£),Link
+Active Cooler,1,4.50,4.50,https://thepihut.com/products/active-cooler-for-raspberry-pi-5
+Ethernet Cable,5,3.00,15.00,https://thepihut.com/products/cat6a-shielded-snagless-rj45-ethernet-cable-2m?variant=40638521704643&country=GB&currency=GBP&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&gad_source=1&gad_campaignid=11673057096&gbraid=0AAAAADfQ4GEC9FtD9xgscKJkD8ZGfEWVP&gclid=CjwKCAiAraXJBhBJEiwAjz7MZR3RhOtRWh0PaTDeGcQKzqcR_jbTVvi6cRdoKAOxcU7_G5725rGyQxoCxn8QAvD_BwE
+HQ Camera,2,45.00,90.00,https://thepihut.com/products/raspberry-pi-high-quality-camera-module
+Lens,2,22.00,44.00,https://thepihut.com/products/raspberry-pi-high-quality-camera-lens
+Metal Case,1,5.80,5.80,https://thepihut.com/products/industrial-grade-metal-case-for-raspberry-pi-5
+NVMe Hat,1,28.80,28.80,https://thepihut.com/products/52pi-m-2-nvme-2280-poe-hat-for-raspberry-pi-5
+NVMe SSD,1,86.39,86.39,https://uk.insight.com/en_GB/shop/product/SDBPNTY-512G-IN/integral/SDBPNTY-512G-IN/Integral-SSD-512-GB-internal-M2-2280-PCIe-30-x4-NVMe/
+Pi 5,4,74.40,297.60,https://thepihut.com/products/raspberry-pi-5?variant=42531604922563
+PoE Hat,3,19.20,57.60,https://thepihut.com/products/poe-hat-for-raspberry-pi-5-with-cooling-fan
+DLink 8 Port PoE Switch,1,67.19,67.19,https://uk.insight.com/en_GB/shop/product/DGS-1100-08PV2%2FB/d-link/DGS-1100-08PV2%2FB/DLink-DGS-110008PV2-switch-8-ports-smart/#tab-specifications#
+RTC Battery,1,5.88,5.88,https://amzn.eu/d/02OrSOBT
+SD Card,3,8.39,25.17,https://uk.insight.com/en_GB/shop/product/SDCS3%2F64GB/kingston%20technology/SDCS3%2F64GB/Kingston-Canvas-Select-Plus-flash-memory-card-64-GB-microSDXC-UHSI/
+TTL Hat,1,13.00,13.00,https://thepihut.com/products/gpio-screw-terminal-hat
+
+TOTAL,,,740.93,

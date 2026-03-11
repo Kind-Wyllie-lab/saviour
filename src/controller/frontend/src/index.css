@@ -66,3 +66,39 @@ body.dark-mode {
 .card h2 {
   text-align: center;
 }
+
+/* ── Shared modal ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--card-bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 340px;
+  width: 90%;
+}
+
+.modal p {
+  margin: 0 0 8px;
+}
+
+.modal-subtext {
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin-bottom: 20px !important;
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

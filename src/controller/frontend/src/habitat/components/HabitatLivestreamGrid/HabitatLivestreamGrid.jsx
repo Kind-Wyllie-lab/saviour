@@ -9,7 +9,7 @@ import HabitatLivestreamCard from "../HabitatLivestreamCard/HabitatLivestreamCar
 const STREAM_REFRESH_MS = 60 * 1000; // 1 minute in ms
 
 const COLUMNS = ["A", "B", "C", "D"];
-const ROWS = [1, 2, 3, 4];
+const ROWS = [4, 3, 2, 1];
 
 const ALL_CELLS = COLUMNS.flatMap(col =>
   ROWS.map(row => `${col}${row}`)

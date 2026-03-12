@@ -10,6 +10,7 @@ import ControllerConfigCard from "/src/basic/components/ConfigCard/ControllerCon
 function Settings() {
   const { modules } = useModules();
   const [selectedId, setSelectedId] = useState("controller");
+  const [clipboard, setClipboard] = useState(null); // { label, data }
 
   const moduleOptions = [
     { id: "controller", name: "Controller" },
@@ -40,7 +41,7 @@ function Settings() {
       </label>
 
       <div className="module-grid">
-        <ConfigCard id={selectedId} module={selectedModule} />
+        <ConfigCard id={selectedId} module={selectedModule} clipboard={clipboard} onCopy={setClipboard} />
       </div>
 
     </main>

@@ -27,7 +27,7 @@
         "auto_export": true,
         "delete_on_export": true,
         "_manifest_enabled": false,
-        "_share_path": "controller_share",
+        "share_path": "controller_share",
         "share_ip": "10.0.0.1",
         "_share_username": "pi",
         "_share_password": "saviour",

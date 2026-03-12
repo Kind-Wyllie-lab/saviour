@@ -146,6 +146,13 @@ class Modules:
         self.broadcast_updated_modules()
 
 
+    def get_module_ip(self, module_id: str) -> str:
+        module = self._modules.get(module_id)
+        if module is None:
+            raise KeyError(f"Module {module_id} not found")
+        return module.ip
+
+
     # -----------------------------------------------------------------------
     # Status / health notifications
     # -----------------------------------------------------------------------

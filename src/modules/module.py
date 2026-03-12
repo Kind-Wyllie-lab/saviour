@@ -132,6 +132,7 @@ class Module(ABC):
             "update_saviour": self.update_saviour,
             "reboot": self.reboot,
             "reset_config": self.reset_config,
+            "start_export": self.start_export,
         }
 
         # Register callbacks and facade
@@ -854,6 +855,45 @@ class Module(ABC):
             self.facade.stage_file_for_export(new_filepath)
             self.facade.export_staged(export_path)
 
+
+    def start_export(self, export_path: str = None) -> dict:
+        """Handle a start_export command from the controller.
+
+        Spawns a background thread to perform the actual export so the command
+        listener is not blocked.  The thread sends export_complete or
+        export_failed when done so the controller can dispatch the next module.
+        """
+        if self.export.exporting:
+            self.logger.warning("start_export received but already exporting")
+            return {"result": "error", "message": "Already exporting"}
+        threading.Thread(
+            target=self._run_export,
+            args=(export_path,),
+            daemon=True
+        ).start()
+        return {"result": "accepted"}
+
+    def _run_export(self, export_path: str) -> None:
+        """Background thread: run export and report outcome to controller."""
+        try:
+            success = self.facade.export_staged(export_path)
+            if success:
+                self.facade.send_status({
+                    "type": "export_complete",
+                    "export_path": export_path
+                })
+            else:
+                self.facade.send_status({
+                    "type": "export_failed",
+                    "export_path": export_path
+                })
+        except Exception as e:
+            self.logger.error(f"Error in export thread: {e}")
+            self.facade.send_status({
+                "type": "export_failed",
+                "export_path": export_path,
+                "error": str(e)
+            })
 
     def check_recordings(self) -> dict:
         recordings_folder = self.facade.get_recording_folder()

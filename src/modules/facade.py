@@ -162,6 +162,15 @@ class ModuleFacade():
     def export_staged(self, export_path: str):
         return self.module.export.export_staged(export_path)
 
+    def signal_export_ready(self, export_path: str) -> None:
+        """Notify the controller that files are staged and ready to export."""
+        file_count = len(os.listdir(self.module.export.to_export_folder))
+        self.send_status({
+            "type": "export_ready",
+            "export_path": export_path,
+            "file_count": file_count
+        })
+
     
     def stage_file_for_export(self, filename: str) -> None:
         """Stage a file for export when next segment starts or recording is stopped."""

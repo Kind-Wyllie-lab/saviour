@@ -222,11 +222,15 @@ class Controller(ABC):
                     self.modules.notify_recording_stopped(module_id, status_data)
                     self.facade.module_stopped(module_id)
 
-                case 'stop_recording':
-                    pass  # Command acknowledgement from module's command.py - recording_stopped carries the actual state change
+                case 'cmd_ack':
+                    command = status_data.get('command', 'unknown')
+                    result  = status_data.get('result', 'unknown')
+                    self.logger.debug(f"{module_id} ack'd '{command}': {result}")
 
-                case 'start_export':
-                    pass  # Command acknowledgement - export_complete / export_failed carry the outcome
+                case 'recording_start_failed':
+                    error = status_data.get('error', 'unknown')
+                    self.logger.warning(f"{module_id} failed to start recording: {error}")
+                    self.modules.notify_recording_stopped(module_id, status_data)
 
                 case 'recording_stop_failed':
                     if status_data.get("error") == "Not recording":

@@ -425,6 +425,50 @@ class Web(ABC):
             })
 
 
+        @self.socketio.on("get_controller_info")
+        def handle_get_controller_info(data=None):
+            import subprocess
+            import socket as _socket
+            try:
+                result = subprocess.run(
+                    ['git', '-C', '/usr/local/src/saviour', 'describe', '--tags', '--always'],
+                    capture_output=True, text=True, timeout=5
+                )
+                version = result.stdout.strip() if result.returncode == 0 else "unknown"
+            except Exception:
+                version = "unknown"
+            try:
+                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                ip = "unknown"
+            self.socketio.emit("controller_info_response", {"ip": ip, "version": version})
+
+
+        @self.socketio.on("update_saviour_controller")
+        def handle_update_saviour_controller(data=None):
+            import subprocess
+            self.logger.info("Update SAVIOUR controller requested")
+            def _run_update():
+                try:
+                    result = subprocess.run(
+                        ['git', '-C', '/usr/local/src/saviour', 'pull'],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    success = result.returncode == 0
+                    output = result.stdout.strip() if success else result.stderr.strip()
+                except Exception as e:
+                    success = False
+                    output = str(e)
+                self.socketio.emit("update_saviour_controller_result", {
+                    "success": success,
+                    "output": output
+                })
+            threading.Thread(target=_run_update, daemon=True).start()
+
+
         @self.socketio.on('reboot_saviour')
         def handle_reboot_saviour(data=None):
             import subprocess

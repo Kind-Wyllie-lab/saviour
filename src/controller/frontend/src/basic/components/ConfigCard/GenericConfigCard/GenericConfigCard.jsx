@@ -59,6 +59,10 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
     <div className="config-card">
       <div className="card-header">
         <h3>{module.name} ({module.id})</h3>
+        <div className="device-info">
+          {module.ip && <span>IP: {module.ip}</span>}
+          {module.version && <span>v{module.version}</span>}
+        </div>
       </div>
 
       <div className="config-card-body">

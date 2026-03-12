@@ -204,12 +204,14 @@ class Controller(ABC):
                     self.facade.enqueue_export(module_id, export_path)
 
                 case 'export_complete':
-                    self.logger.info(f"{module_id} completed export")
-                    self.facade.export_complete(module_id)
+                    export_path = status_data.get('export_path', '')
+                    self.logger.info(f"{module_id} completed export of {export_path}")
+                    self.facade.export_complete(module_id, export_path)
 
                 case 'export_failed':
-                    self.logger.warning(f"{module_id} failed to export")
-                    self.facade.export_failed(module_id)
+                    export_path = status_data.get('export_path', '')
+                    self.logger.warning(f"{module_id} failed to export {export_path}")
+                    self.facade.export_failed(module_id, export_path)
 
                 case 'recording_started':
                     self.logger.info(f"{module_id} has started recording")
@@ -218,6 +220,13 @@ class Controller(ABC):
                 case 'recording_stopped':
                     self.logger.info(f"{module_id} has stopped recording")
                     self.modules.notify_recording_stopped(module_id, status_data)
+                    self.facade.module_stopped(module_id)
+
+                case 'stop_recording':
+                    pass  # Command acknowledgement from module's command.py - recording_stopped carries the actual state change
+
+                case 'start_export':
+                    pass  # Command acknowledgement - export_complete / export_failed carry the outcome
 
                 case 'recording_stop_failed':
                     if status_data.get("error") == "Not recording":

@@ -238,7 +238,9 @@ class Web(ABC):
             target = data.get("target")
             session_name = data.get("session_name")
             self.logger.info(f"Received request to create session {session_name} targeting {target}")
-            self.facade.create_session(session_name, target)
+            result = self.facade.create_session(session_name, target)
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
 
 
         @self.socketio.on("create_scheduled_session")
@@ -248,7 +250,9 @@ class Web(ABC):
             start_time = data.get("start_time")
             end_time = data.get("end_time")
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time}")
-            self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
 
 
         @self.socketio.on("stop_session")
@@ -467,8 +471,8 @@ class Web(ABC):
         @self.socketio.on("get_recording_sessions")
         def handle_get_recording_sessions():
             sessions = self.facade.get_recording_sessions()
-            self.logger.info(f"Received {sessions}")
-            self.socketio.emit("recording_sessions", sessions)
+            serializable = {k: asdict(v) for k, v in sessions.items()}
+            self.socketio.emit("recording_sessions", serializable)
 
 
         """ Debug """

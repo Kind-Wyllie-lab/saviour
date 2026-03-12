@@ -26,58 +26,93 @@ function SessionList({ sessionList }) {
         <p>No sessions yet</p>
       ) : (
         sessions.map((session) => {
-          const isExpanded = expandedSessions[session.session_name];
+          const state = session.state;           // "active" | "stopped" | "error" | "scheduled"
+          const isActive    = state === "active";
+          const isStopped   = state === "stopped";
+          const isError     = state === "error";
+          const isScheduled = state === "scheduled";
+          const isExpanded  = expandedSessions[session.session_name];
+
+          // Per-module export summary
+          const exportStates = session.module_export_states || {};
+          const exportEntries = Object.entries(exportStates);
+          const pendingExports  = exportEntries.filter(([, s]) => s === "pending").length;
+          const failedExports   = exportEntries.filter(([, s]) => s === "failed").length;
+          const completeExports = exportEntries.filter(([, s]) => s === "complete").length;
+
+          // Per-module stop summary for the stopping phase
+          const stopStates = session.module_stop_states || {};
+          const stillStopping = Object.values(stopStates).filter(s => s === "stopping").length;
 
           return (
             <div
               key={session.session_name}
-              className={`session ${session.stopped? "stopped" : ""}`}
+              className={`session ${isStopped ? "stopped" : ""} ${isError ? "error" : ""}`}
             >
               {/* Header row */}
               <div
                 className="session-header"
-                onClick={() =>
-                  session.stopped &&
-                  toggleExpand(session.session_name)
-                }
+                onClick={() => isStopped && toggleExpand(session.session_name)}
               >
                 <div>
                   <strong>{session.session_name}</strong>
-                  {session.stopped && " - Stopped"}
+                  {isStopped   && " — Stopped"}
+                  {isScheduled && " — Scheduled"}
                 </div>
 
-                {session.active && (
-                  session.error ? (
-                    <span className="status-icon error">
-                    </span>
-                  ) : (
-                    <span className="status-icon recording">
-                    </span>
-                  )
+                {isActive && (
+                  <span className="status-icon recording" title="Recording" />
                 )}
-
-                {session.stopped && (
-                  <span>
-                    {isExpanded ? "▲" : "▼"}
-                  </span>
+                {isError && (
+                  <span className="status-icon error" title={session.error_message} />
+                )}
+                {isScheduled && (
+                  <span className="status-icon scheduled" title="Waiting for scheduled start" />
+                )}
+                {isStopped && (
+                  <span>{isExpanded ? "▲" : "▼"}</span>
                 )}
               </div>
 
               {/* Details */}
-              {(!session.stopped || isExpanded) && (
+              {(!isStopped || isExpanded) && (
                 <div className="session-details">
                   <p><strong>Target:</strong> {session.target}</p>
                   <p><strong>Modules:</strong> {session.modules.join(", ")}</p>
                   <p><strong>Start:</strong> {session.start_time || "-"}</p>
-                  <p><strong>End:</strong> {session.end_time || "-"}</p>
-                  {session.error && (
-                    <p><strong>ERROR:</strong> {session.error_message}</p>
+                  <p><strong>End:</strong>   {session.end_time   || "-"}</p>
+
+                  {isError && (
+                    <p className="error-message"><strong>Error:</strong> {session.error_message}</p>
                   )}
-                  {session.stopped && (
-                    <p><strong>Status:</strong> Session is stopped</p>
+
+                  {isStopped && (
+                    <p><strong>Status:</strong> Session stopped</p>
                   )}
-                  {session.scheduled && <p><strong>Scheduled Time:</strong> {session.scheduled_start_time} - {session.scheduled_end_time}</p>}
-                  {!session.stopped && (
+
+                  {/* Stop progress — visible while modules are confirming */}
+                  {stillStopping > 0 && (
+                    <p><strong>Stopping:</strong> waiting for {stillStopping} module(s) to confirm</p>
+                  )}
+
+                  {/* Export progress */}
+                  {exportEntries.length > 0 && (
+                    <p>
+                      <strong>Exports:</strong>{" "}
+                      {completeExports}/{exportEntries.length} complete
+                      {pendingExports > 0 && `, ${pendingExports} pending`}
+                      {failedExports  > 0 && `, ${failedExports} failed`}
+                    </p>
+                  )}
+
+                  {isScheduled && session.scheduled_start_time && (
+                    <p>
+                      <strong>Schedule:</strong>{" "}
+                      {session.scheduled_start_time} – {session.scheduled_end_time}
+                    </p>
+                  )}
+
+                  {!isStopped && !isScheduled && (
                     <button
                       className="stop-button"
                       onClick={() => handleStop(session.session_name)}

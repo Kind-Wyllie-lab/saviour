@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./ControllerConfigCard.css";
 import socket from "/src/socket";
 import { useConfigForm } from "../useConfigForm";
@@ -8,16 +8,30 @@ import ConfigFields from "../ConfigFields";
 function ControllerConfigCard() {
   const { formData, setFormData, handleChange } = useConfigForm();
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved"
+  const saveTimerRef = useRef(null);
 
   useEffect(() => {
     socket.emit("get_controller_config");
     socket.on("controller_config_response", (data) => {
       setFormData(data.config || {});
+      setSaveStatus(prev => {
+        if (prev === "saving") {
+          clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = setTimeout(() => setSaveStatus(null), 3000);
+          return "saved";
+        }
+        return prev;
+      });
     });
-    return () => socket.off("controller_config_response");
+    return () => {
+      socket.off("controller_config_response");
+      clearTimeout(saveTimerRef.current);
+    };
   }, []);
 
   const handleSave = () => {
+    setSaveStatus("saving");
     const editableData = filterPrivateKeys(formData);
     socket.emit("save_controller_config", { config: editableData });
   };
@@ -40,6 +54,12 @@ function ControllerConfigCard() {
           <button className="save-button" type="button" onClick={handleSave}>
             Save Config
           </button>
+          {saveStatus === "saving" && (
+            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
+          )}
+          {saveStatus === "saved" && (
+            <span className="config-sync-badge config-sync-badge--synced">&#10003; Saved</span>
+          )}
         </div>
       </div>
       <div className="update-button-wrapper">

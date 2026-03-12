@@ -170,6 +170,8 @@ class ControllerFacade():
     def module_discovery(self, module):
         self.controller.modules.module_discovery(module)
         self.controller.health.module_discovery(module)
+        # Fetch config immediately so module name is known before any card is opened
+        self.controller.communication.send_command(module.id, "get_config", {})
 
 
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:

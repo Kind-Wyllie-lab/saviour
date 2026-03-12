@@ -8,6 +8,7 @@ import ConfigFields from "../ConfigFields";
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [hasSaved, setHasSaved] = useState(false);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
@@ -32,6 +33,7 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const capitalize = s => s.charAt(0).toUpperCase() + s.slice(1);
 
   const handleSave = () => {
+    setHasSaved(true);
     const editableData = filterPrivateKeys(formData);
     socket.emit("save_module_config", { id, config: editableData });
   };
@@ -92,6 +94,15 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
               Reset to Default
             </button>
           </div>
+          {hasSaved && module.config_sync_status === "PENDING" && (
+            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
+          )}
+          {hasSaved && module.config_sync_status === "SYNCED" && (
+            <span className="config-sync-badge config-sync-badge--synced">Saved</span>
+          )}
+          {hasSaved && module.config_sync_status === "FAILED" && (
+            <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
+          )}
         </div>
 
         {module.type.includes("camera") && (

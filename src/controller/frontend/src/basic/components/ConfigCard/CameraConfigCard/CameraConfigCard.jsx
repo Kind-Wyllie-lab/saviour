@@ -34,6 +34,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const [sensorModes, setSensorModes] = useState([]);
   const [activePreset, setActivePreset] = useState("custom");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [hasSaved, setHasSaved] = useState(false);
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -117,6 +118,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const capitalize = s => s.charAt(0).toUpperCase() + s.slice(1);
 
   const handleSave = () => {
+    setHasSaved(true);
     socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
   };
 
@@ -334,6 +336,15 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
               Reset to Default
             </button>
           </div>
+          {hasSaved && module.config_sync_status === "PENDING" && (
+            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
+          )}
+          {hasSaved && module.config_sync_status === "SYNCED" && (
+            <span className="config-sync-badge config-sync-badge--synced">Saved</span>
+          )}
+          {hasSaved && module.config_sync_status === "FAILED" && (
+            <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
+          )}
         </div>
 
         <div className="livestream-wrapper">

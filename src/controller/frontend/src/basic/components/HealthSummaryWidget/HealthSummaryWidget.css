@@ -1,0 +1,71 @@
+.health-summary-widget {
+  padding: 12px 16px;
+}
+
+.health-summary-widget--issues {
+  border-color: color-mix(in srgb, orange 40%, var(--border-color));
+}
+
+.hsw-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.hsw-header h2 {
+  margin: 0;
+}
+
+.hsw-view-link {
+  font-size: 0.82em;
+  opacity: 0.7;
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.hsw-view-link:hover {
+  opacity: 1;
+}
+
+.hsw-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  font-size: 0.88em;
+  gap: 12px;
+}
+
+.hsw-row:last-of-type {
+  border-bottom: none;
+}
+
+.hsw-label {
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.hsw-value {
+  text-align: right;
+  font-weight: 500;
+}
+
+.hsw-alert .hsw-value {
+  word-break: break-word;
+  text-align: right;
+  max-width: 60%;
+}
+
+.hsw-empty {
+  font-size: 0.85em;
+  opacity: 0.5;
+  text-align: center;
+  margin: 8px 0 0;
+}
+
+/* Shared value colours — also used by System page */
+.val--ok     { color: #2d9e4f; }
+.val--warn   { color: #d4820a; }
+.val--danger { color: #cc3333; }

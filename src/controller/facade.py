@@ -29,7 +29,7 @@ class ControllerFacade():
 
 
     def get_module_ip(self, module_id: str) -> str:
-        return self.controller.network.get_module_ip(module_id)
+        return self.controller.modules.get_module_ip(module_id)
 
 
     def get_modules_by_target(self, target: str) -> dict:
@@ -38,6 +38,10 @@ class ControllerFacade():
 
     def get_module_health(self, module_id: Optional[str] = None):
         return self.controller.health.get_module_health(module_id)
+
+
+    def get_health_summary(self) -> dict:
+        return self.controller.health.get_health_summary()
 
 
     def get_module_config(self, module_id: str) -> dict:
@@ -105,24 +109,30 @@ class ControllerFacade():
 
 
     """Recording"""
-    def start_recording(self, target: str, session_name: str, duration: int):
-        return self.controller.recording.start_recording(target, session_name, duration)
-
-    
-    def stop_recording(self, target: str):
-        return self.controller.recording.stop_recording(target)
-
-
-    def create_session(self, session_name: str, target: str) -> None:
+    def start_recording(self, target: str, session_name: str, duration: int = 0) -> dict:
+        """Start recording by creating a session. Kept for backwards-compatibility with web events."""
         return self.controller.recording.create_session(session_name, target)
 
+    def stop_recording(self, target: str) -> None:
+        """Stop recording for a target by finding and stopping its session."""
+        session_name = self.controller.recording.get_session_name_from_target(target)
+        if session_name:
+            self.controller.recording.stop_session(session_name)
+        else:
+            # No managed session — send command directly as a fallback
+            self.controller.communication.send_command(target, "stop_recording", {})
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str) -> None:
+    def create_session(self, session_name: str, target: str) -> dict:
+        return self.controller.recording.create_session(session_name, target)
+
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str) -> dict:
         return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time)
-    
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
+
+    def module_stopped(self, module_id: str) -> None:
+        self.controller.recording.module_stopped(module_id)
 
     
     def update_sessions(self, sessions: dict) -> None:
@@ -152,6 +162,19 @@ class ControllerFacade():
         
 
     """Events"""
+    """Export Queue"""
+    def enqueue_export(self, module_id: str, export_path: str) -> None:
+        self.controller.recording.module_export_update(module_id, export_path, "pending")
+        self.controller.export_queue.enqueue(module_id, export_path)
+
+    def export_complete(self, module_id: str, export_path: str = "") -> None:
+        self.controller.export_queue.on_export_complete(module_id)
+        self.controller.recording.module_export_update(module_id, export_path, "complete")
+
+    def export_failed(self, module_id: str, export_path: str = "") -> None:
+        self.controller.export_queue.on_export_failed(module_id)
+        self.controller.recording.module_export_update(module_id, export_path, "failed")
+
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline
         self.controller.recording.module_offline(module_id)
@@ -170,6 +193,8 @@ class ControllerFacade():
     def module_discovery(self, module):
         self.controller.modules.module_discovery(module)
         self.controller.health.module_discovery(module)
+        # Fetch config immediately so module name is known before any card is opened
+        self.controller.communication.send_command(module.id, "get_config", {})
 
 
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:

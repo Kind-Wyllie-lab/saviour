@@ -1,0 +1,107 @@
+.system-page {
+  padding: 16px 24px;
+}
+
+.system-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.system-header h2 {
+  margin: 0;
+}
+
+.refresh-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.refresh-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.system-table-wrapper {
+  overflow-x: auto;
+}
+
+.system-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+
+.system-table th {
+  text-align: left;
+  padding: 6px 12px;
+  border-bottom: 2px solid var(--border-color);
+  font-weight: 600;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.system-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.system-table__controller-row td {
+  background-color: color-mix(in srgb, var(--accent-color) 6%, var(--card-bg-color));
+  font-weight: 500;
+}
+
+.system-table__empty {
+  text-align: center;
+  padding: 24px !important;
+  opacity: 0.45;
+  font-style: italic;
+  white-space: normal !important;
+}
+
+.device-name {
+  display: block;
+  font-weight: 500;
+}
+
+.device-id {
+  display: block;
+  font-size: 0.8em;
+  opacity: 0.5;
+}
+
+.status-dot-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: capitalize;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot--online    { background-color: #2d9e4f; }
+.status-dot--suspected { background-color: #d4820a; }
+.status-dot--offline   { background-color: #cc3333; }
+
+.cell--muted {
+  opacity: 0.45;
+}
+
+/* val colours imported from HealthSummaryWidget.css via global scope —
+   but redeclare here to be self-contained if that CSS isn't loaded */
+.val--ok     { color: #2d9e4f; }
+.val--warn   { color: #d4820a; }
+.val--danger { color: #cc3333; }

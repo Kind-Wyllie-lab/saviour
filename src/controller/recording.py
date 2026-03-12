@@ -1,348 +1,458 @@
 """
 Recording manager for the SAVIOUR Controller.
 
-Each module can only be associated with one recording session.
+Each module can only be associated with one recording session at a time.
 
 Author: Andrew SG
 Created: 26/01/2026
 """
 
-
 import os
+import json
 import logging
-from datetime import datetime
+from datetime import datetime, date
 import time
-from typing import Optional
-from dataclasses import dataclass, field
+from typing import Optional, Dict
+from dataclasses import dataclass, field, asdict
 import threading
+from enum import StrEnum
 
+
+SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
+
+_MONITOR_INTERVAL_SECS = 5
+
+
+# ---------------------------------------------------------------------------
+# State enums
+# ---------------------------------------------------------------------------
+
+class SessionState(StrEnum):
+    SCHEDULED = "scheduled"
+    ACTIVE    = "active"
+    STOPPED   = "stopped"
+    ERROR     = "error"
+
+
+# ---------------------------------------------------------------------------
+# RecordingSession dataclass
+# ---------------------------------------------------------------------------
 
 @dataclass
-class RecordingSession():
-    """Dataclass to represent a SAVIOUR recording session"""
-    session_name: str # Name of the recording session
-    target: str # The target of recording e.g. all, group_3, camera_dc67
-    modules: list = field(default_factory=list) # The module_ids belonging to this recording session. # TODO: Should this be a dict, with info about each module i.e. if they're recording still?
-    start_time: int = None # Time the session was started at - None if not started
-    end_time: int = None # Time the session finished at - None if not started
-    active: bool = False# Bool indicating whether this session is currently recording
-    error: bool = False # Bool indicating whether the session is in an error state
-    error_message: str = "" # If fault state, error message here
-    session_folder: str = "" # The path on the controller's samba share where session files will be stored
-    stopped: bool = False # Bool indicating whether the session has been stopped 
-    scheduled: bool = False # Whether the session should run on a schedule
-    scheduled_start_time: Optional[str] = None # In 24hr time e.g. 19:00
-    scheduled_end_time: Optional[str] = None # In 24hr time e.g. 23:00
+class RecordingSession:
+    session_name:              str
+    target:                    str
+    state:                     str  = SessionState.ACTIVE
+    modules:                   list = field(default_factory=list)
+    start_time:                Optional[str] = None
+    end_time:                  Optional[str] = None
+    error_message:             str  = ""
+    scheduled:                 bool = False
+    scheduled_start_time:      Optional[str] = None   # HH:MM
+    scheduled_end_time:        Optional[str] = None   # HH:MM
+    # Prevents a scheduled session from starting more than once on the same
+    # calendar day (YYYY-MM-DD).
+    scheduled_last_start_date: Optional[str] = None
+    # Per-module stop acknowledgement: "recording" | "stopping" | "stopped" | "unknown"
+    module_stop_states:        dict = field(default_factory=dict)
+    # Per-module export tracking:  "idle" | "pending" | "complete" | "failed"
+    module_export_states:      dict = field(default_factory=dict)
 
 
-class Recording():
+# ---------------------------------------------------------------------------
+# Recording manager
+# ---------------------------------------------------------------------------
+
+class Recording:
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.sessions = {} # Dict of recording sessions with session_name as key
-        self.session_monitor_thread = threading.Thread(target=self._monitor_sessions, daemon=True).start()
+        self.sessions: Dict[str, RecordingSession] = {}
+        self._lock = threading.Lock()
+
+        self._load_sessions()
+
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_sessions,
+            daemon=True,
+            name="session-monitor",
+        )
+        self._monitor_thread.start()
 
 
-    def get_session_name_from_target(self, target: str) -> str:
+    # -----------------------------------------------------------------------
+    # Public session API
+    # -----------------------------------------------------------------------
+
+    def create_session(self, session_name: str, target: str) -> dict:
+        """Create a session that begins recording immediately.
+
+        Returns a result dict so the caller can surface errors to the frontend.
         """
-        Find which session the target belongs to.
-        Assumption: one target can only belong to one recording session.
-        """
-        active_sessions = self.get_active_recording_sessions()
-
-        if not active_sessions:
-            return None
-
-        if target == "all":
-            if len(active_sessions) != 1:
-                raise ValueError("Multiple active sessions for 'all'")
-            return next(iter(active_sessions))
-
-        for session_name, session in active_sessions.items():
-            if target in session.modules:
-                return session_name
-
-        return None
-            
-
-    """Getter methods"""
-    def get_recording_status(self) -> bool:
-        # If any session is active, system is recording
-        for session_name, session in self.sessions.items():
-            if session.active == True:
-                return True
-
-    
-    def get_recording_sessions(self) -> dict:
-        return self.sessions
-
-    
-    def _format_session_name(self, session_name: str) -> str:
-        # Add timestamp to session name
-        start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-        session_name += ("-" + start_time)
-
-        return session_name
-
-
-    def create_session(self, session_name: str, target: str) -> None:
-        """Create a session that will immediately begin recording.
-
-        Args:
-            session_name: The name of the session that will be used as top level folder where files will be saved as well as filename prefix
-            target: May be "all", a group name, or a specific module id. 
-        """
-        session_name = self._format_session_name(session_name)
-
-        self.logger.info(f"Creating recording session {session_name} targeting {target}")
+        if not session_name or not session_name.strip():
+            self.logger.warning("create_session: empty session_name")
+            return {"success": False, "error": "Session name cannot be empty"}
 
         modules = list(self.facade.get_modules_by_target(target).keys())
+        if not modules:
+            self.logger.warning(f"create_session: no modules for target '{target}'")
+            return {"success": False, "error": f"No online modules found for target '{target}'"}
+
+        session_name = self._format_session_name(session_name)
 
         session = RecordingSession(
-            session_name = session_name,
-            target = target,
-            modules = modules,
-            active = True,
-            start_time = datetime.now().strftime("%Y%m%d-%H%M%S"),
-            end_time = None,
-            session_folder = self._create_session_folder(session_name)
+            session_name=session_name,
+            target=target,
+            state=SessionState.ACTIVE,
+            modules=modules,
+            start_time=datetime.now().strftime("%Y%m%d-%H%M%S"),
+            module_stop_states={m: "recording" for m in modules},
+            module_export_states={m: "idle" for m in modules},
         )
 
-        self.sessions[session_name] = session
+        with self._lock:
+            self.sessions[session_name] = session
 
-        self._create_session_file(session_name)
-
-        params = {
-            "duration": 0,
-            "session_name": session_name
-        }
+        params = {"duration": 0, "session_name": session_name}
         self.facade.send_command(target, "start_recording", params)
-
         self.facade.update_sessions(self.sessions)
+        self._save_sessions()
 
-        self._write_session_start_to_file(session_name)
+        self.logger.info(
+            f"Session '{session_name}' created targeting {target} ({len(modules)} modules)"
+        )
+        return {"success": True, "session_name": session_name}
 
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str):
-        """Create a session that will record between a specified start and end time each day
+    def create_scheduled_session(self, session_name: str, target: str,
+                                  start_time: str, end_time: str) -> dict:
+        """Create a session that records daily between start_time and end_time (HH:MM)."""
+        if not session_name or not session_name.strip():
+            return {"success": False, "error": "Session name cannot be empty"}
+        if not start_time or not end_time:
+            return {"success": False, "error": "start_time and end_time are required (HH:MM)"}
 
-        Args:
-            session_name: The name of the session that will be used as top level folder where files will be saved as well as filename prefix
-            target: May be "all", a group name, or a specific module id. 
-            start_time: Time of day to start recording, in 24hr format (e.g. 19:30)
-            end_time: Time of day to end recording, in 24hr format (e.g. 21:15)
-        """
+        modules = list(self.facade.get_modules_by_target(target).keys())
+        if not modules:
+            return {"success": False, "error": f"No online modules found for target '{target}'"}
 
         session_name = self._format_session_name(session_name)
-        modules = list(self.facade.get_modules_by_target(target).keys())
 
         session = RecordingSession(
-            session_name = session_name,
-            target = target,
-            modules = modules,
-            start_time = datetime.now().strftime("%Y%m%d-%H%M%S"),
-            end_time = None,
-            scheduled = True,
-            scheduled_start_time = start_time,
-            scheduled_end_time = end_time,
-            session_folder = self._create_session_folder(session_name)
+            session_name=session_name,
+            target=target,
+            state=SessionState.SCHEDULED,
+            modules=modules,
+            scheduled=True,
+            scheduled_start_time=start_time,
+            scheduled_end_time=end_time,
+            module_stop_states={m: "recording" for m in modules},
+            module_export_states={m: "idle" for m in modules},
         )
 
-        self.sessions[session_name] = session
+        with self._lock:
+            self.sessions[session_name] = session
 
         self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(
+            f"Scheduled session '{session_name}' created for {target} "
+            f"between {start_time}–{end_time}"
+        )
+        return {"success": True, "session_name": session_name}
 
-        self._create_session_file(session_name)
 
+    def stop_session(self, session_name: str) -> None:
+        """Stop a recording session.
 
-    def stop_session(self, session_name: str):
-        """
-        Stop a recording session by session_name.
-
-        This stops all modules in the session, marks the session inactive, 
-        sets the end time, and writes to the session info file.
+        Sends stop_recording to all modules and marks each as 'stopping'.
+        The session transitions to STOPPED only once all modules confirm via
+        module_stopped(), so the frontend can track progress accurately.
         """
         if session_name not in self.sessions:
-            self.logger.warning(f"Tried to stop unknown session {session_name}")
+            self.logger.warning(f"stop_session: unknown session '{session_name}'")
             return
 
         session = self.sessions[session_name]
 
-        if session.stopped:
-            self.logger.info(f"Session {session_name} is already stopped")
+        if session.state == SessionState.STOPPED:
+            self.logger.info(f"Session '{session_name}' is already stopped")
             return
 
-        # Stop modules in the session
         self.facade.send_command(session.target, "stop_recording", {})
 
-        # Update session status
-        self.sessions[session_name].stopped = True
-        self.sessions[session_name].active = False
-        self.sessions[session_name].end_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with self._lock:
+            for module_id in session.modules:
+                session.module_stop_states[module_id] = "stopping"
 
-        # Write end time to session file
         self.facade.update_sessions(self.sessions)
-        self._end_session(session_name)
-
-        self.logger.info(f"Session {session_name} stopped successfully")
-
-
-    def _create_session_file(self, session_name: str) -> None:
-        filename = self._get_session_info_file(session_name)
-        self.logger.info(f"Creating {filename}")
-        with open(filename, "a") as f:
-            f.write(f"Created {session_name} targeting {self.sessions[session_name].target} (")
-            for module in self.sessions[session_name].modules:
-                f.write(f"{module}, ")
-            
-            if self.sessions[session_name].scheduled == True:
-                f.write(f"Session is scheduled to run between {self.sessions[session_name].scheduled_start_time} and {self.sessions[session_name].scheduled_end_time}")
+        self._save_sessions()
+        self.logger.info(
+            f"Stop command sent to {len(session.modules)} module(s) in '{session_name}'"
+        )
 
 
-    def _create_session_folder(self, session_name: str) -> str:
-        # Create a folder for the session files to be written to in the samba share
-        share_path = self.facade.get_share_path()
-        session_folder_path = f"{share_path}/{session_name}"
-        os.makedirs(session_folder_path, exist_ok=True)
-        import pwd, grp
-        uid = pwd.getpwnam("pi").pw_uid
-        gid = grp.getgrnam("pi").gr_gid
-        os.chown(session_folder_path, uid, gid)
-        self.logger.info(f"Created session folder {session_folder_path}")
-        return session_folder_path
+    def module_stopped(self, module_id: str) -> None:
+        """Called when a module sends recording_stopped.
+
+        Marks the module as confirmed-stopped and checks whether all modules
+        in the session have now confirmed, transitioning the session to STOPPED.
+        """
+        for name, session in self.sessions.items():
+            if session.module_stop_states.get(module_id) == "stopping":
+                with self._lock:
+                    session.module_stop_states[module_id] = "stopped"
+                self.logger.info(
+                    f"Module {module_id} confirmed stopped in session '{name}'"
+                )
+                self._check_all_stopped(name)
+                return
+        self.logger.debug(
+            f"module_stopped: {module_id} not found in any 'stopping' session — ignoring"
+        )
 
 
-    def _write_session_start_to_file(self, session_name: str) -> None:
-        filename = self._get_session_info_file(session_name)
-        self.logger.info(f"Writing start time to {filename}")
-        with open(filename, "a") as f:
-            f.write(f"\nSession started at {self.sessions[session_name].start_time}")
+    def module_export_update(self, module_id: str, export_path: str, state: str) -> None:
+        """Update export state for a module.
 
-        
-    def _write_line_to_file(self, session_name: str, line: str) -> None:
-        filename = self._get_session_info_file(session_name)
-        with open(filename, "a") as f:
-            f.write(line)
-        
+        The session is identified from the first path component of export_path,
+        which is always the session_name (e.g. 'myexp-20260312/20260312/camera_d61e').
+        """
+        session_name = export_path.split('/')[0] if export_path else None
+        if not session_name or session_name not in self.sessions:
+            return
 
-    def _end_session(self, session_name: str) -> None:
-        filename = self._get_session_info_file(session_name)
-        self.logger.info(f"Finishing and closing {filename}")
-        with open(filename, "a") as f:
-            f.write(f"\nEnded at {self.sessions[session_name].end_time}")
+        with self._lock:
+            self.sessions[session_name].module_export_states[module_id] = state
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(f"Export state for {module_id} in '{session_name}': {state}")
 
 
-    def _get_session_info_file(self, session_name: str) -> str:
-        session_folder = self.sessions[session_name].session_folder
-        filename = os.path.abspath(f"{session_folder}/SessionInfo.txt")
-        return filename
+    # -----------------------------------------------------------------------
+    # Getters
+    # -----------------------------------------------------------------------
 
-    
+    def get_recording_status(self) -> bool:
+        return any(s.state == SessionState.ACTIVE for s in self.sessions.values())
+
+    def get_recording_sessions(self) -> dict:
+        return self.sessions
+
     def get_active_recording_sessions(self) -> dict:
-        active_sessions = {
-            k: v for k, v in self.sessions.items() if v.active is True
-        }
-        return active_sessions
+        return {k: v for k, v in self.sessions.items() if v.state == SessionState.ACTIVE}
 
+    def get_session_name_from_target(self, target: str) -> Optional[str]:
+        """Find a non-stopped session that the target belongs to."""
+        non_stopped = {
+            k: v for k, v in self.sessions.items()
+            if v.state != SessionState.STOPPED
+        }
+        if not non_stopped:
+            return None
+        if target == "all":
+            if len(non_stopped) != 1:
+                return None
+            return next(iter(non_stopped))
+        for name, session in non_stopped.items():
+            if target in session.modules:
+                return name
+        return None
+
+
+    # -----------------------------------------------------------------------
+    # Module lifecycle events
+    # -----------------------------------------------------------------------
 
     def module_offline(self, module_id: str) -> None:
-        """When a module goes offline, make a note of it"""
-        self.logger.info(f"{module_id} went offline, recording in session log")
+        """Record that a module went offline; if it was mid-stop, count it as done."""
         session_name = self.get_session_name_from_target(module_id)
         if not session_name:
             return
-        filename = self._get_session_info_file(session_name)
-        with open(filename, "a") as f:
-            f.write(f"\n{module_id} went offline at {datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        
-        self.sessions[session_name].error=True
-        self.sessions[session_name].error_message = f"{module_id} is Offline"
+        session = self.sessions[session_name]
 
-    
+        if session.module_stop_states.get(module_id) == "stopping":
+            with self._lock:
+                session.module_stop_states[module_id] = "stopped"
+            self._check_all_stopped(session_name)
+
+        if session.state != SessionState.STOPPED:
+            session.error_message = f"{module_id} is offline"
+            session.state = SessionState.ERROR
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            self.logger.info(f"Session '{session_name}' → ERROR: {module_id} offline")
+
+
     def module_back_online(self, module_id: str) -> None:
-        self.logger.info(f"{module_id} is back online, restarting recording")
+        """Resume recording for a module that reconnected during an active session."""
         session_name = self.get_session_name_from_target(module_id)
         if not session_name:
             return
-        if self.sessions[session_name].active == True:
-            filename = self._get_session_info_file(session_name)
-            with open(filename, "a") as f:
-                f.write(f"\n{module_id} came back online at {datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        session = self.sessions[session_name]
 
-            # Tell it to resume recording
-            params = {
-                "duration": 0, # TODO: Refactor duration to be an end time instead of a duration in s
-                "session_name": session_name
-            }
-            self.facade.send_command(module_id, "start_recording", params) # TODO: Create "restart_recording" endpoint on module 
+        if session.state in (SessionState.ACTIVE, SessionState.ERROR):
+            params = {"duration": 0, "session_name": session_name}
+            self.facade.send_command(module_id, "start_recording", params)
+            with self._lock:
+                session.module_stop_states[module_id] = "recording"
+                if session.state == SessionState.ERROR:
+                    session.error_message = ""
+                    session.state = SessionState.ACTIVE
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            self.logger.info(
+                f"Module {module_id} back online — restarted recording in '{session_name}'"
+            )
 
 
+    # -----------------------------------------------------------------------
+    # Private helpers
+    # -----------------------------------------------------------------------
 
-    """Session Monitoring"""
-    def _monitor_sessions(self):
-        cycle_count = 0
+    def _format_session_name(self, session_name: str) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return f"{session_name}-{timestamp}"
+
+
+    def _check_all_stopped(self, session_name: str) -> None:
+        """Transition the session to STOPPED when no module is still 'stopping'."""
+        session = self.sessions.get(session_name)
+        if not session or session.state == SessionState.STOPPED:
+            return
+
+        still_stopping = any(
+            v == "stopping" for v in session.module_stop_states.values()
+        )
+        if still_stopping:
+            return
+
+        with self._lock:
+            session.state = SessionState.STOPPED
+            session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        self.logger.info(
+            f"All modules confirmed stopped — session '{session_name}' is now STOPPED"
+        )
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+
+
+    def _start_scheduled_session(self, session_name: str, today: str) -> None:
+        session = self.sessions[session_name]
+        with self._lock:
+            session.state = SessionState.ACTIVE
+            session.scheduled_last_start_date = today
+            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.module_stop_states = {m: "recording" for m in session.modules}
+            session.module_export_states = {m: "idle" for m in session.modules}
+
+        params = {"duration": 0, "session_name": session_name}
+        self.facade.send_command(session.target, "start_recording", params)
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(f"Scheduled session '{session_name}' started for {today}")
+
+
+    def _stop_scheduled_session(self, session_name: str) -> None:
+        session = self.sessions[session_name]
+        self.facade.send_command(session.target, "stop_recording", {})
+        with self._lock:
+            for module_id in session.modules:
+                session.module_stop_states[module_id] = "stopping"
+            # Return to SCHEDULED so it runs again tomorrow
+            session.state = SessionState.SCHEDULED
+            session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(f"Scheduled session '{session_name}' stopped for today")
+
+
+    def _monitor_sessions(self) -> None:
+        """Background thread: drive scheduled timers and health-check active sessions."""
         while True:
-            cycle_count += 1
-            if cycle_count % 10 == 0:
-                # self.logger.info(f"Recording Monitor cycle {cycle_count}")
-                pass
-
+            time.sleep(_MONITOR_INTERVAL_SECS)
             current_time = datetime.now().strftime("%H:%M")
-            for session_name, session in self.sessions.items():
+            today = date.today().isoformat()
+
+            for session_name, session in list(self.sessions.items()):
                 try:
-                    if session.stopped:
+                    if session.state == SessionState.STOPPED:
                         continue
 
-                    self.logger.info(f"{session_name} is not yet stopped")
-            
                     if session.scheduled:
-                        if current_time == session.scheduled_start_time and not session.active:
-                            self.logger.info(f"Starting scheduled session {session_name}")
-                            self._write_line_to_file(session_name, f"Starting scheduled session at {current_time}")
-                            self.start_scheduled_session(session_name)
-                        elif current_time == session.scheduled_end_time and session.active:
-                            self.logger.info(f"Ending scheduled session {session_name}")
-                            self._write_line_to_file(session_name, f"Ending scheduled session at {current_time}")
-                            self.stop_scheduled_session(session_name)
-                        else:
-                            self.logger.info(f"{session_name}, time is {current_time}, active {session.active}, error {session.error}, scheduled start time {session.scheduled_start_time}, scheduled end time {session.scheduled_end_time}")
-                    
-                    if session.active:
+                        # Start if not already started today and time has come
+                        if (session.state != SessionState.ACTIVE
+                                and session.scheduled_last_start_date != today
+                                and current_time >= session.scheduled_start_time):
+                            self._start_scheduled_session(session_name, today)
 
-                        healthy = True # Begin by assuming session is healthy
-                        
-                        # Check if all modules are recording
-                        for module_id in session.modules:
-                            error_message = "Not recording modules: "
-                            if not self.facade.is_module_recording(module_id):
-                                self.logger.info(f"Error in {session}, {module_id} is not recording")
-                                healthy = False
-                                error_message += f"{module_id} "
-                            
-                        if not healthy:
-                            self.sessions[session_name].error = True
-                            self.sessions[session_name].error_message = error_message 
-                        else:
-                            self.sessions[session_name].error = False
-                            self.sessions[session_name].error_message = ""
+                        # Stop if active, started today, and end time reached
+                        elif (session.state == SessionState.ACTIVE
+                                and session.scheduled_last_start_date == today
+                                and current_time >= session.scheduled_end_time):
+                            self._stop_scheduled_session(session_name)
+
+                    elif session.state in (SessionState.ACTIVE, SessionState.ERROR):
+                        # Check every module that should be recording actually is
+                        should_be_recording = [
+                            m for m in session.modules
+                            if session.module_stop_states.get(m) == "recording"
+                        ]
+                        not_recording = [
+                            m for m in should_be_recording
+                            if not self.facade.is_module_recording(m)
+                        ]
+                        if not_recording:
+                            msg = f"Not recording: {', '.join(not_recording)}"
+                            if session.error_message != msg or session.state != SessionState.ERROR:
+                                session.error_message = msg
+                                session.state = SessionState.ERROR
+                                self.facade.update_sessions(self.sessions)
+                        elif session.state == SessionState.ERROR:
+                            session.error_message = ""
+                            session.state = SessionState.ACTIVE
+                            self.facade.update_sessions(self.sessions)
+
                 except Exception as e:
-                    self.logger.error(f"Error monitoring recording sessions: {e}")
-
-            time.sleep(1)
-
-    
-    def start_scheduled_session(self, session_name: str) -> None:
-        params = {
-            "duration": 0,
-            "session_name": session_name
-        }
-        target = self.sessions[session_name].target
-        self.facade.send_command(target, "start_recording", params)
-        self.sessions[session_name].active = True
-        self.facade.update_sessions(self.sessions)
+                    self.logger.error(f"Error monitoring session '{session_name}': {e}")
 
 
-    def stop_scheduled_session(self, session_name: str) -> None:
-        target = self.sessions[session_name].target
-        self.facade.send_command(target, "stop_recording", {})
-        self.sessions[session_name].active = False
-        self.facade.update_sessions(self.sessions)
+    # -----------------------------------------------------------------------
+    # Persistence
+    # -----------------------------------------------------------------------
+
+    def _save_sessions(self) -> None:
+        """Write all sessions to disk as JSON."""
+        try:
+            os.makedirs(os.path.dirname(SESSIONS_FILE), exist_ok=True)
+            data = {name: asdict(session) for name, session in self.sessions.items()}
+            with open(SESSIONS_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Failed to save sessions: {e}")
+
+
+    def _load_sessions(self) -> None:
+        """Load sessions from disk on startup.
+
+        Sessions that were ACTIVE when the controller last stopped are marked ERROR
+        so the operator can see they need attention.
+        """
+        if not os.path.exists(SESSIONS_FILE):
+            return
+        try:
+            with open(SESSIONS_FILE) as f:
+                data = json.load(f)
+            for name, d in data.items():
+                session = RecordingSession(**d)
+                if session.state == SessionState.ACTIVE:
+                    session.state = SessionState.ERROR
+                    session.error_message = "Controller restarted during active session"
+                    session.module_stop_states = {m: "unknown" for m in session.modules}
+                self.sessions[name] = session
+            self.logger.info(f"Loaded {len(self.sessions)} session(s) from disk")
+        except Exception as e:
+            self.logger.error(f"Failed to load sessions: {e}")

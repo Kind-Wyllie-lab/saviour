@@ -7,6 +7,7 @@ import { Routes, Route } from "react-router-dom";
 import Sidebar from '/src/basic/components/Sidebar/Sidebar';
 import Settings from "/src/basic/pages/Settings/Settings";
 import Debug from "/src/basic/pages/Debug/Debug";
+import System from "/src/basic/pages/System/System";
 import Recording from '/src/basic/pages/Recording/Recording';
 
 
@@ -23,6 +24,7 @@ const pages = [
   { label: "Settings", path: "/settings" },
   { label: "Monitor", path: "/monitor" },
   { label: "Recording", path: "/recording" },
+  { label: "System", path: "/system" },
   // { label: "Debug", path: "/debug", disabled: true }
 ];
 
@@ -59,7 +61,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/monitor" element={<Monitor />} />
           <Route path="/recording" element={<Recording />} />
-          <Route path="/debug" element={<Debug />} />
+          <Route path="/system" element={<System />} />
         </Routes>
       </div>
     </div>

@@ -206,24 +206,26 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value by its key path
-        
+
         Args:
             key_path: Dot-separated path to the configuration value
             default: Default value to return if key doesn't exist
-            
+
         Returns:
             Configuration value or default if not found
         """
         parts = key.split('.') # Split the . separated param into parts
         config = self.config
         for part in parts:
+            if not isinstance(config, dict):
+                return default
             if part in config:
                 config = config[part]
             elif f"_{part}" in config: # Check for leading underscore
                 config = config[f"_{part}"]
             else:
-                config = default
-        if config == None:
+                return default
+        if config is None:
             self.logger.warning(f"config.get() returning None for {key}")
         return config
     

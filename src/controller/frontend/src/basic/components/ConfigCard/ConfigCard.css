@@ -96,10 +96,24 @@ max-width: 600px;
   font-weight: bold;
 }
 
+.card-header {
+  margin-bottom: 8px;
+}
+
+.device-info {
+  display: flex;
+  gap: 12px;
+  font-size: 0.78em;
+  opacity: 0.55;
+  margin-top: 2px;
+}
+
 .update-button-wrapper {
   display: flex;
   justify-content: center;
+  gap: 8px;
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .update-button {

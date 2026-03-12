@@ -135,8 +135,8 @@ class Command:
                 self.logger.warning(f"Make sure {cmd} returns a dict")
                 result = {"result": f"error: NoneType result from {cmd} callback"}
 
-            # 4. Send response to controller
-            response = {"type": cmd}
+            # 4. Send unified command acknowledgement to controller
+            response = {"type": "cmd_ack", "command": cmd}
             response.update(result)
             self.facade.send_status(response)
 

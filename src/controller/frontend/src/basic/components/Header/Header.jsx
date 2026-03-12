@@ -21,6 +21,7 @@ function APAHeader() {
                     <ul>
                         <li><Link to="/" className="nav-link">Dashboard</Link></li>
                         {/* <li><Link to="/recordings" className="nav-link">Recordings</Link></li> */}
+                        <li><Link to="/system" className="nav-link">System</Link></li>
                         <li><Link to="/settings" className="nav-link">Settings</Link></li>
                         <li><Link to="/debug" className="nav-link">Debug</Link></li>
                     </ul>

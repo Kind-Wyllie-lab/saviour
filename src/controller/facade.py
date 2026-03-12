@@ -105,24 +105,30 @@ class ControllerFacade():
 
 
     """Recording"""
-    def start_recording(self, target: str, session_name: str, duration: int):
-        return self.controller.recording.start_recording(target, session_name, duration)
-
-    
-    def stop_recording(self, target: str):
-        return self.controller.recording.stop_recording(target)
-
-
-    def create_session(self, session_name: str, target: str) -> None:
+    def start_recording(self, target: str, session_name: str, duration: int = 0) -> dict:
+        """Start recording by creating a session. Kept for backwards-compatibility with web events."""
         return self.controller.recording.create_session(session_name, target)
 
+    def stop_recording(self, target: str) -> None:
+        """Stop recording for a target by finding and stopping its session."""
+        session_name = self.controller.recording.get_session_name_from_target(target)
+        if session_name:
+            self.controller.recording.stop_session(session_name)
+        else:
+            # No managed session — send command directly as a fallback
+            self.controller.communication.send_command(target, "stop_recording", {})
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str) -> None:
+    def create_session(self, session_name: str, target: str) -> dict:
+        return self.controller.recording.create_session(session_name, target)
+
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str) -> dict:
         return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time)
-    
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
+
+    def module_stopped(self, module_id: str) -> None:
+        self.controller.recording.module_stopped(module_id)
 
     
     def update_sessions(self, sessions: dict) -> None:
@@ -154,13 +160,16 @@ class ControllerFacade():
     """Events"""
     """Export Queue"""
     def enqueue_export(self, module_id: str, export_path: str) -> None:
+        self.controller.recording.module_export_update(module_id, export_path, "pending")
         self.controller.export_queue.enqueue(module_id, export_path)
 
-    def export_complete(self, module_id: str) -> None:
+    def export_complete(self, module_id: str, export_path: str = "") -> None:
         self.controller.export_queue.on_export_complete(module_id)
+        self.controller.recording.module_export_update(module_id, export_path, "complete")
 
-    def export_failed(self, module_id: str) -> None:
+    def export_failed(self, module_id: str, export_path: str = "") -> None:
         self.controller.export_queue.on_export_failed(module_id)
+        self.controller.recording.module_export_update(module_id, export_path, "failed")
 
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline

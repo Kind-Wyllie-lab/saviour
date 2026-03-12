@@ -29,7 +29,7 @@ class ControllerFacade():
 
 
     def get_module_ip(self, module_id: str) -> str:
-        return self.controller.network.get_module_ip(module_id)
+        return self.controller.modules.get_module_ip(module_id)
 
 
     def get_modules_by_target(self, target: str) -> dict:

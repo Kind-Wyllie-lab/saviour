@@ -40,6 +40,10 @@ class ControllerFacade():
         return self.controller.health.get_module_health(module_id)
 
 
+    def get_health_summary(self) -> dict:
+        return self.controller.health.get_health_summary()
+
+
     def get_module_config(self, module_id: str) -> dict:
         return self.controller.get_module_config(module_id)
         

@@ -417,8 +417,24 @@ class Web(ABC):
             self.logger.info("Saving controller config")
             self.facade.set_config(data.get("config", {}))
             self.socketio.emit("controller_config_response", {
-                "config": self.facade.get_controller_config()
+                "config": self.facade.get_config()
             })
+
+
+        @self.socketio.on('reboot_saviour')
+        def handle_reboot_saviour(data=None):
+            import subprocess
+            self.logger.info("Reboot SAVIOUR requested — sending reboot to all modules then rebooting controller")
+            for mid in list(self.facade.get_modules().keys()):
+                try:
+                    self.facade.send_command(mid, "reboot", {})
+                except Exception as e:
+                    self.logger.error(f"Failed to send reboot to module {mid}: {e}")
+            self.socketio.emit("reboot_saviour_initiated", {})
+            def _reboot():
+                time.sleep(3)
+                subprocess.Popen(['sudo', 'reboot'])
+            threading.Thread(target=_reboot, daemon=True).start()
 
 
         """Viewing exported recordings on the share"""

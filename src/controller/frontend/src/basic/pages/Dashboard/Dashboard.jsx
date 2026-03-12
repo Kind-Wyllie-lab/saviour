@@ -6,6 +6,7 @@ import "./Dashboard.css";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import ExperimentMetadata from "/src/basic/components/ExperimentMetadata/ExperimentMetadata";
 import CommandsPanel from "/src/basic/components/CommandsPanel/CommandsPanel";
+import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 
 
 // Hooks
@@ -30,6 +31,9 @@ function Dashboard() {
         </section>
         <section>
           <CommandsPanel modules={moduleList} experimentName={experimentName} />
+        </section>
+        <section>
+          <HealthSummaryWidget />
         </section>
       </div>
     </main>

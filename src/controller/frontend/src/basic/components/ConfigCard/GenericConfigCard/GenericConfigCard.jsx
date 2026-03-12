@@ -5,16 +5,35 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 
-function GenericConfigCard({ id, module }) {
-  const { formData, handleChange } = useConfigForm(module.config);
+function GenericConfigCard({ id, module, clipboard, onCopy }) {
+  const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [hasSaved, setHasSaved] = useState(false);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
   }, [module.id]);
 
+  const handlePaste = () => {
+    if (!clipboard) return;
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      for (const [key, value] of Object.entries(clipboard.data)) {
+        cloned[key] = structuredClone(value);
+      }
+      return cloned;
+    });
+  };
+
+  const sections = Object.keys(filterPrivateKeys(formData) ?? {}).filter(
+    k => formData[k] !== null && typeof formData[k] === "object"
+  );
+
+  const capitalize = s => s.charAt(0).toUpperCase() + s.slice(1);
+
   const handleSave = () => {
+    setHasSaved(true);
     const editableData = filterPrivateKeys(formData);
     socket.emit("save_module_config", { id, config: editableData });
   };
@@ -40,13 +59,37 @@ function GenericConfigCard({ id, module }) {
     <div className="config-card">
       <div className="card-header">
         <h3>{module.name} ({module.id})</h3>
+        <div className="device-info">
+          {module.ip && <span>IP: {module.ip}</span>}
+          {module.version && <span>v{module.version}</span>}
+        </div>
       </div>
 
       <div className="config-card-body">
         <div className="config-form">
+          {clipboard && (
+            <div className="clipboard-bar">
+              <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+              <button type="button" className="copy-btn" onClick={handlePaste}>Paste</button>
+              <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+            </div>
+          )}
           <form>
             <ConfigFields data={formData} handleChange={handleChange} />
           </form>
+          <div className="copy-bar">
+            <span className="copy-bar-label">Copy:</span>
+            {sections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => onCopy({ label: `${capitalize(key)} — ${module.name}`, data: { [key]: formData[key] } })}>
+                {capitalize(key)}
+              </button>
+            ))}
+            <button type="button" className="copy-btn"
+              onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
+              All
+            </button>
+          </div>
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>
               Save Config
@@ -55,6 +98,15 @@ function GenericConfigCard({ id, module }) {
               Reset to Default
             </button>
           </div>
+          {hasSaved && module.config_sync_status === "PENDING" && (
+            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
+          )}
+          {hasSaved && module.config_sync_status === "SYNCED" && (
+            <span className="config-sync-badge config-sync-badge--synced">Saved</span>
+          )}
+          {hasSaved && module.config_sync_status === "FAILED" && (
+            <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
+          )}
         </div>
 
         {module.type.includes("camera") && (

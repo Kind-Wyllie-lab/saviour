@@ -4,13 +4,13 @@ import GenericConfigCard from "./GenericConfigCard/GenericConfigCard";
 import CameraConfigCard from "./CameraConfigCard/CameraConfigCard";
 import ControllerConfigCard from './ControllerConfigCard/ControllerConfigCard';
 
-function ConfigCard({ id, module }) {
+function ConfigCard({ id, module, clipboard, onCopy }) {
   if (id === "controller") {
     return <ControllerConfigCard />;
   } else if (module.type.includes("camera")) {
-    return <CameraConfigCard id={id} module={module} />;
+    return <CameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
   } else {
-    return <GenericConfigCard id={id} module={module} />;
+    return <GenericConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
   }
 }
 

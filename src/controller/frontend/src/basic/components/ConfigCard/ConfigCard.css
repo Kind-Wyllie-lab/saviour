@@ -314,4 +314,26 @@ max-width: 600px;
   color: var(--accent-color);
 }
 
+/* Config sync status badge */
+.config-sync-badge {
+  font-size: 0.82em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.config-sync-badge--pending {
+  color: var(--text-color);
+  opacity: 0.65;
+}
+
+.config-sync-badge--synced {
+  color: #2d9e4f;
+}
+
+.config-sync-badge--failed {
+  color: #cc3333;
+}
+
 /* Modal styles live in index.css (global) */

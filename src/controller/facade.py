@@ -152,6 +152,16 @@ class ControllerFacade():
         
 
     """Events"""
+    """Export Queue"""
+    def enqueue_export(self, module_id: str, export_path: str) -> None:
+        self.controller.export_queue.enqueue(module_id, export_path)
+
+    def export_complete(self, module_id: str) -> None:
+        self.controller.export_queue.on_export_complete(module_id)
+
+    def export_failed(self, module_id: str) -> None:
+        self.controller.export_queue.on_export_failed(module_id)
+
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline
         self.controller.recording.module_offline(module_id)

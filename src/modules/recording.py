@@ -179,7 +179,7 @@ class Recording():
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
             if self.config.get("export.auto_export") == True:
                 export_path = f"{self.current_session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
-                self.facade.export_staged(export_path)
+                self.facade.signal_export_ready(export_path)
 
             return {"result": "Success"}
 
@@ -209,10 +209,10 @@ class Recording():
         # Start new health metadata segment
         self._start_next_health_metadata_segment()
 
-        # Start new actual recording segment 
+        # Start new actual recording segment
         self.facade.start_next_recording_segment() # Callback to tell specific module to start a new recording segment
         export_path = f"{self.current_session_name}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
-        self.facade.export_staged(export_path) # Export files that have been marked for export
+        self.facade.signal_export_ready(export_path) # Signal to controller that files are ready to export
 
 
     def _create_initial_recording_segment(self) -> None:

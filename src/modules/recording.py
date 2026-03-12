@@ -82,7 +82,7 @@ class Recording():
                 "type": "recording_start_failed",
                 "error": "Already recording"
             })
-            return None
+            return {"result": "error", "error": "Already recording"}
 
         # Store experiment folder information for export
         self.current_session_name = self._format_session_name(session_name)
@@ -160,7 +160,7 @@ class Recording():
                     "type": "recording_stopped",
                     "status": "error",
                 })
-                return
+                return {"result": "error", "error": "Failed to stop recording"}
             
             # Stop recording health metadata
             self._stop_recording_health_metadata()

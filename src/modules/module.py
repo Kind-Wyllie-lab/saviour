@@ -908,7 +908,7 @@ class Module(ABC):
         try:
             # Get version
             s = subprocess.run(
-                ["git", "describe", "--tags"],
+                ["git", "-c", "safe.directory=/usr/local/src/saviour", "describe", "--tags"],
                 cwd="/usr/local/src/saviour",
                 capture_output=True,
                 text=True,

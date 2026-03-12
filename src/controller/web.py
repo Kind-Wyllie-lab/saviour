@@ -238,7 +238,9 @@ class Web(ABC):
             target = data.get("target")
             session_name = data.get("session_name")
             self.logger.info(f"Received request to create session {session_name} targeting {target}")
-            self.facade.create_session(session_name, target)
+            result = self.facade.create_session(session_name, target)
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
 
 
         @self.socketio.on("create_scheduled_session")
@@ -248,7 +250,9 @@ class Web(ABC):
             start_time = data.get("start_time")
             end_time = data.get("end_time")
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time}")
-            self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
 
 
         @self.socketio.on("stop_session")
@@ -421,6 +425,126 @@ class Web(ABC):
             })
 
 
+        @self.socketio.on("get_controller_info")
+        def handle_get_controller_info(data=None):
+            import subprocess
+            import socket as _socket
+            try:
+                result = subprocess.run(
+                    ['git', '-c', 'safe.directory=/usr/local/src/saviour',
+                     '-C', '/usr/local/src/saviour', 'describe', '--tags', '--always'],
+                    capture_output=True, text=True, timeout=5
+                )
+                version = result.stdout.strip() if result.returncode == 0 else "unknown"
+            except Exception:
+                version = "unknown"
+            try:
+                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                ip = "unknown"
+            self.socketio.emit("controller_info_response", {"ip": ip, "version": version})
+
+
+        @self.socketio.on("get_controller_health")
+        def handle_get_controller_health(data=None):
+            import shutil
+            import socket as _socket
+            health = {}
+            # IP
+            try:
+                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                health['ip'] = s.getsockname()[0]
+                s.close()
+            except Exception:
+                health['ip'] = None
+            # CPU temperature
+            try:
+                with open('/sys/class/thermal/thermal_zone0/temp') as f:
+                    health['cpu_temp'] = round(int(f.read().strip()) / 1000, 1)
+            except Exception:
+                health['cpu_temp'] = None
+            # CPU usage — read /proc/stat twice with a short sleep for accuracy
+            try:
+                def _read_cpu_stat():
+                    with open('/proc/stat') as f:
+                        fields = f.readline().split()
+                    vals = list(map(int, fields[1:]))
+                    idle = vals[3]
+                    total = sum(vals)
+                    return idle, total
+                idle1, total1 = _read_cpu_stat()
+                import time as _time
+                _time.sleep(0.5)
+                idle2, total2 = _read_cpu_stat()
+                delta_total = total2 - total1
+                delta_idle  = idle2  - idle1
+                health['cpu_usage'] = round((1 - delta_idle / delta_total) * 100, 1) if delta_total else 0.0
+            except Exception:
+                health['cpu_usage'] = None
+            # Memory
+            try:
+                import psutil
+                mem = psutil.virtual_memory()
+                health['memory_usage'] = round(mem.percent, 1)
+            except ImportError:
+                try:
+                    with open('/proc/meminfo') as f:
+                        lines = f.readlines()
+                    info = {l.split(':')[0]: int(l.split()[1]) for l in lines if ':' in l}
+                    total = info.get('MemTotal', 0)
+                    available = info.get('MemAvailable', 0)
+                    health['memory_usage'] = round((total - available) / total * 100, 1) if total else None
+                except Exception:
+                    health['memory_usage'] = None
+            # Disk
+            try:
+                usage = shutil.disk_usage('/var/lib/saviour')
+                health['disk_used_pct'] = round(usage.used / usage.total * 100, 1)
+                health['disk_free_gb'] = round(usage.free / (1024 ** 3), 1)
+            except Exception:
+                try:
+                    usage = shutil.disk_usage('/')
+                    health['disk_used_pct'] = round(usage.used / usage.total * 100, 1)
+                    health['disk_free_gb'] = round(usage.free / (1024 ** 3), 1)
+                except Exception:
+                    health['disk_used_pct'] = None
+                    health['disk_free_gb'] = None
+            self.socketio.emit("controller_health_response", health)
+
+
+        @self.socketio.on("get_health_summary")
+        def handle_get_health_summary(data=None):
+            summary = self.facade.get_health_summary()
+            self.socketio.emit("health_summary_response", summary)
+
+
+        @self.socketio.on("update_saviour_controller")
+        def handle_update_saviour_controller(data=None):
+            import subprocess
+            self.logger.info("Update SAVIOUR controller requested")
+            def _run_update():
+                try:
+                    result = subprocess.run(
+                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
+                         '-C', '/usr/local/src/saviour', 'pull'],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    success = result.returncode == 0
+                    output = result.stdout.strip() if success else result.stderr.strip()
+                except Exception as e:
+                    success = False
+                    output = str(e)
+                self.socketio.emit("update_saviour_controller_result", {
+                    "success": success,
+                    "output": output
+                })
+            threading.Thread(target=_run_update, daemon=True).start()
+
+
         @self.socketio.on('reboot_saviour')
         def handle_reboot_saviour(data=None):
             import subprocess
@@ -467,8 +591,8 @@ class Web(ABC):
         @self.socketio.on("get_recording_sessions")
         def handle_get_recording_sessions():
             sessions = self.facade.get_recording_sessions()
-            self.logger.info(f"Received {sessions}")
-            self.socketio.emit("recording_sessions", sessions)
+            serializable = {k: asdict(v) for k, v in sessions.items()}
+            self.socketio.emit("recording_sessions", serializable)
 
 
         """ Debug """

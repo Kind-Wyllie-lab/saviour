@@ -56,6 +56,7 @@ from src.controller.web import Web
 from src.controller.modules import Modules
 from src.controller.facade import ControllerFacade
 from src.controller.recording import Recording
+from src.controller.export_queue import ExportQueue
 
 # Habitat Controller Class
 class Controller(ABC):
@@ -97,6 +98,7 @@ class Controller(ABC):
         self.health = Health(self.config)
         self.modules = Modules()
         self.recording = Recording()
+        self.export_queue = ExportQueue(self.config)
         self.facade = ControllerFacade(self)
 
         # Register facade/callbacks
@@ -106,6 +108,7 @@ class Controller(ABC):
         self.web.facade = self.facade
         self.modules.facade = self.facade
         self.recording.facade = self.facade
+        self.export_queue.facade = self.facade
         self.config.on_controller_config_change = self.on_controller_config_change
 
         # Controller state
@@ -194,12 +197,39 @@ class Controller(ABC):
                         self.logger.error(f"set_config failed for {module_id}: {error_msg}")
                         self.modules.handle_set_config_failed(module_id, error_msg)
 
+                case 'export_ready':
+                    export_path = status_data.get('export_path', '')
+                    file_count = status_data.get('file_count', 0)
+                    self.logger.info(f"{module_id} has {file_count} file(s) ready to export → {export_path}")
+                    self.facade.enqueue_export(module_id, export_path)
+
+                case 'export_complete':
+                    export_path = status_data.get('export_path', '')
+                    self.logger.info(f"{module_id} completed export of {export_path}")
+                    self.facade.export_complete(module_id, export_path)
+
+                case 'export_failed':
+                    export_path = status_data.get('export_path', '')
+                    self.logger.warning(f"{module_id} failed to export {export_path}")
+                    self.facade.export_failed(module_id, export_path)
+
                 case 'recording_started':
                     self.logger.info(f"{module_id} has started recording")
                     self.modules.notify_recording_started(module_id, status_data)
 
                 case 'recording_stopped':
                     self.logger.info(f"{module_id} has stopped recording")
+                    self.modules.notify_recording_stopped(module_id, status_data)
+                    self.facade.module_stopped(module_id)
+
+                case 'cmd_ack':
+                    command = status_data.get('command', 'unknown')
+                    result  = status_data.get('result', 'unknown')
+                    self.logger.debug(f"{module_id} ack'd '{command}': {result}")
+
+                case 'recording_start_failed':
+                    error = status_data.get('error', 'unknown')
+                    self.logger.warning(f"{module_id} failed to start recording: {error}")
                     self.modules.notify_recording_stopped(module_id, status_data)
 
                 case 'recording_stop_failed':

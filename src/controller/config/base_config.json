@@ -26,6 +26,9 @@
         "_export_interval": 15,
         "_health_export_interval": 30
     },
+    "export": {
+        "max_concurrent_exports": 2
+    },
     "database": {
         "url": "",
         "key": ""

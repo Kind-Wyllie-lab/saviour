@@ -159,6 +159,14 @@ class ControllerFacade():
 
     def set_target_module_config(self, module_id: str, module_config: dict) -> None:
         self.controller.modules.set_target_module_config(module_id, module_config)
+
+
+    def apply_section_to_cameras(self, section: str, section_data: dict) -> None:
+        """Merge section_data into the given config section on every camera module."""
+        targets = self.controller.modules.apply_section_to_type("camera", section, section_data)
+        for module_id, config in targets:
+            self.controller.communication.send_command(module_id, "set_config", config)
+        self.logger.info(f"apply_section_to_cameras: sent '{section}' to {len(targets)} camera(s)")
         
 
     """Events"""

@@ -398,6 +398,18 @@ class Web(ABC):
             self.logger.info(f"Received reset_module_config request for {module_id}")
             self.facade.send_command(module_id, "reset_config", {})
 
+
+        @self.socketio.on('apply_section_to_cameras')
+        def handle_apply_section_to_cameras(data):
+            """Apply one config section from a source camera to all camera modules."""
+            section = data.get("section")
+            section_data = data.get("data", {})
+            if not section or not isinstance(section_data, dict) or not section_data:
+                self.logger.warning(f"apply_section_to_cameras: invalid payload {data}")
+                return
+            self.logger.info(f"Applying section '{section}' to all camera modules")
+            self.facade.apply_section_to_cameras(section, section_data)
+
         """Controller System State"""
         @self.socketio.on("get_system_state")
         def handle_get_system_state(data=None):

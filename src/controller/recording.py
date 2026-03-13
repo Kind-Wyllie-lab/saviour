@@ -57,6 +57,9 @@ class RecordingSession:
     module_stop_states:        dict = field(default_factory=dict)
     # Per-module export tracking:  "idle" | "pending" | "complete" | "failed"
     module_export_states:      dict = field(default_factory=dict)
+    # Cumulative count of completed exports across all segments
+    total_exports_complete:    int  = 0
+    total_exports_failed:      int  = 0
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +227,10 @@ class Recording:
 
         with self._lock:
             self.sessions[session_name].module_export_states[module_id] = state
+            if state == "complete":
+                self.sessions[session_name].total_exports_complete += 1
+            elif state == "failed":
+                self.sessions[session_name].total_exports_failed += 1
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()

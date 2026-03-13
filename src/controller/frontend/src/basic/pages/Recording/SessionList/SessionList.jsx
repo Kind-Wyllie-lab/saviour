@@ -39,6 +39,9 @@ function SessionList({ sessionList }) {
           const pendingExports  = exportEntries.filter(([, s]) => s === "pending").length;
           const failedExports   = exportEntries.filter(([, s]) => s === "failed").length;
           const completeExports = exportEntries.filter(([, s]) => s === "complete").length;
+          const totalComplete   = session.total_exports_complete ?? 0;
+          const totalFailed     = session.total_exports_failed ?? 0;
+          const activeSegment   = pendingExports > 0 || completeExports > 0;
 
           // Per-module stop summary for the stopping phase
           const stopStates = session.module_stop_states || {};
@@ -96,12 +99,17 @@ function SessionList({ sessionList }) {
                   )}
 
                   {/* Export progress */}
-                  {exportEntries.length > 0 && (
+                  {(exportEntries.length > 0 || totalComplete > 0) && (
                     <p>
                       <strong>Exports:</strong>{" "}
-                      {completeExports}/{exportEntries.length} complete
-                      {pendingExports > 0 && `, ${pendingExports} pending`}
-                      {failedExports  > 0 && `, ${failedExports} failed`}
+                      {totalComplete} file{totalComplete !== 1 ? "s" : ""} exported
+                      {totalFailed > 0 && `, ${totalFailed} failed`}
+                      {activeSegment && (
+                        <span className="cell--muted">
+                          {" "}({completeExports}/{exportEntries.length} this segment
+                          {pendingExports > 0 && `, ${pendingExports} pending`})
+                        </span>
+                      )}
                     </p>
                   )}
 

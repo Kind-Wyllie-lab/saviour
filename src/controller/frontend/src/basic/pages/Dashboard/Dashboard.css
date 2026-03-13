@@ -1,11 +1,12 @@
 .dashboard {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
+  flex-wrap: wrap;
   gap: 32px;
-  padding: 64px;
+  padding: 24px 32px;
   justify-content: space-between;
   align-items: flex-start;
-  flex: 3;
+  overflow-y: auto;
 }
 
   .dashboard-left {

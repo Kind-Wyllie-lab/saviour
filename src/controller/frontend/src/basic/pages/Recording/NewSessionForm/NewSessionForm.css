@@ -26,22 +26,23 @@
   .form-row label {
     font-weight: 600;
     font-size: 0.9rem;
-    color: var("--text-color");
+    color: var(--text-color);
   }
-  
+
   .form-row select {
     flex-grow: 1;
     padding: 0.6rem 0.8rem;
     border-radius: 6px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-color);
     font-size: 0.95rem;
-    background: white;
+    background: var(--bg-color);
+    color: var(--text-color);
     transition: border 0.2s ease;
   }
-  
+
   .form-row select:focus {
     outline: none;
-    border-color: #4a90e2;
+    border-color: var(--accent-color);
   }
   
   .button-row {
@@ -56,33 +57,34 @@
     border: none;
     font-weight: 600;
     cursor: pointer;
-    background-color: red;
+    background-color: var(--accent-color);
     color: white;
-    transition: background 0.2s ease;
+    transition: filter 0.2s ease;
   }
-  
+
   .primary-button:hover:not(:disabled) {
-    background-color: #256628;
+    filter: brightness(0.85);
   }
-  
+
   .primary-button:disabled {
-    background-color: #9e9e9e;
+    opacity: 0.45;
     cursor: not-allowed;
   }
-  
+
   .secondary-button {
     padding: 0.6rem 1.2rem;
     border-radius: 6px;
-    border: none;
-    background-color: blue;
-    color: white;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--text-color);
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.2s ease;
+    transition: border-color 0.2s ease, color 0.2s ease;
   }
-  
+
   .secondary-button:hover {
-    background-color: #f3f3f3;
+    border-color: var(--accent-color);
+    color: var(--accent-color);
   }
   
   .session-description {

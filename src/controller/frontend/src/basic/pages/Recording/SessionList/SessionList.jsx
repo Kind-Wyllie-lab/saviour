@@ -50,7 +50,7 @@ function SessionList({ sessionList }) {
           return (
             <div
               key={session.session_name}
-              className={`session ${isStopped ? "stopped" : ""} ${isError ? "error" : ""}`}
+              className={`session ${isActive ? "active" : ""} ${isStopped ? "stopped" : ""} ${isError ? "error" : ""}`}
             >
               {/* Header row */}
               <div
@@ -120,12 +120,20 @@ function SessionList({ sessionList }) {
                     </p>
                   )}
 
-                  {!isStopped && !isScheduled && (
+                  {isActive && (
                     <button
                       className="stop-button"
                       onClick={() => handleStop(session.session_name)}
                     >
                       End Session
+                    </button>
+                  )}
+                  {isScheduled && (
+                    <button
+                      className="stop-button"
+                      onClick={() => handleStop(session.session_name)}
+                    >
+                      Cancel Schedule
                     </button>
                   )}
                 </div>

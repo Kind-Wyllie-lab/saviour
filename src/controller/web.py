@@ -873,11 +873,13 @@ class Web(ABC):
                 case "heartbeat":
                     pass
 
-                case "get_sensor_modes":
-                    self.socketio.emit("sensor_modes_response", {
-                        "module_id": module_id,
-                        "sensor_modes": status.get("sensor_modes", [])
-                    })
+                case "cmd_ack":
+                    command = status.get("command")
+                    if command == "get_sensor_modes":
+                        self.socketio.emit("sensor_modes_response", {
+                            "module_id": module_id,
+                            "sensor_modes": status.get("sensor_modes", [])
+                        })
 
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)

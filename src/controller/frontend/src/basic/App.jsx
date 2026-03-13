@@ -2,12 +2,27 @@
 import './App.css';
 import React,  { useEffect, useState } from "react";
 
-import Header from "./components/Header/Header";
+// SAVIOUR Imports
+import Sidebar from "./components/Sidebar/Sidebar";
 import { Routes, Route } from "react-router-dom";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import Settings from "./pages/Settings/Settings";
+import Recording from "./pages/Recording/Recording";
 import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
+
+
+document.title="SAVIOUR";
+
+
+const pages = [
+  { label: "Dashboard", path: "/" },
+  { label: "Settings", path: "/settings" },
+  { label: "Recording", path: "/recording" },
+  // { label: "System", path: "/system" },
+  // { label: "Debug", path: "/debug", disabled: true }
+];
+
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);
@@ -33,14 +48,16 @@ function App() {
   }, [darkMode]);
 
   return (
-    <div>
-      <Header />
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/system" element={<System />} />
-        <Route path="/debug" element={<Debug />} />
-      </Routes>
+    <div className="app">
+      <Sidebar navItems={pages} />
+      <div className="content">
+        <Routes>
+          <Route path="/" element={<System />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/recording" element={<Recording />} />
+          {/* <Route path="/system" element={<System />} /> */}
+        </Routes>
+      </div>
     </div>
   );
 }

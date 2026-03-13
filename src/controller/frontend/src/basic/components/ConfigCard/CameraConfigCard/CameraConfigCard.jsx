@@ -181,7 +181,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
         <h3>{module.name} ({module.id})</h3>
         <div className="device-info">
           {typeof module.ip === "string" && module.ip && <span>IP: {module.ip}</span>}
-          {typeof module.version === "string" && module.version && <span>v{module.version}</span>}
+          {typeof module.version === "string" && module.version && <span>{module.version}</span>}
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { filterPrivateKeys } from "./configUtils";
+import { filterPrivateKeys, isPlainObject } from "./configUtils";
 
 /**
  * Recursively renders form fields for a plain config object.
@@ -18,7 +18,8 @@ function ConfigFields({ data, handleChange }) {
       const fieldPath = [...path, key];
       const fieldKey = fieldPath.join(".");
 
-      if (typeof value === "object" && value !== null) {
+      // Only recurse into plain objects — skip Arrays, ArrayBuffers, typed arrays, etc.
+      if (isPlainObject(value)) {
         const isCollapsed = collapsedSections[fieldKey] ?? false;
         return (
           <fieldset key={fieldKey} className="nested-fieldset">
@@ -37,6 +38,9 @@ function ConfigFields({ data, handleChange }) {
         );
       }
 
+      // Skip non-plain objects that filterPrivateKeys may not have caught
+      if (typeof value === "object" && value !== null) return null;
+
       return (
         <div key={fieldKey} className="form-field">
           <label>{key}:</label>
@@ -46,7 +50,7 @@ function ConfigFields({ data, handleChange }) {
               typeof value === "boolean" ? "checkbox" :
               "text"
             }
-            value={typeof value === "boolean" ? undefined : value}
+            value={typeof value === "boolean" ? undefined : (value ?? "")}
             checked={typeof value === "boolean" ? value : undefined}
             onChange={(e) => handleChange(fieldPath, e)}
           />

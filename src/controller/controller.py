@@ -219,6 +219,19 @@ class Controller(ABC):
                             self.logger.error(f"set_config failed for {module_id}: {result}")
                             self.modules.handle_set_config_failed(module_id, result)
 
+                    elif command == 'validate_readiness':
+                        ready = status_data.get('ready', False)
+                        message = status_data.get('message', 'No message...')
+                        self.logger.info(f"Readiness validation response from {module_id}: {'ready' if ready else 'not ready'}")
+                        if not ready:
+                            self.logger.info(f"Full message from non-ready module: {message}")
+                        self.modules.notify_module_readiness_update(module_id, ready, message)
+
+                    elif command == 'get_health':
+                        self.logger.info(f"Health response received from {module_id}")
+                        self.modules.check_status(module_id, status_data)
+                        self.health.update_module_health(module_id, status_data)
+
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')
                     self.logger.warning(f"{module_id} failed to start recording: {error}")
@@ -227,16 +240,6 @@ class Controller(ABC):
                 case 'recording_stop_failed':
                     if status_data.get("error") == "Not recording":
                         self.modules.notify_recording_stopped(module_id, status_data)
-
-                case 'validate_readiness':
-                    # Handle readiness validation response
-                    ready = status_data.get('ready', False)
-                    message = status_data.get('message', 'No message...')
-                    self.logger.info(f"Readiness validation response from {module_id}: {'ready' if ready else 'not ready'}")
-                    # Tell Module object that module is ready
-                    if not ready:
-                        self.logger.info(f"Full message from non-ready module: {message}")
-                    self.modules.notify_module_readiness_update(module_id, ready, message)
 
                 case "error":
                     message = status_data.get('message', 'No message...')

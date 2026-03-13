@@ -3,14 +3,16 @@ import socket from "/src/socket";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
 
 function MicrophoneStream({ ip, port }) {
-  const [streamKey, setStreamKey]   = useState(Date.now());
-  const stallTimer                  = useRef(null);
-  const reconnectTimer              = useRef(null);
+  const [streamKey, setStreamKey] = useState(Date.now());
+  const [fullscreen, setFullscreen] = useState(false);
+  const stallTimer     = useRef(null);
+  const reconnectTimer = useRef(null);
   const bump = () => setStreamKey(Date.now());
 
   useEffect(() => {
@@ -34,14 +36,20 @@ function MicrophoneStream({ ip, port }) {
   };
 
   return (
-    <img
-      key={streamKey}
-      src={`http://${ip}:${port}/video_feed`}
-      alt="Microphone spectrogram stream"
-      style={{ width: "100%", display: "block", borderRadius: "4px" }}
-      onLoad={resetStall}
-      onError={handleError}
-    />
+    <>
+      <img
+        key={streamKey}
+        src={`http://${ip}:${port}/video_feed`}
+        alt="Microphone monitor stream"
+        style={{ width: "100%", display: "block", borderRadius: "4px", cursor: "pointer" }}
+        onLoad={resetStall}
+        onError={handleError}
+        onClick={() => setFullscreen(true)}
+      />
+      {fullscreen && (
+        <FullscreenVideo ip={ip} port={port} onClose={() => setFullscreen(false)} />
+      )}
+    </>
   );
 }
 

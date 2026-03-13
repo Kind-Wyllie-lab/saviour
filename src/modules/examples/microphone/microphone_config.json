@@ -1,9 +1,8 @@
 {
     "microphone": {
-        "sample_rate": 192000,
+        "_sample_rate": 192000,
         "_frame_num": 131072,
         "_block_size": 131072,
-        "file_duration": 1,
         "_processing": {
             "_apply_filter": false,
             "_filter_type": "bandpass",

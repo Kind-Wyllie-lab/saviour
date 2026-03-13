@@ -69,7 +69,7 @@ function ControllerConfigCard() {
         <h3>Controller Config</h3>
         <div className="device-info">
           {controllerInfo.ip && <span>IP: {controllerInfo.ip}</span>}
-          {controllerInfo.version && <span>v{controllerInfo.version}</span>}
+          {controllerInfo.version && <span>{controllerInfo.version}</span>}
         </div>
       </div>
       <div className="config-card-body">

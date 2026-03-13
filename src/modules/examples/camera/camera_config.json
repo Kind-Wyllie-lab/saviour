@@ -1,10 +1,10 @@
 {
     "camera": {
         "monochrome": false,
-        "sensor_mode_index": 0,
+        "sensor_mode_index": 2,
         "width": 1000,
         "height": 1000,
-        "fps": 30,
+        "fps": 25,
         "overlay_timestamp": true,
         "text_size": "medium",
         "gain": 10,

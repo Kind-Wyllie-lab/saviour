@@ -313,6 +313,32 @@ class Modules:
         return result
 
 
+    def apply_section_to_type(self, module_type: str, section: str, section_data: dict):
+        """
+        Merge section_data into one config section for every module whose type
+        contains module_type.  Stages each updated config via set_target_module_config
+        and returns a list of (module_id, merged_filtered_config) so the caller
+        can send the set_config commands.
+        """
+        targets = []
+        for module_id, module in self._modules.items():
+            if module_type not in module.type:
+                continue
+            state = self._config_states.get(module_id)
+            if not state:
+                continue
+            true_config = state.true_config or {}
+            merged = {**true_config, section: {**true_config.get(section, {}), **section_data}}
+            filtered = self._filter_private_keys(merged)
+            self.set_target_module_config(module_id, filtered)
+            targets.append((module_id, filtered))
+        self.logger.info(
+            f"apply_section_to_type: staged section '{section}' for "
+            f"{len(targets)} module(s) of type '{module_type}'"
+        )
+        return targets
+
+
     def get_modules_by_target(self, target: str) -> Dict[str, Any]:
         """
         Resolve a target string to a dict of modules.

@@ -23,8 +23,10 @@ function bestSensorMode(sensorModes, width, height, fps) {
     m => m.size[0] >= width && m.size[1] >= height && m.fps >= fps
   );
   if (!candidates.length) return null;
+  // Prefer the largest sensor area — more area means more FOV.
+  // The pipeline downsamples to the requested resolution regardless.
   return candidates.reduce((best, m) =>
-    m.size[0] * m.size[1] < best.size[0] * best.size[1] ? m : best
+    m.size[0] * m.size[1] > best.size[0] * best.size[1] ? m : best
   );
 }
 
@@ -37,6 +39,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const [sensorModes, setSensorModes] = useState([]);
   const [activePreset, setActivePreset] = useState("custom");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
 
   useEffect(() => {
@@ -128,6 +131,17 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const handleReset = () => {
     socket.emit("reset_module_config", { module_id: module.id });
     setShowResetConfirm(false);
+  };
+
+  const confirmApplyToAll = () => {
+    if (!applyAllConfirm) return;
+    const { section } = applyAllConfirm;
+    const filtered = filterPrivateKeys(formData);
+    const data = filtered?.[section];
+    if (data) {
+      socket.emit("apply_section_to_cameras", { section, data });
+    }
+    setApplyAllConfirm(null);
   };
 
   const cam = formData?.camera ?? {};
@@ -335,6 +349,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
             </button>
           </div>
 
+          {/* ── Apply to all cameras ── */}
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all cameras:</span>
+            <button type="button" className="copy-btn"
+              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera" })}>
+              Camera
+            </button>
+            {otherSections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key) })}>
+                {capitalize(key)}
+              </button>
+            ))}
+          </div>
+
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>
               Save Config
@@ -375,6 +404,30 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           Reboot Module
         </button>
       </div>
+
+      {/* ── Apply-to-all confirmation modal ── */}
+      {applyAllConfirm && (
+        <div className="modal-overlay" onClick={() => setApplyAllConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>
+              Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
+              <strong>{module.name}</strong> to all connected cameras?
+            </p>
+            <p className="modal-subtext">
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every
+              camera module and save immediately — unsaved changes on other cameras will be lost.
+            </p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button" onClick={confirmApplyToAll}>
+                Apply to All
+              </button>
+              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Reset confirmation modal ── */}
       {showResetConfirm && (

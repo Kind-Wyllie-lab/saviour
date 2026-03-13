@@ -37,6 +37,13 @@ function cpuCell(pct) {
   return <span className={cls}>{pct.toFixed(1)}%</span>;
 }
 
+function ptpCell(offset) {
+  if (offset == null) return <span className="cell--muted">—</span>;
+  const abs = Math.abs(offset);
+  const cls = abs >= 10000 ? "val--danger" : abs >= 1000 ? "val--warn" : "val--ok";
+  return <span className={cls}>{offset}µs</span>;
+}
+
 function statusCell(status) {
   const cls = status === "online"    ? "status-dot--online"
             : status === "suspected" ? "status-dot--suspected"
@@ -82,6 +89,7 @@ export default function System() {
               <th>Temp</th>
               <th>Memory</th>
               <th>Disk</th>
+              <th>PTP offset</th>
               <th>Last seen</th>
             </tr>
           </thead>
@@ -107,6 +115,7 @@ export default function System() {
                 ) : <span className="cell--muted">—</span>}
               </td>
               <td className="cell--muted">—</td>
+              <td className="cell--muted">—</td>
             </tr>
 
             {/* Module rows */}
@@ -122,13 +131,14 @@ export default function System() {
                 <td>{tempCell(row.cpu_temp)}</td>
                 <td>{pctCell(row.memory_usage, 70, 85)}</td>
                 <td>{pctCell(row.disk_space, 75, 90)}</td>
+                <td>{ptpCell(row.ptp4l_offset)}</td>
                 <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
               </tr>
             ))}
 
             {moduleRows.length === 0 && (
               <tr>
-                <td colSpan={8} className="system-table__empty">
+                <td colSpan={9} className="system-table__empty">
                   No module health data yet — waiting for first heartbeat
                 </td>
               </tr>

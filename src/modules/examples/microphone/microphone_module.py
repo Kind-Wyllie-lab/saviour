@@ -305,6 +305,7 @@ class AudiomothModule(Module):
           - Header: serial number + current dBFS reading
           - Spectrogram: time scrolling left→right on X, frequency on Y (0 Hz
             at bottom, Nyquist at top), power encoded as colour (INFERNO map)
+          - Frequency spectrum: current FFT as a line chart (freq on X, dBFS on Y)
           - Level bar: colour-coded RMS dBFS meter
         Returns JPEG bytes, or None on error.
         """
@@ -315,14 +316,15 @@ class AudiomothModule(Module):
             sample_rate = self.config.get("microphone.sample_rate", 192000)
             nyquist = sample_rate / 2
 
-            WIDTH   = 800
-            ROW_H   = 290   # pixels per audiomoth row
-            PLOT_H  = 200   # spectrogram height in pixels
-            PADDING = 15
-            LABEL_W = 30    # space reserved left of plot for freq labels
+            WIDTH    = 800
+            ROW_H    = 430   # pixels per audiomoth row
+            PLOT_H   = 200   # spectrogram height
+            CHART_H  = 130   # frequency spectrum chart height
+            PADDING  = 15
+            LABEL_W  = 30    # space reserved left of plots for freq labels
             DB_MIN, DB_MAX = -80, 0
 
-            px0 = PADDING + LABEL_W   # left edge of spectrogram plot
+            px0 = PADDING + LABEL_W   # left edge of plot area
             px1 = WIDTH - PADDING     # right edge
             pw  = px1 - px0           # plot width in pixels
 
@@ -351,23 +353,18 @@ class AudiomothModule(Module):
 
                 # ── Spectrogram ──────────────────────────────────────────────
                 if spec_buf:
-                    # Stack columns into (n_cols, n_bins), transpose to (n_bins, n_cols)
                     spec_mat = np.array(spec_buf, dtype=np.float32).T
-                    # Resize to display dimensions: (PLOT_H rows, pw cols)
                     spec_img = cv2.resize(spec_mat, (pw, PLOT_H),
                                           interpolation=cv2.INTER_LINEAR)
-                    # Flip so low frequencies sit at the bottom of the image
                     spec_img = np.flipud(spec_img)
-                    # Normalise dB range to [0, 255] and apply INFERNO colormap
                     spec_norm    = np.clip((spec_img - DB_MIN) /
                                            (DB_MAX - DB_MIN) * 255, 0, 255).astype(np.uint8)
                     spec_colored = cv2.applyColorMap(spec_norm, cv2.COLORMAP_INFERNO)
                     frame[py0:py1, px0:px1] = spec_colored
 
-                # Plot border
                 cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
 
-                # ── Y-axis: frequency labels ─────────────────────────────────
+                # ── Y-axis: frequency labels (spectrogram) ───────────────────
                 freq_ticks_khz = [0, 20, 40, 60, 80, int(nyquist // 1000)]
                 for fk in freq_ticks_khz:
                     fy = int(py1 - (fk * 1000 / nyquist) * PLOT_H)
@@ -375,9 +372,53 @@ class AudiomothModule(Module):
                     cv2.putText(frame, f"{fk}k", (3, fy + 4),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.30, (110, 110, 110), 1)
 
+                # ── Frequency spectrum chart ──────────────────────────────────
+                cy0 = py1 + 10
+                cy1 = cy0 + CHART_H
+                cw  = px1 - px0
+
+                # Dark background
+                cv2.rectangle(frame, (px0, cy0), (px1, cy1), (15, 15, 15), -1)
+
+                if spec_buf:
+                    current_spec = spec_buf[-1]
+                    n_bins = len(current_spec)
+
+                    # Horizontal dB grid lines
+                    for db_tick in [-20, -40, -60]:
+                        ty = int(cy1 - (db_tick - DB_MIN) / (DB_MAX - DB_MIN) * CHART_H)
+                        if cy0 <= ty <= cy1:
+                            cv2.line(frame, (px0, ty), (px1, ty), (40, 40, 40), 1)
+
+                    # Spectrum polyline
+                    pts = []
+                    for i in range(n_bins):
+                        x = px0 + int(i / max(n_bins - 1, 1) * cw)
+                        y_norm = (float(current_spec[i]) - DB_MIN) / (DB_MAX - DB_MIN)
+                        y = int(cy1 - np.clip(y_norm, 0.0, 1.0) * CHART_H)
+                        pts.append([x, y])
+                    pts_arr = np.array(pts, dtype=np.int32)
+                    cv2.polylines(frame, [pts_arr], False, (0, 210, 90), 1)
+
+                    # Y-axis dB labels
+                    for db_tick in [0, -20, -40, -60, -80]:
+                        ty = int(cy1 - (db_tick - DB_MIN) / (DB_MAX - DB_MIN) * CHART_H)
+                        if cy0 <= ty <= cy1:
+                            cv2.putText(frame, f"{db_tick}", (3, ty + 4),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (100, 100, 100), 1)
+
+                    # X-axis frequency labels
+                    for fk in [0, 20, 40, 60, 80, int(nyquist // 1000)]:
+                        fx = px0 + int(fk * 1000 / nyquist * cw)
+                        cv2.line(frame, (fx, cy1), (fx, cy1 + 3), (100, 100, 100), 1)
+                        cv2.putText(frame, f"{fk}k", (fx - 6, cy1 + 13),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.28, (100, 100, 100), 1)
+
+                cv2.rectangle(frame, (px0, cy0), (px1, cy1), (60, 60, 60), 1)
+
                 # ── Level bar ────────────────────────────────────────────────
                 bx0, bx1 = PADDING, WIDTH - PADDING
-                by0, by1 = y0 + 245, y0 + 275
+                by0, by1 = cy1 + 18, cy1 + 48
                 bw = bx1 - bx0
                 level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
                 bar_w = int(level_norm * bw)
@@ -391,6 +432,8 @@ class AudiomothModule(Module):
 
                 cv2.rectangle(frame, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
                 cv2.rectangle(frame, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
+                cv2.putText(frame, "Level", (bx0, by0 - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.32, (100, 100, 100), 1)
 
                 # Row separator
                 if row < len(data_snapshot) - 1:

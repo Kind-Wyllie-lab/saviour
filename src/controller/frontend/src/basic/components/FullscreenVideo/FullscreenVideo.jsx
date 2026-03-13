@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import "./FullscreenVideo.css";
 
-function FullscreenVideo({ ip, onClose }) {
+function FullscreenVideo({ ip, port = 8080, onClose }) {
   // Handle ESC key to close fullscreen
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -16,7 +16,7 @@ function FullscreenVideo({ ip, onClose }) {
       <div className="video-panel">
         {/* Video fills the overlay */}
         <img
-          src={`http://${ip}:8080/video_feed`}
+          src={`http://${ip}:${port}/video_feed`}
           alt="Fullscreen camera stream"
           className="fullscreen-video"
         />

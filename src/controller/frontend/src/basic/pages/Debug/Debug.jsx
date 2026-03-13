@@ -9,24 +9,19 @@ function Debug() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
 
     useEffect(() => {
-        console.log("Emitting get_debug_data");
         socket.emit("get_debug_data");
 
-        // Receive modules
         socket.on("debug_data", (data) => {
-            console.log("Received debug data:", data);
             setDebugData(data);
         });
 
-        // Unbind sockets
-        return() => {
-            socket.off("debug_data"); // Unregister listener to prevent multiple listeners on component re-render
+        return () => {
+            socket.off("debug_data");
         };
     }, []);
 
-    function requestDebugData(){
-        console.log("Emitting get debug data")
-        socket.emit("get_debug_data")
+    function requestDebugData() {
+        socket.emit("get_debug_data");
     }
 
     return (
@@ -35,7 +30,10 @@ function Debug() {
                 <LoginModal onSuccess={() => setIsAuthenticated(true)} />
             ) : (
                 <div className="debug-container">
-                    <div className="module-information">{JSON.stringify(debugData.modules)}</div>
+                    {debugData
+                        ? <pre className="module-information">{JSON.stringify(debugData, null, 2)}</pre>
+                        : <p>Loading debug data...</p>
+                    }
                     <button onClick={requestDebugData}>Refresh Data</button>
                 </div>
             )}

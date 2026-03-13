@@ -1,10 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import "./Settings.css";
 import useModules from "/src/hooks/useModules";
 
-
 import ConfigCard from "/src/basic/components/ConfigCard/ConfigCard";
-import ControllerConfigCard from "/src/basic/components/ConfigCard/ControllerConfigCard/ControllerConfigCard";
 
 
 function Settings() {

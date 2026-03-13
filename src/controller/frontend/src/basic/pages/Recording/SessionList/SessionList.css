@@ -30,7 +30,7 @@
   .session-details {
     margin-top: 0.8rem;
     padding-top: 0.6rem;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
   }
@@ -61,7 +61,15 @@
   }
 
   .status-icon.recording {
-    background-color: red;
+    background-color: #cc3333;
+  }
+
+  .status-icon.error {
+    background-color: #d4820a;
+  }
+
+  .status-icon.scheduled {
+    background-color: #4a90d9;
   }
 
   

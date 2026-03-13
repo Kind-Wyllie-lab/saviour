@@ -1,5 +1,5 @@
 // src/pages/Dashboard.js
-import React, { useEffect, useState } from "react";
+import React from "react";
 
 // Styling and components
 import "./Dashboard.css";
@@ -15,7 +15,7 @@ import useExperimentTitle from "/src/hooks/useExperimentTitle";
 
 
 function Dashboard() {
-  const { modules, moduleList } = useModules();
+  const { moduleList } = useModules();
   const { experimentName } = useExperimentTitle();
 
   return (

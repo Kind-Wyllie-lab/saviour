@@ -16,6 +16,9 @@ const PRESETS = [
 
 function bestSensorMode(sensorModes, width, height, fps) {
   if (!sensorModes.length) return null;
+  if (!width) return null;
+  if (!height) return null;
+  if (!fps) return null;
   const candidates = sensorModes.filter(
     m => m.size[0] >= width && m.size[1] >= height && m.fps >= fps
   );
@@ -163,8 +166,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       <div className="card-header">
         <h3>{module.name} ({module.id})</h3>
         <div className="device-info">
-          {module.ip && <span>IP: {module.ip}</span>}
-          {module.version && <span>v{module.version}</span>}
+          {typeof module.ip === "string" && module.ip && <span>IP: {module.ip}</span>}
+          {typeof module.version === "string" && module.version && <span>v{module.version}</span>}
         </div>
       </div>
 

@@ -172,31 +172,6 @@ class Controller(ABC):
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
 
-                case 'get_config':
-                    self.logger.info(f"Config dict received from {module_id}")
-                    config_data = status_data.get('config', {})
-                    self.modules.received_module_config(module_id, config_data)
-
-                case 'reset_config':
-                    self.logger.info(f"Reset config response received from {module_id}")
-                    config_data = status_data.get('config', {})
-                    self.modules.received_module_config(module_id, config_data)
-
-                case 'set_config':
-                    self.logger.info(f"Set config response received from {module_id}")
-                    if status_data.get('result') == 'success':
-                        config_data = status_data.get('config')
-                        if config_data:
-                            # Module echoed back its full config - use it to confirm sync
-                            self.modules.received_module_config(module_id, config_data)
-                        else:
-                            # Module acknowledged but didn't echo config - request it explicitly
-                            self.communication.send_command(module_id, "get_config", {})
-                    else:
-                        error_msg = status_data.get('result', 'Unknown error')
-                        self.logger.error(f"set_config failed for {module_id}: {error_msg}")
-                        self.modules.handle_set_config_failed(module_id, error_msg)
-
                 case 'export_ready':
                     export_path = status_data.get('export_path', '')
                     file_count = status_data.get('file_count', 0)
@@ -226,6 +201,23 @@ class Controller(ABC):
                     command = status_data.get('command', 'unknown')
                     result  = status_data.get('result', 'unknown')
                     self.logger.debug(f"{module_id} ack'd '{command}': {result}")
+
+                    if command in ('get_config', 'reset_config'):
+                        config_data = status_data.get('config', {})
+                        if config_data:
+                            self.logger.info(f"Config received from {module_id} via {command}")
+                            self.modules.received_module_config(module_id, config_data)
+
+                    elif command == 'set_config':
+                        if result == 'success':
+                            config_data = status_data.get('config')
+                            if config_data:
+                                self.modules.received_module_config(module_id, config_data)
+                            else:
+                                self.communication.send_command(module_id, "get_config", {})
+                        else:
+                            self.logger.error(f"set_config failed for {module_id}: {result}")
+                            self.modules.handle_set_config_failed(module_id, result)
 
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')

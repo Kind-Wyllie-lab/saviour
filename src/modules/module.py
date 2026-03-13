@@ -284,7 +284,7 @@ class Module(ABC):
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
 
         # Check for special keys
-        export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export._share_path"]
+        export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export.share_path", "export.share_username", "export.share_password"]
         should_reconfigure_samba = False
         for key in export_keys:
             if key in updated_keys:

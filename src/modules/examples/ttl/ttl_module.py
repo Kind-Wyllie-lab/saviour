@@ -11,6 +11,7 @@ Author: Andrew SG
 Created: 23/05/2025
 """
 
+import collections
 import os
 import sys
 import time
@@ -20,6 +21,9 @@ import threading
 import gpiozero
 import datetime
 import json
+import numpy as np
+import cv2
+from flask import Flask, Response
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -107,6 +111,21 @@ class TTLModule(Module):
         # State flags (matching camera module pattern)
         self.is_recording = False
         self.is_streaming = False
+
+        # Monitoring stream state
+        self.monitoring_app = Flask(__name__)
+        self.monitoring_server = None
+        self.monitoring_server_thread = None
+        self.should_stop_monitoring = False
+        self.monitor_sample_thread = None
+
+        # Rolling pin state buffers: {pin_number: deque of bool (True = electrical HIGH)}
+        self.MONITOR_COLS = 500   # samples; at 25 Hz ≈ 20 s of history
+        self.MONITOR_HZ   = 25
+        self.pin_state_buffers = {}
+        self.pin_state_lock = threading.Lock()
+
+        self._register_monitoring_routes()
 
         # Set up TTL-specific callbacks for the command handler
         self.ttl_callbacks = {}
@@ -481,18 +500,22 @@ class TTLModule(Module):
             input_pins_assigned = []
             output_pins_assigned = []
             
+            active_logic = self.config.get("ttl.active_logic", "active_low")
+            pull_up = (active_logic == "active_low")
+            self.logger.info(f"Assigning pins with active_logic='{active_logic}' (pull_up={pull_up})")
+
             for pin_number, pin_config in pins_config.items():
                 try:
                     pin_number = int(pin_number)
                     pin_type = pin_config.get("mode")
-                    
+
                     # Store pin configuration
                     self.pin_configs[pin_number] = pin_config
-                    
+
                     if pin_type == "input":
                         # Create input pin (Button object) with proper error handling
                         try:
-                            pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=True)
+                            pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=pull_up)
                             self.input_pins.append(pin_obj)
                             input_pins_assigned.append(pin_number)
                             self.logger.info(f"Assigned input pin {pin_number}")
@@ -501,7 +524,7 @@ class TTLModule(Module):
                             # Try to clean up and retry once
                             self._cleanup_gpio()
                             try:
-                                pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=True)
+                                pin_obj = gpiozero.Button(pin_number, bounce_time=0, pull_up=pull_up)
                                 self.input_pins.append(pin_obj)
                                 input_pins_assigned.append(pin_number)
                                 self.logger.info(f"Successfully assigned input pin {pin_number} after retry")
@@ -564,7 +587,17 @@ class TTLModule(Module):
             # Update the pin lists for backward compatibility
             self.ttl_input_pins = input_pins_assigned
             self.ttl_output_pins = output_pins_assigned
-            
+
+            # Sync monitoring buffers: add new pins, remove deassigned ones
+            all_assigned = set(input_pins_assigned + output_pins_assigned)
+            with self.pin_state_lock:
+                for pn in all_assigned:
+                    if pn not in self.pin_state_buffers:
+                        self.pin_state_buffers[pn] = collections.deque(maxlen=self.MONITOR_COLS)
+                for pn in list(self.pin_state_buffers.keys()):
+                    if pn not in all_assigned:
+                        del self.pin_state_buffers[pn]
+
             self.logger.info(f"Pin assignment complete: {len(self.input_pins)} input pins, {len(self.output_pins)} output pins")
             
         except Exception as e:
@@ -779,6 +812,264 @@ class TTLModule(Module):
         finally:
             self.logger.info(f"Pseudorandom worker stopped for pin {pin_number}")
     
+
+    """Monitoring stream"""
+
+    def _get_electrical_high(self, pin_obj, is_input: bool) -> bool:
+        """Return True if the pin is electrically HIGH."""
+        active_logic = self.config.get("ttl.active_logic", "active_low")
+        if is_input:
+            # Button.is_pressed = True when active.
+            # active_low: active = LOW → electrical HIGH = not is_pressed
+            # active_high: active = HIGH → electrical HIGH = is_pressed
+            return not pin_obj.is_pressed if active_logic == "active_low" else pin_obj.is_pressed
+        else:
+            # LED.is_lit = True when HIGH
+            return pin_obj.is_lit
+
+    def _sample_pins(self) -> None:
+        """Background thread: poll all pins at MONITOR_HZ, fill state buffers."""
+        interval = 1.0 / self.MONITOR_HZ
+        while not self.should_stop_monitoring:
+            input_pairs  = [(p, True)  for p in self.input_pins]
+            output_pairs = [(p, False) for p in self.output_pins]
+            with self.pin_state_lock:
+                for pin_obj, is_input in input_pairs + output_pairs:
+                    pn = pin_obj.pin.number
+                    if pn in self.pin_state_buffers:
+                        try:
+                            self.pin_state_buffers[pn].append(
+                                self._get_electrical_high(pin_obj, is_input)
+                            )
+                        except Exception:
+                            self.pin_state_buffers[pn].append(False)
+            time.sleep(interval)
+
+    def _render_monitor_frame(self) -> bytes | None:
+        """Render a logic-analyser style MJPEG frame for all assigned pins."""
+        try:
+            active_logic = self.config.get("ttl.active_logic", "active_low")
+
+            with self.pin_state_lock:
+                snapshot = {pn: list(buf) for pn, buf in self.pin_state_buffers.items()}
+
+            pin_numbers = sorted(snapshot.keys())
+            n_pins = len(pin_numbers)
+
+            WIDTH    = 800
+            PADDING  = 12
+            STATE_W  = 110   # right-side badge
+            HEADER_H = 20
+            TRACE_H  = 44
+            GAP_H    = 14
+            ROW_H    = HEADER_H + TRACE_H + GAP_H
+
+            height = max(n_pins * ROW_H + PADDING, 120)
+            frame = np.zeros((height, WIDTH, 3), dtype=np.uint8)
+
+            if n_pins == 0:
+                cv2.putText(frame, "No pins assigned",
+                            (PADDING, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (140, 140, 140), 1)
+                _, jpeg = cv2.imencode('.jpg', frame)
+                return jpeg.tobytes()
+
+            trace_x0 = PADDING
+            trace_x1 = WIDTH - STATE_W - PADDING
+            trace_w  = trace_x1 - trace_x0
+
+            ACTIVE_COL   = (0, 200, 80)   # green  (BGR)
+            INACTIVE_COL = (65, 65, 65)
+
+            for idx, pin_num in enumerate(pin_numbers):
+                cfg  = self.pin_configs.get(pin_num, {})
+                mode = cfg.get("mode", "?")
+                desc = cfg.get("description", "")
+                buf  = snapshot[pin_num]
+
+                y0 = PADDING // 2 + idx * ROW_H
+
+                # Current state
+                elec_high = buf[-1] if buf else False
+                is_active = elec_high if active_logic == "active_high" else not elec_high
+
+                # ── Header ────────────────────────────────────────────────
+                parts = [f"GPIO {pin_num}", mode.upper()]
+                if desc:
+                    parts.append(desc)
+                cv2.putText(frame, "  |  ".join(parts),
+                            (trace_x0, y0 + 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 180, 180), 1)
+
+                # ── Waveform ──────────────────────────────────────────────
+                ty0  = y0 + HEADER_H
+                ty1  = ty0 + TRACE_H
+                ymid = (ty0 + ty1) // 2
+                yhi  = ty0 + 6
+                ylo  = ty1 - 6
+
+                # Background and border
+                cv2.rectangle(frame, (trace_x0, ty0), (trace_x1, ty1), (22, 22, 22), -1)
+                cv2.rectangle(frame, (trace_x0, ty0), (trace_x1, ty1), (55, 55, 55),  1)
+                cv2.line(frame, (trace_x0, ymid), (trace_x1, ymid), (38, 38, 38), 1)
+
+                if buf:
+                    N = len(buf)
+                    px_per = trace_w / N
+
+                    prev_y = yhi if buf[0] else ylo
+                    prev_x = trace_x0
+
+                    for i, high in enumerate(buf):
+                        cur_y = yhi if high else ylo
+                        cur_x = trace_x0 + int((i + 1) * px_per)
+                        seg_active = high if active_logic == "active_high" else not high
+                        col = ACTIVE_COL if seg_active else INACTIVE_COL
+
+                        cv2.line(frame, (prev_x, prev_y), (cur_x, prev_y), col, 2)
+                        if cur_y != prev_y:
+                            cv2.line(frame, (cur_x, prev_y), (cur_x, cur_y), col, 2)
+                        prev_y = cur_y
+                        prev_x = cur_x
+
+                # ── State badge ───────────────────────────────────────────
+                bx0 = WIDTH - STATE_W
+                bx1 = WIDTH - PADDING // 2
+                badge_col = ACTIVE_COL if is_active else INACTIVE_COL
+                cv2.rectangle(frame, (bx0, ty0), (bx1, ty1), badge_col, -1)
+                badge_txt = "ACTIVE" if is_active else "IDLE"
+                (tw, th), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                cv2.putText(frame, badge_txt,
+                            (bx0 + (bx1 - bx0 - tw) // 2, ty0 + (TRACE_H + th) // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
+
+                # ── Row separator ─────────────────────────────────────────
+                if idx < n_pins - 1:
+                    sep_y = ty1 + GAP_H // 2
+                    cv2.line(frame, (0, sep_y), (WIDTH, sep_y), (45, 45, 45), 1)
+
+            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return jpeg.tobytes()
+
+        except Exception as e:
+            self.logger.error(f"TTL frame render error: {e}")
+            return None
+
+    def _generate_monitor_frames(self):
+        """MJPEG generator — yields frames at ~20 fps."""
+        while not self.should_stop_monitoring:
+            frame = self._render_monitor_frame()
+            if frame is not None:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" +
+                    frame +
+                    b"\r\n"
+                )
+            time.sleep(0.05)
+
+    def _register_monitoring_routes(self):
+        @self.monitoring_app.route('/')
+        def index():
+            return "TTL Monitoring Server"
+
+        @self.monitoring_app.route('/video_feed')
+        def video_feed():
+            return Response(
+                self._generate_monitor_frames(),
+                mimetype='multipart/x-mixed-replace; boundary=frame'
+            )
+
+    def run_monitoring_server(self, port: int = 8082) -> None:
+        try:
+            from werkzeug.serving import make_server
+            self.monitoring_server = make_server('0.0.0.0', port, self.monitoring_app, threaded=True)
+            self.logger.info(f"TTL monitoring server listening on port {port}")
+            self.monitoring_server.serve_forever()
+        except Exception as e:
+            self.logger.error(f"TTL monitoring server error: {e}")
+            self.monitoring_server = None
+            self.is_streaming = False
+
+    def start_streaming(self) -> bool:
+        """Start the MJPEG monitoring stream and pin sampling thread."""
+        try:
+            if self.is_streaming:
+                self.logger.warning("TTL monitoring stream already running")
+                return False
+
+            port = self.config.get("monitoring.port", 8082)
+            self.should_stop_monitoring = False
+
+            self.monitor_sample_thread = threading.Thread(
+                target=self._sample_pins,
+                daemon=True,
+                name="ttl-monitor-sampler"
+            )
+            self.monitor_sample_thread.start()
+
+            self.monitoring_server_thread = threading.Thread(
+                target=self.run_monitoring_server,
+                args=(port,),
+                daemon=True,
+                name="ttl-monitoring-server"
+            )
+            self.monitoring_server_thread.start()
+
+            self.is_streaming = True
+            self.logger.info(
+                f"TTL monitoring stream started — "
+                f"http://{getattr(self.network, 'ip', '?')}:{port}/video_feed"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error starting TTL monitoring stream: {e}")
+            return False
+
+    def stop_streaming(self) -> bool:
+        """Stop the MJPEG monitoring stream."""
+        try:
+            if not self.is_streaming:
+                return False
+
+            self.should_stop_monitoring = True
+
+            if self.monitor_sample_thread:
+                self.monitor_sample_thread.join(timeout=2)
+                self.monitor_sample_thread = None
+
+            if self.monitoring_server:
+                self.monitoring_server.shutdown()
+                self.monitoring_server = None
+
+            self.is_streaming = False
+            self.logger.info("TTL monitoring stream stopped")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error stopping TTL monitoring stream: {e}")
+            return False
+
+    def start(self) -> bool:
+        """Start the TTL module."""
+        try:
+            if not super().start():
+                return False
+            self.start_streaming()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error starting TTL module: {e}")
+            return False
+
+    def stop(self) -> bool:
+        """Stop the TTL module."""
+        try:
+            if self.is_streaming:
+                self.stop_streaming()
+            return super().stop()
+        except Exception as e:
+            self.logger.error(f"Error stopping TTL module: {e}")
+            return False
 
     def cleanup(self):
         """Clean up TTL module resources"""

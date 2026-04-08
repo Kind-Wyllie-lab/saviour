@@ -19,8 +19,7 @@ const pages = [
   { label: "Dashboard", path: "/" },
   { label: "Settings", path: "/settings" },
   { label: "Recording", path: "/recording" },
-  // { label: "System", path: "/system" },
-  // { label: "Debug", path: "/debug", disabled: true }
+  { label: "System", path: "/system" },
 ];
 
 
@@ -52,10 +51,10 @@ function App() {
       <Sidebar navItems={pages} />
       <div className="content">
         <Routes>
-          <Route path="/" element={<System />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/recording" element={<Recording />} />
-          {/* <Route path="/system" element={<System />} /> */}
+          <Route path="/system" element={<System />} />
         </Routes>
       </div>
     </div>

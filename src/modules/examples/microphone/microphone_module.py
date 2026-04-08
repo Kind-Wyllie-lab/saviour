@@ -374,7 +374,7 @@ class AudiomothModule(Module):
 
                 # ── Peak meter with peak hold ─────────────────────────────────
                 bx0, bx1 = PADDING, WIDTH - PADDING
-                by0, by1 = py1 + 18, py1 + 48
+                by0, by1 = py1 + 32, py1 + 62
                 bw = bx1 - bx0
 
                 # Update peak hold: reset when a new peak exceeds the held value

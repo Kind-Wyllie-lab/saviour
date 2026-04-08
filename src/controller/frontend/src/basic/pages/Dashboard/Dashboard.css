@@ -1,26 +1,68 @@
 .dashboard {
-  min-height: 100vh;
   display: flex;
-  flex-wrap: wrap;
-  gap: 32px;
-  padding: 24px 32px;
-  justify-content: space-between;
-  align-items: flex-start;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Main body: cameras left, status panel right ─────────────────────────── */
+
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Camera grid ─────────────────────────────────────────────────────────── */
+
+.dashboard-cameras {
+  flex: 2;
+  display: grid;
+  /* 2 cameras → 2 equal columns; 3-4 cameras → wraps to 2×2 */
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
 }
 
-  .dashboard-left {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: center;
-  }
+.dashboard-cameras .mjpeg-stream-card {
+  min-width: 0;
+  min-height: 0;
+}
 
-  .dashboard-right {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: center;
-  }
+.dashboard-no-cameras {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  font-style: italic;
+}
+
+/* ── Right status panel ──────────────────────────────────────────────────── */
+
+.dashboard-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-width: 0;
+  max-width: 420px;
+}
+
+/* Override global .card min-width so cards fit the narrow panel */
+.dashboard-panel .card {
+  min-width: 0;
+}
+
+/* Give the audio/TTL stream cards a fixed height so they don't collapse */
+.dashboard-panel .mjpeg-stream-card {
+  flex: none;
+  height: 220px;
+}

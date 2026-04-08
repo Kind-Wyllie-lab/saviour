@@ -179,6 +179,19 @@ class TTLModule(Module):
             return False
 
 
+    # TODO: Implement these
+    def _start_new_recording(self): 
+        pass
+    
+
+    def _start_next_recording_segment(self):
+        pass
+
+    
+    def configure_module_special(self):
+        pass
+
+
     def _start_recording_all_input_pins(self):
         self.logger.info(f"Starting to record all input pins")
         for pin in self.input_pins:

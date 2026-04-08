@@ -47,11 +47,14 @@ function diskCell(usedPct, freeGb) {
   );
 }
 
-function ptpCell(offset) {
-  if (offset == null) return <span className="cell--muted">—</span>;
-  const abs = Math.abs(offset);
+function ptpCell(ns) {
+  if (ns == null) return <span className="cell--muted">—</span>;
+  const abs = Math.abs(ns);
   const cls = abs >= 10000 ? "val--danger" : abs >= 1000 ? "val--warn" : "val--ok";
-  return <span className={cls}>{offset}µs</span>;
+  const display = abs >= 1000
+    ? `${(ns / 1000).toFixed(1)} µs`
+    : `${Math.round(ns)} ns`;
+  return <span className={cls}>{display}</span>;
 }
 
 function statusCell(status) {

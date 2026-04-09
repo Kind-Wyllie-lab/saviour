@@ -247,21 +247,71 @@ EOF
 
 configure_samba_share() {
     echo "Configuring Samba Share"
-    
-    # Create the share directory
+
+    # ── 1. Linux group and users ──────────────────────────────────────────
+    # Create shared group for the share
+    if ! getent group saviour > /dev/null 2>&1; then
+        sudo groupadd saviour
+        echo "Created group: saviour"
+    fi
+
+    # Add pi to the saviour group so it can write as a regular member
+    sudo usermod -aG saviour pi
+
+    # Create saviour_module system user (no login shell, no home dir)
+    if ! id saviour_module > /dev/null 2>&1; then
+        sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid saviour saviour_module
+        echo "Created system user: saviour_module"
+    fi
+
+    # ── 2. Share directory ────────────────────────────────────────────────
     sudo mkdir -p /home/pi/${SHARENAME}
-    sudo chown ${USER}:pi /home/pi/${SHARENAME}
-    sudo chmod 755 /home/pi/${SHARENAME}
-    echo "Created controller_share directory: /home/pi/${SHARENAME}"
-    
-    # Backup original samba config
+    sudo chown pi:saviour /home/pi/${SHARENAME}
+    # 1775 = rwxrwsr-t: group-write so saviour_module can create files;
+    # sticky bit so only the file owner/root can delete files.
+    sudo chmod 1775 /home/pi/${SHARENAME}
+    echo "Share directory: /home/pi/${SHARENAME} (mode 1775, owner pi:saviour)"
+
+    # ── 3. Generate a random password for saviour_module ─────────────────
+    sudo mkdir -p /etc/saviour
+    MODULE_PASS=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+    sudo tee /etc/saviour/samba_credentials > /dev/null <<CREDS
+username=saviour_module
+password=${MODULE_PASS}
+CREDS
+    sudo chmod 600 /etc/saviour/samba_credentials
+    echo "Generated saviour_module password → /etc/saviour/samba_credentials"
+
+    # ── 4. Write credentials into modules/config/base_config.json ────────
+    BASE_CONFIG="${DIR}/src/modules/config/base_config.json"
+    if [ -f "${BASE_CONFIG}" ]; then
+        python3 - "${BASE_CONFIG}" "${MODULE_PASS}" <<'PYEOF'
+import sys, json
+path, password = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    cfg = json.load(f)
+export = cfg.setdefault("export", {})
+export["share_username"] = "saviour_module"
+export["share_password"] = password
+# Remove old underscore-prefixed keys if present
+export.pop("_share_username", None)
+export.pop("_share_password", None)
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+print("Updated base_config.json with saviour_module credentials")
+PYEOF
+    else
+        echo "WARNING: ${BASE_CONFIG} not found — module credentials not written"
+    fi
+
+    # ── 5. Samba configuration ────────────────────────────────────────────
     if [ -f /etc/samba/smb.conf ]; then
         sudo cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
         echo "Backed up original smb.conf"
     fi
-    
-    # Create new samba configuration
-    echo "Creating Samba configuration..."
+
     sudo tee /etc/samba/smb.conf > /dev/null <<EOF
 [global]
    workgroup = WORKGROUP
@@ -274,44 +324,40 @@ configure_samba_share() {
    max log size = 50
 
 [${SHARENAME}]
-   comment = Saviour Controller Share
+   comment = SAVIOUR Controller Share
    path = /home/pi/${SHARENAME}
    browseable = yes
-   writable = yes
+   # Guests (unauthenticated) get read-only access
    guest ok = yes
-   create mask = 0644
-   directory mask = 0755
-   force user = ${USER}
-   force group = pi
+   read only = yes
+   # saviour_module and pi can write; pi is also admin (bypasses UNIX perms)
+   write list = saviour_module, pi
+   admin users = pi
+   create mask = 0664
+   directory mask = 0775
 EOF
 
-    # Set Samba password for pi user (default password: saviour)
-    echo "Setting Samba password for {$USER} user..."
+    # ── 6. Set Samba passwords ────────────────────────────────────────────
+    echo "Setting Samba password for saviour_module..."
+    printf '%s\n%s\n' "${MODULE_PASS}" "${MODULE_PASS}" | sudo smbpasswd -s -a saviour_module
+
+    echo "Setting Samba password for pi (default: saviour)..."
     echo -e "saviour\nsaviour" | sudo smbpasswd -s -a pi
-    
-    # Restart Samba services
-    sudo systemctl restart smbd
-    sudo systemctl restart nmbd
-    
-    # Enable Samba services at boot
-    sudo systemctl enable smbd
-    sudo systemctl enable nmbd
-    
+
+    # ── 7. Restart and enable Samba ───────────────────────────────────────
+    sudo systemctl restart smbd nmbd
+    sudo systemctl enable smbd nmbd
+
+    CONTROLLER_IP=$(hostname -I | awk '{print $1}')
+    echo ""
     echo "Samba share configured successfully!"
-    echo "Share name: ${SHARENAME}"
-    echo "Path: /home/pi/${SHARENAME}"
-    echo "Username: ${USER}"
-    echo "Password: saviour"
+    echo "  Share name : ${SHARENAME}"
+    echo "  Path       : /home/pi/${SHARENAME}"
     echo ""
-    echo "Access from other devices:"
-    echo "  Windows: \\\\$(hostname -I | awk '{print $1}')\\controller_share"
-    echo "  Linux/Mac: smb://$(hostname -I | awk '{print $1}')/controller_share"
-    echo ""
-    echo "Samba control commands:"
-    echo "  Start: sudo systemctl start smbd nmbd"
-    echo "  Stop:  sudo systemctl stop smbd nmbd"
-    echo "  Status: sudo systemctl status smbd nmbd"
-    echo "  Restart: sudo systemctl restart smbd nmbd"
+    echo "Access tiers:"
+    echo "  Guest (read-only) : smb://${CONTROLLER_IP}/${SHARENAME}"
+    echo "  Module (write)    : username=saviour_module  password stored in /etc/saviour/samba_credentials"
+    echo "  Admin (full)      : username=pi  password=saviour"
 }
 
 disable_samba_share() {
@@ -321,18 +367,29 @@ disable_samba_share() {
 }
 
 check_for_gateway() {
-    # If the local network has a device at 192.168.x.2 or 10.0.x.2, SAVIOUR will assume this is gateway and configure it's own IP to match.
     GATEWAY=""
+    echo ""
+    echo "Does this controller sit behind a gateway/router (e.g. 10.0.x.2 or 192.168.x.2)?"
+    read -p "Scan for gateway? (y/n, default n): " scan_choice
+    if [ "$scan_choice" != "y" ] && [ "$scan_choice" != "Y" ]; then
+        echo "  Skipping gateway scan — will default to 10.0.0.x addressing"
+        return
+    fi
+
+    echo "Scanning for gateway (pinging 10.0.x.2 and 192.168.x.2 for x in 1..254)..."
     for i in {1..254}; do
-        if ping -c 1 -w 1 10.0.$i.2 >/dev/null 2>&1 ; then 
-            GATEWAY="10.0.$i.2"
-            break 
-        fi
-        if ping -c 1 -w 1 192.168.$i.2 >/dev/null 2>&1; then 
-            GATEWAY="192.168.$i.2"
-            break
-        fi
+        printf "\r  Trying subnet %d/254..." "$i"
+        ping -c 1 -w 1 10.0.$i.2    >/dev/null 2>&1 && GATEWAY="10.0.$i.2"    &
+        ping -c 1 -w 1 192.168.$i.2 >/dev/null 2>&1 && GATEWAY="192.168.$i.2" &
+        wait
+        [ -n "$GATEWAY" ] && break
     done
+    echo ""
+    if [ -n "$GATEWAY" ]; then
+        echo "  Gateway found: $GATEWAY"
+    else
+        echo "  No gateway found — will default to 10.0.0.x addressing"
+    fi
 }
 
 set_own_ip() {
@@ -355,7 +412,11 @@ set_own_ip() {
         IFS='.' read -r a b c d <<< "$DEVICE_IP"
     fi
 
-    sudo nmcli connection modify "$INTERFACE" ipv4.addresses $IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual 
+    if [ -n "$GATEWAY" ]; then
+        sudo nmcli connection modify "$INTERFACE" ipv4.addresses $DEVICE_IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual
+    else
+        sudo nmcli connection modify "$INTERFACE" ipv4.addresses $DEVICE_IP ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual
+    fi
 }
 
 detect_interface_name() {

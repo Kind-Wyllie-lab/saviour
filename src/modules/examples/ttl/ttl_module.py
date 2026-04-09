@@ -178,13 +178,34 @@ class TTLModule(Module):
             return False
 
 
-    # TODO: Implement these
-    def _start_new_recording(self): 
-        pass
-    
+    def _get_ttl_filename(self) -> str:
+        """Build the CSV filename for the current recording segment."""
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        return f"{self.facade.get_filename_prefix()}_({self.facade.get_segment_id()}_{strtime}).csv"
+
+
+    def _start_new_recording(self):
+        """Open the initial TTL events CSV and start monitoring all pins."""
+        filename = self._get_ttl_filename()
+        self.current_ttl_events_filename = filename
+        self.facade.add_session_file(filename)
+        self._open_ttl_file(filename)
+        self._start_pin_generators()
+        self._start_recording_all_input_pins()
+
 
     def _start_next_recording_segment(self):
-        pass
+        """Stage and close the current CSV, then open a new one for the next segment.
+
+        Input pin callbacks and generators keep running across segments — no restart needed.
+        """
+        self.facade.stage_file_for_export(self.current_ttl_events_filename)
+        self._close_ttl_event_file()
+
+        filename = self._get_ttl_filename()
+        self.current_ttl_events_filename = filename
+        self.facade.add_session_file(filename)
+        self._open_ttl_file(filename)
 
     
     def configure_module_special(self):
@@ -293,24 +314,22 @@ class TTLModule(Module):
         self.logger.info(f"Input pin {pin.pin} went high (released)") 
 
 
-    def _create_ttl_file(self):
-        """Create the initial CSV file to save TTL events"""
-        self.current_ttl_events_filename = f"{self.current_filename_prefix}_events.csv"
-        filename = self.current_ttl_events_filename
-        self.logger.info(f"Creating ttl file {filename}")
-        self.add_session_file(filename)
+    def _open_ttl_file(self, filename: str):
+        """Open a TTL events CSV file for writing and write the column header."""
+        self.logger.info(f"Opening TTL events file: {filename}")
         try:
             self._ttl_file_handle = open(filename, "w", buffering=1)  # line-buffered
-            # Write header with metadata
-            f = self._ttl_file_handle
-            f.write("# TTL Event Recording\n")
-            f.write(f"# Session ID: {self.recording_session_id}\n")
-            f.write(f"# Recording Start: {self.recording_start_time}\n")
-            f.write("#\n")
-            f.write("Timestamp_nanoseconds, pin_number, pin_mode, pin_state, pin_description\n")
+            self._ttl_file_handle.write("Timestamp_nanoseconds,pin_number,pin_mode,pin_state,pin_description\n")
         except Exception as e:
-            self.logger.error(f"Failed to open TTL events file: {e}")
+            self.logger.error(f"Failed to open TTL events file {filename}: {e}")
             self._ttl_file_handle = None
+
+
+    def _create_ttl_file(self):
+        """Legacy helper used by _start_recording. Delegates to _open_ttl_file."""
+        self.current_ttl_events_filename = f"{self.facade.get_filename_prefix()}_events.csv"
+        self.facade.add_session_file(self.current_ttl_events_filename)
+        self._open_ttl_file(self.current_ttl_events_filename)
 
 
     def _write_ttl_event(self, timestamp_ns: int, pin_number: int, state: TTLValue): 
@@ -319,13 +338,17 @@ class TTLModule(Module):
             self._ttl_file_handle.write(f'{timestamp_ns},{pin_number},{self.pin_configs[pin_number].get("mode")},{state},{self.pin_configs[pin_number].get("description")}\n')
 
 
-    def _close_ttl_event_file(self, filename="ttl_event_buffer.csv"):
-        """Close ttl file"""
+    def _close_ttl_event_file(self, filename=None):
+        """Flush and close the current TTL events file."""
         try:
-            self._ttl_file_handle = None
-            self.logger.info(f"Closed ttl file {filename}")
+            if self._ttl_file_handle:
+                self._ttl_file_handle.flush()
+                self._ttl_file_handle.close()
+                self._ttl_file_handle = None
+                self.logger.info(f"Closed TTL events file: {filename or self.current_ttl_events_filename}")
         except Exception as e:
-            self.logger.warning(f"Error closing ttl file: {e}")
+            self.logger.warning(f"Error closing TTL events file: {e}")
+            self._ttl_file_handle = None
 
 
     def start_pseudo_random_pulses(self, pin_number, min_interval=1.0, max_interval=10.0, pulse_duration=0.01):

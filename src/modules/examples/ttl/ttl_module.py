@@ -96,7 +96,6 @@ class TTLModule(Module):
         # Recording variables
         self.recording_start_time = None
         self.recording_stop_time = None
-        self.recording = False
 
         # Pulse generation variables
         self.pulse_generation_active = False
@@ -147,7 +146,6 @@ class TTLModule(Module):
             # Reset recording state
             self.recording_start_time = time.time()
             self.recording_stop_time = None
-            self.recording = True
             self.is_recording = True
             # Save TTL events to file
             self._create_ttl_file()
@@ -220,7 +218,6 @@ class TTLModule(Module):
             
             # Update recording state
             self.recording_stop_time = time.time()
-            self.recording = False
             self.is_recording = False
 
             # self.add_session_file(events_file)
@@ -657,7 +654,7 @@ class TTLModule(Module):
         """Stop all pin generators"""
         try:
             # Set recording flag to False to signal threads to stop
-            self.recording = False
+            self.is_recording = False
             
             # Give threads a moment to exit naturally and execute finally blocks
             time.sleep(0.1)  # 100ms should be enough for daemon threads to check the flag and cleanup
@@ -731,7 +728,7 @@ class TTLModule(Module):
         try:
             self.logger.info(f"Experiment clock worker started on pin {pin_number}")
             
-            while self.recording:
+            while self.is_recording:
                 # Calculate timing
                 high_time = period * duty_cycle
                 low_time = period * (1.0 - duty_cycle)
@@ -742,7 +739,7 @@ class TTLModule(Module):
                 time.sleep(high_time)
                 
                 # Check if still recording
-                if not self.recording:
+                if not self.is_recording:
                     break
                 
                 # Low phase
@@ -802,7 +799,7 @@ class TTLModule(Module):
         try:
             self.logger.info(f"Pseudorandom worker started on pin {pin_number}")
             
-            while self.recording:
+            while self.is_recording:
                 # Generate random interval
                 interval = random.uniform(min_interval, max_interval)
                 
@@ -810,7 +807,7 @@ class TTLModule(Module):
                 time.sleep(interval)
                 
                 # Check if still recording
-                if not self.recording:
+                if not self.is_recording:
                     break
                 
                 # Generate pulse (set low, then high)
@@ -1090,7 +1087,7 @@ class TTLModule(Module):
             self.logger.info("Cleaning up TTL module resources")
             
             # Stop recording if active
-            if self.recording:
+            if self.is_recording:
                 self.stop_recording()
             
             # Stop all pin generators

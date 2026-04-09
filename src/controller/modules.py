@@ -301,9 +301,15 @@ class Modules:
         return self._serialise_modules()
 
     def has_config(self, module_id: str) -> bool:
-        """Return True if we have a confirmed config from this module."""
-        state = self._config_states.get(module_id)
-        return bool(state and state.true_config)
+        """Return True if the live module object has a populated config.
+
+        Checks module.config rather than state.true_config so that a reconnecting
+        module (whose Module object is replaced with a fresh empty-config instance
+        by add_module) correctly returns False, allowing the heartbeat handler to
+        re-request the config.
+        """
+        module = self._modules.get(module_id)
+        return bool(module and module.config)
 
 
     def get_module_configs(self) -> Dict[str, Any]:

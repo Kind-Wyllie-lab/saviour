@@ -266,6 +266,8 @@ configure_samba_share() {
     fi
 
     # ── 2. Share directory ────────────────────────────────────────────────
+    # Allow non-pi users to traverse /home/pi to reach the share
+    sudo chmod 711 /home/pi
     sudo mkdir -p /home/pi/${SHARENAME}
     sudo chown pi:saviour /home/pi/${SHARENAME}
     # 1775 = rwxrwsr-t: group-write so saviour_module can create files;

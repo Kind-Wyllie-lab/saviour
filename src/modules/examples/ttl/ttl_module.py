@@ -139,46 +139,8 @@ class TTLModule(Module):
     #     return self.command.handle_command(command, **kwargs)
 
 
-    def _start_recording(self) -> bool:
-        """Start TTL event recording"""
-        # Store experiment name for use in timestamps filename
-        
-        try:
-            # Cancel any in-progress pin tests before starting a real recording
-            self._stop_all_pin_tests()
-
-            # Reset recording state
-            self.recording_start_time = time.time()
-            self.recording_stop_time = None
-            self.is_recording = True
-            # Save TTL events to file
-            self._create_ttl_file()
-            
-            # Start experiment clock and pseudorandom generators
-            self._start_pin_generators()
-            
-            # Start monitoring all input pins
-            self._start_recording_all_input_pins()
-
-            # Send status response after successful recording start
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_started",
-                    # "filename": filename,
-                    "recording": True,
-                    "session_id": self.recording_session_id
-                })
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_start_failed",
-                    "error": str(e)
-                })
-            return False
+    # _start_recording() removed — superseded by _start_new_recording() which is
+    # called by the Recording base class via facade.start_new_recording().
 
 
     def _get_ttl_filename(self) -> str:
@@ -189,6 +151,15 @@ class TTLModule(Module):
 
     def _start_new_recording(self):
         """Open the initial TTL events CSV and start monitoring all pins."""
+        # Cancel any in-progress pin tests before starting a real recording
+        self._stop_all_pin_tests()
+
+        # Stop any stale generators left from a previous recording that was not
+        # cleanly stopped (e.g. controller disconnect).  _stop_pin_generators
+        # sets is_recording=False, so we must re-set it True afterwards.
+        if self.generator_threads:
+            self._stop_pin_generators()
+
         # Set before starting generator threads so their while-loops don't exit immediately.
         # The base Recording class sets recording.is_recording=True only after this method
         # returns, but the workers need to see the flag as True when they first check it.
@@ -717,14 +688,18 @@ class TTLModule(Module):
     def _start_pin_generators(self):
         """Start experiment clock and pseudorandom generators for all configured pins"""
         try:
+            self.logger.info(f"_start_pin_generators: experiment_clock={self.experiment_clock_pins} "
+                             f"pseudorandom={self.pseudorandom_pins} "
+                             f"output_pins={[p.pin.number for p in self.output_pins]}")
+
             # Start experiment clock generators
             for pin_number in self.experiment_clock_pins:
                 self._start_experiment_clock(pin_number)
-            
+
             # Start pseudorandom generators
             for pin_number in self.pseudorandom_pins:
                 self._start_pseudorandom_generator(pin_number)
-                
+
             self.logger.info(f"Started {len(self.experiment_clock_pins)} experiment clock generators and {len(self.pseudorandom_pins)} pseudorandom generators")
             
         except Exception as e:
@@ -892,15 +867,16 @@ class TTLModule(Module):
     def _pseudorandom_worker(self, pin_obj, pin_number, min_interval, max_interval, pulse_duration):
         """Worker thread for pseudorandom pulse generation"""
         try:
-            self.logger.info(f"Pseudorandom worker started on pin {pin_number}")
-            
-            mean_interval = (min_interval + max_interval) / 2.0
+            self.logger.info(f"Pseudorandom worker started on pin {pin_number} "
+                             f"(min={min_interval}s max={max_interval}s pulse={pulse_duration}s)")
+            pulse_count = 0
 
             while self.is_recording:
-                # Exponential distribution (Poisson process) — produces naturally
-                # irregular inter-pulse intervals with many short gaps and occasional
-                # long ones, unlike uniform which clusters near the mean.
-                interval = min(max_interval, max(min_interval, random.expovariate(1.0 / mean_interval)))
+                # Uniform distribution: equal probability of any interval in [min, max].
+                interval = random.uniform(min_interval, max_interval)
+                pulse_count += 1
+                self.logger.debug(f"Pseudorandom pin {pin_number} pulse #{pulse_count}: "
+                                  f"waiting {interval:.3f}s")
 
                 # Wait for the interval
                 time.sleep(interval)

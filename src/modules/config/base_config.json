@@ -1,37 +1,37 @@
 {
-    "module": {
-        "_heartbeat_interval": 30,
-        "name": "",
-        "group": ""
-    },
-    "network": {
-        "_zeroconf_port": 5353,
-        "_zeroconf_service_type": "_module._tcp.local."
-    },
-    "communication": {
-        "_command_socket_port": 5555,
-        "_status_socket_port": 5556
-    },
-    "logging": {
-        "_level": "INFO",
-        "_format": "%(asctime)s - %(levelname)s - %(message)s"
-    },
-    "recording": {
-        "segment_length_mins": 60,
-        "_recording_folder": "/var/lib/saviour/recordings",
-        "_recording_filetype": "NOT SET",
-        "_record_health_metadata": true,
-        "_health_metadata_recording_interval": 5
-    },
-    "export": {
-        "auto_export": true,
-        "delete_on_export": true,
-        "_manifest_enabled": false,
-        "share_path": "controller_share",
-        "share_ip": "10.0.0.1",
-        "share_username": "saviour_module",
-        "share_password": "",
-        "max_bitrate_mb": 950,
-        "max_burst_kb": 30
-    }
+  "module": {
+    "_heartbeat_interval": 30,
+    "name": "",
+    "group": ""
+  },
+  "network": {
+    "_zeroconf_port": 5353,
+    "_zeroconf_service_type": "_module._tcp.local."
+  },
+  "communication": {
+    "_command_socket_port": 5555,
+    "_status_socket_port": 5556
+  },
+  "logging": {
+    "_level": "INFO",
+    "_format": "%(asctime)s - %(levelname)s - %(message)s"
+  },
+  "recording": {
+    "segment_length_mins": 60,
+    "_recording_folder": "/var/lib/saviour/recordings",
+    "_recording_filetype": "NOT SET",
+    "_record_health_metadata": true,
+    "_health_metadata_recording_interval": 5
+  },
+  "export": {
+    "auto_export": true,
+    "delete_on_export": true,
+    "_manifest_enabled": false,
+    "share_path": "controller_share",
+    "share_ip": "10.0.0.1",
+    "share_username": "saviour_module",
+    "share_password": "HeBGwEszDs5k3cWDAkmh",
+    "max_bitrate_mb": 950,
+    "max_burst_kb": 30
+  }
 }

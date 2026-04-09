@@ -894,10 +894,14 @@ class TTLModule(Module):
         try:
             self.logger.info(f"Pseudorandom worker started on pin {pin_number}")
             
+            mean_interval = (min_interval + max_interval) / 2.0
+
             while self.is_recording:
-                # Generate random interval
-                interval = random.uniform(min_interval, max_interval)
-                
+                # Exponential distribution (Poisson process) — produces naturally
+                # irregular inter-pulse intervals with many short gaps and occasional
+                # long ones, unlike uniform which clusters near the mean.
+                interval = min(max_interval, max(min_interval, random.expovariate(1.0 / mean_interval)))
+
                 # Wait for the interval
                 time.sleep(interval)
                 

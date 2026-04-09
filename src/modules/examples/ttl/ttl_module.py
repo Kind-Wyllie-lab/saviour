@@ -186,6 +186,11 @@ class TTLModule(Module):
 
     def _start_new_recording(self):
         """Open the initial TTL events CSV and start monitoring all pins."""
+        # Set before starting generator threads so their while-loops don't exit immediately.
+        # The base Recording class sets recording.is_recording=True only after this method
+        # returns, but the workers need to see the flag as True when they first check it.
+        self.is_recording = True
+
         filename = self._get_ttl_filename()
         self.current_ttl_events_filename = filename
         self.facade.add_session_file(filename)

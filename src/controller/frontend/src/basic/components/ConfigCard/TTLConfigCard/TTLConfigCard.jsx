@@ -186,7 +186,13 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                             max={meta.max}
                             step={meta.type === "float" ? "any" : undefined}
                             value={settings[fieldName] ?? ""}
-                            onChange={(e) => changeField(pin, fieldName, e.target.value)}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              let val = raw;
+                              if (meta.type === "float") val = raw === "" ? "" : parseFloat(raw);
+                              else if (meta.type === "int") val = raw === "" ? "" : parseInt(raw, 10);
+                              changeField(pin, fieldName, Number.isNaN(val) ? raw : val);
+                            }}
                           />
                         </div>
                       );

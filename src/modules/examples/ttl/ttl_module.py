@@ -715,10 +715,9 @@ class TTLModule(Module):
         try:
             # Get pin configuration
             pin_config = self.pin_configs.get(pin_number, {})
-            duty_cycle = pin_config.get("duty_cycle", 0.5)
+            duty_cycle = float(pin_config.get("duty_cycle", 0.5))
+            period = float(pin_config.get("period", 1.0))
             self.logger.info(f"Duty cycle for experiment clock {duty_cycle} from config")
-
-            period = 1.0  # 1 second period
             
             # Find the pin object
             pin_obj = None
@@ -788,9 +787,9 @@ class TTLModule(Module):
         try:
             # Get pin configuration
             pin_config = self.pin_configs.get(pin_number, {})
-            min_interval = pin_config.get("min_interval", 1.0)
-            max_interval = pin_config.get("max_interval", 10.0)
-            pulse_duration = pin_config.get("pulse_duration", 0.01)
+            min_interval = float(pin_config.get("min_interval", 1.0))
+            max_interval = float(pin_config.get("max_interval", 10.0))
+            pulse_duration = float(pin_config.get("pulse_duration", 0.01))
 
             self.logger.info(f"Min interval {min_interval}, max interval {max_interval}, pulse_duration {pulse_duration}")
             

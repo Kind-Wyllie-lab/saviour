@@ -213,8 +213,11 @@ class TTLModule(Module):
         self._open_ttl_file(filename)
 
     
-    def configure_module_special(self):
-        pass
+    def configure_module_special(self, updated_keys: list):
+        """Re-assign pins and refresh the MJPEG stream buffers when TTL config changes."""
+        if any(k.startswith("ttl.") for k in updated_keys):
+            self.logger.info("TTL config changed — re-assigning pins")
+            self.assign_pins()
 
 
     def _start_recording_all_input_pins(self):
@@ -284,9 +287,6 @@ class TTLModule(Module):
             return False
     
 
-    def configure_module(self):
-        self.logger.info(f"Something changed in TTL configuration")
-        self.assign_pins()
 
 
     def stop_recording_all_input_pins(self):

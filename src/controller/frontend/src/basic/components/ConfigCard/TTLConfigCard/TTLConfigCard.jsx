@@ -3,6 +3,7 @@ import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
+import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom"]);
@@ -124,7 +125,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
         <div className="ttl-body">
           {/* ── Left column: stream ── */}
           <div className="ttl-stream-col">
-            <LivestreamCard module={module} />
+            <MJPEGStreamCard ip={module.ip} port={8082} />
           </div>
 
           {/* ── Right column: config ── */}

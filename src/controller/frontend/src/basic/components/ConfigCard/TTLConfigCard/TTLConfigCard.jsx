@@ -4,148 +4,89 @@ import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 
-/* Draft for a TTL config card that dynamically updates form based on schema, for adding and removing pins. Not currently working.*/
+const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom"]);
 
 function TTLConfigCard({ module }) {
-  const { formData, setFormData, handleChange } = useConfigForm(module.config);
+  const { formData, setFormData } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState({});
   const [newPin, setNewPin] = useState("");
+  const [newMode, setNewMode] = useState("");
 
-  const renderFields = (obj, path = []) => {
-    const filteredObj = filterPrivateKeys(obj);
-    if (!filteredObj) return null;
+  const ttlCfg = formData?.ttl ?? {};
+  const availablePins = module.config?.ttl?._available_pins ?? [];
+  const availableModes = (module.config?.ttl?._available_modes ?? []).filter((m) => m !== "None");
+  const schema = module.config?.ttl?._mode_settings_schema ?? {};
+  const activeLogicOptions = module.config?.ttl?._active_logic_options ?? ["active_low", "active_high"];
 
-    return Object.entries(filteredObj).map(([key, value]) => {
-      const fieldPath = [...path, key];
-      const fieldKey = fieldPath.join(".");
-
-      // Special rendering for TTL pins
-      if (key === "pins" && path[0] === "ttl") {
-        const modes = module.config.ttl._available_modes || [];
-        const schema = module.config.ttl._mode_settings_schema || {};
-        return Object.entries(value).map(([pin, settings]) => (
-          <div key={pin} className="pin-card">
-            <h4>Pin {pin}</h4>
-
-            <label>Mode:</label>
-            <select
-              value={settings.mode || "None"}
-              onChange={(e) => {
-                const newMode = e.target.value;
-                const defaults = schema[`_${newMode}`] || {};
-                setFormData((prev) => ({
-                  ...prev,
-                  ttl: {
-                    ...prev.ttl,
-                    pins: {
-                      ...prev.ttl.pins,
-                      [pin]: {
-                        mode: newMode,
-                        ...Object.fromEntries(
-                          Object.entries(defaults).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""])
-                        ),
-                      },
-                    },
-                  },
-                }));
-              }}
-            >
-              {modes.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-
-            {settings.mode !== "None" &&
-              Object.entries(schema[`_${settings.mode}`] || {}).map(([k, meta]) => (
-                <div key={k} className="field">
-                  <label>{k.replace(/^_/, "")}</label>
-                  <input
-                    type={meta.type === "float" ? "number" : meta.type}
-                    min={meta.min}
-                    max={meta.max}
-                    step="any"
-                    value={settings[k.replace(/^_/, "")] ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setFormData((prev) => ({
-                        ...prev,
-                        ttl: {
-                          ...prev.ttl,
-                          pins: {
-                            ...prev.ttl.pins,
-                            [pin]: { ...prev.ttl.pins[pin], [k.replace(/^_/, "")]: val },
-                          },
-                        },
-                      }));
-                    }}
-                  />
-                </div>
-              ))}
-
-            <button
-              onClick={() => {
-                setFormData((prev) => {
-                  const copy = { ...prev };
-                  delete copy.ttl.pins[pin];
-                  return copy;
-                });
-              }}
-            >
-              Remove Pin
-            </button>
-          </div>
-        ));
-      }
-
-      // Render nested objects recursively
-      if (typeof value === "object" && value !== null) {
-        const collapsedSection = collapsedSections[fieldKey] ?? false;
-        return (
-          <fieldset key={fieldKey} className="nested-fieldset">
-            <legend
-              onClick={() =>
-                setCollapsedSections((prev) => ({ ...prev, [fieldKey]: !collapsedSection }))
-              }
-              style={{ cursor: "pointer" }}
-            >
-              {key} {collapsedSection ? "(+)" : "(-)"}
-            </legend>
-            {!collapsedSection && <div className="nested">{renderFields(value, fieldPath)}</div>}
-          </fieldset>
-        );
-      }
-
-      // Render primitive fields
-      return (
-        <div key={fieldKey} className="form-field">
-          <label>{key}</label>
-          <input
-            type={typeof value === "number" ? "number" : typeof value === "boolean" ? "checkbox" : "text"}
-            value={typeof value === "boolean" ? undefined : value}
-            checked={typeof value === "boolean" ? value : undefined}
-            onChange={(e) => handleChange(fieldPath, e)}
-          />
-        </div>
-      );
-    });
-  };
+  const assignedPins = Object.keys(ttlCfg.pins ?? {}).map(Number);
+  const unassignedPins = availablePins.filter((p) => !assignedPins.includes(p));
+  const sortedPins = Object.keys(ttlCfg.pins ?? {}).sort((a, b) => Number(a) - Number(b));
 
   const addPin = () => {
     const parsed = parseInt(newPin, 10);
-    if (isNaN(parsed)) return alert("Enter a valid pin number.");
-    if (formData.ttl.pins[parsed]) return alert(`Pin ${parsed} already exists.`);
-
+    if (isNaN(parsed) || !newMode) return;
+    const defaults = schema[`_${newMode}`] ?? {};
     setFormData((prev) => ({
       ...prev,
-      ttl: { ...prev.ttl, pins: { ...prev.ttl.pins, [parsed]: { mode: "None" } } },
+      ttl: {
+        ...prev.ttl,
+        pins: {
+          ...prev.ttl.pins,
+          [parsed]: {
+            mode: newMode,
+            ...Object.fromEntries(
+              Object.entries(defaults).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""])
+            ),
+          },
+        },
+      },
     }));
     setNewPin("");
+    setNewMode("");
+  };
+
+  const removePin = (pin) => {
+    setFormData((prev) => {
+      const newPins = { ...prev.ttl.pins };
+      delete newPins[pin];
+      return { ...prev, ttl: { ...prev.ttl, pins: newPins } };
+    });
+  };
+
+  const changeMode = (pin, mode) => {
+    const defaults = schema[`_${mode}`] ?? {};
+    setFormData((prev) => ({
+      ...prev,
+      ttl: {
+        ...prev.ttl,
+        pins: {
+          ...prev.ttl.pins,
+          [pin]: {
+            mode,
+            ...Object.fromEntries(
+              Object.entries(defaults).map(([k, v]) => [k.replace(/^_/, ""), v.default ?? ""])
+            ),
+          },
+        },
+      },
+    }));
+  };
+
+  const changeField = (pin, field, val) => {
+    setFormData((prev) => ({
+      ...prev,
+      ttl: {
+        ...prev.ttl,
+        pins: {
+          ...prev.ttl.pins,
+          [pin]: { ...prev.ttl.pins[pin], [field]: val },
+        },
+      },
+    }));
   };
 
   const saveConfig = () => {
-    const editableData = filterPrivateKeys(formData);
-    socket.emit("save_module_config", { id: module.id, config: editableData });
+    socket.emit("save_module_config", { id: module.id, config: filterPrivateKeys(formData) });
   };
 
   return (
@@ -158,25 +99,88 @@ function TTLConfigCard({ module }) {
 
       {!collapsed && (
         <div className="config-card-body">
-          <div className="config-form">
-            <div className="add-pin-row">
-              <input
-                type="number"
-                placeholder="Enter new pin number"
-                value={newPin}
-                onChange={(e) => setNewPin(e.target.value)}
-              />
-              <button type="button" onClick={addPin}>
-                Add Pin
-              </button>
-            </div>
+          <div className="form-field">
+            <label>Active Logic</label>
+            <select
+              value={ttlCfg.active_logic ?? "active_low"}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, active_logic: e.target.value } }))
+              }
+            >
+              {activeLogicOptions.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
 
-            <form>{renderFields(formData)}</form>
+          <div className="pin-list">
+            {sortedPins.map((pin) => {
+              const settings = ttlCfg.pins[pin];
+              const mode = settings.mode ?? "None";
+              const isOutput = OUTPUT_MODES.has(mode);
+              const modeFields = schema[`_${mode}`] ?? {};
 
-            <button className="save-button" type="button" onClick={saveConfig}>
-              Save
+              return (
+                <div key={pin} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
+                  <div className="pin-card-header">
+                    <span className="pin-label">GPIO {pin}</span>
+                    <span className={`pin-type-badge ${isOutput ? "badge--output" : "badge--input"}`}>
+                      {isOutput ? "OUTPUT" : "INPUT"}
+                    </span>
+                    <button className="btn-remove" onClick={() => removePin(pin)}>✕</button>
+                  </div>
+
+                  <div className="field">
+                    <label>Mode</label>
+                    <select value={mode} onChange={(e) => changeMode(pin, e.target.value)}>
+                      {availableModes.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {Object.entries(modeFields).map(([k, meta]) => {
+                    const fieldName = k.replace(/^_/, "");
+                    return (
+                      <div key={k} className="field">
+                        <label>{fieldName}</label>
+                        <input
+                          type={meta.type === "float" || meta.type === "int" ? "number" : "text"}
+                          min={meta.min}
+                          max={meta.max}
+                          step={meta.type === "float" ? "any" : undefined}
+                          value={settings[fieldName] ?? ""}
+                          onChange={(e) => changeField(pin, fieldName, e.target.value)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="add-pin-row">
+            <select value={newPin} onChange={(e) => setNewPin(e.target.value)}>
+              <option value="">Pin…</option>
+              {unassignedPins.map((p) => (
+                <option key={p} value={p}>GPIO {p}</option>
+              ))}
+            </select>
+            <select value={newMode} onChange={(e) => setNewMode(e.target.value)}>
+              <option value="">Mode…</option>
+              {availableModes.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+            <button type="button" onClick={addPin} disabled={!newPin || !newMode}>
+              Add Pin
             </button>
           </div>
+
+          <button className="save-button" type="button" onClick={saveConfig}>
+            Save
+          </button>
         </div>
       )}
     </div>

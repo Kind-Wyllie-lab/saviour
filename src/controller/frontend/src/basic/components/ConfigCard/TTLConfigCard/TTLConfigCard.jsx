@@ -3,13 +3,14 @@ import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
+import ConfigFields from "../ConfigFields";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom"]);
 
 function TTLConfigCard({ id, module, clipboard, onCopy }) {
-  const { formData, setFormData } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
   const [newPin, setNewPin] = useState("");
   const [newMode, setNewMode] = useState("");
@@ -242,6 +243,14 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                 Add Pin
               </button>
             </div>
+
+            {/* ── Non-TTL config sections (export, recording, module name, etc.) ── */}
+            {(() => {
+              const { ttl, ...rest } = filterPrivateKeys(formData) ?? {};
+              return Object.keys(rest).length > 0
+                ? <form><ConfigFields data={rest} handleChange={handleChange} /></form>
+                : null;
+            })()}
 
             {/* Action buttons */}
             <div className="ttl-action-row">

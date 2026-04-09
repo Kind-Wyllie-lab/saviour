@@ -281,26 +281,22 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
               onChange={e => handleChange(["camera", "gain"], e)} />
           </div>
           <div className="form-field">
-            <label>Manual exposure:</label>
-            <input type="checkbox"
-              checked={cam.manual_exposure ?? false}
-              onChange={e => handleChange(["camera", "manual_exposure"], e)} />
-          </div>
-          {cam.manual_exposure ? (
-            <div className="form-field">
-              <label>Exposure time (µs):</label>
+            <label>Exposure time (µs):</label>
+            <div className="exposure-control">
               <input type="number" min="1" step="100"
-                value={cam.exposure_time ?? ""}
+                disabled={!cam.manual_exposure}
+                value={cam.manual_exposure
+                  ? (cam.exposure_time ?? "")
+                  : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
                 onChange={e => handleChange(["camera", "exposure_time"], e)} />
+              <label className="exposure-manual-label">
+                <input type="checkbox"
+                  checked={cam.manual_exposure ?? false}
+                  onChange={e => handleChange(["camera", "manual_exposure"], e)} />
+                Manual
+              </label>
             </div>
-          ) : (
-            <div className="form-field">
-              <label>Exposure time (µs):</label>
-              <span className="form-field-computed">
-                {cam.fps ? Math.round(1_000_000 / cam.fps).toLocaleString() : "—"} (auto)
-              </span>
-            </div>
-          )}
+          </div>
 
           {/* ── Recording ── */}
           <div className="form-field">

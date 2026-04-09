@@ -118,6 +118,9 @@ class TTLModule(Module):
         self.is_recording = False
         self.is_streaming = False
 
+        # Per-pin test state: {pin_number: threading.Event (stop flag)}
+        self._pin_test_stop_flags: dict = {}
+
         # Monitoring stream state
         self.monitoring_app = Flask(__name__)
         self.monitoring_server = None
@@ -128,7 +131,9 @@ class TTLModule(Module):
         self._register_monitoring_routes()
 
         # Set up TTL-specific callbacks for the command handler
-        self.ttl_callbacks = {}
+        self.ttl_callbacks = {
+            "test_pin": self.test_pin,
+        }
         self.command.set_callbacks(self.ttl_callbacks) # Append new TTL callbacks
         self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
 
@@ -144,6 +149,9 @@ class TTLModule(Module):
         # Store experiment name for use in timestamps filename
         
         try:
+            # Cancel any in-progress pin tests before starting a real recording
+            self._stop_all_pin_tests()
+
             # Reset recording state
             self.recording_start_time = time.time()
             self.recording_stop_time = None
@@ -218,6 +226,68 @@ class TTLModule(Module):
         if any(k.startswith("ttl.") for k in updated_keys):
             self.logger.info("TTL config changed — re-assigning pins")
             self.assign_pins()
+
+
+    def test_pin(self, pin: int, duration: float = 5.0) -> dict:
+        """Run a 2 Hz pulse train on an output pin for *duration* seconds.
+
+        Useful for validating that a signal can be seen on downstream hardware
+        without starting a full recording session.
+
+        Returns an error if the pin is not configured as an output.
+        """
+        pin_number = int(pin)
+        duration = float(duration)
+
+        if pin_number not in self.pin_configs:
+            return {"result": "error", "message": f"Pin {pin_number} is not configured"}
+
+        pin_obj = next((p for p in self.output_pins if p.pin.number == pin_number), None)
+        if pin_obj is None:
+            return {
+                "result": "error",
+                "message": f"Pin {pin_number} is not an output pin — cannot drive a test pulse",
+            }
+
+        # Cancel any in-progress test on this pin
+        existing = self._pin_test_stop_flags.pop(pin_number, None)
+        if existing is not None:
+            existing.set()
+
+        stop_event = threading.Event()
+        self._pin_test_stop_flags[pin_number] = stop_event
+
+        def _run_test(p, stop, dur):
+            self.logger.info(f"test_pin: starting {dur}s pulse train on GPIO {pin_number}")
+            try:
+                deadline = time.monotonic() + dur
+                while time.monotonic() < deadline and not stop.is_set():
+                    p.on()
+                    stop.wait(0.25)
+                    if stop.is_set():
+                        break
+                    p.off()
+                    stop.wait(0.25)
+            finally:
+                p.off()
+                self._pin_test_stop_flags.pop(pin_number, None)
+                self.logger.info(f"test_pin: finished pulse train on GPIO {pin_number}")
+
+        t = threading.Thread(
+            target=_run_test,
+            args=(pin_obj, stop_event, duration),
+            daemon=True,
+            name=f"test-pin-{pin_number}",
+        )
+        t.start()
+        return {"result": "success", "message": f"Running 2 Hz test pulse on GPIO {pin_number} for {duration}s"}
+
+
+    def _stop_all_pin_tests(self):
+        """Cancel any in-progress pin tests (called on recording start and cleanup)."""
+        for stop_event in list(self._pin_test_stop_flags.values()):
+            stop_event.set()
+        self._pin_test_stop_flags.clear()
 
 
     def _start_recording_all_input_pins(self):
@@ -1113,7 +1183,10 @@ class TTLModule(Module):
         """Clean up TTL module resources"""
         try:
             self.logger.info("Cleaning up TTL module resources")
-            
+
+            # Cancel any in-progress pin tests
+            self._stop_all_pin_tests()
+
             # Stop recording if active
             if self.is_recording:
                 self.stop_recording()

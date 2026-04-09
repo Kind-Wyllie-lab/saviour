@@ -117,6 +117,9 @@ class Modules:
         self.logger.info(f"{action} module {module.id}")
         self.add_module(module)
         self.broadcast_updated_modules()
+        # Kick off a retry loop — the immediate get_config in facade.module_discovery
+        # may be dropped by ZMQ's slow-joiner window; this loop catches that.
+        self._schedule_config_fetch(module.id)
 
 
     def module_rediscovered(self, module_id: str) -> None:
@@ -287,6 +290,15 @@ class Modules:
         self.broadcast_updated_modules()
 
 
+    def invalidate_config(self, module_id: str) -> None:
+        """Clear a module's cached config so the next has_config() call returns False.
+        Use this when we know the module has restarted and its config may be stale.
+        """
+        module = self._modules.get(module_id)
+        if module and module.config:
+            self.logger.info(f"Invalidating cached config for {module_id} (module came back online)")
+            module.config = {}
+
     def get_config_sync_status(self, module_id: str) -> ConfigSyncStatus:
         state = self._config_states.get(module_id)
         return state.status if state else ConfigSyncStatus.UNKNOWN
@@ -390,6 +402,34 @@ class Modules:
     # -----------------------------------------------------------------------
     # Private helpers
     # -----------------------------------------------------------------------
+
+    def _schedule_config_fetch(self, module_id: str) -> None:
+        """Spawn a daemon thread that retries get_config every 2 s until config arrives.
+
+        This handles the ZMQ slow-joiner race: the immediate send right after
+        zeroconf discovery may be dropped, so we keep asking until the module replies.
+        """
+        def _retry():
+            for attempt in range(1, 11):
+                time.sleep(2)
+                if self.has_config(module_id):
+                    self.logger.info(
+                        f"Config confirmed for {module_id} (retry attempt {attempt})"
+                    )
+                    return
+                self.logger.info(
+                    f"Retrying get_config for {module_id} (attempt {attempt}/10)"
+                )
+                if self.facade:
+                    self.facade.send_command(module_id, "get_config", {})
+            self.logger.warning(
+                f"Gave up fetching config for {module_id} after 10 retry attempts"
+            )
+
+        t = threading.Thread(
+            target=_retry, daemon=True, name=f"cfg-fetch-{module_id}"
+        )
+        t.start()
 
     def _get_or_create_config_state(self, module_id: str) -> ModuleConfigState:
         if module_id not in self._config_states:

@@ -259,7 +259,7 @@ class Controller(ABC):
 
     def on_module_status_change(self, module_id: str, status: str):
         """Callback for when module status changes (online/offline)
-        
+
         Args:
             module_id: String representing the module
             status: may be "online" or "offline"
@@ -268,10 +268,15 @@ class Controller(ABC):
         if status == "online":
             online = True
             self.facade.module_back_online(module_id)
+            # Module came back from offline — its cached config may be from a
+            # previous run. Invalidate it so the frontend shows fresh data.
+            self.modules.invalidate_config(module_id)
+            self.logger.info(f"Requesting fresh config from {module_id} after coming back online")
+            self.communication.send_command(module_id, "get_config", {})
         elif status == "offline":
             online = False
             self.facade.module_offline(module_id)
-            
+
         self.modules.notify_module_online_update(module_id, online)
 
 

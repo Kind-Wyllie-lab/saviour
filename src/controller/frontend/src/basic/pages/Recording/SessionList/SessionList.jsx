@@ -4,9 +4,15 @@ import "./SessionList.css";
 
 function SessionList({ sessionList }) {
   const [expandedSessions, setExpandedSessions] = useState({});
+  const [pendingDelete, setPendingDelete] = useState(null); // session_name awaiting confirm
 
   const handleStop = (sessionName) => {
     socket.emit("stop_session", { session_name: sessionName });
+  };
+
+  const handleDeleteConfirm = (sessionName) => {
+    socket.emit("delete_session", { session_name: sessionName, delete_files: true });
+    setPendingDelete(null);
   };
 
   const toggleExpand = (sessionName) => {
@@ -135,6 +141,22 @@ function SessionList({ sessionList }) {
                     >
                       Cancel Schedule
                     </button>
+                  )}
+                  {(isStopped || isError) && (
+                    pendingDelete === session.session_name ? (
+                      <div className="delete-confirm">
+                        <span>Delete session and all files?</span>
+                        <button className="delete-confirm-yes" onClick={() => handleDeleteConfirm(session.session_name)}>Yes, delete</button>
+                        <button className="delete-confirm-no"  onClick={() => setPendingDelete(null)}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button
+                        className="delete-button"
+                        onClick={() => setPendingDelete(session.session_name)}
+                      >
+                        Delete
+                      </button>
+                    )
                   )}
                 </div>
               )}

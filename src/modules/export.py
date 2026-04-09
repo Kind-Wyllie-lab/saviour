@@ -485,7 +485,7 @@ class Export:
                     f'//{self.samba_share_ip}/{self.samba_share_path}',
                     self.mount_point,
                     '-o', f'username={self.samba_share_username},password={self.samba_share_password},'
-                          'uid=saviour_module,gid=saviour,file_mode=0664,dir_mode=0775'
+                          'uid=pi,gid=pi,file_mode=0664,dir_mode=0775'
                 ]
 
                 result = subprocess.run(mount_cmd, capture_output=True, text=True)

@@ -294,13 +294,11 @@ class Config:
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
                     _recursive_update(target[k], v, full_key)
                 else:
-                    # Update the value
-                    if target[k] != v:
+                    # Use .get() so new keys (e.g. a freshly added pin) don't raise KeyError
+                    if target.get(k) != v:
                         target[k] = v
                         config_updated = True
                         updated_keys.append(full_key)
-                    else:
-                        pass
 
         _recursive_update(self.config, updates)
 

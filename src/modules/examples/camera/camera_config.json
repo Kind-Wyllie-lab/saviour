@@ -8,6 +8,7 @@
         "overlay_timestamp": true,
         "text_size": "medium",
         "gain": 10,
+        "manual_exposure": false,
         "exposure_time": 10000,
         "brightness": 0,
         "overlay_framerate_on_preview": true,

@@ -168,7 +168,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
     const {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
-      monochrome, brightness, gain, exposure_time, overlay_framerate_on_preview,
+      monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
       bitrate_mb,
       ...rest
     } = formData.camera;
@@ -281,11 +281,26 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
               onChange={e => handleChange(["camera", "gain"], e)} />
           </div>
           <div className="form-field">
-            <label>Exposure time (µs):</label>
-            <input type="number" min="1" step="100"
-              value={cam.exposure_time ?? ""}
-              onChange={e => handleChange(["camera", "exposure_time"], e)} />
+            <label>Manual exposure:</label>
+            <input type="checkbox"
+              checked={cam.manual_exposure ?? false}
+              onChange={e => handleChange(["camera", "manual_exposure"], e)} />
           </div>
+          {cam.manual_exposure ? (
+            <div className="form-field">
+              <label>Exposure time (µs):</label>
+              <input type="number" min="1" step="100"
+                value={cam.exposure_time ?? ""}
+                onChange={e => handleChange(["camera", "exposure_time"], e)} />
+            </div>
+          ) : (
+            <div className="form-field">
+              <label>Exposure time (µs):</label>
+              <span className="form-field-computed">
+                {cam.fps ? Math.round(1_000_000 / cam.fps).toLocaleString() : "—"} (auto)
+              </span>
+            </div>
+          )}
 
           {/* ── Recording ── */}
           <div className="form-field">

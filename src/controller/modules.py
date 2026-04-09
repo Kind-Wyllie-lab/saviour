@@ -300,6 +300,12 @@ class Modules:
         """Return all modules serialised to dicts, ready for the frontend."""
         return self._serialise_modules()
 
+    def has_config(self, module_id: str) -> bool:
+        """Return True if we have a confirmed config from this module."""
+        state = self._config_states.get(module_id)
+        return bool(state and state.true_config)
+
+
     def get_module_configs(self) -> Dict[str, Any]:
         """Return config state for all modules, keyed by module_id."""
         result = {}

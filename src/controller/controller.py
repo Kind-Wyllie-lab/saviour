@@ -163,6 +163,12 @@ class Controller(ABC):
                 case 'heartbeat':
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
+                    # If we have no config for this module yet (e.g. it restarted and
+                    # the initial get_config was sent before its ZMQ socket was ready),
+                    # request it now that we know ZMQ comms are working.
+                    if not self.modules.has_config(module_id):
+                        self.logger.info(f"No config stored for {module_id}, requesting via heartbeat trigger")
+                        self.communication.send_command(module_id, "get_config", {})
 
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")

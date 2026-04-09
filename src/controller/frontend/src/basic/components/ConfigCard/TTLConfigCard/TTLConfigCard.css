@@ -1,164 +1,273 @@
-.ttl-card {
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 12px;
-    margin: 10px 0;
-    background: var(--card-bg-color);
-    color: var(--text-color);
-    max-width: 800px;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+/* ── Card shell ─────────────────────────────────────────────────────── */
+.ttl-config-card {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  box-shadow: 0 0 20px rgba(0,0,0,0.5);
+  max-width: 1100px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border-color);
+  gap: 12px;
+}
+
+.card-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-header-left h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.module-meta {
+  font-size: 0.75rem;
+  opacity: 0.55;
+}
+
+.card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Two-column body ─────────────────────────────────────────────────── */
+.ttl-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 14px;
+}
+
+.ttl-stream-col {
+  min-width: 0; /* prevent overflow */
+}
+
+.ttl-config-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* ── Active-logic row ────────────────────────────────────────────────── */
+.form-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-field label {
+  font-weight: 500;
+  min-width: 80px;
+  font-size: 0.85rem;
+}
+
+.form-field select {
+  padding: 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+/* ── Pin list ────────────────────────────────────────────────────────── */
+.pin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.no-pins-hint {
+  font-size: 0.8rem;
+  opacity: 0.5;
+  margin: 0;
+}
+
+.pin-card {
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pin-card--input  { border-color: #4a90d9; }
+.pin-card--output { border-color: #5dba72; }
+
+.pin-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pin-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  flex: 1;
+}
+
+.pin-type-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.badge--input  { background: #1e3a5f; color: #7ab8f5; }
+.badge--output { background: #1a3d26; color: #6fcf8a; }
+
+.btn-remove {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  opacity: 0.45;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: opacity 0.15s;
+}
+.btn-remove:hover { opacity: 1; }
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.field label {
+  font-weight: 500;
+  min-width: 80px;
+}
+
+.field input[type="text"],
+.field input[type="number"] {
+  width: 90px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+.field select {
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.85rem;
+  max-width: 170px;
+}
+
+/* ── Add pin row ─────────────────────────────────────────────────────── */
+.add-pin-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.add-pin-row select {
+  flex: 1;
+  min-width: 90px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+.add-pin-row button {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--accent-color);
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.add-pin-row button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Action buttons ──────────────────────────────────────────────────── */
+.ttl-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ── Sync badges ─────────────────────────────────────────────────────── */
+.config-sync-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.config-sync-badge--pending { background: #554a1a; color: #f0c040; }
+.config-sync-badge--synced  { background: #1a3d26; color: #6fcf8a; }
+.config-sync-badge--failed  { background: #3d1a1a; color: #f07070; }
+
+/* ── Modal ───────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--card-bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 380px;
+  width: 90%;
+}
+
+.modal p { margin: 0 0 8px; }
+
+.modal-subtext {
+  font-size: 0.82rem;
+  opacity: 0.65;
+  margin-bottom: 16px !important;
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* ── Responsive: stack columns on narrow viewports ───────────────────── */
+@media (max-width: 700px) {
+  .ttl-body {
+    grid-template-columns: 1fr;
   }
-
-  .ttl-card h3 {
-    margin: 0 0 10px 0;
-    font-size: 1.2rem;
-  }
-
-  /* ── Pin list ───────────────────────────────────────────── */
-  .pin-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
-  .pin-card {
-    border: 1px dashed var(--border-color);
-    border-radius: 6px;
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .pin-card--input  { border-color: #4a90d9; }
-  .pin-card--output { border-color: #5dba72; }
-
-  .pin-card-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .pin-label {
-    font-weight: 600;
-    font-size: 0.95rem;
-    flex: 1;
-  }
-
-  .pin-type-badge {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding: 2px 6px;
-    border-radius: 3px;
-    text-transform: uppercase;
-  }
-
-  .badge--input  { background: #1e3a5f; color: #7ab8f5; }
-  .badge--output { background: #1a3d26; color: #6fcf8a; }
-
-  .btn-remove {
-    margin-left: auto;
-    padding: 2px 6px;
-    border-radius: 4px;
-    border: none;
-    background: transparent;
-    color: var(--text-color);
-    opacity: 0.5;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: opacity 0.15s;
-  }
-
-  .btn-remove:hover { opacity: 1; }
-
-  .pin-card label {
-    font-weight: 500;
-    margin-right: 8px;
-    min-width: 80px;
-  }
-
-  .pin-card input[type="text"],
-  .pin-card input[type="number"] {
-    flex: 1;
-    max-width: 100px;
-    padding: 4px;
-    border-radius: 4px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-color);
-    color: var(--text-color);
-  }
-
-  .pin-card select {
-    flex: 1;
-    max-width: 180px;
-    padding: 4px;
-    border-radius: 4px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-color);
-    color: var(--text-color);
-  }
-
-  /* ── Add pin row ────────────────────────────────────────── */
-  .add-pin-row {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    align-items: center;
-  }
-
-  .add-pin-row select {
-    flex: 1;
-    padding: 4px 6px;
-    border-radius: 4px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-color);
-    color: var(--text-color);
-  }
-
-  .add-pin-row button {
-    padding: 4px 10px;
-    border-radius: 4px;
-    border: none;
-    background: var(--accent-color);
-    color: white;
-    font-weight: bold;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .add-pin-row button:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  /* ── Misc fields ────────────────────────────────────────── */
-  .field {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .form-field {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-
-  .form-field label {
-    font-weight: 500;
-    min-width: 80px;
-  }
-
-  .form-field select {
-    padding: 4px;
-    border-radius: 4px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-color);
-    color: var(--text-color);
-  }
+}

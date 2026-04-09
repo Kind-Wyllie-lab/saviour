@@ -6,7 +6,7 @@ import { filterPrivateKeys } from "../configUtils";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom"]);
 
-function TTLConfigCard({ module }) {
+function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
   const [newPin, setNewPin] = useState("");
@@ -86,7 +86,7 @@ function TTLConfigCard({ module }) {
   };
 
   const saveConfig = () => {
-    socket.emit("save_module_config", { id: module.id, config: filterPrivateKeys(formData) });
+    socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
   };
 
   return (

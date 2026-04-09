@@ -142,6 +142,28 @@
 }
 .btn-remove:hover { opacity: 1; }
 
+.btn-test-pin {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #2a5a3a;
+  background: transparent;
+  color: #6fcf8a;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-test-pin:hover:not(:disabled) { background: #1a3d26; }
+.btn-test-pin--active {
+  background: #1a3d26;
+  color: #6fcf8a;
+  opacity: 0.7;
+  cursor: default;
+}
+.btn-test-pin--done {
+  border-color: #4a9a5a;
+  color: #4a9a5a;
+}
+
 .field {
   display: flex;
   align-items: center;

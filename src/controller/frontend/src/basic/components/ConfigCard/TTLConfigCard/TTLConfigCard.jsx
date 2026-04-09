@@ -15,6 +15,8 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const [newMode, setNewMode] = useState("");
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  // {pin: "idle" | "testing" | "done"}
+  const [pinTestState, setPinTestState] = useState({});
 
   const ttlCfg = formData?.ttl ?? {};
   const availablePins = module.config?.ttl?._available_pins ?? [];
@@ -87,6 +89,15 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
         },
       },
     }));
+  };
+
+  const testPin = (pin) => {
+    setPinTestState((prev) => ({ ...prev, [pin]: "testing" }));
+    socket.emit("send_command", { module_id: id, type: "test_pin", params: { pin: Number(pin), duration: 5 } });
+    setTimeout(() => {
+      setPinTestState((prev) => ({ ...prev, [pin]: "done" }));
+      setTimeout(() => setPinTestState((prev) => { const n = { ...prev }; delete n[pin]; return n; }), 2000);
+    }, 5000);
   };
 
   const saveConfig = () => {
@@ -163,6 +174,17 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                       <span className={`pin-type-badge ${isOutput ? "badge--output" : "badge--input"}`}>
                         {isOutput ? "OUTPUT" : "INPUT"}
                       </span>
+                      {isOutput && (
+                        <button
+                          className={`btn-test-pin${pinTestState[pin] === "testing" ? " btn-test-pin--active" : pinTestState[pin] === "done" ? " btn-test-pin--done" : ""}`}
+                          type="button"
+                          disabled={pinTestState[pin] === "testing"}
+                          onClick={() => testPin(pin)}
+                          title="Run a 5-second test pulse to validate the signal"
+                        >
+                          {pinTestState[pin] === "testing" ? "Testing…" : pinTestState[pin] === "done" ? "Done" : "Test"}
+                        </button>
+                      )}
                       <button className="btn-remove" onClick={() => removePin(pin)}>✕</button>
                     </div>
 

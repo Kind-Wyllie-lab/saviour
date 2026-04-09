@@ -43,7 +43,7 @@
 /* ── Two-column body ─────────────────────────────────────────────────── */
 .ttl-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 3fr 2fr;
   gap: 16px;
   padding: 14px;
 }
@@ -59,25 +59,9 @@
   min-width: 0;
 }
 
-/* ── Active-logic row ────────────────────────────────────────────────── */
-.form-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.form-field label {
-  font-weight: 500;
-  min-width: 80px;
-  font-size: 0.85rem;
-}
-
-.form-field select {
-  padding: 4px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-color);
-  color: var(--text-color);
+/* ── Active-logic row (scoped to TTL config col to avoid global conflicts) */
+.ttl-config-col .form-field > label:first-child {
+  flex: 0 0 120px;
   font-size: 0.85rem;
 }
 

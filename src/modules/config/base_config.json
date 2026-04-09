@@ -29,8 +29,8 @@
         "_manifest_enabled": false,
         "share_path": "controller_share",
         "share_ip": "10.0.0.1",
-        "_share_username": "pi",
-        "_share_password": "saviour",
+        "share_username": "saviour_module",
+        "share_password": "",
         "max_bitrate_mb": 950,
         "max_burst_kb": 30
     }

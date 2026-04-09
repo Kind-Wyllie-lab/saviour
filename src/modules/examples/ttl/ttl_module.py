@@ -100,10 +100,6 @@ class TTLModule(Module):
         # Assign pins from config
         self.assign_pins()
 
-        # Recording variables
-        self.recording_start_time = None
-        self.recording_stop_time = None
-
         # Pulse generation variables
         self.pulse_generation_active = False
         self.pulse_generation_thread = None
@@ -322,28 +318,19 @@ class TTLModule(Module):
             # self.add_session_file(events_file)
             self._close_ttl_event_file(filename=self.current_ttl_events_filename)
             
-            # Calculate duration
-            if self.recording_start_time is not None:
-                
-                # Send status response after successful recording stop
-                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                    self.communication.send_status({
-                        "type": "recording_stopped",
-                        "session_id": self.recording_session_id,
-                        "status": "success",
-                        "recording": False,
-                        "message": f"Recording completed successfully"
-                    })
-                return True
-            else:
-                self.logger.error("Error: recording_start_time was None")
-                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                    self.communication.send_status({
-                        "type": "recording_stopped",
-                        "status": "error",
-                        "error": "Recording start time was not set."
-                    })
-                return False
+            if self.recording.recording_start_time is None:
+                self.logger.warning("recording_start_time was None at stop — module may not have started recording")
+
+            # Send status response after successful recording stop
+            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                self.communication.send_status({
+                    "type": "recording_stopped",
+                    "session_id": self.recording_session_id,
+                    "status": "success",
+                    "recording": False,
+                    "message": "Recording completed successfully"
+                })
+            return True
             
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")

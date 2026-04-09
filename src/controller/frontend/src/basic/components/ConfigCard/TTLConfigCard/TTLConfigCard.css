@@ -11,62 +11,77 @@
     align-items: stretch;
     box-shadow: 0 0 20px rgba(0,0,0,0.5);
   }
-  
+
   .ttl-card h3 {
     margin: 0 0 10px 0;
     font-size: 1.2rem;
   }
-  
-  .add-pin-row {
+
+  /* ── Pin list ───────────────────────────────────────────── */
+  .pin-list {
     display: flex;
+    flex-direction: column;
     gap: 8px;
     margin-bottom: 12px;
   }
-  
-  .add-pin-row input[type="number"] {
-    flex: 1;
-    padding: 4px 6px;
-    border-radius: 4px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-color);
-    color: var(--text-color);
-  }
-  
-  .add-pin-row button {
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: none;
-    background: var(--accent-color);
-    color: white;
-    font-weight: bold;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  
-  .add-pin-row button:hover {
-    background: darken(var(--accent-color), 10%);
-  }
-  
+
   .pin-card {
     border: 1px dashed var(--border-color);
     border-radius: 6px;
     padding: 10px;
-    margin-bottom: 10px;
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
-  
-  .pin-card h4 {
-    margin: 0;
-    font-size: 1rem;
+
+  .pin-card--input  { border-color: #4a90d9; }
+  .pin-card--output { border-color: #5dba72; }
+
+  .pin-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
-  
+
+  .pin-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+    flex: 1;
+  }
+
+  .pin-type-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+
+  .badge--input  { background: #1e3a5f; color: #7ab8f5; }
+  .badge--output { background: #1a3d26; color: #6fcf8a; }
+
+  .btn-remove {
+    margin-left: auto;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    opacity: 0.5;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: opacity 0.15s;
+  }
+
+  .btn-remove:hover { opacity: 1; }
+
   .pin-card label {
     font-weight: 500;
     margin-right: 8px;
+    min-width: 80px;
   }
-  
+
   .pin-card input[type="text"],
   .pin-card input[type="number"] {
     flex: 1;
@@ -77,54 +92,73 @@
     background: var(--bg-color);
     color: var(--text-color);
   }
-  
+
   .pin-card select {
     flex: 1;
-    max-width: 150px;
+    max-width: 180px;
     padding: 4px;
     border-radius: 4px;
     border: 1px solid var(--border-color);
     background: var(--bg-color);
     color: var(--text-color);
   }
-  
-  .pin-card button {
-    align-self: flex-start;
+
+  /* ── Add pin row ────────────────────────────────────────── */
+  .add-pin-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    align-items: center;
+  }
+
+  .add-pin-row select {
+    flex: 1;
     padding: 4px 6px;
     border-radius: 4px;
-    border: none;
-    background: var(--accent-color);
-    color: white;
-    font-weight: bold;
-    cursor: pointer;
-    max-width: 120px;
-    transition: background 0.2s;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
   }
-  
-  .pin-card button:hover {
-    background: darken(var(--accent-color), 10%);
-  }
-  
-  .ttl-card > button {
-    margin-top: 10px;
-    align-self: flex-start;
-    padding: 6px 10px;
+
+  .add-pin-row button {
+    padding: 4px 10px;
     border-radius: 4px;
     border: none;
     background: var(--accent-color);
     color: white;
     font-weight: bold;
     cursor: pointer;
-    max-width: 200px;
+    white-space: nowrap;
   }
-  
-  .ttl-card > button:hover {
-    background: darken(var(--accent-color), 10%);
+
+  .add-pin-row button:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
-  
+
+  /* ── Misc fields ────────────────────────────────────────── */
   .field {
     display: flex;
     align-items: center;
     gap: 6px;
   }
-  
+
+  .form-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .form-field label {
+    font-weight: 500;
+    min-width: 80px;
+  }
+
+  .form-field select {
+    padding: 4px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
+  }

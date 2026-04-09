@@ -90,6 +90,13 @@ class TTLModule(Module):
         self.pseudorandom_pins = []  # Pins configured as pseudorandom
         self.generator_threads = {}  # Store generator threads
 
+        # Rolling pin state buffers: {pin_number: deque of bool (True = electrical HIGH)}
+        # Must be initialised before assign_pins() which populates them
+        self.MONITOR_COLS = 500   # samples; at 25 Hz ≈ 20 s of history
+        self.MONITOR_HZ   = 25
+        self.pin_state_buffers = {}
+        self.pin_state_lock = threading.Lock()
+
         # Assign pins from config
         self.assign_pins()
 
@@ -117,12 +124,6 @@ class TTLModule(Module):
         self.monitoring_server_thread = None
         self.should_stop_monitoring = False
         self.monitor_sample_thread = None
-
-        # Rolling pin state buffers: {pin_number: deque of bool (True = electrical HIGH)}
-        self.MONITOR_COLS = 500   # samples; at 25 Hz ≈ 20 s of history
-        self.MONITOR_HZ   = 25
-        self.pin_state_buffers = {}
-        self.pin_state_lock = threading.Lock()
 
         self._register_monitoring_routes()
 

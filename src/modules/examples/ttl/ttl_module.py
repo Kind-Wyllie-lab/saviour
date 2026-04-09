@@ -195,12 +195,14 @@ class TTLModule(Module):
 
 
     def test_pin(self, pin: int, duration: float = 5.0) -> dict:
-        """Run a 2 Hz pulse train on an output pin for *duration* seconds.
+        """Run a mode-faithful test on an output pin for *duration* seconds.
+
+        - experiment_clock: runs the configured clock (period/duty_cycle)
+        - pseudorandom: runs the configured random pulse train (min/max interval, pulse_duration)
+        - other output: falls back to a 2 Hz square wave
 
         Useful for validating that a signal can be seen on downstream hardware
         without starting a full recording session.
-
-        Returns an error if the pin is not configured as an output.
         """
         pin_number = int(pin)
         duration = float(duration)
@@ -222,22 +224,74 @@ class TTLModule(Module):
 
         stop_event = threading.Event()
         self._pin_test_stop_flags[pin_number] = stop_event
+        pin_config = self.pin_configs.get(pin_number, {})
+        mode = pin_config.get("mode", "")
 
-        def _run_test(p, stop, dur):
-            self.logger.info(f"test_pin: starting {dur}s pulse train on GPIO {pin_number}")
-            try:
-                deadline = time.monotonic() + dur
-                while time.monotonic() < deadline and not stop.is_set():
-                    self._set_output_active(p)
-                    stop.wait(0.25)
-                    if stop.is_set():
-                        break
+        if mode == "experiment_clock":
+            duty_cycle = float(pin_config.get("duty_cycle", 0.5))
+            period = float(pin_config.get("period", 1.0))
+            high_time = period * duty_cycle
+            low_time = period * (1.0 - duty_cycle)
+
+            def _run_test(p, stop, dur):
+                self.logger.info(f"test_pin: experiment_clock on GPIO {pin_number} "
+                                 f"period={period}s duty={duty_cycle} for {dur}s")
+                try:
+                    deadline = time.monotonic() + dur
+                    while time.monotonic() < deadline and not stop.is_set():
+                        self._set_output_active(p)
+                        if stop.wait(min(high_time, deadline - time.monotonic())):
+                            break
+                        self._set_output_inactive(p)
+                        if stop.wait(min(low_time, max(0.0, deadline - time.monotonic()))):
+                            break
+                finally:
                     self._set_output_inactive(p)
-                    stop.wait(0.25)
-            finally:
-                self._set_output_inactive(p)
-                self._pin_test_stop_flags.pop(pin_number, None)
-                self.logger.info(f"test_pin: finished pulse train on GPIO {pin_number}")
+                    self._pin_test_stop_flags.pop(pin_number, None)
+                    self.logger.info(f"test_pin: finished on GPIO {pin_number}")
+
+        elif mode == "pseudorandom":
+            min_interval = float(pin_config.get("min_interval", 1.0))
+            max_interval = float(pin_config.get("max_interval", 10.0))
+            pulse_duration = float(pin_config.get("pulse_duration", 0.01))
+
+            def _run_test(p, stop, dur):
+                self.logger.info(f"test_pin: pseudorandom on GPIO {pin_number} "
+                                 f"min={min_interval}s max={max_interval}s pulse={pulse_duration}s for {dur}s")
+                try:
+                    deadline = time.monotonic() + dur
+                    while time.monotonic() < deadline and not stop.is_set():
+                        interval = random.uniform(min_interval, max_interval)
+                        if stop.wait(min(interval, max(0.0, deadline - time.monotonic()))):
+                            break
+                        if time.monotonic() >= deadline:
+                            break
+                        self._set_output_active(p)
+                        if stop.wait(min(pulse_duration, max(0.0, deadline - time.monotonic()))):
+                            break
+                        self._set_output_inactive(p)
+                finally:
+                    self._set_output_inactive(p)
+                    self._pin_test_stop_flags.pop(pin_number, None)
+                    self.logger.info(f"test_pin: finished on GPIO {pin_number}")
+
+        else:
+            # Generic fallback: 2 Hz square wave
+            def _run_test(p, stop, dur):
+                self.logger.info(f"test_pin: 2 Hz pulse on GPIO {pin_number} for {dur}s")
+                try:
+                    deadline = time.monotonic() + dur
+                    while time.monotonic() < deadline and not stop.is_set():
+                        self._set_output_active(p)
+                        stop.wait(0.25)
+                        if stop.is_set():
+                            break
+                        self._set_output_inactive(p)
+                        stop.wait(0.25)
+                finally:
+                    self._set_output_inactive(p)
+                    self._pin_test_stop_flags.pop(pin_number, None)
+                    self.logger.info(f"test_pin: finished on GPIO {pin_number}")
 
         t = threading.Thread(
             target=_run_test,
@@ -246,7 +300,7 @@ class TTLModule(Module):
             name=f"test-pin-{pin_number}",
         )
         t.start()
-        return {"result": "success", "message": f"Running 2 Hz test pulse on GPIO {pin_number} for {duration}s"}
+        return {"result": "success", "message": f"Running {mode or '2 Hz'} test on GPIO {pin_number} for {duration}s"}
 
 
     def _stop_all_pin_tests(self):

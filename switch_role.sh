@@ -636,7 +636,8 @@ Wants=ptp4l.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/phc2sys -a -r -r
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/sbin/phc2sys -a -r -r -m
 Restart=always
 RestartSec=5
 
@@ -658,7 +659,13 @@ EOF
 
 configure_ptp_timereceiver() {
     echo "Configuring PTP to act as timeReceiver"
-    
+
+    # Disable timesyncd — it conflicts with phc2sys on modules.
+    # The controller keeps NTP/timesyncd running so PTP can broadcast internet time.
+    echo "Disabling systemd-timesyncd (conflicts with phc2sys on timeReceiver)"
+    sudo timedatectl set-ntp false
+    sudo systemctl disable --now systemd-timesyncd 2>/dev/null || true
+
     # Stop existing services if running
     sudo systemctl stop ptp4l 2>/dev/null || true
     sudo systemctl stop phc2sys 2>/dev/null || true
@@ -694,7 +701,7 @@ Wants=ptp4l.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m
+ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -R 8
 Restart=always
 RestartSec=5
 

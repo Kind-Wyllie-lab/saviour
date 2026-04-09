@@ -131,11 +131,10 @@ class TTLModule(Module):
         self._register_monitoring_routes()
 
         # Set up TTL-specific callbacks for the command handler
-        self.ttl_callbacks = {
+        self.ttl_commands = {
             "test_pin": self.test_pin,
         }
-        self.command.set_callbacks(self.ttl_callbacks) # Append new TTL callbacks
-        self.logger.info(f"Command handler callbacks: {self.command.callbacks}")
+        self.command.set_commands(self.ttl_commands) # Append new TTL callbacks
 
         self.logger.info(f"Initialized TTL module with {len(self.input_pins)} input pins and {len(self.output_pins)} output pins")
 

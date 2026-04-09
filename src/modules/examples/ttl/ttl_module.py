@@ -257,14 +257,14 @@ class TTLModule(Module):
             try:
                 deadline = time.monotonic() + dur
                 while time.monotonic() < deadline and not stop.is_set():
-                    p.on()
+                    self._set_output_active(p)
                     stop.wait(0.25)
                     if stop.is_set():
                         break
-                    p.off()
+                    self._set_output_inactive(p)
                     stop.wait(0.25)
             finally:
-                p.off()
+                self._set_output_inactive(p)
                 self._pin_test_stop_flags.pop(pin_number, None)
                 self.logger.info(f"test_pin: finished pulse train on GPIO {pin_number}")
 

@@ -308,8 +308,8 @@ class TTLModule(Module):
             # Stop all pin generators
             self._stop_pin_generators()
 
-            # Set all output pins to low to signal experiment stopped
-            self._set_all_output_pins_low()
+            # Return all output pins to resting (inactive) state
+            self._set_all_output_pins_inactive()
             
             # Update recording state
             self.recording_stop_time = time.time()
@@ -632,41 +632,37 @@ class TTLModule(Module):
                             pin_obj = gpiozero.LED(pin_number)
                             self.output_pins.append(pin_obj)
                             output_pins_assigned.append(pin_number)
-                            # For pseudorandom, start in low state
-                            pin_obj.off()
+                            self._set_output_inactive(pin_obj)
                             self.pseudorandom_pins.append(pin_number)
-                            self.logger.info(f"Assigned output pin {pin_number} as pseudorandom (initial state: LOW)")
+                            self.logger.info(f"Assigned output pin {pin_number} as pseudorandom (initial state: inactive)")
                         except Exception as e:
                             self.logger.error(f"Failed to assign output pin {pin_number}: {e}")
-                            # Try to clean up and retry once
                             self._cleanup_gpio()
                             try:
                                 pin_obj = gpiozero.LED(pin_number)
                                 self.output_pins.append(pin_obj)
                                 output_pins_assigned.append(pin_number)
-                                pin_obj.off()
+                                self._set_output_inactive(pin_obj)
                                 self.logger.info(f"Successfully assigned output pin {pin_number} after retry")
                             except Exception as e2:
                                 self.logger.error(f"Failed to assign output pin {pin_number} after retry: {e2}")
-                            
+
                     elif pin_type == "experiment_clock":
                         try:
                             pin_obj = gpiozero.LED(pin_number)
                             self.output_pins.append(pin_obj)
                             output_pins_assigned.append(pin_number)
-                            # For experiment clock, start in low state (will go high when recording starts)
-                            pin_obj.off()
+                            self._set_output_inactive(pin_obj)
                             self.experiment_clock_pins.append(pin_number)
-                            self.logger.info(f"Assigned output pin {pin_number} as experiment_clock (initial state: LOW)")
+                            self.logger.info(f"Assigned output pin {pin_number} as experiment_clock (initial state: inactive)")
                         except Exception as e:
                             self.logger.error(f"Failed to assign output pin {pin_number}: {e}")
-                            # Try to clean up and retry once
                             self._cleanup_gpio()
                             try:
                                 pin_obj = gpiozero.LED(pin_number)
                                 self.output_pins.append(pin_obj)
                                 output_pins_assigned.append(pin_number)
-                                pin_obj.off()
+                                self._set_output_inactive(pin_obj)
                                 self.logger.info(f"Successfully assigned output pin {pin_number} after retry")
                             except Exception as e2:
                                 self.logger.error(f"Failed to assign output pin {pin_number} after retry: {e2}")
@@ -752,18 +748,34 @@ class TTLModule(Module):
             self.logger.error(f"Error stopping pin generators: {e}")
     
 
-    def _set_all_output_pins_low(self):
-        """Set all output pins to low state"""
+    def _set_output_active(self, pin_obj) -> None:
+        """Drive pin to its electrically active state."""
+        active_logic = self.config.get("ttl.active_logic", "active_low")
+        if active_logic == "active_low":
+            pin_obj.off()   # active = LOW
+        else:
+            pin_obj.on()    # active = HIGH
+
+    def _set_output_inactive(self, pin_obj) -> None:
+        """Drive pin to its electrically inactive (resting) state."""
+        active_logic = self.config.get("ttl.active_logic", "active_low")
+        if active_logic == "active_low":
+            pin_obj.on()    # inactive = HIGH
+        else:
+            pin_obj.off()   # inactive = LOW
+
+    def _set_all_output_pins_inactive(self):
+        """Set all output pins to their resting (inactive) electrical state."""
         try:
             for pin in self.output_pins:
                 try:
-                    pin.off()
-                    self.logger.info(f"Set output pin {pin.pin.number} to low state")
+                    self._set_output_inactive(pin)
+                    self.logger.info(f"Set output pin {pin.pin.number} to inactive state")
                 except Exception as e:
-                    self.logger.error(f"Error setting pin {pin.pin.number} to low: {e}")
-            self.logger.info(f"Set all {len(self.output_pins)} output pins to low state")
+                    self.logger.error(f"Error setting pin {pin.pin.number} to inactive: {e}")
+            self.logger.info(f"Set all {len(self.output_pins)} output pins to inactive state")
         except Exception as e:
-            self.logger.error(f"Error setting output pins to low: {e}")
+            self.logger.error(f"Error setting output pins to inactive: {e}")
     
 
     def _start_experiment_clock(self, pin_number):
@@ -786,8 +798,8 @@ class TTLModule(Module):
                 self.logger.error(f"Could not find pin object for experiment clock pin {pin_number}")
                 return False
             
-            # Set initial state to HIGH (experiment clock starts high when recording begins)
-            pin_obj.on()
+            # Set initial state to active (clock is active as soon as recording begins)
+            self._set_output_active(pin_obj)
             self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
             self.logger.info(f"Started experiment clock on pin {pin_number} with {duty_cycle} duty cycle")
             
@@ -817,25 +829,24 @@ class TTLModule(Module):
                 high_time = period * duty_cycle
                 low_time = period * (1.0 - duty_cycle)
                 
-                # High phase
-                pin_obj.on()
+                # Active phase
+                self._set_output_active(pin_obj)
                 self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
                 time.sleep(high_time)
-                
-                # Check if still recording
+
                 if not self.is_recording:
                     break
-                
-                # Low phase
-                pin_obj.off()
+
+                # Inactive phase
+                self._set_output_inactive(pin_obj)
                 self._write_ttl_event(time.time_ns(), pin_number, TTLValue.LOW)
                 time.sleep(low_time)
-                
+
         except Exception as e:
             self.logger.error(f"Error in experiment clock worker for pin {pin_number}: {e}")
         finally:
-            pin_obj.off()
-            self.logger.info(f"Experiment clock worker stopped for pin {pin_number} and pin set to low")
+            self._set_output_inactive(pin_obj)
+            self.logger.info(f"Experiment clock worker stopped for pin {pin_number}, returned to inactive state")
     
 
     def _start_pseudorandom_generator(self, pin_number):
@@ -894,17 +905,18 @@ class TTLModule(Module):
                 if not self.is_recording:
                     break
                 
-                # Generate pulse (set low, then high)
-                pin_obj.off()
-                self._write_ttl_event(time.time_ns(), pin_number, TTLValue.LOW)
-                time.sleep(pulse_duration)
-                pin_obj.on()
+                # Generate pulse: active for pulse_duration, then return to inactive
+                self._set_output_active(pin_obj)
                 self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
-                
+                time.sleep(pulse_duration)
+                self._set_output_inactive(pin_obj)
+                self._write_ttl_event(time.time_ns(), pin_number, TTLValue.LOW)
+
         except Exception as e:
             self.logger.error(f"Error in pseudorandom worker for pin {pin_number}: {e}")
         finally:
-            self.logger.info(f"Pseudorandom worker stopped for pin {pin_number}")
+            self._set_output_inactive(pin_obj)
+            self.logger.info(f"Pseudorandom worker stopped for pin {pin_number}, returned to inactive state")
     
 
     """Monitoring stream"""
@@ -1180,10 +1192,10 @@ class TTLModule(Module):
             # Stop all pin generators
             self._stop_pin_generators()
             
-            # Turn off all output pins
+            # Return all output pins to inactive state before cleanup
             for pin in self.output_pins:
                 try:
-                    pin.off()
+                    self._set_output_inactive(pin)
                 except:
                     pass
             

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
@@ -18,6 +19,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   // {pin: "idle" | "testing" | "done"}
   const [pinTestState, setPinTestState] = useState({});
+  const { updateStatus, handleUpdate } = useModuleUpdate(id);
 
   const ttlCfg = formData?.ttl ?? {};
   const availablePins = module.config?.ttl?._available_pins ?? [];
@@ -260,10 +262,14 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
                 Reset to Default
               </button>
-              <button className="update-button" type="button"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "update_saviour", params: {} })}>
-                Update Saviour
+              <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
+                {updateStatus === "updating" ? "Updating…" : "Update Saviour"}
               </button>
+              {updateStatus && updateStatus !== "updating" && (
+                <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                  {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
+                </span>
+              )}
               <button className="update-button" type="button"
                 onClick={() => socket.emit("send_command", { module_id: id, type: "reboot", params: {} })}>
                 Reboot

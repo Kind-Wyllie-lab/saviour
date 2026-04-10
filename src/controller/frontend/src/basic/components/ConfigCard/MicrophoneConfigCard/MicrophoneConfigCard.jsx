@@ -4,6 +4,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
+import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -57,6 +58,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [hasSaved, setHasSaved]                 = useState(false);
+  const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
   const streamPort = module.config?.monitoring?.port ?? 8081;
 
@@ -153,10 +155,14 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       </div>
 
       <div className="update-button-wrapper">
-        <button className="update-button" type="button"
-          onClick={() => socket.emit("send_command", { module_id: module.id, type: "update_saviour", params: {} })}>
-          Update Saviour Version
+        <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
+          {updateStatus === "updating" ? "Updating…" : "Update Saviour Version"}
         </button>
+        {updateStatus && updateStatus !== "updating" && (
+          <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+            {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
+          </span>
+        )}
       </div>
       <div className="update-button-wrapper">
         <button className="update-button" type="button"

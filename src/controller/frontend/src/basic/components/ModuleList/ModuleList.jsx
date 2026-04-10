@@ -1,11 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import "./ModuleList.css";
 
 function ModuleList({ modules }) {
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [updateStatuses, setUpdateStatuses] = useState({}); // { module_id: "updating" | { success, output } }
+
+  useEffect(() => {
+    const handler = (data) => {
+      setUpdateStatuses(prev => ({
+        ...prev,
+        [data.module_id]: { success: data.success, output: data.output },
+      }));
+    };
+    socket.on("module_update_result", handler);
+    return () => socket.off("module_update_result", handler);
+  }, []);
 
   const handleUpdateAll = () => {
+    const pending = {};
+    modules.forEach(m => { pending[m.id] = "updating"; });
+    setUpdateStatuses(pending);
     socket.emit("send_command", { module_id: "all", type: "update_saviour", params: {} });
   };
 
@@ -35,28 +50,35 @@ function ModuleList({ modules }) {
           <span>Version</span>
         </div>
 
-        {modules.map((module) => (
-          <div className="module-list-item" key={module.id}>
-            <div className="module-list-item-start">
-              <div className={`status-icon ${module.status.toLowerCase()}`} />
-              <span>{module.name} ({module.type})</span>
+        {modules.map((module) => {
+          const upd = updateStatuses[module.id];
+          return (
+            <div className="module-list-item" key={module.id}>
+              <div className="module-list-item-start">
+                <div className={`status-icon ${module.status.toLowerCase()}`} />
+                <span>{module.name} ({module.type})</span>
+              </div>
+              <span>{module.status}</span>
+              <span>{module.ip}</span>
+              <span className="module-version" title={module.version}>
+                {formatVersion(module.version)}
+              </span>
+              {upd && (
+                <span className={`module-update-status ${upd === "updating" ? "module-update-status--pending" : upd.success ? "module-update-status--success" : "module-update-status--error"}`}
+                  title={upd !== "updating" ? upd.output : undefined}>
+                  {upd === "updating" ? "Updating…" : upd.success ? `\u2713 ${upd.output}` : `\u2717 ${upd.output}`}
+                </span>
+              )}
             </div>
-            <span>{module.status}</span>
-            <span>{module.ip}</span>
-            <span
-              className="module-version"
-              title={module.version}
-            >
-              {formatVersion(module.version)}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {modules.length > 0 && (
         <div className="bulk-actions">
-          <button className="bulk-btn" type="button" onClick={handleUpdateAll}>
-            Update All
+          <button className="bulk-btn" type="button" onClick={handleUpdateAll}
+            disabled={modules.some(m => updateStatuses[m.id] === "updating")}>
+            {modules.some(m => updateStatuses[m.id] === "updating") ? "Updating…" : "Update All"}
           </button>
           <button className="bulk-btn bulk-btn--danger" type="button" onClick={() => setShowRebootConfirm(true)}>
             Reboot All

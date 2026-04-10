@@ -1,44 +1,72 @@
-// src/pages/Dashboard.js
 import React from "react";
-
-// Styling and components
 import "./Dashboard.css";
-import ModuleList from "/src/basic/components/ModuleList/ModuleList";
-import ExperimentMetadata from "/src/basic/components/ExperimentMetadata/ExperimentMetadata";
-import CommandsPanel from "/src/basic/components/CommandsPanel/CommandsPanel";
-import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
-import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
-import socket from "/src/socket";
 
-// Hooks
 import useModules from "/src/hooks/useModules";
-import useExperimentTitle from "/src/hooks/useExperimentTitle";
+import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
+import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
+import ModuleList from "/src/basic/components/ModuleList/ModuleList";
+import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
+// MJPEG stream port by module type
+const STREAM_PORTS = {
+  camera:     8080,
+  microphone: 8081,
+  ttl:        8082,
+};
 
 function Dashboard() {
   const { moduleList } = useModules();
-  const { experimentName } = useExperimentTitle();
 
-  const cameraModules = (moduleList || []).filter(
-    (m) => m.type === "camera"
-  );
+  const cameraModules     = moduleList.filter((m) => m.type === "camera");
+  const micModules        = moduleList.filter((m) => m.type === "microphone");
+  const ttlModules        = moduleList.filter((m) => m.type === "ttl");
 
   return (
-    <main className="dashboard">
-      <div className="dashboard-left">
-        <section>
+    <div className="dashboard">
+      <RecordingStatusWidget />
+
+      <div className="dashboard-main">
+        {/* ── Left: camera grid ─────────────────────────────────────── */}
+        <div className="dashboard-cameras">
+          {cameraModules.length === 0 ? (
+            <div className="dashboard-no-cameras">No camera modules connected</div>
+          ) : (
+            cameraModules.map((m) => (
+              <MJPEGStreamCard
+                key={m.id}
+                ip={m.ip}
+                port={STREAM_PORTS.camera}
+                label={m.name}
+              />
+            ))
+          )}
+        </div>
+
+        {/* ── Right: status panel ───────────────────────────────────── */}
+        <div className="dashboard-panel">
           <HealthSummaryWidget />
-          <ModuleList modules = { moduleList} />
-        </section>
-      </div>
-      <div className="dashboard-right">
-        <section>
-          {cameraModules.map((m) => (
-            <LivestreamCard module={ m } />
+          <ModuleList modules={moduleList} />
+
+          {micModules.map((m) => (
+            <MJPEGStreamCard
+              key={m.id}
+              ip={m.ip}
+              port={STREAM_PORTS.microphone}
+              label={`${m.name} — Audio`}
+            />
           ))}
-        </section>
+
+          {ttlModules.map((m) => (
+            <MJPEGStreamCard
+              key={m.id}
+              ip={m.ip}
+              port={STREAM_PORTS.ttl}
+              label={`${m.name} — TTL`}
+            />
+          ))}
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
 

@@ -183,11 +183,16 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
 
+            fps = self.config.get("camera.fps", 25)
+            if self.config.get("camera.manual_exposure", False):
+                exposure_time = self.config.get("camera.exposure_time", 10000)
+            else:
+                exposure_time = int(1_000_000 / fps)
             self.picam2.set_controls({
-                "AnalogueGain": self.config.get("camera.gain", 1), 
-                "ExposureTime": self.config.get("camera.exposure_time"),
+                "AnalogueGain": self.config.get("camera.gain", 1),
+                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness"),
-                "FrameRate": self.config.get("camera.fps")
+                "FrameRate": fps,
             })
 
         elif not self.is_streaming:
@@ -246,10 +251,15 @@ class CameraModule(Module):
             sensor = {"output_size": self.mode["size"], "bit_depth": self.mode["bit_depth"]}
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
             lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
+            if self.config.get("camera.manual_exposure", False):
+                exposure_time = self.config.get("camera.exposure_time", 10000)
+            else:
+                exposure_time = int(1_000_000 / self.fps)
+
             controls = {
-                "FrameRate": self.fps, 
-                "AnalogueGain": self.config.get("camera.gain"), 
-                "ExposureTime": self.config.get("camera.exposure_time"), 
+                "FrameRate": self.fps,
+                "AnalogueGain": self.config.get("camera.gain"),
+                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness")
             } # target framerate, in reality it might be lower.
             

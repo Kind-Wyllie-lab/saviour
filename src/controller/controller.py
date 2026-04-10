@@ -163,6 +163,12 @@ class Controller(ABC):
                 case 'heartbeat':
                     self.modules.check_status(module_id, status_data)
                     self.health.update_module_health(module_id, status_data)
+                    # If we have no config for this module yet (e.g. it restarted and
+                    # the initial get_config was sent before its ZMQ socket was ready),
+                    # request it now that we know ZMQ comms are working.
+                    if not self.modules.has_config(module_id):
+                        self.logger.info(f"No config stored for {module_id}, requesting via heartbeat trigger")
+                        self.communication.send_command(module_id, "get_config", {})
 
                 case 'recordings_list':
                     self.logger.info(f"Recordings list received from {module_id}")
@@ -253,7 +259,7 @@ class Controller(ABC):
 
     def on_module_status_change(self, module_id: str, status: str):
         """Callback for when module status changes (online/offline)
-        
+
         Args:
             module_id: String representing the module
             status: may be "online" or "offline"
@@ -262,10 +268,15 @@ class Controller(ABC):
         if status == "online":
             online = True
             self.facade.module_back_online(module_id)
+            # Module came back from offline — its cached config may be from a
+            # previous run. Invalidate it so the frontend shows fresh data.
+            self.modules.invalidate_config(module_id)
+            self.logger.info(f"Requesting fresh config from {module_id} after coming back online")
+            self.communication.send_command(module_id, "get_config", {})
         elif status == "offline":
             online = False
             self.facade.module_offline(module_id)
-            
+
         self.modules.notify_module_online_update(module_id, online)
 
 

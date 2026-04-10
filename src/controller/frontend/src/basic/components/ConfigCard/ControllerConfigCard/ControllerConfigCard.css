@@ -1,0 +1,8 @@
+.controller-config-card .config-card-body {
+  justify-content: center;
+}
+
+.controller-config-card .config-form {
+  max-width: 520px;
+  flex: 0 1 520px;
+}

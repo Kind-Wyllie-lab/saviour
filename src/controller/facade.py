@@ -86,7 +86,7 @@ class ControllerFacade():
             "example": "This is an example system state object",
             "recording": self.get_recording_status(),
             "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": self.get_ptp_sync() # Largest ptp offset from a module in ms
+            "ptp_sync": self.get_ptp_sync() # Largest ptp4l_offset across modules, in nanoseconds
         }
 
 
@@ -130,6 +130,9 @@ class ControllerFacade():
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
+
+    def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
+        return self.controller.recording.delete_session(session_name, delete_files)
 
     def module_stopped(self, module_id: str) -> None:
         self.controller.recording.module_stopped(module_id)

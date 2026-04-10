@@ -149,98 +149,44 @@ class PTP:
 
 
     def _stop_timesyncd(self):
+        """Stop systemd-timesyncd so it doesn't interfere with phc2sys.
+
+        setup.sh should have disabled it permanently; this is a belt-and-braces
+        guard in case it was re-enabled.  We only stop it here (not disable) so
+        we don't make a persistent change on every service start.
         """
-        systemd-timesyncd is a ntp daemon which I have found runs by default on raspberry pi 5.
-        It will interfere with phc2sys function if it is running.
-        It's also necessary to stop ntp. This is achieved with timedatectl set-ntp false. Make sure to run it as sudo.
-        This should be made to happen during setup, but we might as well do it here as well.
-        """
-        self.logger.info("Attempting to stop systemd-timesyncd")
+        # Check first — avoid a pointless systemctl call if already stopped.
         try:
-            # Stop the service
-            result = subprocess.run(["sudo", "systemctl", "stop", "systemd-timesyncd"], 
-                                   capture_output=True, text=True, check=True)
-            self.logger.info("systemd-timesyncd stopped successfully")
-            
-            # Disable the service to prevent auto-restart
-            result = subprocess.run(["sudo", "systemctl", "disable", "systemd-timesyncd"], 
-                                   capture_output=True, text=True, check=True)
-            self.logger.info("systemd-timesyncd disabled successfully")
-            
+            result = subprocess.run(["systemctl", "is-active", "systemd-timesyncd"],
+                                    capture_output=True, text=True)
+            if result.stdout.strip() != "active":
+                self.logger.info("systemd-timesyncd already inactive, skipping stop")
+                return
+        except Exception:
+            pass
+
+        self.logger.info("Stopping systemd-timesyncd to avoid phc2sys conflict")
+        try:
+            subprocess.run(["systemctl", "stop", "systemd-timesyncd"],
+                           capture_output=True, text=True, check=True)
+            subprocess.run(["timedatectl", "set-ntp", "false"],
+                           capture_output=True, text=True, check=True)
+            self.logger.info("systemd-timesyncd stopped and NTP disabled")
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to stop/disable timesyncd: {e}")
-            self.logger.error(f"stdout: {e.stdout}")
-            self.logger.error(f"stderr: {e.stderr}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Failed to stop timesyncd: {str(e)}")
-            raise
-            
-        self.logger.info("Attempting to disable NTP via timedatectl")
-        try:
-            result = subprocess.run(["sudo", "timedatectl", "set-ntp", "false"], 
-                                   capture_output=True, text=True, check=True)
-            self.logger.info("NTP disabled via timedatectl successfully")
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to disable NTP: {e}")
-            self.logger.error(f"stdout: {e.stdout}")
-            self.logger.error(f"stderr: {e.stderr}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Failed to stop timedatectl ntp: {str(e)}")
-            raise
-            
-        # Verify the service is actually stopped
-        try:
-            result = subprocess.run(["systemctl", "is-active", "systemd-timesyncd"], 
-                                   capture_output=True, text=True)
-            status = result.stdout.strip()
-            if status == "active":
-                self.logger.warning("systemd-timesyncd is still active after stop attempt")
-            else:
-                self.logger.info(f"systemd-timesyncd status: {status}")
-        except Exception as e:
-            self.logger.error(f"Could not verify timesyncd status: {str(e)}")
+            self.logger.warning(f"Could not stop timesyncd: {e}")
     
 
     def _start_timesyncd(self):
-        """
-        Resume timesyncd and ntp on cleanup - clock will drift otherwise.
-        """
+        """Resume timesyncd on cleanup so the clock doesn't drift when PTP is stopped."""
+        self.logger.info("Re-enabling systemd-timesyncd")
         try:
-            self.logger.info("Attempting to enable systemd-timesyncd")
-            # Enable the service first
-            result = subprocess.run(["sudo", "systemctl", "enable", "systemd-timesyncd"], 
-                                   capture_output=True, text=True, check=True)
-            self.logger.info("systemd-timesyncd enabled successfully")
-            
-            # Start the service
-            result = subprocess.run(["sudo", "systemctl", "start", "systemd-timesyncd"], 
-                                   capture_output=True, text=True, check=True)
-            self.logger.info("systemd-timesyncd started successfully")
-            
+            subprocess.run(["systemctl", "start", "systemd-timesyncd"],
+                           capture_output=True, text=True, check=True)
+            subprocess.run(["timedatectl", "set-ntp", "true"],
+                           capture_output=True, text=True, check=True)
+            self.logger.info("systemd-timesyncd started and NTP enabled")
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to start systemd-timesyncd: {e}")
-            self.logger.error(f"stdout: {e.stdout}")
-            self.logger.error(f"stderr: {e.stderr}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Failed to start systemd-timesyncd: {str(e)}")
-            raise
-            
-        try:
-            self.logger.info("Attempting to enable NTP via timedatectl")
-            result = subprocess.run(["sudo", "timedatectl", "set-ntp", "true"], 
-                                   capture_output=True, text=True, check=True)
-            self.logger.info("NTP enabled via timedatectl successfully")
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to enable NTP: {e}")
-            self.logger.error(f"stdout: {e.stdout}")
-            self.logger.error(f"stderr: {e.stderr}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Failed to start timedatectl ntp: {str(e)}")
-            raise
+            self.logger.warning(f"Could not re-enable timesyncd: {e}")
 
 
     def _get_service_status(self, service_name):

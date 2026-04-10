@@ -194,7 +194,7 @@ class Network():
         module = Module(
             id = module_id,
             name = info.properties.get(b'name', b'unknown').decode(),
-            version = info.properties.get(b'version', b'unknown'.decode()),
+            version = info.properties.get(b'version', b'unknown').decode(),
             zeroconf_name = name,
             type = info.properties.get(b'type', b'unknown').decode(),
             ip = socket.inet_ntoa(info.addresses[0]),

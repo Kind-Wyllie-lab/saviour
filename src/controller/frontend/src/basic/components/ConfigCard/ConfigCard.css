@@ -28,14 +28,14 @@ align-items: flex-start;
 }
 
 .config-form {
-flex: 1 1 400px;
-border: 1px solid var(--border-color);
-border-radius: 8px;
-padding: 10px;
-display: flex;
-flex-direction: column;
-align-items: center;
-justify-content: space-between;
+  flex: 1 1 400px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
 }
 
 .livestream-wrapper {
@@ -45,45 +45,123 @@ min-width: 300px;
 }
 
 .nested-fieldset {
-  border: 1px dashed var(--border-color);
-  margin: 10px 0;
-  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: 6px;
+  margin: 8px 0;
+  padding: 2px 10px 10px;
+  background: color-mix(in srgb, var(--bg-color) 40%, transparent);
 }
 
-.nested-fieldset legend {
-  font-weight: bold;
+.nested-fieldset-legend {
+  font-weight: 600;
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  cursor: pointer;
+  user-select: none;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nested-fieldset-legend:hover {
+  opacity: 1;
+}
+
+.nested-fieldset-arrow {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
+.nested-fieldset .form-field label {
+  font-size: 0.88em;
+  opacity: 0.85;
 }
 
 .form-field {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
   margin-bottom: 6px;
+  width: 100%;
+  min-width: 0;
 }
 
-.form-field label {
-  flex: 0 0 40%;
-  width: 180px;
+.form-field > label:first-child {
+  flex: 0 0 180px;
   font-weight: 500;
-}
-
-.form-field input {
-  flex: 1 1 auto;
-  max-width: 100px;
+  font-size: 0.88em;
 }
 
 .form-field input[type="text"],
 .form-field input[type="number"] {
   flex: 1;
-  padding: 4px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
   background-color: var(--bg-color);
   color: var(--text-color);
+  font-size: 0.88em;
+}
+
+.form-field select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.88em;
 }
 
 .form-field input[type="checkbox"] {
   transform: scale(1.2);
+  flex: 0 0 auto;
+}
+
+.form-field-computed {
+  flex: 1;
+  color: var(--text-muted, #888);
+  font-size: 0.9em;
+}
+
+.exposure-control {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exposure-control input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
   background-color: var(--bg-color);
   color: var(--text-color);
+  font-size: 0.88em;
+}
+
+.exposure-control input[type="number"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.exposure-manual-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+  font-weight: normal;
+  width: auto;
+  flex: 0 0 auto;
 }
 
 .save-button {

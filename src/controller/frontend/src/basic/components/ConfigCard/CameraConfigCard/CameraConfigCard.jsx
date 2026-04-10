@@ -4,6 +4,7 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 
 const PRESETS = [
   { key: "1080p30",  label: "1080p",        sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
@@ -41,6 +42,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
+  const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -168,7 +170,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
     const {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
-      monochrome, brightness, gain, exposure_time, overlay_framerate_on_preview,
+      monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
       bitrate_mb,
       ...rest
     } = formData.camera;
@@ -282,9 +284,20 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           </div>
           <div className="form-field">
             <label>Exposure time (µs):</label>
-            <input type="number" min="1" step="100"
-              value={cam.exposure_time ?? ""}
-              onChange={e => handleChange(["camera", "exposure_time"], e)} />
+            <div className="exposure-control">
+              <input type="number" min="1" step="100"
+                disabled={!cam.manual_exposure}
+                value={cam.manual_exposure
+                  ? (cam.exposure_time ?? "")
+                  : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
+                onChange={e => handleChange(["camera", "exposure_time"], e)} />
+              <label className="exposure-manual-label">
+                <input type="checkbox"
+                  checked={cam.manual_exposure ?? false}
+                  onChange={e => handleChange(["camera", "manual_exposure"], e)} />
+                Manual
+              </label>
+            </div>
           </div>
 
           {/* ── Recording ── */}
@@ -393,10 +406,14 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       </div>
 
       <div className="update-button-wrapper">
-        <button className="update-button" type="button"
-          onClick={() => socket.emit("send_command", { module_id: module.id, type: "update_saviour", params: {} })}>
-          Update Saviour Version
+        <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
+          {updateStatus === "updating" ? "Updating…" : "Update Saviour Version"}
         </button>
+        {updateStatus && updateStatus !== "updating" && (
+          <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+            {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
+          </span>
+        )}
       </div>
       <div className="update-button-wrapper">
         <button className="update-button" type="button"

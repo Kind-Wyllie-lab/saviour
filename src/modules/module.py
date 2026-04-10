@@ -24,6 +24,8 @@ import datetime
 import csv
 from abc import ABC, abstractmethod 
 
+INSTALL_DIR = "/usr/local/src/saviour"
+
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
 
@@ -200,42 +202,37 @@ class Module(ABC):
         os.system("sudo reboot now")
 
 
-    def update_saviour(self) -> bool:
+    def update_saviour(self) -> dict:
         """Update saviour to the latest version from git"""
         try:
             # Check internet connectivity before attempting git pull
             self.logger.info("Checking internet connectivity before updating SAVIOUR")
             try:
-                subprocess.run(["ping", "-c", "1", "github.com"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(
+                    ["ping", "-c", "1", "-W", "5", "github.com"],
+                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
                 self.logger.info("Internet connectivity confirmed")
             except subprocess.CalledProcessError:
                 self.logger.warning("No internet connectivity, cannot update SAVIOUR")
-                return False
+                return {"result": "error", "output": "No internet connectivity — could not reach github.com"}
+
             self.logger.info("Updating SAVIOUR to the latest version from git")
-
-            # Ensure main branch is checked out before pulling
-            # result = subprocess.run(["git", "checkout", "main"], capture_output=True, text=True)
-            # if result.returncode != 0:
-            #     self.logger.error(f"Failed to checkout main branch: {result.stderr}")
-            #     return False
-
-            # Still shows Host key verification failed when running as root under systemd, even after creating known_hosts file - workaround is to disable strict host key checking for github.com in global git config (only for root user, so should be safe)
-            result = subprocess.run(["git", "config", "--global", "--add", "ssh.github.com.strictHostKeyChecking", "no"], capture_output=True, text=True)   
-
-            # Can I run a subprocess command not as root user?
-            
-
-            # Pull the latest changes
-            result = subprocess.run(["git", "pull"], capture_output=True, text=True)
+            result = subprocess.run(
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR, "pull"],
+                capture_output=True, text=True, timeout=60
+            )
             if result.returncode == 0:
-                self.logger.info(f"SAVIOUR update successful: {result.stdout}")
-                return True
+                output = result.stdout.strip() or "Already up to date."
+                self.logger.info(f"SAVIOUR update successful: {output}")
+                return {"result": "success", "output": output}
             else:
-                self.logger.error(f"SAVIOUR update failed: {result.stderr}")
-                return False
+                output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                self.logger.error(f"SAVIOUR update failed: {output}")
+                return {"result": "error", "output": output}
         except Exception as e:
             self.logger.error(f"Error updating SAVIOUR: {e}")
-            return False
+            return {"result": "error", "output": str(e)}
 
 
     def _handle_set_config(self, **kwargs) -> dict:

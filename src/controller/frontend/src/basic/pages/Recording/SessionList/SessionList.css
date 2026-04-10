@@ -87,4 +87,60 @@
   .stop-button:hover {
     background-color: #a61d1d;
   }
+
+  .delete-button {
+    margin-top: 0.8rem;
+    padding: 0.4rem 0.9rem;
+    background: none;
+    color: #888;
+    border: 1px solid #888;
+    border-radius: 6px;
+    cursor: pointer;
+    align-self: flex-end;
+    font-size: 0.85rem;
+  }
+
+  .delete-button:hover {
+    color: #c62828;
+    border-color: #c62828;
+  }
+
+  .delete-confirm {
+    margin-top: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: #c62828;
+  }
+
+  .delete-confirm-yes {
+    padding: 0.3rem 0.8rem;
+    background-color: #c62828;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .delete-confirm-yes:hover {
+    background-color: #a61d1d;
+  }
+
+  .delete-confirm-no {
+    padding: 0.3rem 0.8rem;
+    background: none;
+    color: #666;
+    border: 1px solid #aaa;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .delete-confirm-no:hover {
+    border-color: #555;
+    color: #333;
+  }
   

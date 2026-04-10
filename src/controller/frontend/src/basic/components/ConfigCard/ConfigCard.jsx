@@ -4,6 +4,7 @@ import GenericConfigCard      from "./GenericConfigCard/GenericConfigCard";
 import CameraConfigCard       from "./CameraConfigCard/CameraConfigCard";
 import MicrophoneConfigCard   from "./MicrophoneConfigCard/MicrophoneConfigCard";
 import ControllerConfigCard   from './ControllerConfigCard/ControllerConfigCard';
+import TTLConfigCard          from './TTLConfigCard/TTLConfigCard';
 
 function ConfigCard({ id, module, clipboard, onCopy }) {
   if (id === "controller") {
@@ -17,6 +18,9 @@ function ConfigCard({ id, module, clipboard, onCopy }) {
   }
   if (module.type?.includes("microphone")) {
     return <MicrophoneConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
+  }
+  if (module.type?.includes("ttl")) {
+    return <TTLConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
   }
   return <GenericConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
 }

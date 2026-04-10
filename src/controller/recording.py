@@ -10,6 +10,7 @@ Created: 26/01/2026
 import os
 import json
 import logging
+import shutil
 from datetime import datetime, date
 import time
 from typing import Optional, Dict
@@ -164,6 +165,36 @@ class Recording:
         )
         return {"success": True, "session_name": session_name}
 
+
+    def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
+        """Remove a stopped/error session from the list and optionally delete its files.
+
+        Active and scheduled sessions cannot be deleted; stop them first.
+        """
+        if session_name not in self.sessions:
+            return {"error": f"Unknown session '{session_name}'"}
+
+        session = self.sessions[session_name]
+        if session.state in (SessionState.ACTIVE, SessionState.SCHEDULED):
+            return {"error": f"Cannot delete a session in state '{session.state}' — stop it first"}
+
+        if delete_files:
+            share_dir = f"/home/pi/controller_share/{session_name}"
+            if os.path.isdir(share_dir):
+                try:
+                    shutil.rmtree(share_dir)
+                    self.logger.info(f"Deleted files for session '{session_name}' at {share_dir}")
+                except Exception as e:
+                    self.logger.error(f"Failed to delete files for '{session_name}': {e}")
+                    return {"error": f"File deletion failed: {e}"}
+
+        with self._lock:
+            del self.sessions[session_name]
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(f"Session '{session_name}' deleted (delete_files={delete_files})")
+        return {"success": True}
 
     def stop_session(self, session_name: str) -> None:
         """Stop a recording session.

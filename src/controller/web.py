@@ -260,6 +260,15 @@ class Web(ABC):
             session_name = data.get("session_name")
             self.logger.info(f"Received request to stop session {session_name}")
             self.facade.stop_session(session_name)
+
+        @self.socketio.on("delete_session")
+        def handle_delete_session(data):
+            session_name = data.get("session_name")
+            delete_files = data.get("delete_files", True)
+            self.logger.info(f"Received request to delete session '{session_name}' (delete_files={delete_files})")
+            result = self.facade.delete_session(session_name, delete_files)
+            if "error" in result:
+                self.socketio.emit("session_error", {"error": result["error"]})
             
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
@@ -891,6 +900,12 @@ class Web(ABC):
                         self.socketio.emit("sensor_modes_response", {
                             "module_id": module_id,
                             "sensor_modes": status.get("sensor_modes", [])
+                        })
+                    elif command == "update_saviour":
+                        self.socketio.emit("module_update_result", {
+                            "module_id": module_id,
+                            "success": status.get("result") == "success",
+                            "output": status.get("output", ""),
                         })
 
                 case _:

@@ -64,7 +64,7 @@ function ControllerConfigCard() {
   };
 
   return (
-    <div className="config-card">
+    <div className="config-card controller-config-card">
       <div className="card-header">
         <h3>Controller Config</h3>
         <div className="device-info">

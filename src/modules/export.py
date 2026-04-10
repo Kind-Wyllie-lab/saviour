@@ -375,8 +375,8 @@ class Export:
 
         self.samba_share_ip = self.config.get("export.share_ip", "10.0.0.1")
         self.samba_share_path = self.config.get("export.share_path", "controller_share")
-        self.samba_share_username = self.config.get("export.share_username", "pi")
-        self.samba_share_password = self.config.get("export.share_password", "saviour")
+        self.samba_share_username = self.config.get("export.share_username", "saviour_module")
+        self.samba_share_password = self.config.get("export.share_password", "")
 
         # If IP has changed, reconfigure traffic control rules
         if self.samba_share_ip != old_samba_ip: 
@@ -387,8 +387,8 @@ class Export:
     def _samba_settings_changed(self):
         self.samba_share_ip = self.config.get("export.share_ip", "10.0.0.1")
         self.samba_share_path = self.config.get("export.share_path", "controller_share")
-        self.samba_share_username = self.config.get("export.share_username", "pi")
-        self.samba_share_password = self.config.get("export.share_password", "saviour")
+        self.samba_share_username = self.config.get("export.share_username", "saviour_module")
+        self.samba_share_password = self.config.get("export.share_password", "")
         self._clear_traffic_control_filter()
         self._apply_traffic_control_filter()
         
@@ -484,7 +484,8 @@ class Export:
                     'sudo', 'mount', '-t', 'cifs',
                     f'//{self.samba_share_ip}/{self.samba_share_path}',
                     self.mount_point,
-                    '-o', 'guest,uid=pi,gid=pi,file_mode=0664,dir_mode=0775'
+                    '-o', f'username={self.samba_share_username},password={self.samba_share_password},'
+                          'uid=pi,gid=pi,file_mode=0664,dir_mode=0775'
                 ]
 
                 result = subprocess.run(mount_cmd, capture_output=True, text=True)

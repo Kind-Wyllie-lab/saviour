@@ -901,6 +901,12 @@ class Web(ABC):
                             "module_id": module_id,
                             "sensor_modes": status.get("sensor_modes", [])
                         })
+                    elif command == "update_saviour":
+                        self.socketio.emit("module_update_result", {
+                            "module_id": module_id,
+                            "success": status.get("result") == "success",
+                            "output": status.get("output", ""),
+                        })
 
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)

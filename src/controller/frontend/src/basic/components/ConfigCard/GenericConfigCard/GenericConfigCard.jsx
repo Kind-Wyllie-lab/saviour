@@ -4,11 +4,13 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
+  const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
@@ -41,10 +43,6 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const handleReset = () => {
     socket.emit("reset_module_config", { module_id: module.id });
     setShowResetConfirm(false);
-  };
-
-  const handleUpdate = () => {
-    socket.emit("send_command", { module_id: module.id, type: "update_saviour", params: {} });
   };
 
   const handleReboot = () => {
@@ -118,9 +116,14 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       </div>
 
       <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={handleUpdate}>
-          Update Saviour Version
+        <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
+          {updateStatus === "updating" ? "Updating…" : "Update Saviour Version"}
         </button>
+        {updateStatus && updateStatus !== "updating" && (
+          <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+            {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
+          </span>
+        )}
       </div>
       <div className="update-button-wrapper">
         <button className="update-button" type="button" onClick={handleReboot}>

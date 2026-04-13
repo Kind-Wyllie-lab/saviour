@@ -188,11 +188,12 @@ set_device_hostname() {
 
     echo "Setting hostname to $NEW_HOSTNAME"
 
-    # All three writes happen inside one sudo bash invocation so that
+    # All writes happen inside one sudo bash invocation so that
     # sudo resolves the hostname exactly once (before anything changes).
     sudo bash -c "
         echo '${NEW_HOSTNAME}' > /etc/hostname
         hostname '${NEW_HOSTNAME}'
+        nmcli general hostname '${NEW_HOSTNAME}' 2>/dev/null || true
         cat > /etc/hosts <<'HOSTS'
 127.0.0.1  localhost
 127.0.1.1  ${NEW_HOSTNAME}

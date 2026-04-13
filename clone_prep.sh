@@ -73,17 +73,13 @@ fi
 # ── 4. Hostname ───────────────────────────────────────────────────────────────
 echo "[4/8] Setting placeholder hostname..."
 TEMP_HOSTNAME="saviour-unconfigured"
-sudo bash -c "
-    echo '${TEMP_HOSTNAME}' > /etc/hostname
-    hostname '${TEMP_HOSTNAME}'
-    nmcli general hostname '${TEMP_HOSTNAME}' 2>/dev/null || true
-    cat > /etc/hosts <<'HOSTS'
+sudo hostnamectl set-hostname "$TEMP_HOSTNAME"
+sudo tee /etc/hosts > /dev/null <<EOF
 127.0.0.1  localhost
-127.0.1.1  ${TEMP_HOSTNAME}
+127.0.1.1  $TEMP_HOSTNAME
 
 ::1        localhost ip6-localhost ip6-loopback
-HOSTS
-"
+EOF
 echo "  Hostname set to: $TEMP_HOSTNAME"
 echo "  (switch_role.sh will assign the correct MAC-derived hostname)"
 

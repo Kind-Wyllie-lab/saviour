@@ -188,14 +188,20 @@ set_device_hostname() {
 
     echo "Setting hostname to $NEW_HOSTNAME"
 
+    # Write /etc/hostname first — direct file write, no dbus dependency.
+    echo "$NEW_HOSTNAME" | sudo tee /etc/hostname > /dev/null
+
+    # Set the running kernel hostname immediately (also no dbus).
+    sudo hostname "$NEW_HOSTNAME"
+
+    # Now update /etc/hosts with the new name.
+    # Done last so that any sudo calls above can still resolve the old hostname.
     sudo tee /etc/hosts >/dev/null <<EOF
 127.0.0.1  localhost
 127.0.1.1  $NEW_HOSTNAME
 
 ::1        localhost ip6-localhost ip6-loopback
 EOF
-
-    sudo hostnamectl set-hostname "$NEW_HOSTNAME"
 }
 
 

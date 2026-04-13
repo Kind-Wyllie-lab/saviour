@@ -76,6 +76,7 @@ TEMP_HOSTNAME="saviour-unconfigured"
 sudo bash -c "
     echo '${TEMP_HOSTNAME}' > /etc/hostname
     hostname '${TEMP_HOSTNAME}'
+    nmcli general hostname '${TEMP_HOSTNAME}' 2>/dev/null || true
     cat > /etc/hosts <<'HOSTS'
 127.0.0.1  localhost
 127.0.1.1  ${TEMP_HOSTNAME}

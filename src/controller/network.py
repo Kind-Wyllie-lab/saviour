@@ -50,7 +50,7 @@ class Network():
 
     def _wait_for_proper_ip(self):
         """Wait for the proper network IP (192.168.1.1) to be available"""
-        self.logger.info("Waiting for proper network IP (192.168.1.1)...")
+        self.logger.info("Waiting for proper network IP on eth0...")
         
         attempt = 0
         
@@ -83,7 +83,7 @@ class Network():
 
     def _validate_ip(self, potential_ip: str) -> bool:
         """Check that the ip belongs to valid ranges"""
-        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0.0."):
+        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0."):
             ip = potential_ip
             self.ip_is_valid = True
             self.logger.info(f"Found eth0 IP from ifconfig: {ip}")

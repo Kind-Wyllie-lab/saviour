@@ -199,14 +199,13 @@ set_device_hostname() {
 ::1        localhost ip6-localhost ip6-loopback
 EOF
 
-    # Trixie + Pi Imager bug: cloud-init uses a fixed instance_id so it re-runs
-    # on every boot and overwrites /etc/hostname from /boot/firmware/user-data.
-    # Update the hostname there too so cloud-init restores the correct name.
-    if [ -f /boot/firmware/user-data ]; then
-        if grep -q "^hostname:" /boot/firmware/user-data; then
-            sudo sed -i "s/^hostname:.*/hostname: ${NEW_HOSTNAME}/" /boot/firmware/user-data
-            echo "  Updated /boot/firmware/user-data (cloud-init Trixie workaround)"
-        fi
+    # Trixie bug: cloud-init re-runs on every boot (fixed instance_id) and
+    # overrides hostname and /etc/hosts from its cache and user-data.
+    # These are dedicated SAVIOUR devices — disable cloud-init so it cannot
+    # interfere after initial imaging setup is done.
+    if [ -d /etc/cloud ]; then
+        sudo touch /etc/cloud/cloud-init.disabled
+        echo "  Disabled cloud-init (prevents hostname revert on reboot)"
     fi
 }
 

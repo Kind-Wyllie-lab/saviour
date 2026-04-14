@@ -57,7 +57,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
-  const presets = sensorModel === "imx708" ? CM3_PRESETS : HQ_PRESETS;
+  const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });

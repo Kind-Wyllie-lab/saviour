@@ -80,9 +80,9 @@ sudo tee /etc/hosts > /dev/null <<EOF
 
 ::1        localhost ip6-localhost ip6-loopback
 EOF
-if [ -f /boot/firmware/user-data ] && grep -q "^hostname:" /boot/firmware/user-data; then
-    sudo sed -i "s/^hostname:.*/hostname: ${TEMP_HOSTNAME}/" /boot/firmware/user-data
-    echo "  Updated /boot/firmware/user-data (cloud-init Trixie workaround)"
+if [ -d /etc/cloud ]; then
+    sudo touch /etc/cloud/cloud-init.disabled
+    echo "  Disabled cloud-init (prevents hostname revert on reboot)"
 fi
 echo "  Hostname set to: $TEMP_HOSTNAME"
 echo "  (switch_role.sh will assign the correct MAC-derived hostname)"

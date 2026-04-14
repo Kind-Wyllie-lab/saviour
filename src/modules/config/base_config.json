@@ -27,6 +27,7 @@
     "auto_export": true,
     "delete_on_export": true,
     "_manifest_enabled": false,
+    "use_controller_export": true,
     "share_path": "controller_share",
     "share_ip": "10.0.0.1",
     "share_username": "saviour_module",

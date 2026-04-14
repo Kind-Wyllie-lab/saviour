@@ -55,6 +55,9 @@ class ControllerFacade():
     def get_samba_info(self):
         return self.controller.get_samba_info()
 
+    def get_export_credentials(self) -> dict:
+        return self.controller.get_export_credentials()
+
 
     def get_share_path(self):
         return "/home/pi/controller_share"
@@ -206,6 +209,10 @@ class ControllerFacade():
         self.controller.health.module_discovery(module)
         # Fetch config immediately so module name is known before any card is opened
         self.controller.communication.send_command(module.id, "get_config", {})
+        # Push current export credentials so modules always point at this controller
+        creds = self.controller.get_export_credentials()
+        if creds:
+            self.controller.communication.send_command(module.id, "set_export_config", creds)
 
 
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:

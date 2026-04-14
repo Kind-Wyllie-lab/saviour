@@ -488,6 +488,40 @@ class Controller(ABC):
         self.communication.send_command("all", "get_config", {})
 
 
+    def get_export_credentials(self) -> dict:
+        """
+        Read the Samba credentials written by switch_role.sh and return them
+        alongside this controller's IP — ready to push to modules as
+        set_export_config params.
+        Returns an empty dict if the credentials file is missing.
+        """
+        creds_path = "/etc/saviour/samba_credentials"
+        try:
+            username = ""
+            password = ""
+            with open(creds_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("username="):
+                        username = line.split("=", 1)[1]
+                    elif line.startswith("password="):
+                        password = line.split("=", 1)[1]
+            return {
+                "share_ip": self.service.ip,
+                "share_username": username,
+                "share_password": password,
+            }
+        except FileNotFoundError:
+            self.logger.warning(
+                f"Samba credentials file not found at {creds_path} — "
+                "module export config will not be pushed automatically"
+            )
+            return {}
+        except Exception as e:
+            self.logger.error(f"Failed to read export credentials: {e}")
+            return {}
+
+
     def get_samba_info(self):
         """Get Samba share information from configuration"""
         try:

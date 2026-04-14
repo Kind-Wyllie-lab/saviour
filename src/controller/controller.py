@@ -507,7 +507,7 @@ class Controller(ABC):
                     elif line.startswith("password="):
                         password = line.split("=", 1)[1]
             return {
-                "share_ip": self.service.ip,
+                "share_ip": self.network.ip,
                 "share_username": username,
                 "share_password": password,
             }
@@ -526,7 +526,7 @@ class Controller(ABC):
         """Get Samba share information from configuration"""
         try:
             # Get controller IP address from service manager (already detected and stored)
-            controller_ip = self.service.ip
+            controller_ip = self.network.ip
             
             # Get Samba configuration from config
             samba_config = {

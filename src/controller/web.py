@@ -899,7 +899,9 @@ class Web(ABC):
                     if command == "get_sensor_modes":
                         self.socketio.emit("sensor_modes_response", {
                             "module_id": module_id,
-                            "sensor_modes": status.get("sensor_modes", [])
+                            "sensor_modes": status.get("sensor_modes", []),
+                            "sensor_model": status.get("sensor_model", ""),
+                            "has_autofocus": status.get("has_autofocus", False),
                         })
                     elif command == "update_saviour":
                         self.socketio.emit("module_update_result", {

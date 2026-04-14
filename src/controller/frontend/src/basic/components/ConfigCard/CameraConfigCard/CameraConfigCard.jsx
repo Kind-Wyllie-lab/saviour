@@ -6,13 +6,24 @@ import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 
-const PRESETS = [
+// Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
+const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",        sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
   { key: "1080p60",  label: "1080p Fast",   sub: "60 fps",  width: 1920, height: 1080, fps: 60  },
   { key: "square25", label: "Square",       sub: "25 fps",  width: 1000, height: 1000, fps: 25  },
   { key: "fast100",  label: "High Speed",   sub: "100 fps", width: 1332, height: 990,  fps: 100 },
   { key: "4k10",     label: "4K",           sub: "10 fps",  width: 4056, height: 3040, fps: 10  },
   { key: "custom",   label: "Custom",       sub: null,      width: null, height: null, fps: null },
+];
+
+// Presets for Camera Module 3 (IMX708) — PDAF autofocus, max 2304×1296
+const CM3_PRESETS = [
+  { key: "cm3_2304p56",  label: "Full FoV",    sub: "56 fps",  width: 2304, height: 1296, fps: 56  },
+  { key: "cm3_1536p120", label: "High Speed",  sub: "120 fps", width: 1536, height: 864,  fps: 120 },
+  { key: "1080p30",      label: "1080p",       sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
+  { key: "1080p60",      label: "1080p Fast",  sub: "60 fps",  width: 1920, height: 1080, fps: 60  },
+  { key: "square25",     label: "Square",      sub: "25 fps",  width: 1000, height: 1000, fps: 25  },
+  { key: "custom",       label: "Custom",      sub: null,      width: null, height: null, fps: null },
 ];
 
 function bestSensorMode(sensorModes, width, height, fps) {
@@ -31,25 +42,33 @@ function bestSensorMode(sensorModes, width, height, fps) {
   );
 }
 
-function detectPreset(width, height, fps) {
-  return PRESETS.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
+function detectPreset(presetList, width, height, fps) {
+  return presetList.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
 }
 
 function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [sensorModes, setSensorModes] = useState([]);
+  const [sensorModel, setSensorModel] = useState("");
+  const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
+  const presets = sensorModel === "imx708" ? CM3_PRESETS : HQ_PRESETS;
+
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
     socket.emit("send_command", { module_id: module.id, type: "get_sensor_modes", params: {} });
 
     const onSensorModes = (data) => {
-      if (data.module_id === module.id) setSensorModes(data.sensor_modes);
+      if (data.module_id === module.id) {
+        setSensorModes(data.sensor_modes);
+        if (data.sensor_model !== undefined) setSensorModel(data.sensor_model);
+        if (data.has_autofocus !== undefined) setHasAutofocus(data.has_autofocus);
+      }
     };
     socket.on("sensor_modes_response", onSensorModes);
     return () => socket.off("sensor_modes_response", onSensorModes);
@@ -73,10 +92,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   useEffect(() => {
     if (formData?.camera) {
       const { width, height, fps } = formData.camera;
-      setActivePreset(detectPreset(width, height, fps));
+      setActivePreset(detectPreset(presets, width, height, fps));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps]);
+  }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps, presets]);
 
   const handlePresetSelect = (preset) => {
     setActivePreset(preset.key);
@@ -90,6 +109,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       if (best) cloned.camera.sensor_mode_index = best.index;
       return cloned;
     });
+  };
+
+  const handleTriggerAutofocus = () => {
+    socket.emit("send_command", { module_id: module.id, type: "trigger_autofocus", params: {} });
   };
 
   const handleCustomChange = (field, rawValue) => {
@@ -171,7 +194,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
       monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb,
+      bitrate_mb, autofocus_mode, lens_position,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -205,11 +228,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
             <select
               value={activePreset}
               onChange={e => {
-                const preset = PRESETS.find(p => p.key === e.target.value);
+                const preset = presets.find(p => p.key === e.target.value);
                 if (preset) handlePresetSelect(preset);
               }}
             >
-              {PRESETS.map(preset => (
+              {presets.map(preset => (
                 <option key={preset.key} value={preset.key}>
                   {preset.label}{preset.sub ? ` — ${preset.sub}` : ""}
                 </option>
@@ -310,6 +333,40 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           <div className="filesize-preview">
             ~{gbPerHour} GB / hr at {bitrateMb} Mbps
           </div>
+
+          {/* ── Autofocus (Camera Module 3 / IMX708 only) ── */}
+          {hasAutofocus && (
+            <>
+              <div className="form-field">
+                <label>Autofocus mode:</label>
+                <select
+                  value={cam.autofocus_mode ?? "manual"}
+                  onChange={e => handleChange(["camera", "autofocus_mode"], e)}
+                >
+                  <option value="manual">Manual</option>
+                  <option value="auto">Auto (one-shot)</option>
+                  <option value="continuous">Continuous</option>
+                </select>
+              </div>
+              {(cam.autofocus_mode ?? "manual") === "manual" && (
+                <div className="form-field">
+                  <label>Lens position: {Number(cam.lens_position ?? 0).toFixed(1)}</label>
+                  <input type="range" min="0" max="10" step="0.1"
+                    value={cam.lens_position ?? 0}
+                    className="brightness-slider"
+                    onChange={e => handleChange(["camera", "lens_position"], e)} />
+                </div>
+              )}
+              {(cam.autofocus_mode ?? "manual") === "auto" && (
+                <div className="form-field">
+                  <label></label>
+                  <button type="button" className="copy-btn" onClick={handleTriggerAutofocus}>
+                    Trigger Autofocus
+                  </button>
+                </div>
+              )}
+            </>
+          )}
 
           {/* ── Overlays ── */}
           <div className="form-field">

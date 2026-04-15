@@ -264,9 +264,10 @@ class Export:
 
 
     def _format_export_path(self, export_path: str):
-        """Create nested"""
-        # export_path = f"{export_path}/{self.facade.get_utc_date(time.time())}/{self.facade.get_module_name()}"
-        export_path = os.path.join(self.mount_point, export_path)
+        """Build the full export path: mount_point/session_name/date/module_name/"""
+        date_str = self.facade.get_utc_date(time.time())
+        module_name = self.facade.get_module_name()
+        export_path = os.path.join(self.mount_point, export_path, date_str, module_name)
         return export_path
 
 

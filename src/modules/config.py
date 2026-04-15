@@ -318,10 +318,10 @@ class Config:
                     self.logger.info(f"Module specific config updated")
                     module_config_updated_keys.append(key)
 
+        if persist:
+            self.save_active()
+
         if config_updated == True:
             self.logger.info("Config updated was True")
             self.configure_module(updated_keys)
-
-        if persist:
-            self.save_active()
 

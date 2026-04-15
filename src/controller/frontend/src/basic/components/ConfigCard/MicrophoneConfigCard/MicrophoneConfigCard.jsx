@@ -5,6 +5,7 @@ import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import { useExportSync } from "/src/hooks/useExportSync";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -59,6 +60,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [hasSaved, setHasSaved]                 = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const { syncStatus, syncExport } = useExportSync(module.id);
 
   const streamPort = module.config?.monitoring?.port ?? 8081;
 
@@ -146,6 +148,21 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           )}
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
+          )}
+
+          {formData?.export !== undefined && (
+            <div className="config-action-buttons">
+              <button type="button" className="save-button"
+                onClick={syncExport}
+                disabled={syncStatus === "syncing"}>
+                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
+              </button>
+              {syncStatus && syncStatus !== "syncing" && (
+                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

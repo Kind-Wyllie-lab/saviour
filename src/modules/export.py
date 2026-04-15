@@ -90,84 +90,91 @@ class Export:
             return False
 
 
+    def _extract_session_from_filename(self, filename: str) -> str | None:
+        """Extract the session name prefix from a recorded filename.
+
+        Filenames follow the pattern: {session_name}_{module_id}_{rest}
+        e.g. NO-NAME-20260415-111025_camera_a349_(0_...)
+        """
+        marker = f"_{self.module_id}"
+        idx = filename.find(marker)
+        if idx > 0:
+            return filename[:idx]
+        return None
+
+
     def export_staged(self, export_path: str = None) -> bool:
-        """Export all files in self.staged_for_export
+        """Export all files in to_export/, routing each file to its correct
+        session folder on the NAS (derived from the filename prefix).
 
         Returns:
-            bool: True if export successful
+            bool: True if all files were exported without error
         """
-        self.staged_for_export = os.listdir(self.to_export_folder)
-        self.logger.info(f"Attempting to export {self.staged_for_export}")
+        all_files = os.listdir(self.to_export_folder)
+        self.staged_for_export = all_files
+        self.logger.info(f"Attempting to export {all_files}")
         self.exporting = True
         try:
+            # Group files by the session they belong to
+            session_file_map: dict[str, list[str]] = {}
+            for filename in all_files:
+                session = self._extract_session_from_filename(filename) or export_path
+                session_file_map.setdefault(session, []).append(filename)
 
-            export_path = self._setup_export(export_path)
-                
-            if not export_path:
-                return False
-            
-            # Create hierarchical export folder structure with conflict prevention
-            export_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-
-            to_export = self.staged_for_export
             source_folder = self.to_export_folder
-            self.logger.info(f"Will attempt to export {to_export}")
-            
-            # Export each session file
             exported_count = 0
-            exported = []
-            for filename in to_export:
-                try:
-                    filename = pathlib.Path(filename).name
-                    self.logger.info(f"Exporting {filename}")
+            exported: list[str] = []
+            all_ok = True
 
-                    # Rename file "PENDING"
-                    temp_filename = f"PENDING_{filename}"
+            for session, files in session_file_map.items():
+                session_export_path = self._setup_export(session)
+                if not session_export_path:
+                    self.logger.error(f"Could not set up export path for session '{session}'; skipping {len(files)} file(s)")
+                    all_ok = False
+                    continue
 
-                    source_path = f"{source_folder}/{filename}"
-                    temp_source_path = f"{source_folder}/{temp_filename}"
-                    temp_dest_path = f"{export_path}/{temp_filename}"
-                    dest_path = f"{export_path}/{filename}"
-                
-                    os.rename(source_path, temp_source_path)
+                self.logger.info(f"Exporting {len(files)} file(s) to {session_export_path}")
 
-                    # Copy the file to samba share
-                    shutil.copy2(temp_source_path, temp_dest_path)
+                for filename in files:
+                    try:
+                        filename = pathlib.Path(filename).name
+                        temp_filename = f"PENDING_{filename}"
 
-                    # Remove "PENDING" from filename on local and remote copy
-                    os.rename(temp_dest_path, dest_path)
-                    os.rename(temp_source_path, source_path)
+                        source_path      = f"{source_folder}/{filename}"
+                        temp_source_path = f"{source_folder}/{temp_filename}"
+                        temp_dest_path   = f"{session_export_path}/{temp_filename}"
+                        dest_path        = f"{session_export_path}/{filename}"
 
-                    # Move local copy of file from to_export/ to exported/
-                    shutil.move(source_path, f"{self.exported_folder}/{filename}") # Move it from to_export to exported
+                        os.rename(source_path, temp_source_path)
+                        shutil.copy2(temp_source_path, temp_dest_path)
+                        os.rename(temp_dest_path, dest_path)
+                        os.rename(temp_source_path, source_path)
+                        shutil.move(source_path, f"{self.exported_folder}/{filename}")
 
-                    self.logger.info(f"Exported: {dest_path}")
-                    exported_count += 1
-                    exported.append(filename)
+                        self.logger.info(f"Exported: {dest_path}")
+                        exported_count += 1
+                        exported.append(filename)
 
-                except Exception as e:
-                    self.logger.error(f"Failed to export {filename}: {e}")
-        
-            
-            # Create export manifest
-            if self.config.get("export.manifest_enabled", False):
-                if not self.session_name:
-                    session_name="NO_SESSION"
-                manifest_filename = self._create_export_manifest(self.staged_for_export, export_path, session_name)
-                if not manifest_filename:
-                    self.logger.error("Failed to create export manifest")
-                    return False
-        
-            # Delete exported files
+                    except Exception as e:
+                        self.logger.error(f"Failed to export {filename}: {e}")
+                        all_ok = False
+
+                # Create export manifest per session if enabled
+                if self.config.get("export.manifest_enabled", False):
+                    manifest_filename = self._create_export_manifest(files, session_export_path, session)
+                    if not manifest_filename:
+                        self.logger.error(f"Failed to create export manifest for session '{session}'")
+
+            # Delete locally-moved copies
             if self.config.get("export.delete_on_export", True):
                 self._delete_local_files(exported)
 
-            self.to_export = []
+            self.staged_for_export = []
 
-            self.logger.info(f"Successfully exported {exported_count} session files to {export_path}")
+            self.logger.info(f"Successfully exported {exported_count} file(s) across {len(session_file_map)} session(s)")
             self.exporting = False
-            return True
-            
+            return all_ok
+
         except Exception as e:
             self.logger.error(f"Export error: {e}")
             self.exporting = False
@@ -274,7 +281,8 @@ class Export:
         """
         try:
             export_path = self.facade.get_current_session_name()
-            if not self._setup_export(export_path):
+            export_path = self._setup_export(export_path)
+            if not export_path:
                 return False
 
             # Look for config files in common locations
@@ -306,7 +314,7 @@ class Export:
             
             if config_source and os.path.exists(config_source):
                 # Copy config file to export folder with timestamp for this export session
-                if "config.json" not in os.listdir(export_path):
+                if not os.path.exists(os.path.join(export_path, "config.json")):
                     # timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
                     # timestamped_config = f"config_export_{timestamp}.json"
                     dest_path = os.path.join(export_path, "config.json")

@@ -104,6 +104,7 @@ export default function System() {
               <th>Device</th>
               <th>Status</th>
               <th>IP</th>
+              <th>Version</th>
               <th>CPU</th>
               <th>Temp</th>
               <th>Memory</th>
@@ -120,6 +121,7 @@ export default function System() {
               </td>
               <td>{statusCell(controllerHealth ? "online" : "suspected")}</td>
               <td className="cell--muted">{controllerHealth?.ip ?? "—"}</td>
+              <td className="cell--muted">{controllerHealth?.version ?? "—"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
               <td>{tempCell(controllerHealth?.cpu_temp)}</td>
               <td>{pctCell(controllerHealth?.memory_usage, 70, 85)}</td>
@@ -137,6 +139,7 @@ export default function System() {
                 </td>
                 <td>{statusCell(row.status ?? "offline")}</td>
                 <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
+                <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
                 <td>{cpuCell(row.cpu_usage)}</td>
                 <td>{tempCell(row.cpu_temp)}</td>
                 <td>{pctCell(row.memory_usage, 70, 85)}</td>
@@ -148,7 +151,7 @@ export default function System() {
 
             {moduleRows.length === 0 && (
               <tr>
-                <td colSpan={9} className="system-table__empty">
+                <td colSpan={10} className="system-table__empty">
                   No module health data yet — waiting for first heartbeat
                 </td>
               </tr>

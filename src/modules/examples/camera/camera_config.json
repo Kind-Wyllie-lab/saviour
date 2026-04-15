@@ -15,7 +15,9 @@
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2,
-        "bitrate_mb": 2
+        "bitrate_mb": 2,
+        "autofocus_mode": "manual",
+        "lens_position": 0.0
     },
     "recording": {
         "_recording_filetype": "ts"

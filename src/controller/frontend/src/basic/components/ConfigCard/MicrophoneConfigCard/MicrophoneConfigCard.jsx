@@ -5,6 +5,7 @@ import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import { useExportSync } from "/src/hooks/useExportSync";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -57,8 +58,10 @@ function MicrophoneStream({ ip, port }) {
 function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved]                 = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const { syncStatus, syncExport } = useExportSync(module.id);
 
   const streamPort = module.config?.monitoring?.port ?? 8081;
 
@@ -147,6 +150,21 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
+
+          {formData?.export !== undefined && (
+            <div className="config-action-buttons">
+              <button type="button" className="save-button"
+                onClick={syncExport}
+                disabled={syncStatus === "syncing"}>
+                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
+              </button>
+              {syncStatus && syncStatus !== "syncing" && (
+                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="livestream-wrapper">
@@ -165,11 +183,26 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
         )}
       </div>
       <div className="update-button-wrapper">
-        <button className="update-button" type="button"
-          onClick={() => socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} })}>
+        <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
           Reboot Module
         </button>
       </div>
+
+      {showRebootConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{module.name}</strong>?</p>
+            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={() => {
+                socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
+                setShowRebootConfirm(false);
+              }}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showResetConfirm && (
         <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>

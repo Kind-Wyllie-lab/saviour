@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
 import useHealth from "/src/hooks/useHealth";
@@ -21,25 +22,11 @@ function formatElapsed(totalSeconds) {
   return h > 0 ? `${h}h ${mm}m ${ss}s` : `${mm}m ${ss}s`;
 }
 
-export default function RecordingStatusWidget() {
-  const { sessionList } = useSessions();
-  const { modules } = useModules();
-  const { moduleHealth } = useHealth();
-
-  const activeSession = useMemo(
-    () => sessionList.find((s) => s.state === "active") ?? null,
-    [sessionList]
-  );
-
-  // Live elapsed time
+function SessionEntry({ session, modules, moduleHealth }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (!activeSession) {
-      setElapsed(0);
-      return;
-    }
-    const startDate = parseStartTime(activeSession.start_time);
+    const startDate = parseStartTime(session.start_time);
     const tick = () => {
       if (!startDate) { setElapsed(0); return; }
       setElapsed(Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 1000)));
@@ -47,19 +34,9 @@ export default function RecordingStatusWidget() {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [activeSession]);
+  }, [session]);
 
-  if (!activeSession) {
-    return (
-      <div className="recording-status-widget recording-status-widget--idle">
-        <span className="rsw-dot rsw-dot--idle" />
-        <span className="rsw-idle-text">No active session</span>
-      </div>
-    );
-  }
-
-  // Per-module status for the session's participating modules
-  const moduleStatuses = (activeSession.modules ?? []).map((id) => {
+  const moduleStatuses = (session.modules ?? []).map((id) => {
     const mod = modules[id];
     const health = moduleHealth[id];
     const isRecording = mod?.status === "RECORDING";
@@ -75,11 +52,10 @@ export default function RecordingStatusWidget() {
   const allRecording = moduleStatuses.every((m) => m.dotClass === "rsw-dot--recording");
 
   return (
-    <div className={`recording-status-widget recording-status-widget--active ${allRecording ? "" : "recording-status-widget--partial"}`}>
+    <span className={`rsw-session ${allRecording ? "" : "rsw-session--partial"}`}>
       <span className="rsw-dot rsw-dot--recording rsw-dot--pulse" />
-      <span className="rsw-session-name">{activeSession.session_name}</span>
+      <span className="rsw-session-name">{session.session_name}</span>
       <span className="rsw-elapsed">{formatElapsed(elapsed)}</span>
-      <span className="rsw-divider" />
       <span className="rsw-modules">
         {moduleStatuses.map(({ id, name, dotClass }) => (
           <span key={id} className="rsw-module-status" title={id}>
@@ -88,6 +64,46 @@ export default function RecordingStatusWidget() {
           </span>
         ))}
       </span>
+    </span>
+  );
+}
+
+export default function RecordingStatusWidget() {
+  const navigate = useNavigate();
+  const { sessionList } = useSessions();
+  const { modules } = useModules();
+  const { moduleHealth } = useHealth();
+
+  const activeSessions = useMemo(
+    () => sessionList.filter((s) => s.state === "active"),
+    [sessionList]
+  );
+
+  if (activeSessions.length === 0) {
+    return (
+      <div
+        className="recording-status-widget recording-status-widget--idle"
+        onClick={() => navigate("/recording")}
+        style={{ cursor: "pointer" }}
+      >
+        <span className="rsw-dot rsw-dot--idle" />
+        <span className="rsw-idle-text">No active session</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="recording-status-widget recording-status-widget--active"
+      onClick={() => navigate("/recording")}
+      style={{ cursor: "pointer" }}
+    >
+      {activeSessions.map((session, i) => (
+        <React.Fragment key={session.session_name}>
+          {i > 0 && <span className="rsw-divider" />}
+          <SessionEntry session={session} modules={modules} moduleHealth={moduleHealth} />
+        </React.Fragment>
+      ))}
     </div>
   );
 }

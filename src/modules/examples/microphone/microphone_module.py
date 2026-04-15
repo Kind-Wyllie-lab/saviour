@@ -74,10 +74,6 @@ class AudiomothModule(Module):
         self.command.set_commands(self.audiomoth_commands)
 
 
-    def configure_module(self):
-        self.logger.info("No implementation yet for configure_module in audiomoth")
-
-
     @command
     def list_audiomoths(self):
         """Returns dict containing list of audiomoths"""

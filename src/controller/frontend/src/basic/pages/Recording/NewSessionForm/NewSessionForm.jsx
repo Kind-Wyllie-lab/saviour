@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import socket from "/src/socket";
 import "./NewSessionForm.css";
 
@@ -17,10 +17,36 @@ function NewSessionForm({ modules }) {
   const [endHour, setEndHour]         = useState("23");
   const [endMinute, setEndMinute]     = useState("00");
 
-  const targetModules      = target === "all" ? modules : modules.filter((m) => m.id === target);
+  // Derive groups from module list: { groupName: [module, ...] }
+  const groups = useMemo(() => {
+    const map = {};
+    modules.forEach((m) => {
+      if (m.group) {
+        map[m.group] = [...(map[m.group] ?? []), m];
+      }
+    });
+    return map;
+  }, [modules]);
+
+  const hasGroups = Object.keys(groups).length > 0;
+
+  // Resolve the modules that will be targeted
+  const targetModules = useMemo(() => {
+    if (target === "all")          return modules;
+    if (target in groups)          return groups[target];
+    return modules.filter((m) => m.id === target);
+  }, [target, modules, groups]);
+
   const allTargetReady     = targetModules.length > 0 && targetModules.every((m) => m.status === "READY");
   const anyTargetRecording = targetModules.some((m) => m.status === "RECORDING");
   const canStart           = experimentName && allTargetReady && !anyTargetRecording;
+
+  // Human-readable label for the target description line
+  const targetLabel = target === "all"
+    ? `all ${modules.length} module${modules.length !== 1 ? "s" : ""}`
+    : target in groups
+      ? `group "${target}" (${groups[target].length} module${groups[target].length !== 1 ? "s" : ""})`
+      : modules.find((m) => m.id === target)?.name || target;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -61,9 +87,22 @@ function NewSessionForm({ modules }) {
             onChange={(e) => setTarget(e.target.value)}
           >
             <option value="all">All Modules</option>
-            {modules.map((m) => (
-              <option key={m.id} value={m.id}>{m.name || m.id}</option>
-            ))}
+
+            {hasGroups && (
+              <optgroup label="Groups">
+                {Object.entries(groups).map(([groupName, members]) => (
+                  <option key={groupName} value={groupName}>
+                    {groupName} ({members.length} module{members.length !== 1 ? "s" : ""})
+                  </option>
+                ))}
+              </optgroup>
+            )}
+
+            <optgroup label="Individual modules">
+              {modules.map((m) => (
+                <option key={m.id} value={m.id}>{m.name || m.id}</option>
+              ))}
+            </optgroup>
           </select>
         </div>
 
@@ -87,14 +126,23 @@ function NewSessionForm({ modules }) {
 
         <div className="session-description">
           {isScheduled ? (
-            <p>Session will record daily between {startHour}:{startMinute} and {endHour}:{endMinute}.</p>
+            <p>
+              {targetLabel} will record daily between {startHour}:{startMinute} and {endHour}:{endMinute}.
+            </p>
           ) : (
-            <p>Recording starts on all {target === "all" ? "available" : "selected"} modules in ~3 seconds.</p>
+            <p>Recording starts on {targetLabel} in ~3 seconds.</p>
           )}
           <div className="session-name-preview-block">
             Session name <strong>{experimentName ? `${experimentName}-(TIMESTAMP)` : "—"}</strong>
           </div>
         </div>
+
+        {!canStart && anyTargetRecording && (
+          <p className="form-warning">One or more target modules are already recording.</p>
+        )}
+        {!canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
+          <p className="form-warning">Not all target modules are ready.</p>
+        )}
 
         <div className="button-row">
           <button type="button" className="secondary-button" onClick={checkReady}>

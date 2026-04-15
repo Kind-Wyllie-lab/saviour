@@ -544,6 +544,15 @@ class Web(ABC):
                 except Exception:
                     health['disk_used_pct'] = None
                     health['disk_free_gb'] = None
+            # Version
+            try:
+                result = subprocess.run(
+                    ["git", "-C", os.path.dirname(__file__), "describe", "--tags", "--always"],
+                    capture_output=True, text=True, timeout=5
+                )
+                health['version'] = result.stdout.strip() if result.returncode == 0 else None
+            except Exception:
+                health['version'] = None
             self.socketio.emit("controller_health_response", health)
 
 

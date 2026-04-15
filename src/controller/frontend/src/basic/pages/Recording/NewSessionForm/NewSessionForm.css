@@ -1,93 +1,142 @@
 .new-session-form {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 32px;
-    padding: 32px;
-    min-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+}
+
+.new-session-form h2 {
+  margin: 0 0 4px 0;
 }
 
 .session-form {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1.5rem;
-    margin-top: 1rem;
-  }
-  
-  .form-row {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-  }
-  
-  .form-row label {
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: var(--text-color);
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 
-  .form-row select {
-    flex-grow: 1;
-    padding: 0.6rem 0.8rem;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    font-size: 0.95rem;
-    background: var(--bg-color);
-    color: var(--text-color);
-    transition: border 0.2s ease;
-  }
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-  .form-row select:focus {
-    outline: none;
-    border-color: var(--accent-color);
-  }
-  
-  .button-row {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-  }
-  
-  .primary-button {
-    padding: 0.6rem 1.2rem;
-    border-radius: 6px;
-    border: none;
-    font-weight: 600;
-    cursor: pointer;
-    background-color: var(--accent-color);
-    color: white;
-    transition: filter 0.2s ease;
-  }
+.form-row label {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text-color);
+  white-space: nowrap;
+  min-width: 60px;
+}
 
-  .primary-button:hover:not(:disabled) {
-    filter: brightness(0.85);
-  }
+.form-row select {
+  flex: 1;
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  font-size: 0.9rem;
+  background: var(--bg-color);
+  color: var(--text-color);
+  transition: border 0.15s ease;
+}
 
-  .primary-button:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
+.form-row select:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
 
-  .secondary-button {
-    padding: 0.6rem 1.2rem;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background-color: var(--bg-color);
-    color: var(--text-color);
-    font-weight: 500;
-    cursor: pointer;
-    transition: border-color 0.2s ease, color 0.2s ease;
-  }
+/* Scheduled toggle row */
+.form-row--checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: unset;
+  font-weight: 500;
+}
 
-  .secondary-button:hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-  }
-  
-  .session-description {
-    max-width: 400px;
-    text-align: center;
-  }
+.form-row--checkbox input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent-color);
+}
+
+/* Session overview blurb */
+.session-description {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 6%, var(--card-bg-color));
+  border: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 20%, var(--border-color));
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-color);
+}
+
+.session-description p {
+  margin: 0 0 4px 0;
+}
+
+.session-description p:last-child {
+  margin-bottom: 0;
+}
+
+.session-name-preview-block {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 20%, var(--border-color));
+  font-size: 0.82rem;
+  opacity: 0.8;
+}
+
+.session-name-preview-block strong {
+  display: block;
+  font-family: monospace;
+  font-size: 0.88rem;
+  margin-top: 2px;
+  opacity: 1;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.primary-button {
+  padding: 0.5rem 1.1rem;
+  border-radius: 6px;
+  border: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  background-color: var(--accent-color);
+  color: white;
+  transition: filter 0.15s ease;
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: brightness(0.88);
+}
+
+.primary-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  padding: 0.5rem 1.1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background-color: transparent;
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.secondary-button:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}

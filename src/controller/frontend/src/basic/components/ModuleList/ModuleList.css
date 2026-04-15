@@ -60,10 +60,15 @@
     box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
 }
 
-.ready     { background-color: var(--ready-color, blue); }
-.recording { background-color: var(--recording-color, red); }
-.waiting   { background-color: #aaa; }
-.offline   { background-color: lightgray; }
+.ready     { background-color: var(--ready-color, #1565c0); }
+.recording { background-color: #2e7d32; animation: pulse-green-dot 2s ease-in-out infinite; }
+.waiting   { background-color: #e8a020; }
+.offline   { background-color: #bbb; }
+
+@keyframes pulse-green-dot {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.25); }
+  50%       { box-shadow: 0 0 0 5px rgba(46, 125, 50, 0.06); }
+}
 
 /* Per-module update status (shown after Update All) */
 .module-update-status {

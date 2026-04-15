@@ -95,6 +95,15 @@ class Recording:
     # Public session API
     # -----------------------------------------------------------------------
 
+    def _busy_modules(self) -> set:
+        """Return the set of module IDs that are already in an active session."""
+        return {
+            m
+            for s in self.sessions.values()
+            if s.state == SessionState.ACTIVE
+            for m in s.modules
+        }
+
     def create_session(self, session_name: str, target: str) -> dict:
         """Create a session that begins recording immediately.
 
@@ -108,6 +117,11 @@ class Recording:
         if not modules:
             self.logger.warning(f"create_session: no modules for target '{target}'")
             return {"success": False, "error": f"No online modules found for target '{target}'"}
+
+        overlap = self._busy_modules() & set(modules)
+        if overlap:
+            self.logger.warning(f"create_session: modules already recording: {overlap}")
+            return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
 
         session_name = self._format_session_name(session_name)
 
@@ -128,7 +142,8 @@ class Recording:
             self.sessions[session_name] = session
 
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
-        self.facade.send_command(target, "start_recording", params)
+        for module_id in modules:
+            self.facade.send_command(module_id, "start_recording", params)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
@@ -223,11 +238,12 @@ class Recording:
             self.logger.info(f"Session '{session_name}' is already stopped")
             return
 
-        self.facade.send_command(session.target, "stop_recording", {})
-
         with self._lock:
             for module_id in session.modules:
                 session.module_stop_states[module_id] = "stopping"
+
+        for module_id in session.modules:
+            self.facade.send_command(module_id, "stop_recording", {})
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -399,7 +415,8 @@ class Recording:
             session.recording_start_at = start_at
 
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
-        self.facade.send_command(session.target, "start_recording", params)
+        for module_id in session.modules:
+            self.facade.send_command(module_id, "start_recording", params)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Scheduled session '{session_name}' started for {today}")
@@ -407,11 +424,14 @@ class Recording:
 
     def _stop_scheduled_session(self, session_name: str) -> None:
         session = self.sessions[session_name]
-        self.facade.send_command(session.target, "stop_recording", {})
         with self._lock:
             for module_id in session.modules:
                 session.module_stop_states[module_id] = "stopping"
-            # Return to SCHEDULED so it runs again tomorrow
+        for module_id in session.modules:
+            self.facade.send_command(module_id, "stop_recording", {})
+
+        # Return to SCHEDULED so it runs again tomorrow
+        with self._lock:
             session.state = SessionState.SCHEDULED
             session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
 

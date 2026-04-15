@@ -97,6 +97,15 @@
   opacity: 1;
 }
 
+.form-warning {
+  font-size: 0.82rem;
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.07);
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin: 0;
+}
+
 .button-row {
   display: flex;
   gap: 10px;

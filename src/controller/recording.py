@@ -123,7 +123,7 @@ class Recording:
             self.logger.warning(f"create_session: modules already recording: {overlap}")
             return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
 
-        session_name = self._format_session_name(session_name)
+        session_name = self._format_session_name(session_name, target)
 
         start_at = time.time() + LEAD_SECS
 
@@ -165,7 +165,7 @@ class Recording:
         if not modules:
             return {"success": False, "error": f"No online modules found for target '{target}'"}
 
-        session_name = self._format_session_name(session_name)
+        session_name = self._format_session_name(session_name, target)
 
         session = RecordingSession(
             session_name=session_name,
@@ -375,8 +375,10 @@ class Recording:
     # Private helpers
     # -----------------------------------------------------------------------
 
-    def _format_session_name(self, session_name: str) -> str:
+    def _format_session_name(self, session_name: str, target: str = "all") -> str:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if target and target != "all":
+            return f"{session_name}-{target}-{timestamp}"
         return f"{session_name}-{timestamp}"
 
 

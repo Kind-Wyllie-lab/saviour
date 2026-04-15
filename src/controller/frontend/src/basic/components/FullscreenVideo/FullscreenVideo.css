@@ -3,24 +3,26 @@
     position: fixed;
     top: 0;
     left: 0;
-    width: 100vw;   /* full width */
-    height: 100vh;  /* full height */
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    width: 100vw;
+    height: 100vh;
     background-color: black;
     z-index: 9999;
-  }
-  
-  
-  /* Video fills the overlay while maintaining aspect ratio */
-  .fullscreen-video {
-    width: 100%;      /* take full width of overlay */
-    height: 100%;     /* take full height */
-    max-width: 100vw; /* clamp to viewport */
-    max-height: 100vh;
-    object-fit: contain; /* maintain aspect ratio */
-  }
+}
+
+/* Panel fills the entire overlay */
+.video-panel {
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+/* Video fills the panel while maintaining aspect ratio */
+.fullscreen-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
   
   /* Close button */
   .fullscreen-close-btn {

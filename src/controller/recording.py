@@ -23,6 +23,10 @@ SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
 
 _MONITOR_INTERVAL_SECS = 5
 
+# How far into the future modules are told to start recording.
+# PTP-synchronised clocks mean all modules hit this timestamp together.
+LEAD_SECS = 3
+
 
 # ---------------------------------------------------------------------------
 # State enums
@@ -61,6 +65,9 @@ class RecordingSession:
     # Cumulative count of completed exports across all segments
     total_exports_complete:    int  = 0
     total_exports_failed:      int  = 0
+    # UTC epoch at which modules are scheduled to begin recording (time.time() + LEAD_SECS).
+    # None for immediate starts (e.g. module_back_online).
+    recording_start_at:        Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +111,8 @@ class Recording:
 
         session_name = self._format_session_name(session_name)
 
+        start_at = time.time() + LEAD_SECS
+
         session = RecordingSession(
             session_name=session_name,
             target=target,
@@ -112,12 +121,13 @@ class Recording:
             start_time=datetime.now().strftime("%Y%m%d-%H%M%S"),
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
+            recording_start_at=start_at,
         )
 
         with self._lock:
             self.sessions[session_name] = session
 
-        params = {"duration": 0, "session_name": session_name}
+        params = {"duration": 0, "session_name": session_name, "start_at": start_at}
         self.facade.send_command(target, "start_recording", params)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -379,14 +389,16 @@ class Recording:
 
     def _start_scheduled_session(self, session_name: str, today: str) -> None:
         session = self.sessions[session_name]
+        start_at = time.time() + LEAD_SECS
         with self._lock:
             session.state = SessionState.ACTIVE
             session.scheduled_last_start_date = today
             session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
             session.module_stop_states = {m: "recording" for m in session.modules}
             session.module_export_states = {m: "idle" for m in session.modules}
+            session.recording_start_at = start_at
 
-        params = {"duration": 0, "session_name": session_name}
+        params = {"duration": 0, "session_name": session_name, "start_at": start_at}
         self.facade.send_command(session.target, "start_recording", params)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -434,6 +446,10 @@ class Recording:
                             self._stop_scheduled_session(session_name)
 
                     elif session.state in (SessionState.ACTIVE, SessionState.ERROR):
+                        # Skip health check while still in the synchronised lead window
+                        if session.recording_start_at and time.time() < session.recording_start_at:
+                            continue
+
                         # Check every module that should be recording actually is
                         should_be_recording = [
                             m for m in session.modules

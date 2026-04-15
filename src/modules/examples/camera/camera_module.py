@@ -52,8 +52,11 @@ class CameraModule(Module):
         self.mode = None
         self.gain = None
 
-        # Get camera modes
+        # Get camera modes and sensor identity
         self.sensor_modes = self.picam2.sensor_modes
+        self.sensor_model = self.picam2.camera_properties.get("Model", "").lower()
+        self.has_autofocus = "imx708" in self.sensor_model
+        self.logger.info(f"Sensor model: {self.sensor_model!r}, autofocus: {self.has_autofocus}")
         time.sleep(0.1)
     
         # Streaming variables
@@ -145,8 +148,28 @@ class CameraModule(Module):
                 "label": f"Mode {i}: {w}×{h} @ {fps:.0f}fps — {fov}",
             })
 
-        return {"sensor_modes": enriched}
-        
+        return {
+            "sensor_modes": enriched,
+            "sensor_model": self.sensor_model,
+            "has_autofocus": self.has_autofocus,
+        }
+
+
+    @command()
+    def trigger_autofocus(self):
+        """Trigger a one-shot autofocus cycle (IMX708 / Camera Module 3 only)."""
+        if not self.has_autofocus:
+            return {"result": "error", "output": "Camera does not support autofocus"}
+        if not self.picam2.started:
+            return {"result": "error", "output": "Camera is not running"}
+        try:
+            # Switch to Auto mode and fire the trigger, then return to configured mode
+            self.picam2.set_controls({"AfMode": 1, "AfTrigger": 0})  # Auto + Start
+            return {"result": "success"}
+        except Exception as e:
+            self.logger.error(f"trigger_autofocus error: {e}")
+            return {"result": "error", "output": str(e)}
+
 
     def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
@@ -188,12 +211,20 @@ class CameraModule(Module):
                 exposure_time = self.config.get("camera.exposure_time", 10000)
             else:
                 exposure_time = int(1_000_000 / fps)
-            self.picam2.set_controls({
+            live_controls = {
                 "AnalogueGain": self.config.get("camera.gain", 1),
                 "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness"),
                 "FrameRate": fps,
-            })
+            }
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode_str = self.config.get("camera.autofocus_mode", "manual")
+                af_mode = _AF_MODE_MAP.get(af_mode_str, 0)
+                live_controls["AfMode"] = af_mode
+                if af_mode == 0:
+                    live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+            self.picam2.set_controls(live_controls)
 
         elif not self.is_streaming:
             try:
@@ -262,7 +293,15 @@ class CameraModule(Module):
                 "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness")
             } # target framerate, in reality it might be lower.
-            
+
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode_str = self.config.get("camera.autofocus_mode", "manual")
+                af_mode = _AF_MODE_MAP.get(af_mode_str, 0)
+                controls["AfMode"] = af_mode
+                if af_mode == 0:  # Manual — set fixed lens position
+                    controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
 

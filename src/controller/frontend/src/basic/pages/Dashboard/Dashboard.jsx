@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
 import "./Dashboard.css";
 
 import useModules from "/src/hooks/useModules";
@@ -16,14 +16,41 @@ const STREAM_PORTS = {
 
 function Dashboard() {
   const { moduleList } = useModules();
+  const [selectedGroup, setSelectedGroup] = useState("all");
 
-  const cameraModules     = moduleList.filter((m) => m.type === "camera");
-  const micModules        = moduleList.filter((m) => m.type === "microphone");
-  const ttlModules        = moduleList.filter((m) => m.type === "ttl");
+  // Sorted list of non-empty group names across all modules
+  const groups = useMemo(() => {
+    const names = [...new Set(moduleList.map(m => m.group).filter(Boolean))].sort();
+    return names;
+  }, [moduleList]);
+
+  const visibleModules = selectedGroup === "all"
+    ? moduleList
+    : moduleList.filter(m => m.group === selectedGroup);
+
+  const cameraModules = visibleModules.filter((m) => m.type === "camera");
+  const micModules    = visibleModules.filter((m) => m.type === "microphone");
+  const ttlModules    = visibleModules.filter((m) => m.type === "ttl");
 
   return (
     <div className="dashboard">
       <RecordingStatusWidget />
+
+      {groups.length > 0 && (
+        <div className="dashboard-group-filter">
+          <label htmlFor="group-select">Group:</label>
+          <select
+            id="group-select"
+            value={selectedGroup}
+            onChange={e => setSelectedGroup(e.target.value)}
+          >
+            <option value="all">All modules</option>
+            {groups.map(g => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="dashboard-main">
         {/* ── Left: camera grid ─────────────────────────────────────── */}
@@ -37,6 +64,7 @@ function Dashboard() {
                 ip={m.ip}
                 port={STREAM_PORTS.camera}
                 label={m.name}
+                isRecording={m.status === "RECORDING"}
               />
             ))
           )}
@@ -45,7 +73,7 @@ function Dashboard() {
         {/* ── Right: status panel ───────────────────────────────────── */}
         <div className="dashboard-panel">
           <HealthSummaryWidget />
-          <ModuleList modules={moduleList} />
+          <ModuleList modules={visibleModules} />
 
           {micModules.map((m) => (
             <MJPEGStreamCard
@@ -53,6 +81,7 @@ function Dashboard() {
               ip={m.ip}
               port={STREAM_PORTS.microphone}
               label={`${m.name} — Audio`}
+              isRecording={m.status === "RECORDING"}
             />
           ))}
 
@@ -62,6 +91,7 @@ function Dashboard() {
               ip={m.ip}
               port={STREAM_PORTS.ttl}
               label={`${m.name} — TTL`}
+              isRecording={m.status === "RECORDING"}
             />
           ))}
         </div>

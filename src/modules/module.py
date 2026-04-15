@@ -11,6 +11,7 @@ Created: 17/03/2025
 
 import sys
 import os
+import json
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -671,6 +672,42 @@ class Module(ABC):
         module_keys = list(getattr(self.config, 'module_config_keys', []))
         self.configure_module(module_keys)
         return {"config": self.config.get_all()}
+
+
+    @command()
+    def set_export_config(self, share_ip: str, share_username: str, share_password: str) -> dict:
+        """
+        Update the export (Samba) credentials sent by the controller on discovery.
+        Writes to base_config.json so the values survive a config reset, and also
+        updates the running config immediately.
+        Skipped if export.use_controller_export is false (custom export route).
+        """
+        if not self.config.get("export.use_controller_export", True):
+            self.logger.info("set_export_config skipped — use_controller_export is false")
+            return {"result": "skipped"}
+        self.logger.info(f"set_export_config called — updating share_ip to {share_ip}")
+        try:
+            # Persist to base_config.json so a reset_config doesn't revert the credentials
+            with open(self.config.base_config_path) as f:
+                base = json.load(f)
+            export = base.setdefault("export", {})
+            export["share_ip"] = share_ip
+            export["share_username"] = share_username
+            export["share_password"] = share_password
+            with open(self.config.base_config_path, "w") as f:
+                json.dump(base, f, indent=2)
+                f.write("\n")
+
+            # Also update the running config so the change takes effect immediately
+            self.config.set("export.share_ip", share_ip)
+            self.config.set("export.share_username", share_username)
+            self.config.set("export.share_password", share_password)
+
+            self.logger.info("Export config updated and persisted to base_config.json")
+            return {"result": "success"}
+        except Exception as e:
+            self.logger.error(f"set_export_config failed: {e}")
+            return {"result": "error", "output": str(e)}
 
 
     def _get_required_disk_space_mb(self) -> float:

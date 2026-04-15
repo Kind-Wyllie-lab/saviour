@@ -33,6 +33,15 @@
   background-color: color-mix(in srgb, #d4820a 5%, var(--card-bg-color));
 }
 
+/* ── Per-session row (used when multiple sessions are active) ───────────── */
+
+.rsw-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .rsw-session-name {
   font-weight: 600;
   letter-spacing: 0.01em;

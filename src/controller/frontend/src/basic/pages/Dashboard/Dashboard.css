@@ -35,6 +35,51 @@
   min-height: 0;
 }
 
+/* ── Group filter bar ────────────────────────────────────────────────────── */
+
+.dashboard-group-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.dashboard-group-filter label {
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+
+.dashboard-group-filter select {
+  font-size: 0.82em;
+  padding: 3px 26px 3px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.dashboard-group-filter select:hover {
+  border-color: var(--accent-color, #4a9eff);
+}
+
+.dashboard-group-filter select:focus {
+  border-color: var(--accent-color, #4a9eff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a9eff) 20%, transparent);
+}
+
 .dashboard-no-cameras {
   flex: 1;
   display: flex;

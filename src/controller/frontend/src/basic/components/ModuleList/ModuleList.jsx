@@ -37,6 +37,22 @@ function ModuleList({ modules }) {
     return `${parts[0]} +${parts[1]}`;       // e.g. "v0.1.6 +8"
   };
 
+  // Sort modules: grouped ones first (alphabetically by group then name),
+  // ungrouped at the end alphabetically.
+  const sortedModules = [...modules].sort((a, b) => {
+    const ga = a.group || "";
+    const gb = b.group || "";
+    if (ga !== gb) {
+      if (!ga) return 1;
+      if (!gb) return -1;
+      return ga.localeCompare(gb);
+    }
+    return (a.name || a.id).localeCompare(b.name || b.id);
+  });
+
+  // Track which group labels we've already rendered
+  let lastGroup = undefined;
+
   return (
     <div className="module-list-container card">
       <h2>Module List</h2>
@@ -46,29 +62,52 @@ function ModuleList({ modules }) {
         <div className="module-list-header">
           <span>Module</span>
           <span>Status</span>
+          <span>Group</span>
           <span>IP</span>
           <span>Version</span>
         </div>
 
-        {modules.map((module) => {
+        {sortedModules.map((module) => {
           const upd = updateStatuses[module.id];
+          const group = module.group || "";
+
+          // Emit a group separator row when the group changes
+          const showGroupHeader = group !== lastGroup;
+          lastGroup = group;
+
           return (
-            <div className="module-list-item" key={module.id}>
-              <div className="module-list-item-start">
-                <div className={`status-icon ${module.status.toLowerCase()}`} />
-                <span>{module.name} ({module.type})</span>
-              </div>
-              <span>{module.status}</span>
-              <span>{module.ip}</span>
-              <span className="module-version" title={module.version}>
-                {formatVersion(module.version)}
-              </span>
-              {upd && (
-                <span className={`module-update-status ${upd === "updating" ? "module-update-status--pending" : upd.success ? "module-update-status--success" : "module-update-status--error"}`}
-                  title={upd !== "updating" ? upd.output : undefined}>
-                  {upd === "updating" ? "Updating…" : upd.success ? `\u2713 ${upd.output}` : `\u2717 ${upd.output}`}
-                </span>
+            <div key={module.id}>
+              {showGroupHeader && group && (
+                <div className="module-group-header">{group}</div>
               )}
+              {showGroupHeader && !group && sortedModules.some(m => m.group) && (
+                <div className="module-group-header module-group-header--ungrouped">No group</div>
+              )}
+              <div className="module-list-item">
+                <div className="module-list-item-start">
+                  <div className={`status-icon ${module.status.toLowerCase()}`} />
+                  <span>{module.name} ({module.type})</span>
+                </div>
+                <span>{module.status}</span>
+                <span className="module-group-cell">
+                  {group
+                    ? <span className="module-group-badge">{group}</span>
+                    : <span className="cell--muted">—</span>
+                  }
+                </span>
+                <span>{module.ip}</span>
+                <span className="module-version" title={module.version}>
+                  {formatVersion(module.version)}
+                </span>
+                {upd && (
+                  <span
+                    className={`module-update-status ${upd === "updating" ? "module-update-status--pending" : upd.success ? "module-update-status--success" : "module-update-status--error"}`}
+                    title={upd !== "updating" ? upd.output : undefined}
+                  >
+                    {upd === "updating" ? "Updating…" : upd.success ? `\u2713 ${upd.output}` : `\u2717 ${upd.output}`}
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}

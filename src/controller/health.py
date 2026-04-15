@@ -72,6 +72,17 @@ class Health:
 
 
     """Modify module health records"""
+    def touch_heartbeat(self, module_id: str) -> None:
+        """Record that a message was received from module_id without updating metrics.
+
+        Any ZMQ message (cmd_ack, recording_started, etc.) proves the module is
+        reachable.  Updating last_heartbeat here prevents the suspicion/offline
+        timer firing on a module that is busy recording and missed a periodic
+        heartbeat send.
+        """
+        if module_id in self.module_health:
+            self.module_health[module_id]['last_heartbeat'] = time.time()
+
     def remove_module(self, module_id: str):
         if module_id in self.module_health.keys():
             self.module_health.pop(module_id)

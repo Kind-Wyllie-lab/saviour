@@ -419,6 +419,15 @@ class Web(ABC):
             self.logger.info(f"Applying section '{section}' to all camera modules")
             self.facade.apply_section_to_cameras(section, section_data)
 
+        @self.socketio.on('sync_export_credentials')
+        def handle_sync_export_credentials(data):
+            """Push this controller's Samba credentials to a single module's export config."""
+            module_id = data.get("module_id")
+            if not module_id:
+                return
+            result = self.facade.sync_export_to_module(module_id)
+            self.socketio.emit("export_sync_result", {"module_id": module_id, **result})
+
         """Controller System State"""
         @self.socketio.on("get_system_state")
         def handle_get_system_state(data=None):
@@ -473,14 +482,14 @@ class Web(ABC):
         @self.socketio.on("get_controller_health")
         def handle_get_controller_health(data=None):
             import shutil
-            import socket as _socket
             health = {}
-            # IP
+            # IP — read eth0 directly so wlan0 is never returned
             try:
-                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                health['ip'] = s.getsockname()[0]
-                s.close()
+                nm = subprocess.run(
+                    ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
+                    capture_output=True, text=True, timeout=5
+                )
+                health['ip'] = nm.stdout.strip().split("/")[0] if nm.returncode == 0 else None
             except Exception:
                 health['ip'] = None
             # CPU temperature

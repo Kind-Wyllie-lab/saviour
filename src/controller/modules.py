@@ -363,6 +363,25 @@ class Modules:
         return targets
 
 
+    def apply_section_to_module(self, module_id: str, section: str, section_data: dict):
+        """Merge section_data into one config section for a single module.
+
+        Returns (module_id, merged_filtered_config) on success, or None if the
+        module is unknown or has no confirmed config yet.
+        """
+        state = self._config_states.get(module_id)
+        if not state or not state.true_config:
+            self.logger.warning(
+                f"apply_section_to_module: no confirmed config for {module_id}"
+            )
+            return None
+        true_config = state.true_config
+        merged = {**true_config, section: {**true_config.get(section, {}), **section_data}}
+        filtered = self._filter_private_keys(merged)
+        self.set_target_module_config(module_id, filtered)
+        return (module_id, filtered)
+
+
     def get_modules_by_target(self, target: str) -> Dict[str, Any]:
         """
         Resolve a target string to a dict of modules.

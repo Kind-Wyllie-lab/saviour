@@ -159,6 +159,10 @@ class Controller(ABC):
             status_data = json.loads(data)
             status_type = status_data.get('type', 'unknown')
             self.web.handle_module_status(module_id, status_data) # Whatever web related functionality related to status update, process it # TODO: remove this
+            # Any message from a module proves it is reachable — refresh the
+            # heartbeat timer so busy modules (e.g. mid-recording) are not
+            # incorrectly declared offline just because they missed a periodic send.
+            self.health.touch_heartbeat(module_id)
             match status_type:
                 case 'heartbeat':
                     self.modules.check_status(module_id, status_data)
@@ -240,8 +244,17 @@ class Controller(ABC):
 
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')
-                    self.logger.warning(f"{module_id} failed to start recording: {error}")
-                    self.modules.notify_recording_stopped(module_id, status_data)
+                    if error == "Already recording":
+                        # module_back_online re-issued start_recording to a module
+                        # that was already mid-recording — treat it as a confirmation
+                        # rather than a failure so the session stays ACTIVE.
+                        self.logger.info(
+                            f"{module_id} was already recording — treating as recording_started"
+                        )
+                        self.modules.notify_recording_started(module_id, {"recording": True})
+                    else:
+                        self.logger.warning(f"{module_id} failed to start recording: {error}")
+                        self.modules.notify_recording_stopped(module_id, status_data)
 
                 case 'recording_stop_failed':
                     if status_data.get("error") == "Not recording":

@@ -173,7 +173,23 @@ class ControllerFacade():
         for module_id, config in targets:
             self.controller.communication.send_command(module_id, "set_config", config)
         self.logger.info(f"apply_section_to_cameras: sent '{section}' to {len(targets)} camera(s)")
-        
+
+
+    def sync_export_to_module(self, module_id: str) -> dict:
+        """Push this controller's Samba credentials into a single module's export config.
+
+        Returns {"success": True} or {"success": False, "error": "..."}.
+        """
+        creds = self.controller.get_export_credentials()
+        if not creds:
+            return {"success": False, "error": "Credentials file not found on controller"}
+        result = self.controller.modules.apply_section_to_module(module_id, "export", creds)
+        if result is None:
+            return {"success": False, "error": "Module not found or config not yet confirmed"}
+        _, config = result
+        self.controller.communication.send_command(module_id, "set_config", config)
+        return {"success": True}
+
 
     """Events"""
     """Export Queue"""

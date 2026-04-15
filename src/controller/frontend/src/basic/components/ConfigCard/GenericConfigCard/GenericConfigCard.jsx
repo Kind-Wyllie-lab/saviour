@@ -5,12 +5,14 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import { useExportSync } from "/src/hooks/useExportSync";
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const { syncStatus, syncExport } = useExportSync(module.id);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
@@ -104,6 +106,21 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
           )}
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
+          )}
+
+          {formData?.export !== undefined && (
+            <div className="config-action-buttons">
+              <button type="button" className="save-button"
+                onClick={syncExport}
+                disabled={syncStatus === "syncing"}>
+                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
+              </button>
+              {syncStatus && syncStatus !== "syncing" && (
+                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

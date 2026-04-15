@@ -10,7 +10,7 @@ const RECONNECT_DELAY_MS = 2500;
  * Handles stall detection and reconnection for any module that serves
  * an MJPEG stream at http://{ip}:{port}/video_feed.
  */
-function MJPEGStreamCard({ ip, port = 8080, label }) {
+function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [streamKey, setStreamKey] = useState(Date.now());
   const stallTimer = useRef(null);
@@ -55,6 +55,7 @@ function MJPEGStreamCard({ ip, port = 8080, label }) {
             onError={handleError}
             onClick={() => setFullscreen(true)}
           />
+          {isRecording && <span className="mjpeg-rec-dot" title="Recording" />}
         </div>
       </div>
 

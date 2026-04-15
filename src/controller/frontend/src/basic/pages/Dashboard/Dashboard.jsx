@@ -37,6 +37,7 @@ function Dashboard() {
                 ip={m.ip}
                 port={STREAM_PORTS.camera}
                 label={m.name}
+                isRecording={m.status === "RECORDING"}
               />
             ))
           )}
@@ -53,6 +54,7 @@ function Dashboard() {
               ip={m.ip}
               port={STREAM_PORTS.microphone}
               label={`${m.name} — Audio`}
+              isRecording={m.status === "RECORDING"}
             />
           ))}
 
@@ -62,6 +64,7 @@ function Dashboard() {
               ip={m.ip}
               port={STREAM_PORTS.ttl}
               label={`${m.name} — TTL`}
+              isRecording={m.status === "RECORDING"}
             />
           ))}
         </div>

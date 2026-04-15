@@ -24,6 +24,25 @@
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  position: relative;
+}
+
+.mjpeg-rec-dot {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #cc3333;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  animation: mjpeg-rec-pulse 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes mjpeg-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
 }
 
 .mjpeg-stream-video img {

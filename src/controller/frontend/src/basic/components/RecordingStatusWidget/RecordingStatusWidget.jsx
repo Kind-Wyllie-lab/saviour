@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
 import useHealth from "/src/hooks/useHealth";
@@ -22,6 +23,7 @@ function formatElapsed(totalSeconds) {
 }
 
 export default function RecordingStatusWidget() {
+  const navigate = useNavigate();
   const { sessionList } = useSessions();
   const { modules } = useModules();
   const { moduleHealth } = useHealth();
@@ -51,7 +53,11 @@ export default function RecordingStatusWidget() {
 
   if (!activeSession) {
     return (
-      <div className="recording-status-widget recording-status-widget--idle">
+      <div
+        className="recording-status-widget recording-status-widget--idle"
+        onClick={() => navigate("/recording")}
+        style={{ cursor: "pointer" }}
+      >
         <span className="rsw-dot rsw-dot--idle" />
         <span className="rsw-idle-text">No active session</span>
       </div>
@@ -75,7 +81,11 @@ export default function RecordingStatusWidget() {
   const allRecording = moduleStatuses.every((m) => m.dotClass === "rsw-dot--recording");
 
   return (
-    <div className={`recording-status-widget recording-status-widget--active ${allRecording ? "" : "recording-status-widget--partial"}`}>
+    <div
+      className={`recording-status-widget recording-status-widget--active ${allRecording ? "" : "recording-status-widget--partial"}`}
+      onClick={() => navigate("/recording")}
+      style={{ cursor: "pointer" }}
+    >
       <span className="rsw-dot rsw-dot--recording rsw-dot--pulse" />
       <span className="rsw-session-name">{activeSession.session_name}</span>
       <span className="rsw-elapsed">{formatElapsed(elapsed)}</span>

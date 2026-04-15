@@ -68,6 +68,9 @@ class RecordingSession:
     # UTC epoch at which modules are scheduled to begin recording (time.time() + LEAD_SECS).
     # None for immediate starts (e.g. module_back_online).
     recording_start_at:        Optional[float] = None
+    # Set by _stop_scheduled_session so _check_all_stopped returns to SCHEDULED
+    # rather than STOPPED when the day's run finishes.
+    scheduled_stopping:        bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +386,8 @@ class Recording:
 
 
     def _check_all_stopped(self, session_name: str) -> None:
-        """Transition the session to STOPPED when no module is still 'stopping'."""
+        """Transition the session to STOPPED (or back to SCHEDULED for daily sessions)
+        when no module is still 'stopping'."""
         session = self.sessions.get(session_name)
         if not session or session.state == SessionState.STOPPED:
             return
@@ -395,11 +399,18 @@ class Recording:
             return
 
         with self._lock:
-            session.state = SessionState.STOPPED
-            session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            if session.scheduled_stopping:
+                # Daily scheduled session — return to SCHEDULED so it runs tomorrow
+                session.scheduled_stopping = False
+                session.state = SessionState.SCHEDULED
+                new_state = SessionState.SCHEDULED
+            else:
+                session.state = SessionState.STOPPED
+                session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                new_state = SessionState.STOPPED
 
         self.logger.info(
-            f"All modules confirmed stopped — session '{session_name}' is now STOPPED"
+            f"All modules confirmed stopped — session '{session_name}' → {new_state}"
         )
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -425,21 +436,27 @@ class Recording:
 
 
     def _stop_scheduled_session(self, session_name: str) -> None:
+        """Send stop commands for today's run of a scheduled session.
+
+        The session stays in ACTIVE state until all modules confirm via
+        module_stopped(), at which point _check_all_stopped() transitions it
+        back to SCHEDULED (not STOPPED) so it runs again tomorrow.
+        """
         session = self.sessions[session_name]
         with self._lock:
             for module_id in session.modules:
                 session.module_stop_states[module_id] = "stopping"
+            session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            # Mark as SCHEDULED_STOPPING so _check_all_stopped knows to
+            # return to SCHEDULED rather than STOPPED.
+            session.scheduled_stopping = True
+
         for module_id in session.modules:
             self.facade.send_command(module_id, "stop_recording", {})
 
-        # Return to SCHEDULED so it runs again tomorrow
-        with self._lock:
-            session.state = SessionState.SCHEDULED
-            session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
-        self.logger.info(f"Scheduled session '{session_name}' stopped for today")
+        self.logger.info(f"Scheduled session '{session_name}' stop commands sent")
 
 
     def _monitor_sessions(self) -> None:

@@ -10,6 +10,7 @@ import { useExportSync } from "/src/hooks/useExportSync";
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
   const { syncStatus, syncExport } = useExportSync(module.id);
@@ -49,6 +50,7 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
 
   const handleReboot = () => {
     socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
+    setShowRebootConfirm(false);
   };
 
   const handleGetModes = () => {
@@ -143,10 +145,23 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
         )}
       </div>
       <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={handleReboot}>
+        <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
           Reboot Module
         </button>
       </div>
+
+      {showRebootConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{module.name}</strong>?</p>
+            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleReboot}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showResetConfirm && (
         <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>

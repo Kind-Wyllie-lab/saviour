@@ -18,6 +18,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const [newMode, setNewMode] = useState("");
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   // {pin: "idle" | "testing" | "done"}
   const [pinTestState, setPinTestState] = useState({});
   const { updateStatus, handleUpdate } = useModuleUpdate(id);
@@ -287,10 +288,25 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                   {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
                 </span>
               )}
-              <button className="update-button" type="button"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "reboot", params: {} })}>
+              <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
                 Reboot
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRebootConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{module.name || id}</strong>?</p>
+            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={() => {
+                socket.emit("send_command", { module_id: id, type: "reboot", params: {} });
+                setShowRebootConfirm(false);
+              }}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
             </div>
           </div>
         </div>

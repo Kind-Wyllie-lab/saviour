@@ -54,6 +54,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
@@ -490,11 +491,27 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
         )}
       </div>
       <div className="update-button-wrapper">
-        <button className="update-button" type="button"
-          onClick={() => socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} })}>
+        <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
           Reboot Module
         </button>
       </div>
+
+      {/* ── Reboot confirmation modal ── */}
+      {showRebootConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{module.name}</strong>?</p>
+            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={() => {
+                socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
+                setShowRebootConfirm(false);
+              }}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Apply-to-all confirmation modal ── */}
       {applyAllConfirm && (

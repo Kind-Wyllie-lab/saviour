@@ -28,6 +28,10 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from src.controller.models import Module, ModuleStatus
 
+def _type_from_id(module_id: str) -> str:
+    """Derive the module type from its ID (e.g. 'camera_a349' → 'camera')."""
+    return module_id.rsplit("_", 1)[0] if "_" in module_id else module_id
+
 
 # ---------------------------------------------------------------------------
 # Config sync types
@@ -232,7 +236,23 @@ class Modules:
         state = self._get_or_create_config_state(module_id)
         state.true_config = config
 
-        # Also keep Module.config in sync for convenience (e.g. serialisation)
+        # If the module was never registered via zeroconf (e.g. add_service crashed),
+        # auto-register it now so the frontend can see it.  IP and version will be
+        # filled in properly once zeroconf rediscovers the module.
+        if module_id not in self._modules:
+            self.logger.warning(
+                f"Received config for unregistered module {module_id} — "
+                f"auto-registering (no prior zeroconf discovery, IP/version unknown)"
+            )
+            self.add_module(Module(
+                id=module_id,
+                name=module_id,
+                type=_type_from_id(module_id),
+                version="",
+                ip="",
+            ))
+
+        # Keep Module.config in sync for serialisation / frontend delivery
         if module_id in self._modules:
             self._modules[module_id].config = config
             self._update_module_name(module_id)
@@ -250,8 +270,10 @@ class Modules:
             else:
                 state.status = ConfigSyncStatus.SYNCED
         else:
-            # No target set yet – treat initial fetch as synced baseline
-            state.target_config = config
+            # No target set yet — treat initial fetch as synced baseline.
+            # Store the filtered version so future diffs (which also filter
+            # true_config) are comparing apples-to-apples.
+            state.target_config = self._filter_private_keys(config)
             state.status = ConfigSyncStatus.SYNCED
 
         self.broadcast_updated_modules()

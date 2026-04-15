@@ -460,10 +460,11 @@ class Web(ABC):
             except Exception:
                 version = "unknown"
             try:
-                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
-                s.close()
+                nm = subprocess.run(
+                    ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
+                    capture_output=True, text=True, timeout=5
+                )
+                ip = nm.stdout.strip().split("/")[0] if nm.returncode == 0 else "unknown"
             except Exception:
                 ip = "unknown"
             self.socketio.emit("controller_info_response", {"ip": ip, "version": version})

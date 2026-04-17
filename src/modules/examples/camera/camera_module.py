@@ -71,6 +71,7 @@ class CameraModule(Module):
         self.latest_frame = None
         self.last_frame_timestamp = None
         self.frame_lock = threading.Lock()
+        self._last_stream_encode_time = 0.0
 
         # Configure camera
         time.sleep(0.1)
@@ -622,16 +623,15 @@ class CameraModule(Module):
             monochrome = self.config.get("camera.monochrome") is True
             overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
 
-            # Main stream (recording): only open if monochrome conversion is needed.
-            # Timestamp overlay is intentionally skipped here — the per-frame CSV
-            # provides higher-precision timestamps without the per-frame CPU cost of
-            # cv2.putText on a full-resolution frame, which causes drops at ≥60 fps.
-            if monochrome:
-                with MappedArray(req, 'main') as m:
+            # Modify main stream - used for recording.
+            with MappedArray(req, 'main') as m:
+                if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                if overlay_timestamp:
+                    self._apply_timestamp(m, timestamp, "main")
 
-            # Lores stream (preview/streaming): overlay timestamp and fps here only.
+            # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
                 if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
@@ -775,17 +775,30 @@ class CameraModule(Module):
             return False
 
 
-    def _stream_post_callback(self, request):
-        try:
-            frame = request.make_array("lores")
+    _STREAM_FPS = 24
+    _STREAM_INTERVAL_S = 1.0 / _STREAM_FPS
 
+    def _stream_post_callback(self, request):
+        """Capture and JPEG-encode one lores frame, throttled to _STREAM_FPS.
+
+        The post-callback fires on every camera frame regardless of recording fps.
+        Without throttling, a 100fps recording would trigger 100 JPEG encodes per
+        second — far exceeding what the network stream needs and consuming enough
+        CPU to cause frame drops in the encoder.
+        """
+        try:
+            now = time.monotonic()
+            if now - self._last_stream_encode_time < self._STREAM_INTERVAL_S:
+                return
+            self._last_stream_encode_time = now
+
+            frame = request.make_array("lores")
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if not ret:
                 return
-            
             with self.frame_lock:
-                self.latest_frame = jpeg.tobytes()            
-        
+                self.latest_frame = jpeg.tobytes()
+
         except Exception as e:
             self.logger.error(f"Capture error: {e}")
 

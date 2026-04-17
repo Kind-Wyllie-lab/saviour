@@ -1,6 +1,7 @@
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, useState } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
+import socket from "/src/socket";
 import "./System.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ function statusCell(status) {
 
 export default function System() {
   const { moduleHealth, controllerHealth, refresh } = useHealth();
-  const { modules } = useModules();
+  const { modules, moduleList } = useModules();
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
@@ -87,6 +88,41 @@ export default function System() {
       .map(([id, h]) => ({ id, name: modules[id]?.name ?? id, ...h }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [moduleHealth, modules]);
+
+  // ── Update all devices ────────────────────────────────────────────────────
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
+  const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | { success, output }
+
+  useEffect(() => {
+    const onModuleResult = (data) => {
+      setDeviceStatuses(prev => ({ ...prev, [data.module_id]: { success: data.success, output: data.output } }));
+    };
+    const onControllerResult = (data) => {
+      setDeviceStatuses(prev => ({ ...prev, controller: { success: data.success, output: data.output } }));
+    };
+    socket.on("module_update_result", onModuleResult);
+    socket.on("update_saviour_controller_result", onControllerResult);
+    return () => {
+      socket.off("module_update_result", onModuleResult);
+      socket.off("update_saviour_controller_result", onControllerResult);
+    };
+  }, []);
+
+  const handleUpdateAll = () => {
+    const initial = { controller: "updating" };
+    moduleList.forEach(m => { initial[m.id] = "updating"; });
+    setDeviceStatuses(initial);
+    setShowUpdateConfirm(false);
+    socket.emit("update_saviour_controller");
+    socket.emit("send_command", { module_id: "all", type: "update_saviour", params: {} });
+  };
+
+  const updateDevices = useMemo(() => {
+    if (Object.keys(deviceStatuses).length === 0) return [];
+    const rows = [{ id: "controller", name: "Controller" }];
+    moduleList.forEach(m => rows.push({ id: m.id, name: m.name }));
+    return rows;
+  }, [deviceStatuses, moduleList]);
 
   return (
     <main className="system-page">
@@ -159,6 +195,68 @@ export default function System() {
           </tbody>
         </table>
       </div>
+      {/* ── Update all devices ── */}
+      <div className="system-update-section">
+        <div className="system-header">
+          <h2>Update All Devices</h2>
+          <button
+            className="refresh-btn"
+            type="button"
+            onClick={() => setShowUpdateConfirm(true)}
+            disabled={Object.values(deviceStatuses).some(s => s === "updating")}
+          >
+            {Object.values(deviceStatuses).some(s => s === "updating") ? "Updating…" : "Update All"}
+          </button>
+        </div>
+
+        {updateDevices.length > 0 && (
+          <div className="system-table-wrapper">
+            <table className="system-table">
+              <thead>
+                <tr>
+                  <th>Device</th>
+                  <th>Result</th>
+                  <th>Output</th>
+                </tr>
+              </thead>
+              <tbody>
+                {updateDevices.map(({ id, name }) => {
+                  const s = deviceStatuses[id];
+                  return (
+                    <tr key={id} className={id === "controller" ? "system-table__controller-row" : ""}>
+                      <td><span className="device-name">{name}</span></td>
+                      <td>
+                        {s === "updating"
+                          ? <span className="cell--muted">Updating…</span>
+                          : s?.success
+                            ? <span className="val--ok">&#10003; Updated</span>
+                            : <span className="val--danger">&#10007; Failed</span>
+                        }
+                      </td>
+                      <td className="cell--muted update-output">
+                        {s && s !== "updating" ? s.output : ""}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showUpdateConfirm && (
+        <div className="modal-overlay" onClick={() => setShowUpdateConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Update SAVIOUR on all <strong>{moduleList.length + 1}</strong> devices?</p>
+            <p className="modal-subtext">Runs <code>git pull</code> on the controller and all connected modules. Restart services afterwards to apply changes.</p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button" onClick={handleUpdateAll}>Update All</button>
+              <button className="reset-button" type="button" onClick={() => setShowUpdateConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

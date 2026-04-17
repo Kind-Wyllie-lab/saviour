@@ -619,24 +619,22 @@ class CameraModule(Module):
             # alt: timestmap = str(dt)
             timestamp = f"{self.facade.get_module_name()} {timestamp}"
 
+            monochrome = self.config.get("camera.monochrome") is True
             overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
 
-            # Modify main stream - used for recording.
-            with MappedArray(req, 'main') as m:
-                if self.config.get("camera.monochrome") is True:
-                    # Convert BGR to grayscale
+            # Main stream (recording): only open if monochrome conversion is needed.
+            # Timestamp overlay is intentionally skipped here — the per-frame CSV
+            # provides higher-precision timestamps without the per-frame CPU cost of
+            # cv2.putText on a full-resolution frame, which causes drops at ≥60 fps.
+            if monochrome:
+                with MappedArray(req, 'main') as m:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                    # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                if overlay_timestamp:
-                    self._apply_timestamp(m, timestamp, "main")
 
-            # Modify lores stream - used for streaming.
+            # Lores stream (preview/streaming): overlay timestamp and fps here only.
             with MappedArray(req, "lores") as m:
-                if self.config.get("camera.monochrome") is True:
-                    # Convert BGR to grayscale
+                if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                    # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                 if overlay_timestamp:
                     self._apply_timestamp(m, timestamp, "lores")
@@ -677,31 +675,35 @@ class CameraModule(Module):
         )
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
-        """Apply the frame timestamp to the image."""
-        width  = self.width  if stream == "main" else self.lores_width
-        height = self.height if stream == "main" else self.lores_height
-        font = cv2.FONT_HERSHEY_SIMPLEX
+        """Apply the frame timestamp to the image.
 
-        size_preset = self.config.get("camera.text_size", "medium")
-        target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
-        thickness = 2 if size_preset == "large" else 1
+        Font scale and text position are cached after the first call per stream —
+        the timestamp string is always the same length so the layout never changes.
+        """
+        cache_attr = f"_ts_layout_{stream}"
+        layout = getattr(self, cache_attr, None)
+        if layout is None:
+            width  = self.width  if stream == "main" else self.lores_width
+            height = self.height if stream == "main" else self.lores_height
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            size_preset = self.config.get("camera.text_size", "medium")
+            target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
+            thickness = 2 if size_preset == "large" else 1
+            ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
+            font_scale = max(0.3, (target_fraction * width) / ref_width)
+            text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+            x = int((width - text_width) / 2)
+            padding = max(4, int(height * 0.01))
+            y = text_height + padding
+            layout = (font_scale, thickness, x, y)
+            setattr(self, cache_attr, layout)
 
-        # Scale font so the timestamp string fills target_fraction of the image width.
-        ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
-        font_scale = max(0.3, (target_fraction * width) / ref_width)
-
-        text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
-
-        x = int((width - text_width) / 2)
-        # org is the text baseline; offset down by text_height + small padding from top.
-        padding = max(4, int(height * 0.01))
-        y = text_height + padding
-
+        font_scale, thickness, x, y = layout
         cv2.putText(
             img=m.array,
             text=timestamp,
             org=(x, y),
-            fontFace=font,
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX,
             fontScale=font_scale,
             color=(50, 255, 50),
             thickness=thickness,

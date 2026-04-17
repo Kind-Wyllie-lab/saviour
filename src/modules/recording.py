@@ -45,6 +45,7 @@ class Recording():
         # Main Recording Thread
         self._recording_duration_thread = None # A thread to automatically stop recording if a duration is given # TODO: Rename this something to do with auto stop recording
         self.recording_start_time = None # When a recording session was started
+        self.recording_intended_start_at = None # The start_at timestamp requested by the controller (None = start immediately)
         
         # Health metadata thread
         self.health_recording_thread = None # A thread to record health on
@@ -81,6 +82,8 @@ class Recording():
             self.logger.info("Already recording")
             self.facade.send_status({"type": "recording_start_failed", "error": "Already recording"})
             return {"result": "error", "error": "Already recording"}
+
+        self.recording_intended_start_at = start_at
 
         if start_at is not None:
             delay = start_at - time.time()

@@ -564,13 +564,24 @@ class Web(ABC):
 
         @self.socketio.on("update_saviour_controller")
         def handle_update_saviour_controller(data=None):
-            import subprocess
+            import subprocess, os
             self.logger.info("Update SAVIOUR controller requested")
             def _run_update():
                 try:
+                    # Resolve the remote URL and convert SSH to HTTPS so the
+                    # service user (which has no SSH key) can pull without auth.
+                    # The on-disk remote stays as-is, so dev machines can still push over SSH.
+                    url_result = subprocess.run(
+                        ['git', '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
+                        capture_output=True, text=True
+                    )
+                    remote_url = url_result.stdout.strip()
+                    import re
+                    https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
+                                       r'https://\1/\2.git', remote_url)
                     result = subprocess.run(
                         ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                         '-C', '/usr/local/src/saviour', 'pull'],
+                         '-C', '/usr/local/src/saviour', 'pull', https_url],
                         capture_output=True, text=True, timeout=60
                     )
                     success = result.returncode == 0

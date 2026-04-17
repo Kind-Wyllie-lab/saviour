@@ -100,6 +100,19 @@
   opacity: 0.45;
 }
 
+.system-update-section {
+  margin-top: 32px;
+}
+
+.update-output {
+  font-size: 0.82em;
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}
+
 /* val colours imported from HealthSummaryWidget.css via global scope —
    but redeclare here to be self-contained if that CSS isn't loaded */
 .val--ok     { color: #2d9e4f; }

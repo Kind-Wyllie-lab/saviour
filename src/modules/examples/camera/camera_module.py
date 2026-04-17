@@ -596,8 +596,11 @@ class CameraModule(Module):
 
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
 
-            # Write per-frame CSV row while recording
-            if self.is_recording and self._timestamp_csv_writer is not None:
+            # Write per-frame CSV row while recording.
+            # Guard on writer rather than is_recording: the base class sets
+            # is_recording=True *after* _create_initial_recording_segment(), so
+            # the first few frames would be silently skipped by an is_recording check.
+            if self._timestamp_csv_writer is not None:
                 timestamp_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
                 self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc])
                 self._frame_id += 1

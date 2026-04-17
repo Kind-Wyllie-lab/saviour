@@ -171,6 +171,13 @@ class CameraModule(Module):
             return {"result": "error", "output": str(e)}
 
 
+    def get_health(self) -> dict:
+        """Extend base health with wall/monotonic offset for SensorTimestamp alignment."""
+        health = super().get_health()
+        health["wall_mono_offset_s"] = time.time() - time.monotonic()
+        return health
+
+
     def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
         if self.is_streaming:
@@ -512,24 +519,37 @@ class CameraModule(Module):
 
 
     """Timestamping frames"""
-    def _get_frame_timestamp(self, req) -> bool:
+    def _get_frame_timestamp(self, req) -> Optional[int]:
+        """Return the frame exposure time as wall-clock nanoseconds.
+
+        Prefers SensorTimestamp (hardware-stamped at actual sensor exposure,
+        CLOCK_MONOTONIC) converted to CLOCK_REALTIME.  Falls back to
+        FrameWallClock (picamera2 wall-clock stamp at ISP output) if
+        SensorTimestamp is unavailable.
+        """
         try:
             metadata = req.get_metadata()
-            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-            if frame_wall_clock != 'No data':
+            sensor_ts = metadata.get('SensorTimestamp')
+            if sensor_ts is not None:
+                # CLOCK_MONOTONIC → CLOCK_REALTIME conversion (cheap, two syscalls).
+                # On Pi, CLOCK_BOOTTIME == CLOCK_MONOTONIC (no suspend), so this is exact.
+                wall_mono_offset_ns = int((time.time() - time.monotonic()) * 1e9)
+                return sensor_ts + wall_mono_offset_ns
+            frame_wall_clock = metadata.get('FrameWallClock')
+            if frame_wall_clock is not None:
                 return frame_wall_clock
-            else:
-                return False
+            return None
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+            return None
 
 
     def _get_and_apply_frame_timestamp(self, req) -> None:
         try:
             # Get and format timestamp
             timestamp = self._get_frame_timestamp(req)
-            if not timestamp:
-                self.logger.warning("No data returned by frame wall clock")
+            if timestamp is None:
+                self.logger.warning("No frame timestamp available from metadata")
                 return
 
             # Calculate actual framerate

@@ -350,7 +350,7 @@ class Recording():
 
     def _record_health_metadata(self):
         """Retrieve health metadata and write to csv tile"""
-        interval = self.config.get("health_metadata_recording_interval", 5)
+        interval = self.config.get("health_metadata_recording_interval", 1)
         csv_filename = self.current_health_segment 
         fieldnames = list(self.facade.get_health().keys())
         with open(csv_filename, "a", newline="") as f:

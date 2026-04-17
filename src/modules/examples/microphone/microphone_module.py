@@ -59,7 +59,7 @@ class AudiomothModule(Module):
         # {serial: {'level_db': float, 'peak_db': float, 'spectrum_db': ndarray, 'freqs': ndarray}}
         self.monitor_data = {}
         self.monitor_data_lock = threading.Lock()
-        self.SPEC_COLS = 600   # number of FFT columns to retain per audiomoth
+        self.SPEC_COLS = 150   # number of FFT columns to retain per audiomoth (~3 s window)
         self.peak_hold_data = {}  # {serial: {'value_db': float, 'time': float}}
         self._register_monitoring_routes()
 
@@ -347,9 +347,15 @@ class AudiomothModule(Module):
                 cv2.putText(frame, label, (PADDING, y0 + 22),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
-                # ── Spectrogram ──────────────────────────────────────────────
+                # ── Spectrogram (20–70 kHz USV range) ───────────────────────
+                FREQ_LO_HZ = 20_000
+                FREQ_HI_HZ = 70_000
                 if spec_buf:
-                    spec_mat = np.array(spec_buf, dtype=np.float32).T
+                    spec_mat = np.array(spec_buf, dtype=np.float32).T  # (n_bins, n_cols)
+                    n_bins = spec_mat.shape[0]
+                    bin_lo = int(FREQ_LO_HZ / nyquist * n_bins)
+                    bin_hi = int(FREQ_HI_HZ / nyquist * n_bins)
+                    spec_mat = spec_mat[bin_lo:bin_hi, :]
                     spec_img = cv2.resize(spec_mat, (pw, PLOT_H),
                                           interpolation=cv2.INTER_LINEAR)
                     spec_img = np.flipud(spec_img)
@@ -360,10 +366,13 @@ class AudiomothModule(Module):
 
                 cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
 
-                # ── Y-axis: frequency labels (spectrogram) ───────────────────
-                freq_ticks_khz = [0, 20, 40, 60, 80, int(nyquist // 1000)]
+                # ── Y-axis: frequency labels (20–70 kHz) ─────────────────────
+                freq_lo_khz = FREQ_LO_HZ // 1000
+                freq_hi_khz = FREQ_HI_HZ // 1000
+                freq_range_khz = freq_hi_khz - freq_lo_khz
+                freq_ticks_khz = [20, 30, 40, 50, 60, 70]
                 for fk in freq_ticks_khz:
-                    fy = int(py1 - (fk * 1000 / nyquist) * PLOT_H)
+                    fy = int(py1 - ((fk - freq_lo_khz) / freq_range_khz) * PLOT_H)
                     cv2.line(frame, (px0 - 3, fy), (px0, fy), (110, 110, 110), 1)
                     cv2.putText(frame, f"{fk}k", (3, fy + 4),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.30, (110, 110, 110), 1)

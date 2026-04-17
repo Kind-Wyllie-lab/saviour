@@ -107,6 +107,7 @@ class CameraModule(Module):
         self._timestamp_csv_writer = None
         self._current_csv_path = None
         self._frame_id = 0
+        self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
 
         self.module_checks = {
             self._check_picam
@@ -364,8 +365,9 @@ class CameraModule(Module):
         self._current_csv_path = f"{stem}_timestamps.csv"
         self._timestamp_csv_file = open(self._current_csv_path, "w", newline="")
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
-        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc"])
+        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before"])
         self._frame_id = 0
+        self._csv_prev_ns = None
         self.facade.add_session_file(self._current_csv_path)
 
     def _close_timestamp_csv(self) -> None:
@@ -602,7 +604,15 @@ class CameraModule(Module):
             # the first few frames would be silently skipped by an is_recording check.
             if self._timestamp_csv_writer is not None:
                 timestamp_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
-                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc])
+                if self._csv_prev_ns is not None and self.fps:
+                    delta_ms = round((timestamp - self._csv_prev_ns) / 1e6, 3)
+                    expected_ms = 1000.0 / self.fps
+                    dropped_before = max(0, round(delta_ms / expected_ms) - 1)
+                else:
+                    delta_ms = ""
+                    dropped_before = ""
+                self._csv_prev_ns = timestamp
+                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc, delta_ms, dropped_before])
                 self._frame_id += 1
 
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds

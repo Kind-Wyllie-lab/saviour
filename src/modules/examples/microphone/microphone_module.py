@@ -122,13 +122,14 @@ class AudiomothModule(Module):
             self.logger.warning("No audiomoths connected, cannot start recording")
             return
 
+        intended_start_at = getattr(self, "recording_intended_start_at", None)
         for serial, mic_id in self.audiomoths.items():
             filename = self._get_audio_filename(serial)
             self.current_recording_files[serial] = filename
             self.facade.add_session_file(filename)
             thread = threading.Thread(
                 target=self._record_microphone_segment,
-                args=(serial, mic_id, filename),
+                args=(serial, mic_id, filename, intended_start_at),
                 daemon=True,
                 name=f"audiomoth-{serial}"
             )
@@ -160,7 +161,7 @@ class AudiomothModule(Module):
             self.facade.add_session_file(filename)
             thread = threading.Thread(
                 target=self._record_microphone_segment,
-                args=(serial, mic_id, filename),
+                args=(serial, mic_id, filename, None),  # start_at only meaningful for first segment
                 daemon=True,
                 name=f"audiomoth-{serial}"
             )
@@ -170,7 +171,7 @@ class AudiomothModule(Module):
         self.logger.info(f"Switched to recording segment {self.facade.get_segment_id()}")
 
 
-    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str) -> None:
+    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str, intended_start_at: float | None) -> None:
         """Record audio from one audiomoth to a single file until segment stop or recording stop."""
         sample_rate = self.config.get("microphone.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
@@ -183,11 +184,17 @@ class AudiomothModule(Module):
         try:
             microphone = soundcard.get_microphone(mic_id)
             with open(timestamps_filename, 'w') as timestamps_writer:
+                if intended_start_at is not None:
+                    timestamps_writer.write(f"START_AT {intended_start_at:.6f}\n")
                 with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
                     # Timestamp the moment the recorder is open and ready — this is
                     # the tightest available proxy for when the first audio sample
                     # was captured.  Used for post-hoc alignment with video.
-                    timestamps_writer.write(f"START {time.time()}\n")
+                    actual_start = time.time()
+                    timestamps_writer.write(f"STARTED {actual_start:.6f}\n")
+                    if intended_start_at is not None:
+                        startup_latency_ms = (actual_start - intended_start_at) * 1000
+                        timestamps_writer.write(f"STARTUP_LATENCY_MS {startup_latency_ms:.1f}\n")
                     timestamps_writer.flush()
                     with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
                         while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():

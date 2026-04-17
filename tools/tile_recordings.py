@@ -12,20 +12,22 @@ Output:
   OUTPUT_DIR/<session>/<date>/<session>_<YYYYMMDD-HH>_4x4.mkv
 
 Usage:
-  python3 tile_recordings.py [--dry-run] [--session NAME] [--date YYYYMMDD]
+  python3 tile_recordings.py [--dry-run] [--session NAME] [--date YYYYMMDD] [--workers N]
   python3 tile_recordings.py --help
 
 Cron example (run every 30 minutes, process all complete hour-groups):
-  */30 * * * * /usr/local/src/saviour/env/bin/python3 /usr/local/src/saviour/tools/tile_recordings.py >> /var/log/tile_recordings.log 2>&1
+  */30 * * * * python3 /usr/local/src/saviour/tools/tile_recordings.py >> /var/log/tile_recordings.log 2>&1
 """
 
 import argparse
 import fcntl
 import logging
+import os
 import re
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -95,6 +97,7 @@ def build_ffmpeg_cmd(
     group_files: dict,
     output_path: Path,
     encoder: str,
+    threads_per_job: int,
 ) -> list:
     """
     Build an ffmpeg xstack command for 16 tiles.
@@ -102,8 +105,8 @@ def build_ffmpeg_cmd(
     needs to read the same input pad twice (avoids filter_complex fan-out issues).
     """
     cmd  = ["ffmpeg", "-y"]
-    idx  = 0          # running input index
-    slot_index: dict = {}  # grid pos -> input index
+    idx  = 0
+    slot_index: dict = {}
 
     for pos in GRID:
         if pos in group_files:
@@ -114,7 +117,6 @@ def build_ffmpeg_cmd(
         slot_index[pos] = idx
         idx += 1
 
-    # Scale each slot to TILE_SIZE×TILE_SIZE and feed xstack
     scale_parts = [
         f"[{slot_index[pos]}:v]scale={TILE_SIZE}:{TILE_SIZE}:force_original_aspect_ratio=decrease,"
         f"pad={TILE_SIZE}:{TILE_SIZE}:(ow-iw)/2:(oh-ih)/2[v{i}]"
@@ -127,11 +129,16 @@ def build_ffmpeg_cmd(
     xstack = f"{input_labels}xstack=inputs=16:layout={layout}[out]"
     filter_complex = ";".join(scale_parts) + ";" + xstack
 
-    # AV1 settings: CRF 35 is visually good for surveillance-style content
     if encoder == "libsvtav1":
-        enc_args = ["-c:v", "libsvtav1", "-crf", "35", "-preset", "4"]
+        enc_args = [
+            "-c:v", "libsvtav1", "-crf", "35", "-preset", "10",
+            "-svtav1-params", f"lp={threads_per_job}",
+        ]
     else:  # libaom-av1
-        enc_args = ["-c:v", "libaom-av1", "-crf", "35", "-cpu-used", "4", "-row-mt", "1"]
+        enc_args = [
+            "-c:v", "libaom-av1", "-crf", "35", "-cpu-used", "8",
+            "-row-mt", "1", "-threads", str(threads_per_job),
+        ]
 
     cmd += [
         "-filter_complex", filter_complex,
@@ -152,76 +159,87 @@ def process_group(
     group_files: dict,
     output_dir: Path,
     encoder: str,
+    threads_per_job: int,
     dry_run: bool,
-    logger: logging.Logger,
-) -> str:
+    show_progress: bool,
+) -> tuple[str, str]:
+    """Returns (status, label) where status is ok/skipped/failed/dry_run."""
+    logger = logging.getLogger("tile_recordings")
+    label  = f"{session}/{date}/{hour}"
+
     out_dir = output_dir / session / date
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{session}_{hour}_4x4.mkv"
 
     if out_path.exists():
-        logger.debug(f"Skip (exists): {out_path.name}")
-        return "skipped"
+        return "skipped", label
 
     present = sorted(group_files)
     missing = [p for p in GRID if p not in group_files]
     logger.info(
-        f"{session}/{date}/{hour}: {len(present)}/16 cameras"
+        f"{label}: {len(present)}/16 cameras"
         + (f" — MISSING: {missing}" if missing else " — all present")
     )
 
     if not present:
-        logger.warning("No camera files for this group, skipping")
-        return "skipped"
+        logger.warning(f"{label}: no camera files, skipping")
+        return "skipped", label
 
-    cmd = build_ffmpeg_cmd(group_files, out_path, encoder)
+    cmd = build_ffmpeg_cmd(group_files, out_path, encoder, threads_per_job)
 
     if dry_run:
         logger.info("DRY RUN: " + " ".join(str(c) for c in cmd))
-        return "dry_run"
+        return "dry_run", label
 
     logger.info(f"Encoding → {out_path.name}")
-    # Stream stderr so ffmpeg progress is visible; stdout is unused by ffmpeg
     stderr_lines = []
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+        )
         for line in proc.stderr:
             line = line.rstrip()
             stderr_lines.append(line)
-            # ffmpeg writes "frame=... fps=... time=..." progress lines to stderr
-            if line.startswith("frame="):
+            if show_progress and line.startswith("frame="):
                 print(f"\r  {line}", end="", flush=True)
         proc.wait()
-        print()  # newline after progress
+        if show_progress:
+            print()
     except KeyboardInterrupt:
         proc.terminate()
         proc.wait()
         out_path.unlink(missing_ok=True)
-        logger.info("Interrupted — partial output removed")
+        logger.info(f"{label}: interrupted — partial output removed")
         raise
 
     if proc.returncode != 0:
-        logger.error(f"ffmpeg failed (exit {proc.returncode}):\n" + "\n".join(stderr_lines[-50:]))
+        logger.error(
+            f"{label}: ffmpeg failed (exit {proc.returncode}):\n"
+            + "\n".join(stderr_lines[-50:])
+        )
         out_path.unlink(missing_ok=True)
-        return "failed"
+        return "failed", label
 
     size_mb = out_path.stat().st_size / 1_048_576
     logger.info(f"Done: {out_path.name} ({size_mb:.1f} MB)")
-    return "ok"
+    return "ok", label
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Tile 16-camera SAVIOUR recordings into 4×4 AV1 video")
-    parser.add_argument("--recording-dir", type=Path, default=RECORDING_DIR,
-                        help=f"Root recording directory (default: {RECORDING_DIR})")
-    parser.add_argument("--output-dir",    type=Path, default=OUTPUT_DIR,
-                        help=f"Root output directory (default: {OUTPUT_DIR})")
+    cpu_count = os.cpu_count() or 1
+
+    parser = argparse.ArgumentParser(
+        description="Tile 16-camera SAVIOUR recordings into 4×4 AV1 video"
+    )
+    parser.add_argument("--recording-dir", type=Path, default=RECORDING_DIR)
+    parser.add_argument("--output-dir",    type=Path, default=OUTPUT_DIR)
     parser.add_argument("--session", help="Process only this session name")
     parser.add_argument("--date",    help="Process only this date (YYYYMMDD)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print ffmpeg commands without running them")
+    parser.add_argument("--workers", type=int, default=1,
+                        help=f"Parallel encode jobs (default: 1, this machine has {cpu_count} cores)")
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -233,7 +251,7 @@ def main() -> None:
     )
     logger = logging.getLogger("tile_recordings")
 
-    # Prevent concurrent runs (cron-safe)
+    # Prevent concurrent cron runs
     lock_fh = open(LOCK_FILE, "w")
     try:
         fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -243,7 +261,12 @@ def main() -> None:
 
     try:
         encoder = detect_av1_encoder()
-        logger.info(f"AV1 encoder: {encoder}")
+        # Divide CPU cores evenly across parallel jobs so they don't fight each other
+        threads_per_job = max(1, cpu_count // args.workers)
+        logger.info(
+            f"AV1 encoder: {encoder} | workers: {args.workers} | "
+            f"threads/job: {threads_per_job} | total cores: {cpu_count}"
+        )
 
         groups = find_groups(args.recording_dir)
         all_groups = sorted(groups.items())
@@ -254,27 +277,51 @@ def main() -> None:
         logger.info(f"Discovered {len(all_groups)} hour-groups to process")
 
         counts: dict = {"ok": 0, "skipped": 0, "failed": 0, "dry_run": 0}
+        show_progress = args.workers == 1
 
-        for i, ((session, date, hour), group_files) in enumerate(all_groups, 1):
-            logger.info(f"[{i}/{len(all_groups)}]")
-            if args.session and session != args.session:
-                continue
-            if args.date and date != args.date:
-                continue
-
-            status = process_group(
-                session, date, hour, group_files,
-                args.output_dir, encoder, args.dry_run, logger,
-            )
-            counts[status] = counts.get(status, 0) + 1
-            done = counts["ok"] + counts["failed"]
-            if done:
-                logger.info(f"Progress: {done} encoded, {counts['skipped']} skipped, {counts['failed']} failed")
+        if args.workers == 1:
+            for i, ((session, date, hour), group_files) in enumerate(all_groups, 1):
+                logger.info(f"[{i}/{len(all_groups)}]")
+                status, _ = process_group(
+                    session, date, hour, group_files,
+                    args.output_dir, encoder, threads_per_job, args.dry_run, show_progress,
+                )
+                counts[status] += 1
+                done = counts["ok"] + counts["failed"]
+                if done:
+                    logger.info(
+                        f"Progress: {done} encoded, {counts['skipped']} skipped, "
+                        f"{counts['failed']} failed"
+                    )
+        else:
+            completed = 0
+            total = len(all_groups)
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                futures = {
+                    pool.submit(
+                        process_group,
+                        session, date, hour, group_files,
+                        args.output_dir, encoder, threads_per_job, args.dry_run, False,
+                    ): (session, date, hour)
+                    for (session, date, hour), group_files in all_groups
+                }
+                for future in as_completed(futures):
+                    completed += 1
+                    try:
+                        status, label = future.result()
+                    except Exception as exc:
+                        logger.error(f"Worker raised exception: {exc}")
+                        status = "failed"
+                    counts[status] += 1
+                    logger.info(
+                        f"[{completed}/{total}] {status} — "
+                        f"ok:{counts['ok']} skipped:{counts['skipped']} failed:{counts['failed']}"
+                    )
 
         logger.info(
             f"Finished — ok:{counts['ok']} skipped:{counts['skipped']} "
-            f"failed:{counts['failed']}" +
-            (f" dry_run:{counts['dry_run']}" if args.dry_run else "")
+            f"failed:{counts['failed']}"
+            + (f" dry_run:{counts['dry_run']}" if args.dry_run else "")
         )
 
     finally:

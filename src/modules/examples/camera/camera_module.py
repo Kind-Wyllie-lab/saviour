@@ -817,23 +817,28 @@ class CameraModule(Module):
 
 
     def generate_streaming_frames(self):
-        """Generate streaming frames for MJPEG stream"""
+        """Generate streaming frames for MJPEG stream.
+
+        Yields each encoded frame exactly once by comparing object identity
+        against the last yielded frame. Rate is naturally limited by
+        _stream_post_callback which encodes at _STREAM_FPS.
+        """
+        last_frame = None
         while not self.should_stop_streaming:
             with self.frame_lock:
                 frame = self.latest_frame
 
-            if frame is None:
-                time.sleep(0.01)
+            if frame is None or frame is last_frame:
+                time.sleep(0.005)
                 continue
-            
+
+            last_frame = frame
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" +
                 frame +
                 b"\r\n"
             )
-
-            time.sleep(0.04)
 
     def register_routes(self):
         """Register Flask routes"""

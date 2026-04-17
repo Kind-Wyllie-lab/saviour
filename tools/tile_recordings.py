@@ -32,7 +32,7 @@ from pathlib import Path
 
 RECORDING_DIR = Path("/home/saviour-smb/habitat_recording")
 OUTPUT_DIR    = Path("/home/saviour-smb/habitat_tiled")
-LOCK_FILE     = Path("/tmp/tile_recordings.lock")
+LOCK_FILE     = Path("/var/tmp/tile_recordings.lock")
 
 # ── Grid layout ───────────────────────────────────────────────────────────────
 

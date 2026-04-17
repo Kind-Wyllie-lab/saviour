@@ -16,6 +16,7 @@ Created: 17/03/2025
 # TODO: Consider using http.server instead of flask
 """
 
+import csv
 import datetime
 import sys
 import os
@@ -100,6 +101,12 @@ class CameraModule(Module):
 
         self.current_video_segment = None
         self.last_video_segment = None
+
+        # Per-frame timestamp CSV sidecar
+        self._timestamp_csv_file = None
+        self._timestamp_csv_writer = None
+        self._current_csv_path = None
+        self._frame_id = 0
 
         self.module_checks = {
             self._check_picam
@@ -351,6 +358,27 @@ class CameraModule(Module):
         self._start_new_video_segment() # Start new video segment
 
 
+    def _open_timestamp_csv(self, video_filename: str) -> None:
+        """Open a per-frame timestamp CSV sidecar alongside video_filename."""
+        stem = os.path.splitext(video_filename)[0]
+        self._current_csv_path = f"{stem}_timestamps.csv"
+        self._timestamp_csv_file = open(self._current_csv_path, "w", newline="")
+        self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
+        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc"])
+        self._frame_id = 0
+        self.facade.add_session_file(self._current_csv_path)
+
+    def _close_timestamp_csv(self) -> None:
+        """Flush, close, and stage the current timestamp CSV for export."""
+        if self._timestamp_csv_file is not None:
+            self._timestamp_csv_file.flush()
+            self._timestamp_csv_file.close()
+            self._timestamp_csv_file = None
+            self._timestamp_csv_writer = None
+            if hasattr(self, "_current_csv_path") and self._current_csv_path:
+                self.facade.stage_file_for_export(self._current_csv_path)
+                self._current_csv_path = None
+
     def _start_new_recording(self) -> None:
         """Start a new recording session - set up SplittableOutput"""
         # Start video
@@ -369,8 +397,9 @@ class CameraModule(Module):
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
         
         # Start recording
-        self.picam2.start_encoder(self.main_encoder, name="main") # 
+        self.picam2.start_encoder(self.main_encoder, name="main") #
         self.recording_start_time = time.time()
+        self._open_timestamp_csv(filename)
 
 
     def _get_video_filename(self) -> str:
@@ -382,8 +411,11 @@ class CameraModule(Module):
 
     def _start_new_video_segment(self):
         """
-        Start recording a new splittable output video segment. 
+        Start recording a new splittable output video segment.
         """
+        # Close current timestamp CSV before rotating
+        self._close_timestamp_csv()
+
         # Stage current recording for export
         self.last_video_segment = self.current_video_segment
         self.facade.stage_file_for_export(self.last_video_segment)
@@ -392,6 +424,7 @@ class CameraModule(Module):
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.ts
         self.current_video_segment = filename
         self.facade.add_session_file(filename)
+        self._open_timestamp_csv(filename)
 
         # Start recording to new segment
         self.file_output.split_output(PyavOutput(filename, format="mpegts"))
@@ -489,17 +522,18 @@ class CameraModule(Module):
             self.logger.info("Attempting to stop camera specific recording")
 
             self._stop_recording_video()
+            self._close_timestamp_csv()
 
             # Preprocess video files for export
             for file in self.session_files:
                 if file.endswith(".ts"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
-            
+
             self.facade.stage_file_for_export(self.current_video_segment)
 
             return True
-        
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             return False
@@ -560,9 +594,14 @@ class CameraModule(Module):
             else:
                 self.last_frame_timestamp = timestamp
 
-
-
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+
+            # Write per-frame CSV row while recording
+            if self.is_recording and self._timestamp_csv_writer is not None:
+                timestamp_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
+                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc])
+                self._frame_id += 1
+
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
             # alt: timestmap = str(dt)
             timestamp = f"{self.facade.get_module_name()} {timestamp}"

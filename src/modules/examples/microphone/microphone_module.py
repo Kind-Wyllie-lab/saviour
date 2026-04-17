@@ -184,10 +184,19 @@ class AudiomothModule(Module):
             microphone = soundcard.get_microphone(mic_id)
             with open(timestamps_filename, 'w') as timestamps_writer:
                 with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
+                    # Timestamp the moment the recorder is open and ready — this is
+                    # the tightest available proxy for when the first audio sample
+                    # was captured.  Used for post-hoc alignment with video.
+                    timestamps_writer.write(f"START {time.time()}\n")
+                    timestamps_writer.flush()
                     with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
                         while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():
+                            # Timestamp BEFORE record() so it marks the start of
+                            # the block, not the end (each block is frame_num /
+                            # sample_rate seconds long, ~683 ms at default settings).
+                            block_start = time.time()
                             data = recorder.record(numframes=frame_num)
-                            timestamps_writer.write(str(time.time()) + "\n")
+                            timestamps_writer.write(f"{block_start}\n")
                             f.write(data)
         except Exception as e:
             self.logger.error(f"Recording thread error for audiomoth {serial}: {e}")

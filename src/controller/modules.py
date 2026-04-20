@@ -28,6 +28,10 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from src.controller.models import Module, ModuleStatus
 
+def _type_from_id(module_id: str) -> str:
+    """Derive the module type from its ID (e.g. 'camera_a349' → 'camera')."""
+    return module_id.rsplit("_", 1)[0] if "_" in module_id else module_id
+
 
 # ---------------------------------------------------------------------------
 # Config sync types
@@ -117,6 +121,9 @@ class Modules:
         self.logger.info(f"{action} module {module.id}")
         self.add_module(module)
         self.broadcast_updated_modules()
+        # Kick off a retry loop — the immediate get_config in facade.module_discovery
+        # may be dropped by ZMQ's slow-joiner window; this loop catches that.
+        self._schedule_config_fetch(module.id)
 
 
     def module_rediscovered(self, module_id: str) -> None:
@@ -229,7 +236,23 @@ class Modules:
         state = self._get_or_create_config_state(module_id)
         state.true_config = config
 
-        # Also keep Module.config in sync for convenience (e.g. serialisation)
+        # If the module was never registered via zeroconf (e.g. add_service crashed),
+        # auto-register it now so the frontend can see it.  IP and version will be
+        # filled in properly once zeroconf rediscovers the module.
+        if module_id not in self._modules:
+            self.logger.warning(
+                f"Received config for unregistered module {module_id} — "
+                f"auto-registering (no prior zeroconf discovery, IP/version unknown)"
+            )
+            self.add_module(Module(
+                id=module_id,
+                name=module_id,
+                type=_type_from_id(module_id),
+                version="",
+                ip="",
+            ))
+
+        # Keep Module.config in sync for serialisation / frontend delivery
         if module_id in self._modules:
             self._modules[module_id].config = config
             self._update_module_name(module_id)
@@ -247,8 +270,10 @@ class Modules:
             else:
                 state.status = ConfigSyncStatus.SYNCED
         else:
-            # No target set yet – treat initial fetch as synced baseline
-            state.target_config = config
+            # No target set yet — treat initial fetch as synced baseline.
+            # Store the filtered version so future diffs (which also filter
+            # true_config) are comparing apples-to-apples.
+            state.target_config = self._filter_private_keys(config)
             state.status = ConfigSyncStatus.SYNCED
 
         self.broadcast_updated_modules()
@@ -287,6 +312,15 @@ class Modules:
         self.broadcast_updated_modules()
 
 
+    def invalidate_config(self, module_id: str) -> None:
+        """Clear a module's cached config so the next has_config() call returns False.
+        Use this when we know the module has restarted and its config may be stale.
+        """
+        module = self._modules.get(module_id)
+        if module and module.config:
+            self.logger.info(f"Invalidating cached config for {module_id} (module came back online)")
+            module.config = {}
+
     def get_config_sync_status(self, module_id: str) -> ConfigSyncStatus:
         state = self._config_states.get(module_id)
         return state.status if state else ConfigSyncStatus.UNKNOWN
@@ -300,6 +334,18 @@ class Modules:
         """Return all modules serialised to dicts, ready for the frontend."""
         return self._serialise_modules()
 
+    def has_config(self, module_id: str) -> bool:
+        """Return True if the live module object has a populated config.
+
+        Checks module.config rather than state.true_config so that a reconnecting
+        module (whose Module object is replaced with a fresh empty-config instance
+        by add_module) correctly returns False, allowing the heartbeat handler to
+        re-request the config.
+        """
+        module = self._modules.get(module_id)
+        return bool(module and module.config)
+
+
     def get_module_configs(self) -> Dict[str, Any]:
         """Return config state for all modules, keyed by module_id."""
         result = {}
@@ -311,6 +357,51 @@ class Modules:
                 'diffs': state.diffs,
             }
         return result
+
+
+    def apply_section_to_type(self, module_type: str, section: str, section_data: dict):
+        """
+        Merge section_data into one config section for every module whose type
+        contains module_type.  Stages each updated config via set_target_module_config
+        and returns a list of (module_id, merged_filtered_config) so the caller
+        can send the set_config commands.
+        """
+        targets = []
+        for module_id, module in self._modules.items():
+            if module_type not in module.type:
+                continue
+            state = self._config_states.get(module_id)
+            if not state:
+                continue
+            true_config = state.true_config or {}
+            merged = {**true_config, section: {**true_config.get(section, {}), **section_data}}
+            filtered = self._filter_private_keys(merged)
+            self.set_target_module_config(module_id, filtered)
+            targets.append((module_id, filtered))
+        self.logger.info(
+            f"apply_section_to_type: staged section '{section}' for "
+            f"{len(targets)} module(s) of type '{module_type}'"
+        )
+        return targets
+
+
+    def apply_section_to_module(self, module_id: str, section: str, section_data: dict):
+        """Merge section_data into one config section for a single module.
+
+        Returns (module_id, merged_filtered_config) on success, or None if the
+        module is unknown or has no confirmed config yet.
+        """
+        state = self._config_states.get(module_id)
+        if not state or not state.true_config:
+            self.logger.warning(
+                f"apply_section_to_module: no confirmed config for {module_id}"
+            )
+            return None
+        true_config = state.true_config
+        merged = {**true_config, section: {**true_config.get(section, {}), **section_data}}
+        filtered = self._filter_private_keys(merged)
+        self.set_target_module_config(module_id, filtered)
+        return (module_id, filtered)
 
 
     def get_modules_by_target(self, target: str) -> Dict[str, Any]:
@@ -353,6 +444,34 @@ class Modules:
     # Private helpers
     # -----------------------------------------------------------------------
 
+    def _schedule_config_fetch(self, module_id: str) -> None:
+        """Spawn a daemon thread that retries get_config every 2 s until config arrives.
+
+        This handles the ZMQ slow-joiner race: the immediate send right after
+        zeroconf discovery may be dropped, so we keep asking until the module replies.
+        """
+        def _retry():
+            for attempt in range(1, 11):
+                time.sleep(2)
+                if self.has_config(module_id):
+                    self.logger.info(
+                        f"Config confirmed for {module_id} (retry attempt {attempt})"
+                    )
+                    return
+                self.logger.info(
+                    f"Retrying get_config for {module_id} (attempt {attempt}/10)"
+                )
+                if self.facade:
+                    self.facade.send_command(module_id, "get_config", {})
+            self.logger.warning(
+                f"Gave up fetching config for {module_id} after 10 retry attempts"
+            )
+
+        t = threading.Thread(
+            target=_retry, daemon=True, name=f"cfg-fetch-{module_id}"
+        )
+        t.start()
+
     def _get_or_create_config_state(self, module_id: str) -> ModuleConfigState:
         if module_id not in self._config_states:
             self._config_states[module_id] = ModuleConfigState()
@@ -360,10 +479,11 @@ class Modules:
 
 
     def _update_module_name(self, module_id: str) -> None:
-        """Sync Module.name from the 'module.name' key in its config."""
+        """Sync Module.name and Module.group from the module's confirmed config."""
         config = self._modules[module_id].config
         name = config.get("module", {}).get("name", "").strip()
         self._modules[module_id].name = name if name else module_id
+        self._modules[module_id].group = config.get("module", {}).get("group", "").strip()
 
 
     def _serialise_modules(self) -> Dict[str, Dict[str, Any]]:

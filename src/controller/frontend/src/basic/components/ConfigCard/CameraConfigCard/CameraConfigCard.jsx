@@ -4,14 +4,27 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import { useExportSync } from "/src/hooks/useExportSync";
 
-const PRESETS = [
+// Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
+const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",        sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
   { key: "1080p60",  label: "1080p Fast",   sub: "60 fps",  width: 1920, height: 1080, fps: 60  },
   { key: "square25", label: "Square",       sub: "25 fps",  width: 1000, height: 1000, fps: 25  },
   { key: "fast100",  label: "High Speed",   sub: "100 fps", width: 1332, height: 990,  fps: 100 },
   { key: "4k10",     label: "4K",           sub: "10 fps",  width: 4056, height: 3040, fps: 10  },
   { key: "custom",   label: "Custom",       sub: null,      width: null, height: null, fps: null },
+];
+
+// Presets for Camera Module 3 (IMX708) — PDAF autofocus, max 2304×1296
+const CM3_PRESETS = [
+  { key: "cm3_2304p56",  label: "Full FoV",    sub: "56 fps",  width: 2304, height: 1296, fps: 56  },
+  { key: "cm3_1536p120", label: "High Speed",  sub: "120 fps", width: 1536, height: 864,  fps: 120 },
+  { key: "1080p30",      label: "1080p",       sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
+  { key: "1080p60",      label: "1080p Fast",  sub: "60 fps",  width: 1920, height: 1080, fps: 60  },
+  { key: "square25",     label: "Square",      sub: "25 fps",  width: 1000, height: 1000, fps: 25  },
+  { key: "custom",       label: "Custom",      sub: null,      width: null, height: null, fps: null },
 ];
 
 function bestSensorMode(sensorModes, width, height, fps) {
@@ -23,28 +36,42 @@ function bestSensorMode(sensorModes, width, height, fps) {
     m => m.size[0] >= width && m.size[1] >= height && m.fps >= fps
   );
   if (!candidates.length) return null;
+  // Prefer the largest sensor area — more area means more FOV.
+  // The pipeline downsamples to the requested resolution regardless.
   return candidates.reduce((best, m) =>
-    m.size[0] * m.size[1] < best.size[0] * best.size[1] ? m : best
+    m.size[0] * m.size[1] > best.size[0] * best.size[1] ? m : best
   );
 }
 
-function detectPreset(width, height, fps) {
-  return PRESETS.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
+function detectPreset(presetList, width, height, fps) {
+  return presetList.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
 }
 
 function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [sensorModes, setSensorModes] = useState([]);
+  const [sensorModel, setSensorModel] = useState("");
+  const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
+  const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const { syncStatus, syncExport } = useExportSync(module.id);
+
+  const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
     socket.emit("send_command", { module_id: module.id, type: "get_sensor_modes", params: {} });
 
     const onSensorModes = (data) => {
-      if (data.module_id === module.id) setSensorModes(data.sensor_modes);
+      if (data.module_id === module.id) {
+        setSensorModes(data.sensor_modes);
+        if (data.sensor_model !== undefined) setSensorModel(data.sensor_model);
+        if (data.has_autofocus !== undefined) setHasAutofocus(data.has_autofocus);
+      }
     };
     socket.on("sensor_modes_response", onSensorModes);
     return () => socket.off("sensor_modes_response", onSensorModes);
@@ -68,10 +95,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   useEffect(() => {
     if (formData?.camera) {
       const { width, height, fps } = formData.camera;
-      setActivePreset(detectPreset(width, height, fps));
+      setActivePreset(detectPreset(presets, width, height, fps));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps]);
+  }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps, presets]);
 
   const handlePresetSelect = (preset) => {
     setActivePreset(preset.key);
@@ -85,6 +112,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       if (best) cloned.camera.sensor_mode_index = best.index;
       return cloned;
     });
+  };
+
+  const handleTriggerAutofocus = () => {
+    socket.emit("send_command", { module_id: module.id, type: "trigger_autofocus", params: {} });
   };
 
   const handleCustomChange = (field, rawValue) => {
@@ -130,6 +161,17 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
     setShowResetConfirm(false);
   };
 
+  const confirmApplyToAll = () => {
+    if (!applyAllConfirm) return;
+    const { section } = applyAllConfirm;
+    const filtered = filterPrivateKeys(formData);
+    const data = filtered?.[section];
+    if (data) {
+      socket.emit("apply_section_to_cameras", { section, data });
+    }
+    setApplyAllConfirm(null);
+  };
+
   const cam = formData?.camera ?? {};
   const currentWidth  = cam.width;
   const currentHeight = cam.height;
@@ -154,8 +196,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
     const {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
-      monochrome, brightness, gain, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb,
+      monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
+      bitrate_mb, autofocus_mode, lens_position,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -167,7 +209,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
         <h3>{module.name} ({module.id})</h3>
         <div className="device-info">
           {typeof module.ip === "string" && module.ip && <span>IP: {module.ip}</span>}
-          {typeof module.version === "string" && module.version && <span>v{module.version}</span>}
+          {typeof module.version === "string" && module.version && <span>{module.version}</span>}
         </div>
       </div>
 
@@ -189,11 +231,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
             <select
               value={activePreset}
               onChange={e => {
-                const preset = PRESETS.find(p => p.key === e.target.value);
+                const preset = presets.find(p => p.key === e.target.value);
                 if (preset) handlePresetSelect(preset);
               }}
             >
-              {PRESETS.map(preset => (
+              {presets.map(preset => (
                 <option key={preset.key} value={preset.key}>
                   {preset.label}{preset.sub ? ` — ${preset.sub}` : ""}
                 </option>
@@ -268,9 +310,20 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           </div>
           <div className="form-field">
             <label>Exposure time (µs):</label>
-            <input type="number" min="1" step="100"
-              value={cam.exposure_time ?? ""}
-              onChange={e => handleChange(["camera", "exposure_time"], e)} />
+            <div className="exposure-control">
+              <input type="number" min="1" step="100"
+                disabled={!cam.manual_exposure}
+                value={cam.manual_exposure
+                  ? (cam.exposure_time ?? "")
+                  : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
+                onChange={e => handleChange(["camera", "exposure_time"], e)} />
+              <label className="exposure-manual-label">
+                <input type="checkbox"
+                  checked={cam.manual_exposure ?? false}
+                  onChange={e => handleChange(["camera", "manual_exposure"], e)} />
+                Manual
+              </label>
+            </div>
           </div>
 
           {/* ── Recording ── */}
@@ -283,6 +336,40 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           <div className="filesize-preview">
             ~{gbPerHour} GB / hr at {bitrateMb} Mbps
           </div>
+
+          {/* ── Autofocus (Camera Module 3 / IMX708 only) ── */}
+          {hasAutofocus && (
+            <>
+              <div className="form-field">
+                <label>Autofocus mode:</label>
+                <select
+                  value={cam.autofocus_mode ?? "manual"}
+                  onChange={e => handleChange(["camera", "autofocus_mode"], e)}
+                >
+                  <option value="manual">Manual</option>
+                  <option value="auto">Auto (one-shot)</option>
+                  <option value="continuous">Continuous</option>
+                </select>
+              </div>
+              {(cam.autofocus_mode ?? "manual") === "manual" && (
+                <div className="form-field">
+                  <label>Lens position: {Number(cam.lens_position ?? 0).toFixed(1)}</label>
+                  <input type="range" min="0" max="10" step="0.1"
+                    value={cam.lens_position ?? 0}
+                    className="brightness-slider"
+                    onChange={e => handleChange(["camera", "lens_position"], e)} />
+                </div>
+              )}
+              {(cam.autofocus_mode ?? "manual") === "auto" && (
+                <div className="form-field">
+                  <label></label>
+                  <button type="button" className="copy-btn" onClick={handleTriggerAutofocus}>
+                    Trigger Autofocus
+                  </button>
+                </div>
+              )}
+            </>
+          )}
 
           {/* ── Overlays ── */}
           <div className="form-field">
@@ -335,6 +422,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
             </button>
           </div>
 
+          {/* ── Apply to all cameras ── */}
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all cameras:</span>
+            <button type="button" className="copy-btn"
+              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera" })}>
+              Camera
+            </button>
+            {otherSections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key) })}>
+                {capitalize(key)}
+              </button>
+            ))}
+          </div>
+
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>
               Save Config
@@ -352,6 +454,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
+
+          {formData?.export !== undefined && (
+            <div className="config-action-buttons">
+              <button type="button" className="save-button"
+                onClick={syncExport}
+                disabled={syncStatus === "syncing"}>
+                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
+              </button>
+              {syncStatus && syncStatus !== "syncing" && (
+                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="livestream-wrapper">
@@ -364,17 +481,61 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       </div>
 
       <div className="update-button-wrapper">
-        <button className="update-button" type="button"
-          onClick={() => socket.emit("send_command", { module_id: module.id, type: "update_saviour", params: {} })}>
-          Update Saviour Version
+        <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
+          {updateStatus === "updating" ? "Updating…" : "Update Saviour Version"}
         </button>
+        {updateStatus && updateStatus !== "updating" && (
+          <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+            {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
+          </span>
+        )}
       </div>
       <div className="update-button-wrapper">
-        <button className="update-button" type="button"
-          onClick={() => socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} })}>
+        <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
           Reboot Module
         </button>
       </div>
+
+      {/* ── Reboot confirmation modal ── */}
+      {showRebootConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{module.name}</strong>?</p>
+            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={() => {
+                socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
+                setShowRebootConfirm(false);
+              }}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Apply-to-all confirmation modal ── */}
+      {applyAllConfirm && (
+        <div className="modal-overlay" onClick={() => setApplyAllConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>
+              Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
+              <strong>{module.name}</strong> to all connected cameras?
+            </p>
+            <p className="modal-subtext">
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every
+              camera module and save immediately — unsaved changes on other cameras will be lost.
+            </p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button" onClick={confirmApplyToAll}>
+                Apply to All
+              </button>
+              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Reset confirmation modal ── */}
       {showResetConfirm && (

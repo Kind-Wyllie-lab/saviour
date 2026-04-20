@@ -17,5 +17,5 @@
 }
 
 .time-select-form-row select:focus {
-    outline-color: #007BFF; /* Focus color */
+    outline-color: var(--accent-color);
 }

@@ -15,13 +15,19 @@ function Recording() {
 
     return (
         <div className="recording-page">
-            <div className="recording-container">
-                <SessionList sessionList={sessionList} />
-                <NewSessionForm modules={moduleList} />
-                <ModuleList modules={moduleList} />
+            <div className="recording-layout">
+                <div className="recording-layout__form">
+                    <NewSessionForm modules={moduleList} />
+                </div>
+                <div className="recording-layout__sessions">
+                    <SessionList sessionList={sessionList} modules={moduleList} />
+                </div>
+                <div className="recording-layout__modules">
+                    <ModuleList modules={moduleList} />
+                </div>
             </div>
         </div>
-    )
+    );
 }
 
 export default Recording;

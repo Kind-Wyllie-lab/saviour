@@ -42,7 +42,7 @@ function Dashboard({ modules }) {
                 <h3>System</h3>
                 <p>{systemState.recording? ("Recording") : ("Not Recording")}</p> {/*e.g. Recording for 127 minutes or Not recording*/}
                 <p>PTP sync: {systemState.ptp_sync/1000}µs</p>
-                <p>Uptime: {Math.floor(systemState.uptime / 60)}m</p>
+                <p>Uptime: {Math.floor(systemState.uptime / 86400)}d {Math.floor((systemState.uptime % 86400) / 3600)}h</p>
             </section>
         </div>
     )

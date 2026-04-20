@@ -214,7 +214,9 @@ class ControllerFacade():
         # What to do when a module comes back online
         self.controller.recording.module_back_online(module_id)
 
-    
+    def handle_module_health_for_recovery(self, module_id: str, is_recording: bool) -> None:
+        self.controller.recording.handle_module_health_response(module_id, is_recording)
+
     def module_rediscovered(self, module_id: str):
         self.controller.health.module_rediscovered(module_id)
         self.controller.modules.module_rediscovered(module_id)

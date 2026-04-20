@@ -359,16 +359,17 @@ class Modules:
         return result
 
 
-    def apply_section_to_type(self, module_type: str, section: str, section_data: dict):
+    def apply_section_to_type(self, module_type: str | None, section: str, section_data: dict):
         """
         Merge section_data into one config section for every module whose type
-        contains module_type.  Stages each updated config via set_target_module_config
-        and returns a list of (module_id, merged_filtered_config) so the caller
-        can send the set_config commands.
+        contains module_type.  Pass module_type=None to target all modules.
+        Stages each updated config via set_target_module_config and returns a
+        list of (module_id, merged_filtered_config) so the caller can send the
+        set_config commands.
         """
         targets = []
         for module_id, module in self._modules.items():
-            if module_type not in module.type:
+            if module_type is not None and module_type not in module.type:
                 continue
             state = self._config_states.get(module_id)
             if not state:

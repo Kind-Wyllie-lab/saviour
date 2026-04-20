@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import socket from "/src/socket";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
@@ -60,6 +60,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved]                 = useState(false);
+  const [applyAllConfirm, setApplyAllConfirm] = useState(null);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
   const { syncStatus, syncExport } = useExportSync(module.id);
 
@@ -126,6 +127,17 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     setShowResetConfirm(false);
   };
 
+  const confirmApplyToAll = () => {
+    if (!applyAllConfirm) return;
+    const { section, moduleType } = applyAllConfirm;
+    const filtered = filterPrivateKeys(formData);
+    const data = filtered?.[section];
+    if (data) {
+      socket.emit("apply_section_to_type", { module_type: moduleType ?? null, section, data });
+    }
+    setApplyAllConfirm(null);
+  };
+
   return (
     <div className="config-card">
       <div className="card-header">
@@ -138,13 +150,17 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
       <div className="config-card-body">
         <div className="config-form">
-          {clipboard && (
-            <div className="clipboard-bar">
-              <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-              <button type="button" className="copy-btn" onClick={handlePaste}>Paste</button>
-              <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-            </div>
-          )}
+          {clipboard && (() => {
+            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+            return (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            );
+          })()}
 
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange} />
@@ -204,6 +220,26 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
               All
             </button>
+          </div>
+
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all {module.type}s:</span>
+            {sections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
+                {capitalize(key)}
+              </button>
+            ))}
+          </div>
+
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all modules:</span>
+            {sections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: null })}>
+                {capitalize(key)}
+              </button>
+            ))}
           </div>
 
           <div className="config-action-buttons">
@@ -285,6 +321,26 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             <div className="modal-buttons">
               <button className="reset-button" type="button" onClick={handleReset}>Reset</button>
               <button className="save-button"  type="button" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {applyAllConfirm && (
+        <div className="modal-overlay" onClick={() => setApplyAllConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>
+              Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
+              <strong>{module.name}</strong> to all connected{" "}
+              {applyAllConfirm.moduleType ? `${applyAllConfirm.moduleType} ` : ""}modules?
+            </p>
+            <p className="modal-subtext">
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
+              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
+            </p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button" onClick={confirmApplyToAll}>Apply to All</button>
+              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
             </div>
           </div>
         </div>

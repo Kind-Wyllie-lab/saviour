@@ -169,10 +169,18 @@ class ControllerFacade():
 
     def apply_section_to_cameras(self, section: str, section_data: dict) -> None:
         """Merge section_data into the given config section on every camera module."""
-        targets = self.controller.modules.apply_section_to_type("camera", section, section_data)
+        self.apply_section_to_type("camera", section, section_data)
+
+    def apply_section_to_type(self, module_type: str | None, section: str, section_data: dict) -> None:
+        """Merge section_data into the given config section on every module of module_type.
+        Pass module_type=None to target all modules regardless of type."""
+        targets = self.controller.modules.apply_section_to_type(module_type, section, section_data)
         for module_id, config in targets:
             self.controller.communication.send_command(module_id, "set_config", config)
-        self.logger.info(f"apply_section_to_cameras: sent '{section}' to {len(targets)} camera(s)")
+        label = module_type if module_type else "all"
+        self.logger.info(
+            f"apply_section_to_type: sent '{section}' to {len(targets)} {label} module(s)"
+        )
 
 
     def sync_export_to_module(self, module_id: str) -> dict:

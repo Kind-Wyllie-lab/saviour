@@ -72,6 +72,24 @@ class Health:
 
 
     """Modify module health records"""
+    def touch_heartbeat(self, module_id: str) -> None:
+        """Record that a message was received from module_id without updating metrics.
+
+        Any ZMQ message (cmd_ack, recording_started, etc.) proves the module is
+        reachable.  Updating last_heartbeat here prevents the suspicion/offline
+        timer firing on a module that is busy recording and missed a periodic
+        heartbeat send.
+
+        If the module is currently offline or suspected (e.g. because the controller
+        just restarted and hasn't received a full heartbeat payload yet), any ZMQ
+        proof-of-life is enough to bring it back online immediately rather than
+        waiting up to heartbeat_interval seconds for the next scheduled heartbeat.
+        """
+        if module_id in self.module_health:
+            self.module_health[module_id]['last_heartbeat'] = time.time()
+            if self.module_health[module_id].get('status') in ('offline', 'suspected'):
+                self._mark_module_online(module_id, trigger="ZMQ message received (proof of life)")
+
     def remove_module(self, module_id: str):
         if module_id in self.module_health.keys():
             self.module_health.pop(module_id)
@@ -324,7 +342,7 @@ class Health:
                 if time_diff <= self.suspicion_timeout:
                     # Recent heartbeat — module is healthy
                     if status in ('offline', 'suspected'):
-                        self._mark_module_online(module_id)
+                        self._mark_module_online(module_id, trigger="heartbeat received")
 
                 elif time_diff <= self.heartbeat_timeout:
                     # In the suspicion window
@@ -489,7 +507,7 @@ class Health:
             self.logger.error(f"Error in status change callback: {e}")
 
 
-    def _mark_module_online(self, module_id: str):
+    def _mark_module_online(self, module_id: str, trigger: str = "heartbeat received"):
         """Mark a module as back online after being offline or suspected."""
         now = time.time()
         health = self.module_health[module_id]
@@ -508,7 +526,7 @@ class Health:
 
         self.logger.info(
             f"Module {module_id} is back online (was {prev_status} for {duration_str})\n"
-            f"  Recovery triggered by: heartbeat received"
+            f"  Recovery triggered by: {trigger}"
         )
 
         try:

@@ -73,13 +73,6 @@ class PTP:
         self.last_freq = None
         self.monitor_thread = None
 
-        # PTP restart logic exponential backoff
-        self.last_ptp_restart_time = None # Time at which we last restarted ptp
-        self.ptp_stabilisation_timeout = 60 # Number of seconds after which if offsets are stable we can reset the number of retries; consider the fault resolved for now
-        self.ptp_restart_delay = 30 # Number of seconds to wait before attempting to restart phc2sys again
-        self.ptp_restart_multiplier = 2 # A multiplier
-        self.ptp_restart_retries = 0 # Number of retries since ptp was throwing errors
-        
         # Unified offset buffer for storing all PTP values by timestamp
         self.ptp_buffer = []
         self.max_buffer_size = 100  # Store last 100 timestamp entries
@@ -190,49 +183,30 @@ class PTP:
             return ""
 
     def start(self):
-        """Start PTP services using systemd."""
+        """Start PTP services using systemd (if not already running)."""
         self.logger.info(f"Starting PTP in {self.role.value} mode on {self.interface}")
 
         # Ensure timesyncd is disabled
         self._stop_timesyncd()
 
-        # Stop any existing PTP services
-        self.stop()
-
         try:
-            # Start ptp4l service
-            self.logger.info("Starting ptp4l service")
-            subprocess.run(['systemctl', 'restart', self.ptp4l_service], check=True)
-            
-            # Wait a moment for ptp4l to start
-            #time.sleep(2)
-            
-            # Check if ptp4l started successfully
+            # Use 'start' not 'restart' — avoids disrupting an already-converged clock
+            subprocess.run(['systemctl', 'start', self.ptp4l_service], check=True)
             ptp4l_status = self._get_service_status(self.ptp4l_service)
             if ptp4l_status != 'active':
                 logs = self._get_service_logs(self.ptp4l_service)
                 raise PTPError(f"ptp4l service failed to start. Status: {ptp4l_status}\nLogs: {logs}")
+            self.logger.info("ptp4l service active")
 
-            self.logger.info("ptp4l service started successfully")
-
-            # Start phc2sys service
-            self.logger.info("Starting phc2sys service")
-            subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)
-            
-            # Wait a moment for phc2sys to start
-            #time.sleep(2)
-            
-            # Check if phc2sys started successfully
+            subprocess.run(['systemctl', 'start', self.phc2sys_service], check=True)
             phc2sys_status = self._get_service_status(self.phc2sys_service)
             if phc2sys_status != 'active':
                 logs = self._get_service_logs(self.phc2sys_service)
                 raise PTPError(f"phc2sys service failed to start. Status: {phc2sys_status}\nLogs: {logs}")
-
-            self.logger.info("phc2sys service started successfully")
+            self.logger.info("phc2sys service active")
 
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Failed to start PTP services: {e}")
-            self.stop()
             raise
 
         self.running = True
@@ -274,31 +248,12 @@ class PTP:
 
     def _check_ptp_offsets(self):
         if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset is None:
-            self.logger.warning("PTP offsets not yet available, skipping check")
             return
-        if self.latest_phc2sys_freq > 100000 or self.latest_phc2sys_offset > 5000:
-            if self._check_if_should_restart():
-                self.logger.warning(f"PTP phc2sys offsets too high ({self.latest_phc2sys_freq}, {self.latest_phc2sys_offset}), resetting PTP")
-                self.ptp_restart_retries += 1
-                self.last_ptp_restart_time = time.time()
-                self._reset_ptp()
-            else:
-                if not self.last_ptp_restart_time:  # Catch first attempt
-                    self.last_ptp_restart_time = time.time()
-                elif time.time() - self.last_ptp_restart_time > self.ptp_stabilisation_timeout:
-                    self.logger.info(f"PTP seems to have stabilised, resetting retries")
-                    self.ptp_restart_retries = 0
-                return
-
-    def _check_if_should_restart(self):
-        if (time.time() - self.last_ptp_restart_time) > (self.ptp_restart_delay * self.ptp_restart_multiplier * self.ptp_restart_retries): 
-            self.logger.info("Should restart PTP")
-            return True
-        else:
-            return False
-    
-    def _reset_ptp(self):
-        subprocess.run(['systemctl', 'restart', self.phc2sys_service], check=True)
+        if abs(self.latest_phc2sys_offset) > 5000 or abs(self.latest_phc2sys_freq) > 100000:
+            self.logger.warning(
+                f"PTP offset high: phc2sys offset={self.latest_phc2sys_offset}ns "
+                f"freq={self.latest_phc2sys_freq}ppb — converging"
+            )
 
 
     def _add_buffer_entry(self, timestamp):

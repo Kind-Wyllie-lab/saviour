@@ -260,6 +260,15 @@ class Web(ABC):
             session_name = data.get("session_name")
             self.logger.info(f"Received request to stop session {session_name}")
             self.facade.stop_session(session_name)
+
+        @self.socketio.on("delete_session")
+        def handle_delete_session(data):
+            session_name = data.get("session_name")
+            delete_files = data.get("delete_files", True)
+            self.logger.info(f"Received request to delete session '{session_name}' (delete_files={delete_files})")
+            result = self.facade.delete_session(session_name, delete_files)
+            if "error" in result:
+                self.socketio.emit("session_error", {"error": result["error"]})
             
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
@@ -398,6 +407,41 @@ class Web(ABC):
             self.logger.info(f"Received reset_module_config request for {module_id}")
             self.facade.send_command(module_id, "reset_config", {})
 
+
+        @self.socketio.on('apply_section_to_cameras')
+        def handle_apply_section_to_cameras(data):
+            """Apply one config section from a source camera to all camera modules."""
+            section = data.get("section")
+            section_data = data.get("data", {})
+            if not section or not isinstance(section_data, dict) or not section_data:
+                self.logger.warning(f"apply_section_to_cameras: invalid payload {data}")
+                return
+            self.logger.info(f"Applying section '{section}' to all camera modules")
+            self.facade.apply_section_to_cameras(section, section_data)
+
+        @self.socketio.on('apply_section_to_type')
+        def handle_apply_section_to_type(data):
+            """Apply one config section to all modules of a given type.
+            module_type=None targets all modules regardless of type."""
+            module_type = data.get("module_type")  # None means all modules
+            section = data.get("section")
+            section_data = data.get("data", {})
+            if not section or not isinstance(section_data, dict) or not section_data:
+                self.logger.warning(f"apply_section_to_type: invalid payload {data}")
+                return
+            label = module_type if module_type else "all"
+            self.logger.info(f"Applying section '{section}' to all {label} modules")
+            self.facade.apply_section_to_type(module_type, section, section_data)
+
+        @self.socketio.on('sync_export_credentials')
+        def handle_sync_export_credentials(data):
+            """Push this controller's Samba credentials to a single module's export config."""
+            module_id = data.get("module_id")
+            if not module_id:
+                return
+            result = self.facade.sync_export_to_module(module_id)
+            self.socketio.emit("export_sync_result", {"module_id": module_id, **result})
+
         """Controller System State"""
         @self.socketio.on("get_system_state")
         def handle_get_system_state(data=None):
@@ -439,10 +483,11 @@ class Web(ABC):
             except Exception:
                 version = "unknown"
             try:
-                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
-                s.close()
+                nm = subprocess.run(
+                    ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
+                    capture_output=True, text=True, timeout=5
+                )
+                ip = nm.stdout.strip().split("/")[0] if nm.returncode == 0 else "unknown"
             except Exception:
                 ip = "unknown"
             self.socketio.emit("controller_info_response", {"ip": ip, "version": version})
@@ -451,14 +496,14 @@ class Web(ABC):
         @self.socketio.on("get_controller_health")
         def handle_get_controller_health(data=None):
             import shutil
-            import socket as _socket
             health = {}
-            # IP
+            # IP — read eth0 directly so wlan0 is never returned
             try:
-                s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                health['ip'] = s.getsockname()[0]
-                s.close()
+                nm = subprocess.run(
+                    ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
+                    capture_output=True, text=True, timeout=5
+                )
+                health['ip'] = nm.stdout.strip().split("/")[0] if nm.returncode == 0 else None
             except Exception:
                 health['ip'] = None
             # CPU temperature
@@ -513,6 +558,15 @@ class Web(ABC):
                 except Exception:
                     health['disk_used_pct'] = None
                     health['disk_free_gb'] = None
+            # Version
+            try:
+                result = subprocess.run(
+                    ["git", "-C", os.path.dirname(__file__), "describe", "--tags", "--always"],
+                    capture_output=True, text=True, timeout=5
+                )
+                health['version'] = result.stdout.strip() if result.returncode == 0 else None
+            except Exception:
+                health['version'] = None
             self.socketio.emit("controller_health_response", health)
 
 
@@ -524,13 +578,24 @@ class Web(ABC):
 
         @self.socketio.on("update_saviour_controller")
         def handle_update_saviour_controller(data=None):
-            import subprocess
+            import subprocess, os
             self.logger.info("Update SAVIOUR controller requested")
             def _run_update():
                 try:
+                    # Resolve the remote URL and convert SSH to HTTPS so the
+                    # service user (which has no SSH key) can pull without auth.
+                    # The on-disk remote stays as-is, so dev machines can still push over SSH.
+                    url_result = subprocess.run(
+                        ['git', '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
+                        capture_output=True, text=True
+                    )
+                    remote_url = url_result.stdout.strip()
+                    import re
+                    https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
+                                       r'https://\1/\2.git', remote_url)
                     result = subprocess.run(
                         ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                         '-C', '/usr/local/src/saviour', 'pull'],
+                         '-C', '/usr/local/src/saviour', 'pull', https_url],
                         capture_output=True, text=True, timeout=60
                     )
                     success = result.returncode == 0
@@ -585,6 +650,13 @@ class Web(ABC):
             self.socketio.emit('module_health_update', {
                 'module_health': health
             })
+
+
+    def broadcast_module_health(self):
+        """Push current module health to all connected frontend clients."""
+        self.socketio.emit('module_health_update', {
+            'module_health': self.facade.get_module_health()
+        })
 
 
         """ Recording """
@@ -878,7 +950,15 @@ class Web(ABC):
                     if command == "get_sensor_modes":
                         self.socketio.emit("sensor_modes_response", {
                             "module_id": module_id,
-                            "sensor_modes": status.get("sensor_modes", [])
+                            "sensor_modes": status.get("sensor_modes", []),
+                            "sensor_model": status.get("sensor_model", ""),
+                            "has_autofocus": status.get("has_autofocus", False),
+                        })
+                    elif command == "update_saviour":
+                        self.socketio.emit("module_update_result", {
+                            "module_id": module_id,
+                            "success": status.get("result") == "success",
+                            "output": status.get("output", ""),
                         })
 
                 case _:

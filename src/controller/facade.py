@@ -55,6 +55,9 @@ class ControllerFacade():
     def get_samba_info(self):
         return self.controller.get_samba_info()
 
+    def get_export_credentials(self) -> dict:
+        return self.controller.get_export_credentials()
+
 
     def get_share_path(self):
         return "/home/pi/controller_share"
@@ -86,7 +89,7 @@ class ControllerFacade():
             "example": "This is an example system state object",
             "recording": self.get_recording_status(),
             "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": self.get_ptp_sync() # Largest ptp offset from a module in ms
+            "ptp_sync": self.get_ptp_sync() # Largest ptp4l_offset across modules, in nanoseconds
         }
 
 
@@ -131,6 +134,9 @@ class ControllerFacade():
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
 
+    def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
+        return self.controller.recording.delete_session(session_name, delete_files)
+
     def module_stopped(self, module_id: str) -> None:
         self.controller.recording.module_stopped(module_id)
 
@@ -159,7 +165,39 @@ class ControllerFacade():
 
     def set_target_module_config(self, module_id: str, module_config: dict) -> None:
         self.controller.modules.set_target_module_config(module_id, module_config)
-        
+
+
+    def apply_section_to_cameras(self, section: str, section_data: dict) -> None:
+        """Merge section_data into the given config section on every camera module."""
+        self.apply_section_to_type("camera", section, section_data)
+
+    def apply_section_to_type(self, module_type: str | None, section: str, section_data: dict) -> None:
+        """Merge section_data into the given config section on every module of module_type.
+        Pass module_type=None to target all modules regardless of type."""
+        targets = self.controller.modules.apply_section_to_type(module_type, section, section_data)
+        for module_id, config in targets:
+            self.controller.communication.send_command(module_id, "set_config", config)
+        label = module_type if module_type else "all"
+        self.logger.info(
+            f"apply_section_to_type: sent '{section}' to {len(targets)} {label} module(s)"
+        )
+
+
+    def sync_export_to_module(self, module_id: str) -> dict:
+        """Push this controller's Samba credentials into a single module's export config.
+
+        Returns {"success": True} or {"success": False, "error": "..."}.
+        """
+        creds = self.controller.get_export_credentials()
+        if not creds:
+            return {"success": False, "error": "Credentials file not found on controller"}
+        result = self.controller.modules.apply_section_to_module(module_id, "export", creds)
+        if result is None:
+            return {"success": False, "error": "Module not found or config not yet confirmed"}
+        _, config = result
+        self.controller.communication.send_command(module_id, "set_config", config)
+        return {"success": True}
+
 
     """Events"""
     """Export Queue"""
@@ -184,7 +222,9 @@ class ControllerFacade():
         # What to do when a module comes back online
         self.controller.recording.module_back_online(module_id)
 
-    
+    def handle_module_health_for_recovery(self, module_id: str, is_recording: bool) -> None:
+        self.controller.recording.handle_module_health_response(module_id, is_recording)
+
     def module_rediscovered(self, module_id: str):
         self.controller.health.module_rediscovered(module_id)
         self.controller.modules.module_rediscovered(module_id)
@@ -195,6 +235,10 @@ class ControllerFacade():
         self.controller.health.module_discovery(module)
         # Fetch config immediately so module name is known before any card is opened
         self.controller.communication.send_command(module.id, "get_config", {})
+        # Push current export credentials so modules always point at this controller
+        creds = self.controller.get_export_credentials()
+        if creds:
+            self.controller.communication.send_command(module.id, "set_export_config", creds)
 
 
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:

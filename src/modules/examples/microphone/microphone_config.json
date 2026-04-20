@@ -1,9 +1,8 @@
 {
     "microphone": {
-        "sample_rate": 192000,
+        "_sample_rate": 192000,
         "_frame_num": 131072,
         "_block_size": 131072,
-        "file_duration": 1,
         "_processing": {
             "_apply_filter": false,
             "_filter_type": "bandpass",
@@ -21,9 +20,16 @@
             "_notification_enabled": true
         }
     },
+    "monitoring": {
+        "_port": 8081,
+        "_fft_size": 4096,
+        "freq_lo_hz": 20000,
+        "freq_hi_hz": 70000,
+        "time_window_s": 3.0
+    },
     "recording": {
         "_recording_filetype": "flac"
     },
     "_recording_folder": "rec",
     "_auto_export": true
-} 
+}

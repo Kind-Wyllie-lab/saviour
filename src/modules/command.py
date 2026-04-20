@@ -43,6 +43,9 @@ class Command:
         """
         self.commands.update(commands)
         self.logger.info(f"Command handler callbacks: {self.commands}")
+
+    # Alias used by some module implementations
+    set_callbacks = set_commands
         
 
     def _parse_command(self, command: str):

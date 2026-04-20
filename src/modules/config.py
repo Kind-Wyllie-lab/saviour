@@ -293,14 +293,19 @@ class Config:
                 full_key = f"{parent_key}.{k}" if parent_key else k
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
                     _recursive_update(target[k], v, full_key)
+                    # Remove non-private keys that exist in target but were deleted from source
+                    # (e.g. a pin removed via the frontend). Skip _-prefixed keys — those are
+                    # internal defaults that filterPrivateKeys strips before saving.
+                    for stale in [sk for sk in list(target[k]) if sk not in v and not sk.startswith("_")]:
+                        del target[k][stale]
+                        config_updated = True
+                        updated_keys.append(f"{full_key}.{stale}")
                 else:
-                    # Update the value
-                    if target[k] != v:
+                    # Use .get() so new keys (e.g. a freshly added pin) don't raise KeyError
+                    if target.get(k) != v:
                         target[k] = v
                         config_updated = True
                         updated_keys.append(full_key)
-                    else:
-                        pass
 
         _recursive_update(self.config, updates)
 
@@ -313,10 +318,10 @@ class Config:
                     self.logger.info(f"Module specific config updated")
                     module_config_updated_keys.append(key)
 
+        if persist:
+            self.save_active()
+
         if config_updated == True:
             self.logger.info("Config updated was True")
             self.configure_module(updated_keys)
-
-        if persist:
-            self.save_active()
 

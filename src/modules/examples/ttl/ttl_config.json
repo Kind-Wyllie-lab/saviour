@@ -1,5 +1,7 @@
 {
     "ttl": {
+        "active_logic": "active_low",
+        "_active_logic_options": ["active_low", "active_high"],
         "pins": {
             "19": {
                 "mode": "experiment_clock",

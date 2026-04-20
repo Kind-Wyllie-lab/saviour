@@ -137,7 +137,10 @@ export default function System() {
     <main className="system-page">
       <div className="system-header">
         <h2>System Health</h2>
-        <button className="refresh-btn" type="button" onClick={refresh}>
+        <button className="refresh-btn" type="button" onClick={() => {
+          refresh();
+          socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
+        }}>
           Refresh
         </button>
       </div>

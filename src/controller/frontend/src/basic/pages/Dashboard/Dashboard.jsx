@@ -32,7 +32,6 @@ function useIsCompact() {
 function Dashboard() {
   const { moduleList } = useModules();
   const [selectedGroup, setSelectedGroup] = useState("all");
-  const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
   const isCompact = useIsCompact();
 
   const groups = useMemo(() => {
@@ -48,7 +47,10 @@ function Dashboard() {
   const micModules    = visibleModules.filter(m => m.type === "microphone");
   const ttlModules    = visibleModules.filter(m => m.type === "ttl");
 
-  // Flat ordered list of all streams — used by the compact carousel
+  // Optimal column count for wide camera grid
+  const cameraCols = (() => { const n = cameraModules.length; return n <= 2 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4; })();
+
+  // Flat ordered list of all streams — used by the compact grid
   const allStreams = useMemo(() => [
     ...cameraModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.camera,
@@ -64,15 +66,7 @@ function Dashboard() {
     })),
   ], [cameraModules, micModules, ttlModules]);
 
-  // Clamp displayed index if the stream list shrinks while browsing
-  const safeIndex = allStreams.length > 0
-    ? Math.min(currentStreamIndex, allStreams.length - 1)
-    : 0;
-
-  const prev = () =>
-    setCurrentStreamIndex(i => (i - 1 + allStreams.length) % allStreams.length);
-  const next = () =>
-    setCurrentStreamIndex(i => (i + 1) % allStreams.length);
+  const compactCols = (() => { const ns = allStreams.length; return ns <= 1 ? 1 : ns <= 4 ? 2 : ns <= 9 ? 3 : 4; })();
 
   return (
     <div className="dashboard">
@@ -95,45 +89,23 @@ function Dashboard() {
       )}
 
       {isCompact ? (
-        /* ── Compact: single-stream carousel + status below ── */
+        /* ── Compact: stream grid + status below ── */
         <div className="dashboard-compact">
-          <div className="dashboard-carousel">
-            {allStreams.length === 0 ? (
-              <div className="dashboard-no-cameras">No streams connected</div>
-            ) : (
-              <>
-                <div className="carousel-stream">
-                  <MJPEGStreamCard
-                    key={allStreams[safeIndex].id}
-                    ip={allStreams[safeIndex].ip}
-                    port={allStreams[safeIndex].port}
-                    label={allStreams[safeIndex].label}
-                    isRecording={allStreams[safeIndex].isRecording}
-                  />
-                </div>
-                {allStreams.length > 1 && (
-                  <div className="carousel-controls">
-                    <button className="carousel-btn" onClick={prev} aria-label="Previous stream">
-                      &#8249;
-                    </button>
-                    <div className="carousel-dots">
-                      {allStreams.map((s, i) => (
-                        <button
-                          key={s.id}
-                          className={`carousel-dot${i === safeIndex ? " carousel-dot--active" : ""}`}
-                          onClick={() => setCurrentStreamIndex(i)}
-                          aria-label={s.label}
-                        />
-                      ))}
-                    </div>
-                    <button className="carousel-btn" onClick={next} aria-label="Next stream">
-                      &#8250;
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          {allStreams.length === 0 ? (
+            <div className="dashboard-no-cameras">No streams connected</div>
+          ) : (
+            <div className="dashboard-compact-streams" style={{ gridTemplateColumns: `repeat(${compactCols}, 1fr)` }}>
+              {allStreams.map(s => (
+                <MJPEGStreamCard
+                  key={s.id}
+                  ip={s.ip}
+                  port={s.port}
+                  label={s.label}
+                  isRecording={s.isRecording}
+                />
+              ))}
+            </div>
+          )}
 
           <div className="dashboard-compact-panel">
             <HealthSummaryWidget />
@@ -143,7 +115,7 @@ function Dashboard() {
       ) : (
         /* ── Wide: cameras left, status panel right ── */
         <div className="dashboard-main">
-          <div className="dashboard-cameras">
+          <div className="dashboard-cameras" style={{ gridTemplateColumns: `repeat(${cameraCols}, 1fr)` }}>
             {cameraModules.length === 0 ? (
               <div className="dashboard-no-cameras">No camera modules connected</div>
             ) : (

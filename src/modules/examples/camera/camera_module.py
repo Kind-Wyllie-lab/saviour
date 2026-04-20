@@ -196,6 +196,7 @@ class CameraModule(Module):
                 "camera.width",
                 "camera.height",
                 "camera.bitrate_mb",
+                "camera.sync_mode",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -318,6 +319,16 @@ class CameraModule(Module):
                 if af_mode == 0:  # Manual — set fixed lens position
                     controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
+            sync_mode_str = self.config.get("camera.sync_mode", "none")
+            if sync_mode_str in ("server", "client"):
+                from libcamera import controls as lc
+                controls["SyncMode"] = (
+                    lc.rpi.SyncModeEnum.Server
+                    if sync_mode_str == "server"
+                    else lc.rpi.SyncModeEnum.Client
+                )
+                self.logger.info(f"Camera sync mode: {sync_mode_str}")
+
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
 
@@ -375,6 +386,7 @@ class CameraModule(Module):
         """Flush, close, and stage the current timestamp CSV for export."""
         if self._timestamp_csv_file is not None:
             self._timestamp_csv_file.flush()
+            os.fsync(self._timestamp_csv_file.fileno())
             self._timestamp_csv_file.close()
             self._timestamp_csv_file = None
             self._timestamp_csv_writer = None
@@ -398,10 +410,28 @@ class CameraModule(Module):
         # Create file output
         self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
-        
+
+        # Enable sync before starting encoder (section 7.3 of picamera2 manual)
+        sync_mode_str = self.config.get("camera.sync_mode", "none")
+        _sync_enabled = sync_mode_str in ("server", "client")
+        if _sync_enabled:
+            self.main_encoder.sync_enable = True
+
         # Start recording
-        self.picam2.start_encoder(self.main_encoder, name="main") #
+        self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
+
+        if _sync_enabled:
+            self.logger.info(f"Waiting for frame sync ({sync_mode_str})...")
+            synced = self.main_encoder.sync.wait(timeout=10.0)
+            if synced:
+                self.logger.info("Frame sync achieved — recording is synchronised")
+            else:
+                self.logger.warning(
+                    "Frame sync timed out after 10 s — recording started unsynchronised. "
+                    "Check that all cameras are running and that the server started last."
+                )
+
         self._open_timestamp_csv(filename)
 
 

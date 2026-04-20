@@ -59,7 +59,6 @@ class AudiomothModule(Module):
         # {serial: {'level_db': float, 'peak_db': float, 'spectrum_db': ndarray, 'freqs': ndarray}}
         self.monitor_data = {}
         self.monitor_data_lock = threading.Lock()
-        self.SPEC_COLS = 150   # number of FFT columns to retain per audiomoth (~3 s window)
         self.peak_hold_data = {}  # {serial: {'value_db': float, 'time': float}}
         self._register_monitoring_routes()
 
@@ -83,7 +82,7 @@ class AudiomothModule(Module):
     @command
     def monitor(self):
         """Returns the URL of the monitoring MJPEG stream"""
-        port = self.config.get("monitoring.port", 8081)
+        port = self.config.get("monitoring._port", 8081)
         ip = self.network.ip if hasattr(self.network, 'ip') and self.network.ip else "unknown"
         return {
             "result": "Success",
@@ -261,6 +260,34 @@ class AudiomothModule(Module):
 
     """Monitoring stream"""
 
+    def _monitoring_params(self):
+        """Return sanitized (freq_lo_hz, freq_hi_hz, time_window_s) from config."""
+        sample_rate = self.config.get("microphone.sample_rate", 192000)
+        nyquist = sample_rate / 2
+
+        freq_lo = int(self.config.get("monitoring.freq_lo_hz", 20_000))
+        freq_hi = int(self.config.get("monitoring.freq_hi_hz", 70_000))
+        time_window = float(self.config.get("monitoring.time_window_s", 3.0))
+
+        # Clamp each to [0, nyquist]
+        freq_lo = max(0, min(freq_lo, int(nyquist)))
+        freq_hi = max(0, min(freq_hi, int(nyquist)))
+
+        # Ensure at least 1 kHz separation; swap if inverted
+        if freq_lo >= freq_hi:
+            self.logger.warning(
+                f"monitoring.freq_lo_hz ({freq_lo}) >= freq_hi_hz ({freq_hi}); swapping"
+            )
+            freq_lo, freq_hi = freq_hi, freq_lo
+        if freq_hi - freq_lo < 1000:
+            freq_hi = min(int(nyquist), freq_lo + 1000)
+
+        # Time window: between 0.5 s and 60 s
+        time_window = max(0.5, min(time_window, 60.0))
+
+        return freq_lo, freq_hi, time_window
+
+
     def _monitor_audiomoth(self, serial: str, mic_id: str) -> None:
         """
         Continuously read short audio blocks from one audiomoth and compute
@@ -270,7 +297,7 @@ class AudiomothModule(Module):
         PipeWire supports multiple simultaneous readers on the same device.
         """
         sample_rate = self.config.get("microphone.sample_rate", 192000)
-        fft_size = self.config.get("monitoring.fft_size", 4096)  # ~21ms at 192kHz
+        fft_size = self.config.get("monitoring._fft_size", 4096)  # ~21ms at 192kHz
 
         self.logger.info(f"Monitor thread started for audiomoth {serial}")
         try:
@@ -295,9 +322,11 @@ class AudiomothModule(Module):
                     spectrum_db = 20 * np.log10(fft_vals / (np.sum(window) / 2) + 1e-10)
                     freqs = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
 
+                    _, _, time_window_s = self._monitoring_params()
+                    spec_cols = max(10, int(time_window_s * sample_rate / fft_size))
                     with self.monitor_data_lock:
                         prev_buf = self.monitor_data.get(serial, {}).get('spec_buffer', [])
-                        new_buf  = (prev_buf + [spectrum_db])[-self.SPEC_COLS:]
+                        new_buf  = (prev_buf + [spectrum_db])[-spec_cols:]
                         self.monitor_data[serial] = {
                             'level_db':    level_db,
                             'peak_db':     peak_db,
@@ -363,14 +392,13 @@ class AudiomothModule(Module):
                 cv2.putText(frame, label, (PADDING, y0 + 22),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
-                # ── Spectrogram (20–70 kHz USV range) ───────────────────────
-                FREQ_LO_HZ = 20_000
-                FREQ_HI_HZ = 70_000
+                # ── Spectrogram ───────────────────────────────────────────────
+                freq_lo_hz, freq_hi_hz, _ = self._monitoring_params()
                 if spec_buf:
                     spec_mat = np.array(spec_buf, dtype=np.float32).T  # (n_bins, n_cols)
                     n_bins = spec_mat.shape[0]
-                    bin_lo = int(FREQ_LO_HZ / nyquist * n_bins)
-                    bin_hi = int(FREQ_HI_HZ / nyquist * n_bins)
+                    bin_lo = int(freq_lo_hz / nyquist * n_bins)
+                    bin_hi = int(freq_hi_hz / nyquist * n_bins)
                     spec_mat = spec_mat[bin_lo:bin_hi, :]
                     spec_img = cv2.resize(spec_mat, (pw, PLOT_H),
                                           interpolation=cv2.INTER_LINEAR)
@@ -382,15 +410,15 @@ class AudiomothModule(Module):
 
                 cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
 
-                # ── Y-axis: frequency labels (20–70 kHz) ─────────────────────
-                freq_lo_khz = FREQ_LO_HZ // 1000
-                freq_hi_khz = FREQ_HI_HZ // 1000
+                # ── Y-axis: frequency labels ──────────────────────────────────
+                freq_lo_khz = freq_lo_hz / 1000
+                freq_hi_khz = freq_hi_hz / 1000
                 freq_range_khz = freq_hi_khz - freq_lo_khz
-                freq_ticks_khz = [20, 30, 40, 50, 60, 70]
+                freq_ticks_khz = [round(v, 1) for v in np.linspace(freq_lo_khz, freq_hi_khz, 5)]
                 for fk in freq_ticks_khz:
                     fy = int(py1 - ((fk - freq_lo_khz) / freq_range_khz) * PLOT_H)
                     cv2.line(frame, (px0 - 3, fy), (px0, fy), (110, 110, 110), 1)
-                    cv2.putText(frame, f"{fk}k", (3, fy + 4),
+                    cv2.putText(frame, f"{fk:.0f}k" if fk == int(fk) else f"{fk:.1f}k", (3, fy + 4),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.30, (110, 110, 110), 1)
 
                 # ── Peak meter with peak hold ─────────────────────────────────
@@ -499,7 +527,7 @@ class AudiomothModule(Module):
                 self.logger.warning("No audiomoths found, cannot start monitoring stream")
                 return False
 
-            port = self.config.get("monitoring.port", 8081)
+            port = self.config.get("monitoring._port", 8081)
             self.should_stop_monitoring_stream = False
 
             # One monitor thread per audiomoth

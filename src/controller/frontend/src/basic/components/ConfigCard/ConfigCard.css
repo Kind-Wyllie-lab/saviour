@@ -328,9 +328,9 @@ min-width: 300px;
 /* Filesize preview */
 .filesize-preview {
   font-size: 0.82em;
-  opacity: 0.65;
-  text-align: center;
-  margin-bottom: 6px;
+  color: var(--text-muted, #888);
+  padding: 3px 0 6px;
+  margin-bottom: 4px;
 }
 
 /* Save + Reset button row */

@@ -264,11 +264,18 @@ class Export:
 
 
     def _format_export_path(self, export_path: str):
-        """Build the full export path: mount_point/session_name/date/module_name/"""
+        """Build the full export path: mount_point/session_name/date/module_name/
+
+        If export_path already contains slashes it is treated as a full relative
+        path (session/date/module) produced by recording.py and only the mount
+        point is prepended.  A bare session name (no slashes) has the current
+        date and module name appended as before.
+        """
+        if '/' in export_path:
+            return os.path.join(self.mount_point, export_path)
         date_str = self.facade.get_utc_date(time.time())
         module_name = self.facade.get_module_name()
-        export_path = os.path.join(self.mount_point, export_path, date_str, module_name)
-        return export_path
+        return os.path.join(self.mount_point, export_path, date_str, module_name)
 
 
     def _export_config_file(self) -> bool:

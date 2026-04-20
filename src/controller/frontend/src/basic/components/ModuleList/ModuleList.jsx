@@ -95,7 +95,7 @@ function ModuleList({ modules }) {
                     : <span className="cell--muted">—</span>
                   }
                 </span>
-                <span>{module.ip}</span>
+                <span className="module-ip">{module.ip}</span>
                 <span className="module-version" title={module.version}>
                   {formatVersion(module.version)}
                 </span>

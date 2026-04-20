@@ -14,6 +14,10 @@ export function useModuleUpdate(moduleId) {
   const [updateStatus, setUpdateStatus] = useState(null);
 
   useEffect(() => {
+    setUpdateStatus(null);
+  }, [moduleId]);
+
+  useEffect(() => {
     const handler = (data) => {
       if (data.module_id === moduleId) {
         setUpdateStatus({ success: data.success, output: data.output });

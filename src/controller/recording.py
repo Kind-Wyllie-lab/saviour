@@ -107,6 +107,18 @@ class Recording:
             for m in s.modules
         }
 
+    def _check_share_writable(self) -> Optional[str]:
+        """Return an error string if the controller share is not writable, else None."""
+        share = "/home/pi/controller_share"
+        probe = os.path.join(share, ".saviour_write_probe")
+        try:
+            with open(probe, "w") as f:
+                f.write("ok")
+            os.remove(probe)
+            return None
+        except Exception as e:
+            return f"Controller share not writable ({share}): {e}"
+
     def create_session(self, session_name: str, target: str) -> dict:
         """Create a session that begins recording immediately.
 
@@ -115,6 +127,11 @@ class Recording:
         if not session_name or not session_name.strip():
             self.logger.warning("create_session: empty session_name")
             return {"success": False, "error": "Session name cannot be empty"}
+
+        share_err = self._check_share_writable()
+        if share_err:
+            self.logger.error(f"create_session: {share_err}")
+            return {"success": False, "error": share_err}
 
         modules = list(self.facade.get_modules_by_target(target).keys())
         if not modules:
@@ -534,6 +551,10 @@ class Recording:
         Sessions that were ACTIVE when the controller last stopped are marked ERROR
         so the operator can see they need attention.
         """
+        share_err = self._check_share_writable()
+        if share_err:
+            self.logger.warning(f"Startup share check: {share_err}")
+
         if not os.path.exists(SESSIONS_FILE):
             return
         try:

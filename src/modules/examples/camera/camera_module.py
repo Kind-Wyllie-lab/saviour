@@ -386,6 +386,7 @@ class CameraModule(Module):
         """Flush, close, and stage the current timestamp CSV for export."""
         if self._timestamp_csv_file is not None:
             self._timestamp_csv_file.flush()
+            os.fsync(self._timestamp_csv_file.fileno())
             self._timestamp_csv_file.close()
             self._timestamp_csv_file = None
             self._timestamp_csv_writer = None

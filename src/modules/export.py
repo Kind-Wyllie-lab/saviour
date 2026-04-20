@@ -147,6 +147,8 @@ class Export:
 
                         os.rename(source_path, temp_source_path)
                         shutil.copy2(temp_source_path, temp_dest_path)
+                        with open(temp_dest_path, "rb") as _f:
+                            os.fsync(_f.fileno())
                         os.rename(temp_dest_path, dest_path)
                         os.rename(temp_source_path, source_path)
                         shutil.move(source_path, f"{self.exported_folder}/{filename}")

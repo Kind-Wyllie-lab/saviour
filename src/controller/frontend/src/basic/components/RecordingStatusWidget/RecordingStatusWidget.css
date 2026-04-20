@@ -1,0 +1,103 @@
+.recording-status-widget {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  font-size: 0.88em;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--card-bg-color);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-height: 38px;
+}
+
+/* ── Idle state ─────────────────────────────────────────────────────────── */
+
+.recording-status-widget--idle {
+  opacity: 0.45;
+}
+
+.rsw-idle-text {
+  font-style: italic;
+}
+
+/* ── Active state ───────────────────────────────────────────────────────── */
+
+.recording-status-widget--active {
+  border-bottom-color: color-mix(in srgb, #2d9e4f 35%, var(--border-color));
+  background-color: color-mix(in srgb, #2d9e4f 5%, var(--card-bg-color));
+}
+
+.recording-status-widget--partial {
+  border-bottom-color: color-mix(in srgb, #d4820a 35%, var(--border-color));
+  background-color: color-mix(in srgb, #d4820a 5%, var(--card-bg-color));
+}
+
+/* ── Per-session row (used when multiple sessions are active) ───────────── */
+
+.rsw-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rsw-session-name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.rsw-elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  font-size: 0.95em;
+}
+
+.rsw-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border-color);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+/* ── Module status pills ────────────────────────────────────────────────── */
+
+.rsw-modules {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rsw-module-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rsw-module-name {
+  opacity: 0.8;
+}
+
+/* ── Status dots ────────────────────────────────────────────────────────── */
+
+.rsw-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rsw-dot--idle      { background-color: var(--secondary-text-color); }
+.rsw-dot--recording { background-color: #cc3333; }
+.rsw-dot--ready     { background-color: #d4820a; }
+.rsw-dot--offline   { background-color: #888; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+.rsw-dot--pulse {
+  animation: pulse 1.4s ease-in-out infinite;
+}

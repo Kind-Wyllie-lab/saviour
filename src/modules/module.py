@@ -11,6 +11,7 @@ Created: 17/03/2025
 
 import sys
 import os
+import json
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -23,6 +24,8 @@ from typing import Dict, Any, Optional, Union
 import datetime
 import csv
 from abc import ABC, abstractmethod 
+
+INSTALL_DIR = "/usr/local/src/saviour"
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -200,42 +203,48 @@ class Module(ABC):
         os.system("sudo reboot now")
 
 
-    def update_saviour(self) -> bool:
+    def update_saviour(self) -> dict:
         """Update saviour to the latest version from git"""
         try:
             # Check internet connectivity before attempting git pull
             self.logger.info("Checking internet connectivity before updating SAVIOUR")
             try:
-                subprocess.run(["ping", "-c", "1", "github.com"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(
+                    ["ping", "-c", "1", "-W", "5", "github.com"],
+                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
                 self.logger.info("Internet connectivity confirmed")
             except subprocess.CalledProcessError:
                 self.logger.warning("No internet connectivity, cannot update SAVIOUR")
-                return False
+                return {"result": "error", "output": "No internet connectivity — could not reach github.com"}
+
             self.logger.info("Updating SAVIOUR to the latest version from git")
-
-            # Ensure main branch is checked out before pulling
-            # result = subprocess.run(["git", "checkout", "main"], capture_output=True, text=True)
-            # if result.returncode != 0:
-            #     self.logger.error(f"Failed to checkout main branch: {result.stderr}")
-            #     return False
-
-            # Still shows Host key verification failed when running as root under systemd, even after creating known_hosts file - workaround is to disable strict host key checking for github.com in global git config (only for root user, so should be safe)
-            result = subprocess.run(["git", "config", "--global", "--add", "ssh.github.com.strictHostKeyChecking", "no"], capture_output=True, text=True)   
-
-            # Can I run a subprocess command not as root user?
-            
-
-            # Pull the latest changes
-            result = subprocess.run(["git", "pull"], capture_output=True, text=True)
+            # Convert SSH remote URL to HTTPS so the service user (no SSH key)
+            # can pull without auth. The on-disk remote is unchanged.
+            import re
+            url_result = subprocess.run(
+                ["git", "-C", INSTALL_DIR, "remote", "get-url", "origin"],
+                capture_output=True, text=True
+            )
+            remote_url = url_result.stdout.strip()
+            https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
+                               r'https://\1/\2.git', remote_url)
+            result = subprocess.run(
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "pull", https_url],
+                capture_output=True, text=True, timeout=60
+            )
             if result.returncode == 0:
-                self.logger.info(f"SAVIOUR update successful: {result.stdout}")
-                return True
+                output = result.stdout.strip() or "Already up to date."
+                self.logger.info(f"SAVIOUR update successful: {output}")
+                return {"result": "success", "output": output}
             else:
-                self.logger.error(f"SAVIOUR update failed: {result.stderr}")
-                return False
+                output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                self.logger.error(f"SAVIOUR update failed: {output}")
+                return {"result": "error", "output": output}
         except Exception as e:
             self.logger.error(f"Error updating SAVIOUR: {e}")
-            return False
+            return {"result": "error", "output": str(e)}
 
 
     def _handle_set_config(self, **kwargs) -> dict:
@@ -284,7 +293,7 @@ class Module(ABC):
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
 
         # Check for special keys
-        export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export._share_path"]
+        export_keys = ["export.max_bitrate_mb", "export.max_burst_kb", "export.share_ip", "export.share_path", "export.share_username", "export.share_password"]
         should_reconfigure_samba = False
         for key in export_keys:
             if key in updated_keys:
@@ -674,6 +683,42 @@ class Module(ABC):
         module_keys = list(getattr(self.config, 'module_config_keys', []))
         self.configure_module(module_keys)
         return {"config": self.config.get_all()}
+
+
+    @command()
+    def set_export_config(self, share_ip: str, share_username: str, share_password: str) -> dict:
+        """
+        Update the export (Samba) credentials sent by the controller on discovery.
+        Writes to base_config.json so the values survive a config reset, and also
+        updates the running config immediately.
+        Skipped if export.use_controller_export is false (custom export route).
+        """
+        if not self.config.get("export.use_controller_export", True):
+            self.logger.info("set_export_config skipped — use_controller_export is false")
+            return {"result": "skipped"}
+        self.logger.info(f"set_export_config called — updating share_ip to {share_ip}")
+        try:
+            # Persist to base_config.json so a reset_config doesn't revert the credentials
+            with open(self.config.base_config_path) as f:
+                base = json.load(f)
+            export = base.setdefault("export", {})
+            export["share_ip"] = share_ip
+            export["share_username"] = share_username
+            export["share_password"] = share_password
+            with open(self.config.base_config_path, "w") as f:
+                json.dump(base, f, indent=2)
+                f.write("\n")
+
+            # Also update the running config so the change takes effect immediately
+            self.config.set("export.share_ip", share_ip)
+            self.config.set("export.share_username", share_username)
+            self.config.set("export.share_password", share_password)
+
+            self.logger.info("Export config updated and persisted to base_config.json")
+            return {"result": "success"}
+        except Exception as e:
+            self.logger.error(f"set_export_config failed: {e}")
+            return {"result": "error", "output": str(e)}
 
 
     def _get_required_disk_space_mb(self) -> float:

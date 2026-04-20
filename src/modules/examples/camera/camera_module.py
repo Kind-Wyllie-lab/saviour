@@ -16,6 +16,7 @@ Created: 17/03/2025
 # TODO: Consider using http.server instead of flask
 """
 
+import csv
 import datetime
 import sys
 import os
@@ -52,8 +53,11 @@ class CameraModule(Module):
         self.mode = None
         self.gain = None
 
-        # Get camera modes
+        # Get camera modes and sensor identity
         self.sensor_modes = self.picam2.sensor_modes
+        self.sensor_model = self.picam2.camera_properties.get("Model", "").lower()
+        self.has_autofocus = "imx708" in self.sensor_model
+        self.logger.info(f"Sensor model: {self.sensor_model!r}, autofocus: {self.has_autofocus}")
         time.sleep(0.1)
     
         # Streaming variables
@@ -67,6 +71,7 @@ class CameraModule(Module):
         self.latest_frame = None
         self.last_frame_timestamp = None
         self.frame_lock = threading.Lock()
+        self._last_stream_encode_time = 0.0
 
         # Configure camera
         time.sleep(0.1)
@@ -97,6 +102,13 @@ class CameraModule(Module):
 
         self.current_video_segment = None
         self.last_video_segment = None
+
+        # Per-frame timestamp CSV sidecar
+        self._timestamp_csv_file = None
+        self._timestamp_csv_writer = None
+        self._current_csv_path = None
+        self._frame_id = 0
+        self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
 
         self.module_checks = {
             self._check_picam
@@ -145,8 +157,35 @@ class CameraModule(Module):
                 "label": f"Mode {i}: {w}×{h} @ {fps:.0f}fps — {fov}",
             })
 
-        return {"sensor_modes": enriched}
-        
+        return {
+            "sensor_modes": enriched,
+            "sensor_model": self.sensor_model,
+            "has_autofocus": self.has_autofocus,
+        }
+
+
+    @command()
+    def trigger_autofocus(self):
+        """Trigger a one-shot autofocus cycle (IMX708 / Camera Module 3 only)."""
+        if not self.has_autofocus:
+            return {"result": "error", "output": "Camera does not support autofocus"}
+        if not self.picam2.started:
+            return {"result": "error", "output": "Camera is not running"}
+        try:
+            # Switch to Auto mode and fire the trigger, then return to configured mode
+            self.picam2.set_controls({"AfMode": 1, "AfTrigger": 0})  # Auto + Start
+            return {"result": "success"}
+        except Exception as e:
+            self.logger.error(f"trigger_autofocus error: {e}")
+            return {"result": "error", "output": str(e)}
+
+
+    def get_health(self) -> dict:
+        """Extend base health with wall/monotonic offset for SensorTimestamp alignment."""
+        health = super().get_health()
+        health["wall_mono_offset_s"] = time.time() - time.monotonic()
+        return health
+
 
     def configure_module_special(self, updated_keys: Optional[list[str]]):
         """Override parent method configure module in event that module config changes"""
@@ -157,6 +196,7 @@ class CameraModule(Module):
                 "camera.width",
                 "camera.height",
                 "camera.bitrate_mb",
+                "camera.sync_mode",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -183,12 +223,25 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
 
-            self.picam2.set_controls({
-                "AnalogueGain": self.config.get("camera.gain", 1), 
-                "ExposureTime": self.config.get("camera.exposure_time"),
+            fps = self.config.get("camera.fps", 25)
+            if self.config.get("camera.manual_exposure", False):
+                exposure_time = self.config.get("camera.exposure_time", 10000)
+            else:
+                exposure_time = int(1_000_000 / fps)
+            live_controls = {
+                "AnalogueGain": self.config.get("camera.gain", 1),
+                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness"),
-                "FrameRate": self.config.get("camera.fps")
-            })
+                "FrameRate": fps,
+            }
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode_str = self.config.get("camera.autofocus_mode", "manual")
+                af_mode = _AF_MODE_MAP.get(af_mode_str, 0)
+                live_controls["AfMode"] = af_mode
+                if af_mode == 0:
+                    live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+            self.picam2.set_controls(live_controls)
 
         elif not self.is_streaming:
             try:
@@ -246,13 +299,36 @@ class CameraModule(Module):
             sensor = {"output_size": self.mode["size"], "bit_depth": self.mode["bit_depth"]}
             main = {"size": (self.width, self.height), "format": "RGB888"} # The main stream - we will use this for recordings. YUV420 is good for higher framerates.
             lores = {"size": (self.lores_width, self.lores_height), "format":"RGB888"} # A lores stream for network streaming. RGB888 requires less processing.
+            if self.config.get("camera.manual_exposure", False):
+                exposure_time = self.config.get("camera.exposure_time", 10000)
+            else:
+                exposure_time = int(1_000_000 / self.fps)
+
             controls = {
-                "FrameRate": self.fps, 
-                "AnalogueGain": self.config.get("camera.gain"), 
-                "ExposureTime": self.config.get("camera.exposure_time"), 
+                "FrameRate": self.fps,
+                "AnalogueGain": self.config.get("camera.gain"),
+                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness")
             } # target framerate, in reality it might be lower.
-            
+
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode_str = self.config.get("camera.autofocus_mode", "manual")
+                af_mode = _AF_MODE_MAP.get(af_mode_str, 0)
+                controls["AfMode"] = af_mode
+                if af_mode == 0:  # Manual — set fixed lens position
+                    controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+
+            sync_mode_str = self.config.get("camera.sync_mode", "none")
+            if sync_mode_str in ("server", "client"):
+                from libcamera import controls as lc
+                controls["SyncMode"] = (
+                    lc.rpi.SyncModeEnum.Server
+                    if sync_mode_str == "server"
+                    else lc.rpi.SyncModeEnum.Client
+                )
+                self.logger.info(f"Camera sync mode: {sync_mode_str}")
+
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
 
@@ -295,6 +371,29 @@ class CameraModule(Module):
         self._start_new_video_segment() # Start new video segment
 
 
+    def _open_timestamp_csv(self, video_filename: str) -> None:
+        """Open a per-frame timestamp CSV sidecar alongside video_filename."""
+        stem = os.path.splitext(video_filename)[0]
+        self._current_csv_path = f"{stem}_timestamps.csv"
+        self._timestamp_csv_file = open(self._current_csv_path, "w", newline="")
+        self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
+        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before"])
+        self._frame_id = 0
+        self._csv_prev_ns = None
+        self.facade.add_session_file(self._current_csv_path)
+
+    def _close_timestamp_csv(self) -> None:
+        """Flush, close, and stage the current timestamp CSV for export."""
+        if self._timestamp_csv_file is not None:
+            self._timestamp_csv_file.flush()
+            os.fsync(self._timestamp_csv_file.fileno())
+            self._timestamp_csv_file.close()
+            self._timestamp_csv_file = None
+            self._timestamp_csv_writer = None
+            if hasattr(self, "_current_csv_path") and self._current_csv_path:
+                self.facade.stage_file_for_export(self._current_csv_path)
+                self._current_csv_path = None
+
     def _start_new_recording(self) -> None:
         """Start a new recording session - set up SplittableOutput"""
         # Start video
@@ -311,10 +410,29 @@ class CameraModule(Module):
         # Create file output
         self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
-        
+
+        # Enable sync before starting encoder (section 7.3 of picamera2 manual)
+        sync_mode_str = self.config.get("camera.sync_mode", "none")
+        _sync_enabled = sync_mode_str in ("server", "client")
+        if _sync_enabled:
+            self.main_encoder.sync_enable = True
+
         # Start recording
-        self.picam2.start_encoder(self.main_encoder, name="main") # 
+        self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
+
+        if _sync_enabled:
+            self.logger.info(f"Waiting for frame sync ({sync_mode_str})...")
+            synced = self.main_encoder.sync.wait(timeout=10.0)
+            if synced:
+                self.logger.info("Frame sync achieved — recording is synchronised")
+            else:
+                self.logger.warning(
+                    "Frame sync timed out after 10 s — recording started unsynchronised. "
+                    "Check that all cameras are running and that the server started last."
+                )
+
+        self._open_timestamp_csv(filename)
 
 
     def _get_video_filename(self) -> str:
@@ -326,8 +444,11 @@ class CameraModule(Module):
 
     def _start_new_video_segment(self):
         """
-        Start recording a new splittable output video segment. 
+        Start recording a new splittable output video segment.
         """
+        # Close current timestamp CSV before rotating
+        self._close_timestamp_csv()
+
         # Stage current recording for export
         self.last_video_segment = self.current_video_segment
         self.facade.stage_file_for_export(self.last_video_segment)
@@ -336,6 +457,7 @@ class CameraModule(Module):
         filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.ts
         self.current_video_segment = filename
         self.facade.add_session_file(filename)
+        self._open_timestamp_csv(filename)
 
         # Start recording to new segment
         self.file_output.split_output(PyavOutput(filename, format="mpegts"))
@@ -433,17 +555,18 @@ class CameraModule(Module):
             self.logger.info("Attempting to stop camera specific recording")
 
             self._stop_recording_video()
+            self._close_timestamp_csv()
 
             # Preprocess video files for export
             for file in self.session_files:
                 if file.endswith(".ts"):
                     self.logger.info(f"Fixing positioning timestamps for {file}")
                     self._fix_positioning_timestamps(file)
-            
+
             self.facade.stage_file_for_export(self.current_video_segment)
 
             return True
-        
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             return False
@@ -463,24 +586,37 @@ class CameraModule(Module):
 
 
     """Timestamping frames"""
-    def _get_frame_timestamp(self, req) -> bool:
+    def _get_frame_timestamp(self, req) -> Optional[int]:
+        """Return the frame exposure time as wall-clock nanoseconds.
+
+        Prefers SensorTimestamp (hardware-stamped at actual sensor exposure,
+        CLOCK_MONOTONIC) converted to CLOCK_REALTIME.  Falls back to
+        FrameWallClock (picamera2 wall-clock stamp at ISP output) if
+        SensorTimestamp is unavailable.
+        """
         try:
             metadata = req.get_metadata()
-            frame_wall_clock = metadata.get('FrameWallClock', 'No data')
-            if frame_wall_clock != 'No data':
+            sensor_ts = metadata.get('SensorTimestamp')
+            if sensor_ts is not None:
+                # CLOCK_MONOTONIC → CLOCK_REALTIME conversion (cheap, two syscalls).
+                # On Pi, CLOCK_BOOTTIME == CLOCK_MONOTONIC (no suspend), so this is exact.
+                wall_mono_offset_ns = int((time.time() - time.monotonic()) * 1e9)
+                return sensor_ts + wall_mono_offset_ns
+            frame_wall_clock = metadata.get('FrameWallClock')
+            if frame_wall_clock is not None:
                 return frame_wall_clock
-            else:
-                return False
+            return None
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
+            return None
 
 
     def _get_and_apply_frame_timestamp(self, req) -> None:
         try:
             # Get and format timestamp
             timestamp = self._get_frame_timestamp(req)
-            if not timestamp:
-                self.logger.warning("No data returned by frame wall clock")
+            if timestamp is None:
+                self.logger.warning("No frame timestamp available from metadata")
                 return
 
             # Calculate actual framerate
@@ -491,31 +627,44 @@ class CameraModule(Module):
             else:
                 self.last_frame_timestamp = timestamp
 
-
-
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+
+            # Write per-frame CSV row while recording.
+            # Guard on writer rather than is_recording: the base class sets
+            # is_recording=True *after* _create_initial_recording_segment(), so
+            # the first few frames would be silently skipped by an is_recording check.
+            if self._timestamp_csv_writer is not None:
+                timestamp_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
+                if self._csv_prev_ns is not None and self.fps:
+                    delta_ms = round((timestamp - self._csv_prev_ns) / 1e6, 3)
+                    expected_ms = 1000.0 / self.fps
+                    dropped_before = max(0, round(delta_ms / expected_ms) - 1)
+                else:
+                    delta_ms = ""
+                    dropped_before = ""
+                self._csv_prev_ns = timestamp
+                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc, delta_ms, dropped_before])
+                self._frame_id += 1
+
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
             # alt: timestmap = str(dt)
             timestamp = f"{self.facade.get_module_name()} {timestamp}"
 
+            monochrome = self.config.get("camera.monochrome") is True
             overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
 
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
-                if self.config.get("camera.monochrome") is True:
-                    # Convert BGR to grayscale
+                if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                    # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                 if overlay_timestamp:
                     self._apply_timestamp(m, timestamp, "main")
 
             # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
-                if self.config.get("camera.monochrome") is True:
-                    # Convert BGR to grayscale
+                if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                    # Convert back to BGR for consistency with other processing
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                 if overlay_timestamp:
                     self._apply_timestamp(m, timestamp, "lores")
@@ -556,31 +705,35 @@ class CameraModule(Module):
         )
 
     def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
-        """Apply the frame timestamp to the image."""
-        width  = self.width  if stream == "main" else self.lores_width
-        height = self.height if stream == "main" else self.lores_height
-        font = cv2.FONT_HERSHEY_SIMPLEX
+        """Apply the frame timestamp to the image.
 
-        size_preset = self.config.get("camera.text_size", "medium")
-        target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
-        thickness = 2 if size_preset == "large" else 1
+        Font scale and text position are cached after the first call per stream —
+        the timestamp string is always the same length so the layout never changes.
+        """
+        cache_attr = f"_ts_layout_{stream}"
+        layout = getattr(self, cache_attr, None)
+        if layout is None:
+            width  = self.width  if stream == "main" else self.lores_width
+            height = self.height if stream == "main" else self.lores_height
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            size_preset = self.config.get("camera.text_size", "medium")
+            target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
+            thickness = 2 if size_preset == "large" else 1
+            ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
+            font_scale = max(0.3, (target_fraction * width) / ref_width)
+            text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
+            x = int((width - text_width) / 2)
+            padding = max(4, int(height * 0.01))
+            y = text_height + padding
+            layout = (font_scale, thickness, x, y)
+            setattr(self, cache_attr, layout)
 
-        # Scale font so the timestamp string fills target_fraction of the image width.
-        ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
-        font_scale = max(0.3, (target_fraction * width) / ref_width)
-
-        text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
-
-        x = int((width - text_width) / 2)
-        # org is the text baseline; offset down by text_height + small padding from top.
-        padding = max(4, int(height * 0.01))
-        y = text_height + padding
-
+        font_scale, thickness, x, y = layout
         cv2.putText(
             img=m.array,
             text=timestamp,
             org=(x, y),
-            fontFace=font,
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX,
             fontScale=font_scale,
             color=(50, 255, 50),
             thickness=thickness,
@@ -652,17 +805,30 @@ class CameraModule(Module):
             return False
 
 
-    def _stream_post_callback(self, request):
-        try:
-            frame = request.make_array("lores")
+    _STREAM_FPS = 24
+    _STREAM_INTERVAL_S = 1.0 / _STREAM_FPS
 
+    def _stream_post_callback(self, request):
+        """Capture and JPEG-encode one lores frame, throttled to _STREAM_FPS.
+
+        The post-callback fires on every camera frame regardless of recording fps.
+        Without throttling, a 100fps recording would trigger 100 JPEG encodes per
+        second — far exceeding what the network stream needs and consuming enough
+        CPU to cause frame drops in the encoder.
+        """
+        try:
+            now = time.monotonic()
+            if now - self._last_stream_encode_time < self._STREAM_INTERVAL_S:
+                return
+            self._last_stream_encode_time = now
+
+            frame = request.make_array("lores")
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if not ret:
                 return
-            
             with self.frame_lock:
-                self.latest_frame = jpeg.tobytes()            
-        
+                self.latest_frame = jpeg.tobytes()
+
         except Exception as e:
             self.logger.error(f"Capture error: {e}")
 
@@ -681,23 +847,28 @@ class CameraModule(Module):
 
 
     def generate_streaming_frames(self):
-        """Generate streaming frames for MJPEG stream"""
+        """Generate streaming frames for MJPEG stream.
+
+        Yields each encoded frame exactly once by comparing object identity
+        against the last yielded frame. Rate is naturally limited by
+        _stream_post_callback which encodes at _STREAM_FPS.
+        """
+        last_frame = None
         while not self.should_stop_streaming:
             with self.frame_lock:
                 frame = self.latest_frame
 
-            if frame is None:
-                time.sleep(0.01)
+            if frame is None or frame is last_frame:
+                time.sleep(0.005)
                 continue
-            
+
+            last_frame = frame
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" +
                 frame +
                 b"\r\n"
             )
-
-            time.sleep(0.04)
 
     def register_routes(self):
         """Register Flask routes"""

@@ -14,18 +14,16 @@ export default function useHealth({ pollInterval = 30000 } = {}) {
     refresh();
     const interval = setInterval(refresh, pollInterval);
 
-    socket.on("module_health_update", (data) => {
-      setModuleHealth(data.module_health || {});
-    });
+    const handleModuleHealth = (data) => setModuleHealth(data.module_health || {});
+    const handleControllerHealth = (data) => setControllerHealth(data);
 
-    socket.on("controller_health_response", (data) => {
-      setControllerHealth(data);
-    });
+    socket.on("module_health_update", handleModuleHealth);
+    socket.on("controller_health_response", handleControllerHealth);
 
     return () => {
       clearInterval(interval);
-      socket.off("module_health_update");
-      socket.off("controller_health_response");
+      socket.off("module_health_update", handleModuleHealth);
+      socket.off("controller_health_response", handleControllerHealth);
     };
   }, [pollInterval, refresh]);
 

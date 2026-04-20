@@ -45,6 +45,7 @@ class Recording():
         # Main Recording Thread
         self._recording_duration_thread = None # A thread to automatically stop recording if a duration is given # TODO: Rename this something to do with auto stop recording
         self.recording_start_time = None # When a recording session was started
+        self.recording_intended_start_at = None # The start_at timestamp requested by the controller (None = start immediately)
         
         # Health metadata thread
         self.health_recording_thread = None # A thread to record health on
@@ -64,64 +65,85 @@ class Recording():
 
 
     """Start / Stop Recording"""
-    def start_recording(self, session_name: str = None, duration: str = None) -> Optional[str]:
-        """When module starts recording this gets triggered"""
+    def start_recording(self, session_name: str = None, duration: str = None,
+                        start_at: Optional[float] = None) -> dict:
+        """Accept a start_recording command from the controller.
+
+        If start_at is provided (a UTC epoch float), recording begins at that
+        timestamp rather than immediately.  All modules share a PTP-disciplined
+        clock so they all fire at the same wall-clock moment.
         """
-        Start recording. Should be extended with module-specific implementation.
-        
-        Args:
-            session_name: Optional experiment name to prefix the filename
-            duration: Optional duration parameter (not currently used)
-        """
-        self.logger.info(f"start_recording called with session_name {session_name}, duration {duration}")
-        
-        # Check not already recording
+        self.logger.info(
+            f"start_recording called — session_name={session_name}, "
+            f"duration={duration}, start_at={start_at}"
+        )
+
         if self.is_recording:
             self.logger.info("Already recording")
-            self.facade.send_status({
-                "type": "recording_start_failed",
-                "error": "Already recording"
-            })
+            self.facade.send_status({"type": "recording_start_failed", "error": "Already recording"})
             return {"result": "error", "error": "Already recording"}
 
+        self.recording_intended_start_at = start_at
+
+        if start_at is not None:
+            delay = start_at - time.time()
+            if delay <= 0:
+                self.logger.warning(
+                    f"start_at is {-delay:.3f}s in the past (PTP drift?) — starting immediately"
+                )
+                return self._begin_recording(session_name, duration)
+            self.logger.info(f"Recording scheduled to start in {delay:.3f}s")
+            threading.Thread(
+                target=self._scheduled_start,
+                args=(session_name, duration, start_at),
+                daemon=True,
+                name="scheduled-recording-start",
+            ).start()
+            return {"result": "success"}
+
+        return self._begin_recording(session_name, duration)
+
+
+    def _scheduled_start(self, session_name: str, duration: str, start_at: float) -> None:
+        """Sleep until start_at then begin recording."""
+        delay = start_at - time.time()
+        if delay > 0:
+            time.sleep(delay)
+        self._begin_recording(session_name, duration)
+
+
+    def _begin_recording(self, session_name: str, duration: str) -> dict:
+        """Immediately start recording. Called directly or from _scheduled_start."""
         # Store experiment folder information for export
         self.current_session_name = self._format_session_name(session_name)
 
         # Set the export folder based on the supplied experiment name
         self.facade.when_recording_starts()
-        
+
         # Set up recording - filename and folder
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.recording_session_id = f"{self.facade.get_module_name()}"
-        
-        # Use experiment name in filename if provided
+
         if session_name:
             self.current_filename_prefix = f"{self.recording_folder}/{self.current_session_name}_{self.recording_session_id}"
         else:
             self.current_filename_prefix = f"{self.recording_folder}/{self.recording_session_id}"
-        
+
         self.logger.info(f"Filenames will be prefixed {self.current_filename_prefix}")
         os.makedirs(self.recording_folder, exist_ok=True)
 
-        # Set recording start time
         self.recording_start_time = time.time()
 
-        # Check if duration was supplied
         self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
         if duration is not None:
             if duration > 0:
-                self._recording_duration_thread = threading.Thread(target=self._auto_stop_recording, args=(int(duration),))
+                self._recording_duration_thread = threading.Thread(
+                    target=self._auto_stop_recording, args=(int(duration),)
+                )
 
-        # Execute module specific recoridng e.g. camera video
         self._create_initial_recording_segment()
-
-        # Start monitoring recoridng segment durations
         self._start_recording_segment_monitoring()
-
-        # Start generating health metadata to go with file
         self._start_new_health_recording()
 
-        # Start auto stop thread if needed
         if self._recording_duration_thread:
             self._recording_duration_thread.start()
 
@@ -131,7 +153,7 @@ class Recording():
         self.facade.send_status({
             "type": "recording_started",
             "status": "success",
-            "recording": True
+            "recording": True,
         })
 
         return {"result": "success"}
@@ -331,7 +353,7 @@ class Recording():
 
     def _record_health_metadata(self):
         """Retrieve health metadata and write to csv tile"""
-        interval = self.config.get("health_metadata_recording_interval", 5)
+        interval = self.config.get("health_metadata_recording_interval", 1)
         csv_filename = self.current_health_segment 
         fieldnames = list(self.facade.get_health().keys())
         with open(csv_filename, "a", newline="") as f:

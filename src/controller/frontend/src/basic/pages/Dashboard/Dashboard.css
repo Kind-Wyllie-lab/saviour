@@ -1,25 +1,147 @@
 .dashboard {
-  height: 100vh;
   display: flex;
-  gap: 32px;
-  padding: 64px;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex: 3;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-  .dashboard-left {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: center;
-  }
+/* ── Main body: cameras left, status panel right ─────────────────────────── */
 
-  .dashboard-right {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: center;
-  }
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Camera grid ─────────────────────────────────────────────────────────── */
+
+.dashboard-cameras {
+  flex: 2;
+  display: grid;
+  /* column count set via inline style on the element */
+  grid-auto-rows: 1fr;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.dashboard-cameras .mjpeg-stream-card {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ── Group filter bar ────────────────────────────────────────────────────── */
+
+.dashboard-group-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.dashboard-group-filter label {
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+
+.dashboard-group-filter select {
+  font-size: 0.82em;
+  padding: 3px 26px 3px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.dashboard-group-filter select:hover {
+  border-color: var(--accent-color, #4a9eff);
+}
+
+.dashboard-group-filter select:focus {
+  border-color: var(--accent-color, #4a9eff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a9eff) 20%, transparent);
+}
+
+.dashboard-no-cameras {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  font-style: italic;
+}
+
+/* ── Right status panel ──────────────────────────────────────────────────── */
+
+.dashboard-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-width: 0;
+  max-width: 420px;
+}
+
+/* Override global .card min-width so cards fit the narrow panel */
+.dashboard-panel .card {
+  min-width: 0;
+}
+
+/* Give the audio/TTL stream cards a fixed height so they don't collapse */
+.dashboard-panel .mjpeg-stream-card {
+  flex: none;
+  height: 220px;
+}
+
+/* ── Compact layout (≤ 1280px) ──────────────────────────────────────────── */
+
+.dashboard-compact {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Multi-column stream grid — column count set via inline style */
+.dashboard-compact-streams {
+  display: grid;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Lock the video area to 16:9 so cards don't bloat with empty space */
+.dashboard-compact-streams .mjpeg-stream-video {
+  flex: none;
+  aspect-ratio: 16 / 9;
+}
+
+.dashboard-compact-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-compact-panel .card {
+  min-width: 0;
+}

@@ -2,13 +2,19 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import { useExportSync } from "/src/hooks/useExportSync";
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
+  const [applyAllConfirm, setApplyAllConfirm] = useState(null);
+  const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const { syncStatus, syncExport } = useExportSync(module.id);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
@@ -43,12 +49,20 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
     setShowResetConfirm(false);
   };
 
-  const handleUpdate = () => {
-    socket.emit("send_command", { module_id: module.id, type: "update_saviour", params: {} });
+  const confirmApplyToAll = () => {
+    if (!applyAllConfirm) return;
+    const { section, moduleType } = applyAllConfirm;
+    const filtered = filterPrivateKeys(formData);
+    const data = filtered?.[section];
+    if (data) {
+      socket.emit("apply_section_to_type", { module_type: moduleType ?? null, section, data });
+    }
+    setApplyAllConfirm(null);
   };
 
   const handleReboot = () => {
     socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
+    setShowRebootConfirm(false);
   };
 
   const handleGetModes = () => {
@@ -67,13 +81,17 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
 
       <div className="config-card-body">
         <div className="config-form">
-          {clipboard && (
-            <div className="clipboard-bar">
-              <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-              <button type="button" className="copy-btn" onClick={handlePaste}>Paste</button>
-              <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-            </div>
-          )}
+          {clipboard && (() => {
+            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+            return (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            );
+          })()}
           <form>
             <ConfigFields data={formData} handleChange={handleChange} />
           </form>
@@ -90,6 +108,30 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
               All
             </button>
           </div>
+
+          {sections.length > 0 && (
+            <>
+              <div className="copy-bar">
+                <span className="copy-bar-label">Apply to all {module.type}s:</span>
+                {sections.map(key => (
+                  <button key={key} type="button" className="copy-btn"
+                    onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
+                    {capitalize(key)}
+                  </button>
+                ))}
+              </div>
+              <div className="copy-bar">
+                <span className="copy-bar-label">Apply to all modules:</span>
+                {sections.map(key => (
+                  <button key={key} type="button" className="copy-btn"
+                    onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: null })}>
+                    {capitalize(key)}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>
               Save Config
@@ -107,6 +149,21 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
+
+          {formData?.export !== undefined && (
+            <div className="config-action-buttons">
+              <button type="button" className="save-button"
+                onClick={syncExport}
+                disabled={syncStatus === "syncing"}>
+                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
+              </button>
+              {syncStatus && syncStatus !== "syncing" && (
+                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {module.type.includes("camera") && (
@@ -118,15 +175,33 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       </div>
 
       <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={handleUpdate}>
-          Update Saviour Version
+        <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
+          {updateStatus === "updating" ? "Updating…" : "Update Saviour Version"}
         </button>
+        {updateStatus && updateStatus !== "updating" && (
+          <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+            {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
+          </span>
+        )}
       </div>
       <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={handleReboot}>
+        <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
           Reboot Module
         </button>
       </div>
+
+      {showRebootConfirm && (
+        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{module.name}</strong>?</p>
+            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleReboot}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showResetConfirm && (
         <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
@@ -140,6 +215,26 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
               <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {applyAllConfirm && (
+        <div className="modal-overlay" onClick={() => setApplyAllConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>
+              Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
+              <strong>{module.name}</strong> to all connected{" "}
+              {applyAllConfirm.moduleType ? `${applyAllConfirm.moduleType} ` : ""}modules?
+            </p>
+            <p className="modal-subtext">
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
+              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
+            </p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button" onClick={confirmApplyToAll}>Apply to All</button>
+              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
             </div>
           </div>
         </div>

@@ -50,9 +50,15 @@
 .hsw-value {
   text-align: right;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hsw-alert .hsw-value {
+  white-space: normal;
+  overflow: visible;
   word-break: break-word;
   text-align: right;
   max-width: 60%;

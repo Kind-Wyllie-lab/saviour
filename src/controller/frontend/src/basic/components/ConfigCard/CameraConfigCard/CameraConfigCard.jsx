@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import { useExportSync } from "/src/hooks/useExportSync";
@@ -163,11 +163,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
 
   const confirmApplyToAll = () => {
     if (!applyAllConfirm) return;
-    const { section } = applyAllConfirm;
+    const { section, moduleType } = applyAllConfirm;
     const filtered = filterPrivateKeys(formData);
     const data = filtered?.[section];
     if (data) {
-      socket.emit("apply_section_to_cameras", { section, data });
+      socket.emit("apply_section_to_type", { module_type: moduleType ?? null, section, data });
     }
     setApplyAllConfirm(null);
   };
@@ -232,13 +232,17 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         <div className="config-form">
 
           {/* ── Clipboard paste bar ── */}
-          {clipboard && (
-            <div className="clipboard-bar">
-              <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-              <button type="button" className="copy-btn" onClick={handlePaste}>Paste</button>
-              <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-            </div>
-          )}
+          {clipboard && (() => {
+            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+            return (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            );
+          })()}
 
           {/* ── Resolution / mode ── */}
           <div className="form-field">
@@ -481,12 +485,27 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           <div className="copy-bar">
             <span className="copy-bar-label">Apply to all cameras:</span>
             <button type="button" className="copy-btn"
-              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera" })}>
+              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera", moduleType: module.type })}>
               Camera
             </button>
             {otherSections.map(key => (
               <button key={key} type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key) })}>
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
+                {capitalize(key)}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Apply to all modules ── */}
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all modules:</span>
+            <button type="button" className="copy-btn"
+              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera", moduleType: null })}>
+              Camera
+            </button>
+            {otherSections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: null })}>
                 {capitalize(key)}
               </button>
             ))}
@@ -574,11 +593,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <p>
               Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
-              <strong>{module.name}</strong> to all connected cameras?
+              <strong>{module.name}</strong> to all connected{" "}
+              {applyAllConfirm.moduleType ? `${applyAllConfirm.moduleType} ` : ""}modules?
             </p>
             <p className="modal-subtext">
-              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every
-              camera module and save immediately — unsaved changes on other cameras will be lost.
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
+              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
             </p>
             <div className="modal-buttons">
               <button className="save-button" type="button" onClick={confirmApplyToAll}>

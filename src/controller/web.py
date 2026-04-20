@@ -638,6 +638,13 @@ class Web(ABC):
             })
 
 
+    def broadcast_module_health(self):
+        """Push current module health to all connected frontend clients."""
+        self.socketio.emit('module_health_update', {
+            'module_health': self.facade.get_module_health()
+        })
+
+
         """ Recording """
         @self.socketio.on("get_recording_sessions")
         def handle_get_recording_sessions():

@@ -6,7 +6,7 @@ import MicrophoneConfigCard   from "./MicrophoneConfigCard/MicrophoneConfigCard"
 import ControllerConfigCard   from './ControllerConfigCard/ControllerConfigCard';
 import TTLConfigCard          from './TTLConfigCard/TTLConfigCard';
 
-function ConfigCard({ id, module, clipboard, onCopy }) {
+function ConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   if (id === "controller") {
     return <ControllerConfigCard />;
   }
@@ -14,7 +14,7 @@ function ConfigCard({ id, module, clipboard, onCopy }) {
     return <div className="config-card"><p style={{ padding: "12px", opacity: 0.5 }}>Loading module…</p></div>;
   }
   if (module.type?.includes("camera")) {
-    return <CameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
+    return <CameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} syncServerModule={syncServerModule} />;
   }
   if (module.type?.includes("microphone")) {
     return <MicrophoneConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;

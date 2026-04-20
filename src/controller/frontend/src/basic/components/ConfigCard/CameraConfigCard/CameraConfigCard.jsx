@@ -47,7 +47,7 @@ function detectPreset(presetList, width, height, fps) {
   return presetList.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
 }
 
-function CameraConfigCard({ id, module, clipboard, onCopy }) {
+function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [sensorModes, setSensorModes] = useState([]);
   const [sensorModel, setSensorModel] = useState("");
@@ -189,6 +189,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const brightness       = cam.brightness ?? 0;
   const bitrateMb        = cam.bitrate_mb ?? 0;
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
+
+  // Frame sync derived state
+  const isThisServer   = syncServerModule?.id === module.id;
+  const otherIsServer  = syncServerModule != null && !isThisServer;
+  const currentSyncMode = cam.sync_mode ?? "none";
+  const serverCam       = syncServerModule?.config?.camera ?? {};
+  const serverFps       = serverCam.fps != null ? Number(serverCam.fps) : null;
+  const serverExposureUs = serverCam.manual_exposure
+    ? Number(serverCam.exposure_time)
+    : (serverFps ? Math.round(1_000_000 / serverFps) : null);
+  const clientExposureUs = cam.manual_exposure
+    ? Number(cam.exposure_time)
+    : (cam.fps ? Math.round(1_000_000 / cam.fps) : null);
+  const fpsMismatch = currentSyncMode === "client" && syncServerModule && serverFps != null && Number(cam.fps) !== serverFps;
+  const exposureMismatch = currentSyncMode === "client" && syncServerModule && serverExposureUs != null && clientExposureUs != null && clientExposureUs !== serverExposureUs;
 
   // Strip all explicitly-rendered camera fields so ConfigFields doesn't duplicate them.
   const configFieldsData = (() => {
@@ -375,19 +390,39 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           <div className="form-field">
             <label>Frame sync:</label>
             <select
-              value={cam.sync_mode ?? "none"}
+              value={currentSyncMode}
               onChange={e => handleChange(["camera", "sync_mode"], e)}
             >
               <option value="none">None</option>
-              <option value="server">Server (broadcasts timing)</option>
+              <option value="server" disabled={otherIsServer}>
+                Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
+              </option>
               <option value="client">Client (follows server)</option>
             </select>
           </div>
-          {(cam.sync_mode ?? "none") !== "none" && (
+          {currentSyncMode === "server" && (
             <div className="sensor-mode-info">
-              {cam.sync_mode === "server"
-                ? "This camera broadcasts sync timing. Start client cameras first, then this one."
-                : "This camera waits for a server before recording begins. Start this camera first."}
+              This camera broadcasts sync timing. Start client cameras first, then this one.
+            </div>
+          )}
+          {currentSyncMode === "client" && !syncServerModule && (
+            <div className="fov-label fov-cropped">
+              No server camera configured — set another camera to Server first.
+            </div>
+          )}
+          {currentSyncMode === "client" && syncServerModule && (
+            <div className="sensor-mode-info">
+              Syncing to {syncServerModule.name} ({syncServerModule.id}).
+            </div>
+          )}
+          {fpsMismatch && (
+            <div className="fov-label fov-cropped">
+              FPS mismatch: this camera is {cam.fps}fps but server {syncServerModule.name} is {serverFps}fps — frame sync will not be 1:1.
+            </div>
+          )}
+          {exposureMismatch && !fpsMismatch && (
+            <div className="fov-label fov-cropped" style={{ opacity: 0.8 }}>
+              Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ between cameras.
             </div>
           )}
 

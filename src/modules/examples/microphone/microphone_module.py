@@ -59,6 +59,8 @@ class AudiomothModule(Module):
         # {serial: {'level_db': float, 'peak_db': float, 'spectrum_db': ndarray, 'freqs': ndarray}}
         self.monitor_data = {}
         self.monitor_data_lock = threading.Lock()
+        self.SPEC_COLS = 600   # number of FFT columns to retain per audiomoth
+        self.peak_hold_data = {}  # {serial: {'value_db': float, 'time': float}}
         self._register_monitoring_routes()
 
         # Update config
@@ -70,10 +72,6 @@ class AudiomothModule(Module):
             'list_audiomoths': self.list_audiomoths
         }
         self.command.set_commands(self.audiomoth_commands)
-
-
-    def configure_module(self):
-        self.logger.info("No implementation yet for configure_module in audiomoth")
 
 
     @command
@@ -282,11 +280,13 @@ class AudiomothModule(Module):
                     freqs = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
 
                     with self.monitor_data_lock:
+                        prev_buf = self.monitor_data.get(serial, {}).get('spec_buffer', [])
+                        new_buf  = (prev_buf + [spectrum_db])[-self.SPEC_COLS:]
                         self.monitor_data[serial] = {
-                            'level_db': level_db,
-                            'peak_db': peak_db,
-                            'spectrum_db': spectrum_db,
-                            'freqs': freqs,
+                            'level_db':    level_db,
+                            'peak_db':     peak_db,
+                            'spec_buffer': new_buf,
+                            'freqs':       freqs,
                         }
         except Exception as e:
             self.logger.error(f"Monitor thread error for audiomoth {serial}: {e}")
@@ -300,8 +300,9 @@ class AudiomothModule(Module):
 
         Layout per audiomoth (stacked vertically):
           - Header: serial number + current dBFS reading
-          - Spectrum plot: 0–Nyquist Hz on X, -80–0 dBFS on Y
-          - Level bar: colour-coded RMS dBFS meter
+          - Spectrogram: time scrolling left→right on X, frequency on Y (0 Hz
+            at bottom, Nyquist at top), power encoded as colour (INFERNO map)
+          - Peak meter: colour-coded RMS dBFS bar with 2-second peak hold marker
         Returns JPEG bytes, or None on error.
         """
         try:
@@ -311,11 +312,17 @@ class AudiomothModule(Module):
             sample_rate = self.config.get("microphone.sample_rate", 192000)
             nyquist = sample_rate / 2
 
-            WIDTH = 800
-            ROW_H = 290        # pixels per audiomoth row
-            PLOT_H = 200       # height of spectrum plot area
-            PADDING = 15
+            WIDTH    = 800
+            ROW_H    = 315   # pixels per audiomoth row
+            PLOT_H   = 200   # spectrogram height
+            PADDING  = 15
+            LABEL_W  = 30    # space reserved left of plots for freq labels
             DB_MIN, DB_MAX = -80, 0
+            PEAK_HOLD_DURATION = 2.0  # seconds
+
+            px0 = PADDING + LABEL_W   # left edge of plot area
+            px1 = WIDTH - PADDING     # right edge
+            pw  = px1 - px0           # plot width in pixels
 
             if not data_snapshot:
                 frame = np.zeros((200, WIDTH, 3), dtype=np.uint8)
@@ -327,53 +334,55 @@ class AudiomothModule(Module):
             frame = np.zeros((ROW_H * len(data_snapshot), WIDTH, 3), dtype=np.uint8)
 
             for row, (serial, data) in enumerate(data_snapshot.items()):
-                y0 = row * ROW_H
+                y0       = row * ROW_H
                 level_db = data.get('level_db', DB_MIN)
-                peak_db  = data.get('peak_db', DB_MIN)
-                spectrum = data.get('spectrum_db')
-                freqs    = data.get('freqs')
+                peak_db  = data.get('peak_db',  DB_MIN)
+                spec_buf = data.get('spec_buffer', [])
+
+                py0 = y0 + 30
+                py1 = py0 + PLOT_H
 
                 # ── Header ──────────────────────────────────────────────────
                 label = f"Audiomoth {serial}    RMS {level_db:.1f} dBFS    Peak {peak_db:.1f} dBFS"
                 cv2.putText(frame, label, (PADDING, y0 + 22),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
-                # ── Spectrum plot ────────────────────────────────────────────
-                px0 = PADDING + 25   # leave room for dB axis labels
-                px1 = WIDTH - PADDING
-                py0 = y0 + 30
-                py1 = py0 + PLOT_H
-                pw  = px1 - px0
+                # ── Spectrogram ──────────────────────────────────────────────
+                if spec_buf:
+                    spec_mat = np.array(spec_buf, dtype=np.float32).T
+                    spec_img = cv2.resize(spec_mat, (pw, PLOT_H),
+                                          interpolation=cv2.INTER_LINEAR)
+                    spec_img = np.flipud(spec_img)
+                    spec_norm    = np.clip((spec_img - DB_MIN) /
+                                           (DB_MAX - DB_MIN) * 255, 0, 255).astype(np.uint8)
+                    spec_colored = cv2.applyColorMap(spec_norm, cv2.COLORMAP_INFERNO)
+                    frame[py0:py1, px0:px1] = spec_colored
 
-                # dB grid lines
-                for db_tick in range(-80, 10, 20):
-                    gy = int(py1 - (db_tick - DB_MIN) / (DB_MAX - DB_MIN) * PLOT_H)
-                    cv2.line(frame, (px0, gy), (px1, gy), (45, 45, 45), 1)
-                    cv2.putText(frame, f"{db_tick}", (PADDING - 25, gy + 4),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.32, (90, 90, 90), 1)
+                cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
 
-                # Frequency tick marks and labels (kHz)
-                freq_ticks_khz = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, int(nyquist // 1000)]
+                # ── Y-axis: frequency labels (spectrogram) ───────────────────
+                freq_ticks_khz = [0, 20, 40, 60, 80, int(nyquist // 1000)]
                 for fk in freq_ticks_khz:
-                    fx = int(px0 + (fk * 1000 / nyquist) * pw)
-                    cv2.line(frame, (fx, py1), (fx, py1 + 4), (70, 70, 70), 1)
-                    cv2.putText(frame, f"{fk}k", (fx - 8, py1 + 14),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (90, 90, 90), 1)
+                    fy = int(py1 - (fk * 1000 / nyquist) * PLOT_H)
+                    cv2.line(frame, (px0 - 3, fy), (px0, fy), (110, 110, 110), 1)
+                    cv2.putText(frame, f"{fk}k", (3, fy + 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (110, 110, 110), 1)
 
-                # Spectrum polyline — downsample to one point per pixel column
-                if spectrum is not None and len(spectrum) > 1:
-                    n_bins = len(spectrum)
-                    # Build one (x,y) point per pixel column for efficiency
-                    xs = np.linspace(0, n_bins - 1, pw, dtype=int)
-                    ys_db = np.clip(spectrum[xs], DB_MIN, DB_MAX)
-                    ys_px = (py1 - (ys_db - DB_MIN) / (DB_MAX - DB_MIN) * PLOT_H).astype(int)
-                    pts = np.stack([np.arange(px0, px0 + pw), ys_px], axis=1).reshape(-1, 1, 2).astype(np.int32)
-                    cv2.polylines(frame, [pts], False, (0, 210, 170), 1)
-
-                # ── Level bar ───────────────────────────────────────────────
+                # ── Peak meter with peak hold ─────────────────────────────────
                 bx0, bx1 = PADDING, WIDTH - PADDING
-                by0, by1 = y0 + 245, y0 + 275
+                by0, by1 = py1 + 32, py1 + 62
                 bw = bx1 - bx0
+
+                # Update peak hold: reset when a new peak exceeds the held value
+                # or when the hold duration has elapsed
+                now = time.time()
+                hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
+                if peak_db >= hold['value_db'] or (now - hold['time']) > PEAK_HOLD_DURATION:
+                    self.peak_hold_data[serial] = {'value_db': peak_db, 'time': now}
+                    hold_db = peak_db
+                else:
+                    hold_db = hold['value_db']
+
                 level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
                 bar_w = int(level_norm * bw)
 
@@ -386,6 +395,22 @@ class AudiomothModule(Module):
 
                 cv2.rectangle(frame, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
                 cv2.rectangle(frame, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
+
+                # Peak hold marker: white vertical line at the held peak position
+                hold_norm = max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN)))
+                hold_x = bx0 + int(hold_norm * bw)
+                cv2.line(frame, (hold_x, by0), (hold_x, by1), (255, 255, 255), 2)
+
+                cv2.putText(frame, "Level (dBFS)", (bx0, by0 - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.32, (100, 100, 100), 1)
+
+                # dB tick marks and labels below the bar
+                for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
+                    tx = bx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * bw)
+                    cv2.line(frame, (tx, by1), (tx, by1 + 4), (100, 100, 100), 1)
+                    label = f"{db_tick}"
+                    cv2.putText(frame, label, (tx - 6, by1 + 13),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.28, (100, 100, 100), 1)
 
                 # Row separator
                 if row < len(data_snapshot) - 1:

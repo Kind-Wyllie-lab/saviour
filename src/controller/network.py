@@ -50,7 +50,7 @@ class Network():
 
     def _wait_for_proper_ip(self):
         """Wait for the proper network IP (192.168.1.1) to be available"""
-        self.logger.info("Waiting for proper network IP (192.168.1.1)...")
+        self.logger.info("Waiting for proper network IP on eth0...")
         
         attempt = 0
         
@@ -83,7 +83,7 @@ class Network():
 
     def _validate_ip(self, potential_ip: str) -> bool:
         """Check that the ip belongs to valid ranges"""
-        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0.0."):
+        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0."):
             ip = potential_ip
             self.ip_is_valid = True
             self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
@@ -150,22 +150,28 @@ class Network():
 
     
     """Zeroconf Required Methods"""
+    @staticmethod
+    def _prop(properties, key, default=b'unknown') -> str:
+        """Decode a zeroconf property, treating missing or None values as default."""
+        val = properties.get(key)
+        return (val if val is not None else default).decode()
+
     def add_service(self, zeroconf, service_type, name):
         """Add a service to the list of discovered modules"""
         self.logger.info(f"Discovered module: {name}")
         info = zeroconf.get_service_info(service_type, name)
         if not info:
-            self.logger.warning("add_service was called with no service info") 
+            self.logger.warning("add_service was called with no service info")
             return
 
-        module_id = id = info.properties.get(b'id', b'unknown').decode()
+        module_id = self._prop(info.properties, b'id')
 
         module = Module(
             id = module_id,
-            name = info.properties.get(b'name', b'unknown').decode(),
-            version = info.properties.get(b'version', b'unknown').decode(),
+            name = self._prop(info.properties, b'name'),
+            version = self._prop(info.properties, b'version'),
             zeroconf_name = name,
-            type = info.properties.get(b'type', b'unknown').decode(),
+            type = self._prop(info.properties, b'type'),
             ip = socket.inet_ntoa(info.addresses[0]),
             port = info.port,
         )
@@ -189,14 +195,14 @@ class Network():
             self.logger.warning("update_service was called with no service info") 
             return
 
-        module_id = str(info.properties.get(b'id', b'unknown').decode())
-        
+        module_id = self._prop(info.properties, b'id')
+
         module = Module(
             id = module_id,
-            name = info.properties.get(b'name', b'unknown').decode(),
-            version = info.properties.get(b'version', b'unknown'.decode()),
+            name = self._prop(info.properties, b'name'),
+            version = self._prop(info.properties, b'version'),
             zeroconf_name = name,
-            type = info.properties.get(b'type', b'unknown').decode(),
+            type = self._prop(info.properties, b'type'),
             ip = socket.inet_ntoa(info.addresses[0]),
             port = info.port,
         )

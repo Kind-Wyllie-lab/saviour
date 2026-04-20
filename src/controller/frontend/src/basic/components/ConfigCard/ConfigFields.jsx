@@ -24,12 +24,13 @@ function ConfigFields({ data, handleChange }) {
         return (
           <fieldset key={fieldKey} className="nested-fieldset">
             <legend
+              className="nested-fieldset-legend"
               onClick={() =>
                 setCollapsedSections(prev => ({ ...prev, [fieldKey]: !isCollapsed }))
               }
-              style={{ cursor: "pointer" }}
             >
-              {key} {isCollapsed ? "(+)" : "(-)"}
+              <span className="nested-fieldset-arrow">{isCollapsed ? "▸" : "▾"}</span>
+              {key}
             </legend>
             {!isCollapsed && (
               <div className="nested">{renderFields(value, fieldPath)}</div>

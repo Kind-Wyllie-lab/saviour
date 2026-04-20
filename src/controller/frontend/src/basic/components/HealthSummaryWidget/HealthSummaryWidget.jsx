@@ -17,6 +17,21 @@ function diskClass(pct) {
   return "val--ok";
 }
 
+// ptp4l_offset is in nanoseconds throughout the stack
+function ptpClass(ns) {
+  const abs = Math.abs(ns);
+  if (abs >= 10000) return "val--danger";
+  if (abs >= 1000)  return "val--warn";
+  return "val--ok";
+}
+
+function ptpDisplay(ns) {
+  const abs = Math.abs(ns);
+  return abs >= 1000
+    ? `${(ns / 1000).toFixed(1)} µs`
+    : `${Math.round(ns)} ns`;
+}
+
 export default function HealthSummaryWidget() {
   const { moduleHealth, controllerHealth } = useHealth();
   const { modules } = useModules();
@@ -57,9 +72,23 @@ export default function HealthSummaryWidget() {
     maxDiskId = "Controller";
   }
 
+  // Worst PTP offset across modules (nanoseconds, modules only — controller is PTP master)
+  let worstPtp = null;
+  let worstPtpId = null;
+  entries.forEach(([id, h]) => {
+    if (h.ptp4l_offset != null) {
+      const abs = Math.abs(h.ptp4l_offset);
+      if (worstPtp == null || abs > Math.abs(worstPtp)) {
+        worstPtp = h.ptp4l_offset;
+        worstPtpId = modules[id]?.name ?? id;
+      }
+    }
+  });
+
   const hasIssues = offline.length > 0 || suspected.length > 0 ||
                     (maxTemp != null && maxTemp >= 60) ||
-                    (maxDisk != null && maxDisk >= 75);
+                    (maxDisk != null && maxDisk >= 75) ||
+                    (worstPtp != null && Math.abs(worstPtp) >= 1000);
 
   return (
     <div className={`health-summary-widget card ${hasIssues ? "health-summary-widget--issues" : ""}`}>
@@ -107,6 +136,15 @@ export default function HealthSummaryWidget() {
           <span className="hsw-label">Fullest disk</span>
           <span className={`hsw-value ${diskClass(maxDisk)}`}>
             {maxDisk}% — {maxDiskId}
+          </span>
+        </div>
+      )}
+
+      {worstPtp != null && (
+        <div className="hsw-row">
+          <span className="hsw-label">PTP sync (worst)</span>
+          <span className={`hsw-value ${ptpClass(worstPtp)}`}>
+            {ptpDisplay(worstPtp)} — {worstPtpId}
           </span>
         </div>
       )}

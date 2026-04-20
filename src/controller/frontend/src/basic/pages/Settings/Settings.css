@@ -45,10 +45,11 @@
 
 .module-grid {
   width: 100%;
-  max-width: 720px;
+  padding: 0 16px;
   margin-top: 16px;
   display: flex;
   justify-content: center;
+  box-sizing: border-box;
 }
 
 .module-grid > * {

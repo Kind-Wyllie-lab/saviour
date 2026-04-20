@@ -1,20 +1,23 @@
 {
     "camera": {
         "monochrome": false,
-        "sensor_mode_index": 0,
+        "sensor_mode_index": 2,
         "width": 1000,
         "height": 1000,
-        "fps": 30,
+        "fps": 25,
         "overlay_timestamp": true,
         "text_size": "medium",
         "gain": 10,
+        "manual_exposure": false,
         "exposure_time": 10000,
         "brightness": 0,
         "overlay_framerate_on_preview": true,
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2,
-        "bitrate_mb": 2
+        "bitrate_mb": 2,
+        "autofocus_mode": "manual",
+        "lens_position": 0.0
     },
     "recording": {
         "_recording_filetype": "ts"

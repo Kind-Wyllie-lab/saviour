@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import "./System.css";
@@ -37,6 +37,26 @@ function cpuCell(pct) {
   return <span className={cls}>{pct.toFixed(1)}%</span>;
 }
 
+function diskCell(usedPct, freeGb) {
+  if (usedPct == null) return <span className="cell--muted">—</span>;
+  return (
+    <span>
+      {pctCell(usedPct, 75, 90)}
+      {freeGb != null && <span className="cell--muted"> ({freeGb} GB free)</span>}
+    </span>
+  );
+}
+
+function ptpCell(ns) {
+  if (ns == null) return <span className="cell--muted">—</span>;
+  const abs = Math.abs(ns);
+  const cls = abs >= 10000 ? "val--danger" : abs >= 1000 ? "val--warn" : "val--ok";
+  const display = abs >= 1000
+    ? `${(ns / 1000).toFixed(1)} µs`
+    : `${Math.round(ns)} ns`;
+  return <span className={cls}>{display}</span>;
+}
+
 function statusCell(status) {
   const cls = status === "online"    ? "status-dot--online"
             : status === "suspected" ? "status-dot--suspected"
@@ -54,6 +74,12 @@ function statusCell(status) {
 export default function System() {
   const { moduleHealth, controllerHealth, refresh } = useHealth();
   const { modules } = useModules();
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const id = setInterval(refresh, 30000);
+    return () => clearInterval(id);
+  }, [refresh]);
 
   // Build sorted rows: modules sorted by name
   const moduleRows = useMemo(() => {
@@ -78,10 +104,12 @@ export default function System() {
               <th>Device</th>
               <th>Status</th>
               <th>IP</th>
+              <th>Version</th>
               <th>CPU</th>
               <th>Temp</th>
               <th>Memory</th>
               <th>Disk</th>
+              <th>PTP offset</th>
               <th>Last seen</th>
             </tr>
           </thead>
@@ -91,21 +119,14 @@ export default function System() {
               <td>
                 <span className="device-name">Controller</span>
               </td>
-              <td>{statusCell("online")}</td>
+              <td>{statusCell(controllerHealth ? "online" : "suspected")}</td>
               <td className="cell--muted">{controllerHealth?.ip ?? "—"}</td>
+              <td className="cell--muted">{controllerHealth?.version ?? "—"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
               <td>{tempCell(controllerHealth?.cpu_temp)}</td>
               <td>{pctCell(controllerHealth?.memory_usage, 70, 85)}</td>
-              <td>
-                {controllerHealth?.disk_used_pct != null ? (
-                  <span>
-                    {pctCell(controllerHealth.disk_used_pct, 75, 90)}
-                    {controllerHealth.disk_free_gb != null && (
-                      <span className="cell--muted"> ({controllerHealth.disk_free_gb} GB free)</span>
-                    )}
-                  </span>
-                ) : <span className="cell--muted">—</span>}
-              </td>
+              <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_free_gb)}</td>
+              <td className="cell--muted">—</td>
               <td className="cell--muted">—</td>
             </tr>
 
@@ -118,17 +139,19 @@ export default function System() {
                 </td>
                 <td>{statusCell(row.status ?? "offline")}</td>
                 <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
+                <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
                 <td>{cpuCell(row.cpu_usage)}</td>
                 <td>{tempCell(row.cpu_temp)}</td>
                 <td>{pctCell(row.memory_usage, 70, 85)}</td>
                 <td>{pctCell(row.disk_space, 75, 90)}</td>
+                <td>{ptpCell(row.ptp4l_offset)}</td>
                 <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
               </tr>
             ))}
 
             {moduleRows.length === 0 && (
               <tr>
-                <td colSpan={8} className="system-table__empty">
+                <td colSpan={10} className="system-table__empty">
                   No module health data yet — waiting for first heartbeat
                 </td>
               </tr>

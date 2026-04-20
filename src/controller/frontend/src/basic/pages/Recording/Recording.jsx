@@ -17,7 +17,7 @@ function Recording() {
         <div className="recording-page">
             <div className="recording-layout">
                 <div className="recording-layout__form">
-                    <NewSessionForm modules={moduleList} />
+                    <NewSessionForm modules={moduleList} sessionList={sessionList} />
                 </div>
                 <div className="recording-layout__sessions">
                     <SessionList sessionList={sessionList} modules={moduleList} />

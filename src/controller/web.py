@@ -419,6 +419,20 @@ class Web(ABC):
             self.logger.info(f"Applying section '{section}' to all camera modules")
             self.facade.apply_section_to_cameras(section, section_data)
 
+        @self.socketio.on('apply_section_to_type')
+        def handle_apply_section_to_type(data):
+            """Apply one config section to all modules of a given type.
+            module_type=None targets all modules regardless of type."""
+            module_type = data.get("module_type")  # None means all modules
+            section = data.get("section")
+            section_data = data.get("data", {})
+            if not section or not isinstance(section_data, dict) or not section_data:
+                self.logger.warning(f"apply_section_to_type: invalid payload {data}")
+                return
+            label = module_type if module_type else "all"
+            self.logger.info(f"Applying section '{section}' to all {label} modules")
+            self.facade.apply_section_to_type(module_type, section, section_data)
+
         @self.socketio.on('sync_export_credentials')
         def handle_sync_export_credentials(data):
             """Push this controller's Samba credentials to a single module's export config."""
@@ -636,6 +650,13 @@ class Web(ABC):
             self.socketio.emit('module_health_update', {
                 'module_health': health
             })
+
+
+    def broadcast_module_health(self):
+        """Push current module health to all connected frontend clients."""
+        self.socketio.emit('module_health_update', {
+            'module_health': self.facade.get_module_health()
+        })
 
 
         """ Recording """

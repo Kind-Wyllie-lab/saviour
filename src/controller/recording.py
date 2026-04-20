@@ -83,6 +83,7 @@ class Recording:
         self.logger = logging.getLogger(__name__)
         self.sessions: Dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
+        self._health_probed: set = set()  # modules already probed for black-start recovery
 
         self._load_sessions()
 
@@ -107,6 +108,18 @@ class Recording:
             for m in s.modules
         }
 
+    def _check_share_writable(self) -> Optional[str]:
+        """Return an error string if the controller share is not writable, else None."""
+        share = "/home/pi/controller_share"
+        probe = os.path.join(share, ".saviour_write_probe")
+        try:
+            with open(probe, "w") as f:
+                f.write("ok")
+            os.remove(probe)
+            return None
+        except Exception as e:
+            return f"Controller share not writable ({share}): {e}"
+
     def create_session(self, session_name: str, target: str) -> dict:
         """Create a session that begins recording immediately.
 
@@ -115,6 +128,11 @@ class Recording:
         if not session_name or not session_name.strip():
             self.logger.warning("create_session: empty session_name")
             return {"success": False, "error": "Session name cannot be empty"}
+
+        share_err = self._check_share_writable()
+        if share_err:
+            self.logger.error(f"create_session: {share_err}")
+            return {"success": False, "error": share_err}
 
         modules = list(self.facade.get_modules_by_target(target).keys())
         if not modules:
@@ -374,6 +392,34 @@ class Recording:
             )
 
 
+    def handle_module_health_response(self, module_id: str, is_recording: bool) -> None:
+        """Called when a get_health response arrives for a module in 'unknown' stop state.
+
+        If the module is still recording, recover it via module_back_online().
+        If it stopped recording, mark it as stopped so the session can be assessed.
+        """
+        session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            return
+        session = self.sessions[session_name]
+        if session.module_stop_states.get(module_id) != "unknown":
+            return
+
+        if is_recording:
+            self.logger.info(
+                f"Health probe: {module_id} is still recording — recovering session '{session_name}'"
+            )
+            self.module_back_online(module_id)
+        else:
+            self.logger.info(
+                f"Health probe: {module_id} is not recording — marking stopped in '{session_name}'"
+            )
+            with self._lock:
+                session.module_stop_states[module_id] = "stopped"
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+
+
     # -----------------------------------------------------------------------
     # Private helpers
     # -----------------------------------------------------------------------
@@ -489,6 +535,20 @@ class Recording:
                         if session.recording_start_at and time.time() < session.recording_start_at:
                             continue
 
+                        # Probe any modules whose state is unknown (e.g. after black start).
+                        # Send get_health once per module so the response can resolve their state.
+                        for m in session.modules:
+                            if (session.module_stop_states.get(m) == "unknown"
+                                    and m not in self._health_probed):
+                                self._health_probed.add(m)
+                                try:
+                                    self.facade.send_command(m, "get_health", {})
+                                    self.logger.info(
+                                        f"Sent get_health probe to {m} to resolve unknown state"
+                                    )
+                                except Exception as e:
+                                    self.logger.warning(f"Could not probe {m}: {e}")
+
                         # Check every module that should be recording actually is
                         should_be_recording = [
                             m for m in session.modules
@@ -534,6 +594,10 @@ class Recording:
         Sessions that were ACTIVE when the controller last stopped are marked ERROR
         so the operator can see they need attention.
         """
+        share_err = self._check_share_writable()
+        if share_err:
+            self.logger.warning(f"Startup share check: {share_err}")
+
         if not os.path.exists(SESSIONS_FILE):
             return
         try:

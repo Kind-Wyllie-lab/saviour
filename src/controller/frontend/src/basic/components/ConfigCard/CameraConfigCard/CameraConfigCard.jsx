@@ -197,7 +197,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
       monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb, autofocus_mode, lens_position,
+      bitrate_mb, autofocus_mode, lens_position, sync_mode,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -369,6 +369,26 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
                 </div>
               )}
             </>
+          )}
+
+          {/* ── Frame sync ── */}
+          <div className="form-field">
+            <label>Frame sync:</label>
+            <select
+              value={cam.sync_mode ?? "none"}
+              onChange={e => handleChange(["camera", "sync_mode"], e)}
+            >
+              <option value="none">None</option>
+              <option value="server">Server (broadcasts timing)</option>
+              <option value="client">Client (follows server)</option>
+            </select>
+          </div>
+          {(cam.sync_mode ?? "none") !== "none" && (
+            <div className="sensor-mode-info">
+              {cam.sync_mode === "server"
+                ? "This camera broadcasts sync timing. Start client cameras first, then this one."
+                : "This camera waits for a server before recording begins. Start this camera first."}
+            </div>
           )}
 
           {/* ── Overlays ── */}

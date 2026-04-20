@@ -13,8 +13,9 @@
     },
     "object_detection": {
         "enabled": false,
+        "model_path": "/usr/share/hailo-models/yolov8n.hef",
+        "labels": ["rat"],
         "threshold": 0.55,
-        "iou_threshold": 0.9,
         "max_detections": 2,
         "coordinate_smoothing": false
     },

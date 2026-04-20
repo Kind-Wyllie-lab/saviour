@@ -83,6 +83,7 @@ class Recording:
         self.logger = logging.getLogger(__name__)
         self.sessions: Dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
+        self._health_probed: set = set()  # modules already probed for black-start recovery
 
         self._load_sessions()
 
@@ -391,6 +392,34 @@ class Recording:
             )
 
 
+    def handle_module_health_response(self, module_id: str, is_recording: bool) -> None:
+        """Called when a get_health response arrives for a module in 'unknown' stop state.
+
+        If the module is still recording, recover it via module_back_online().
+        If it stopped recording, mark it as stopped so the session can be assessed.
+        """
+        session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            return
+        session = self.sessions[session_name]
+        if session.module_stop_states.get(module_id) != "unknown":
+            return
+
+        if is_recording:
+            self.logger.info(
+                f"Health probe: {module_id} is still recording — recovering session '{session_name}'"
+            )
+            self.module_back_online(module_id)
+        else:
+            self.logger.info(
+                f"Health probe: {module_id} is not recording — marking stopped in '{session_name}'"
+            )
+            with self._lock:
+                session.module_stop_states[module_id] = "stopped"
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+
+
     # -----------------------------------------------------------------------
     # Private helpers
     # -----------------------------------------------------------------------
@@ -505,6 +534,20 @@ class Recording:
                         # Skip health check while still in the synchronised lead window
                         if session.recording_start_at and time.time() < session.recording_start_at:
                             continue
+
+                        # Probe any modules whose state is unknown (e.g. after black start).
+                        # Send get_health once per module so the response can resolve their state.
+                        for m in session.modules:
+                            if (session.module_stop_states.get(m) == "unknown"
+                                    and m not in self._health_probed):
+                                self._health_probed.add(m)
+                                try:
+                                    self.facade.send_command(m, "get_health", {})
+                                    self.logger.info(
+                                        f"Sent get_health probe to {m} to resolve unknown state"
+                                    )
+                                except Exception as e:
+                                    self.logger.warning(f"Could not probe {m}: {e}")
 
                         # Check every module that should be recording actually is
                         should_be_recording = [

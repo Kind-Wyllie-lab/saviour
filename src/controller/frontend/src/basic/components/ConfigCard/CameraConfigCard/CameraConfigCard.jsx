@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import { useExportSync } from "/src/hooks/useExportSync";
@@ -47,7 +47,7 @@ function detectPreset(presetList, width, height, fps) {
   return presetList.find(p => p.width === width && p.height === height && p.fps === fps)?.key ?? "custom";
 }
 
-function CameraConfigCard({ id, module, clipboard, onCopy }) {
+function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [sensorModes, setSensorModes] = useState([]);
   const [sensorModel, setSensorModel] = useState("");
@@ -163,11 +163,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
 
   const confirmApplyToAll = () => {
     if (!applyAllConfirm) return;
-    const { section } = applyAllConfirm;
+    const { section, moduleType } = applyAllConfirm;
     const filtered = filterPrivateKeys(formData);
     const data = filtered?.[section];
     if (data) {
-      socket.emit("apply_section_to_cameras", { section, data });
+      socket.emit("apply_section_to_type", { module_type: moduleType ?? null, section, data });
     }
     setApplyAllConfirm(null);
   };
@@ -190,6 +190,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
   const bitrateMb        = cam.bitrate_mb ?? 0;
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
+  // Frame sync derived state
+  const isThisServer   = syncServerModule?.id === module.id;
+  const otherIsServer  = syncServerModule != null && !isThisServer;
+  const currentSyncMode = cam.sync_mode ?? "none";
+  const serverCam       = syncServerModule?.config?.camera ?? {};
+  const serverFps       = serverCam.fps != null ? Number(serverCam.fps) : null;
+  const serverExposureUs = serverCam.manual_exposure
+    ? Number(serverCam.exposure_time)
+    : (serverFps ? Math.round(1_000_000 / serverFps) : null);
+  const clientExposureUs = cam.manual_exposure
+    ? Number(cam.exposure_time)
+    : (cam.fps ? Math.round(1_000_000 / cam.fps) : null);
+  const fpsMismatch = currentSyncMode === "client" && syncServerModule && serverFps != null && Number(cam.fps) !== serverFps;
+  const exposureMismatch = currentSyncMode === "client" && syncServerModule && serverExposureUs != null && clientExposureUs != null && clientExposureUs !== serverExposureUs;
+
   // Strip all explicitly-rendered camera fields so ConfigFields doesn't duplicate them.
   const configFieldsData = (() => {
     if (!formData?.camera) return formData;
@@ -197,7 +212,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
       monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb, autofocus_mode, lens_position,
+      bitrate_mb, autofocus_mode, lens_position, sync_mode,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -217,13 +232,17 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
         <div className="config-form">
 
           {/* ── Clipboard paste bar ── */}
-          {clipboard && (
-            <div className="clipboard-bar">
-              <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-              <button type="button" className="copy-btn" onClick={handlePaste}>Paste</button>
-              <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-            </div>
-          )}
+          {clipboard && (() => {
+            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+            return (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            );
+          })()}
 
           {/* ── Resolution / mode ── */}
           <div className="form-field">
@@ -371,6 +390,46 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
             </>
           )}
 
+          {/* ── Frame sync ── */}
+          <div className="form-field">
+            <label>Frame sync:</label>
+            <select
+              value={currentSyncMode}
+              onChange={e => handleChange(["camera", "sync_mode"], e)}
+            >
+              <option value="none">None</option>
+              <option value="server" disabled={otherIsServer}>
+                Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
+              </option>
+              <option value="client">Client (follows server)</option>
+            </select>
+          </div>
+          {currentSyncMode === "server" && (
+            <div className="sensor-mode-info">
+              This camera broadcasts sync timing. Start client cameras first, then this one.
+            </div>
+          )}
+          {currentSyncMode === "client" && !syncServerModule && (
+            <div className="fov-label fov-cropped">
+              No server camera configured — set another camera to Server first.
+            </div>
+          )}
+          {currentSyncMode === "client" && syncServerModule && (
+            <div className="sensor-mode-info">
+              Syncing to {syncServerModule.name} ({syncServerModule.id}).
+            </div>
+          )}
+          {fpsMismatch && (
+            <div className="fov-label fov-cropped">
+              FPS mismatch: this camera is {cam.fps}fps but server {syncServerModule.name} is {serverFps}fps — frame sync will not be 1:1.
+            </div>
+          )}
+          {exposureMismatch && !fpsMismatch && (
+            <div className="fov-label fov-cropped" style={{ opacity: 0.8 }}>
+              Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ between cameras.
+            </div>
+          )}
+
           {/* ── Overlays ── */}
           <div className="form-field">
             <label>Timestamp overlay:</label>
@@ -426,12 +485,27 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           <div className="copy-bar">
             <span className="copy-bar-label">Apply to all cameras:</span>
             <button type="button" className="copy-btn"
-              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera" })}>
+              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera", moduleType: module.type })}>
               Camera
             </button>
             {otherSections.map(key => (
               <button key={key} type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key) })}>
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
+                {capitalize(key)}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Apply to all modules ── */}
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all modules:</span>
+            <button type="button" className="copy-btn"
+              onClick={() => setApplyAllConfirm({ section: "camera", label: "Camera", moduleType: null })}>
+              Camera
+            </button>
+            {otherSections.map(key => (
+              <button key={key} type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: null })}>
                 {capitalize(key)}
               </button>
             ))}
@@ -519,11 +593,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy }) {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <p>
               Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
-              <strong>{module.name}</strong> to all connected cameras?
+              <strong>{module.name}</strong> to all connected{" "}
+              {applyAllConfirm.moduleType ? `${applyAllConfirm.moduleType} ` : ""}modules?
             </p>
             <p className="modal-subtext">
-              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every
-              camera module and save immediately — unsaved changes on other cameras will be lost.
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
+              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
             </p>
             <div className="modal-buttons">
               <button className="save-button" type="button" onClick={confirmApplyToAll}>

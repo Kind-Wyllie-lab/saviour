@@ -7,7 +7,7 @@ import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
 
 
-function NewSessionForm({ modules }) {
+function NewSessionForm({ modules, sessionList = {} }) {
   const [target, setTarget] = useState("all");
   const { experimentName } = useExperimentTitle();
 
@@ -40,6 +40,10 @@ function NewSessionForm({ modules }) {
   const allTargetReady     = targetModules.length > 0 && targetModules.every((m) => m.status === "READY");
   const anyTargetRecording = targetModules.some((m) => m.status === "RECORDING");
   const canStart           = experimentName && allTargetReady && !anyTargetRecording;
+
+  const nameAlreadyUsed = experimentName
+    ? Object.values(sessionList).some(s => s.session_name.startsWith(experimentName + "-"))
+    : false;
 
   // Human-readable label for the target description line
   const targetLabel = target === "all"
@@ -137,6 +141,9 @@ function NewSessionForm({ modules }) {
           </div>
         </div>
 
+        {nameAlreadyUsed && (
+          <p className="form-warning">Session name already used — previous recordings exist with this name. Consider updating the trial or rat ID.</p>
+        )}
         {!canStart && anyTargetRecording && (
           <p className="form-warning">One or more target modules are already recording.</p>
         )}

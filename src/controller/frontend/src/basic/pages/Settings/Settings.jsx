@@ -21,6 +21,12 @@ function Settings() {
   const selectedModule =
     selectedId === "controller" ? null : modules[selectedId];
 
+  const syncServerModule =
+    Object.entries(modules)
+      .filter(([, m]) => m.type?.includes("camera"))
+      .map(([id, m]) => ({ id, ...m }))
+      .find(m => m.config?.camera?.sync_mode === "server") ?? null;
+
   return (
     <main className="settings">
       <h2>Module Settings</h2>
@@ -39,7 +45,7 @@ function Settings() {
       </label>
 
       <div className="module-grid">
-        <ConfigCard id={selectedId} module={selectedModule} clipboard={clipboard} onCopy={setClipboard} />
+        <ConfigCard id={selectedId} module={selectedModule} clipboard={clipboard} onCopy={setClipboard} syncServerModule={syncServerModule} />
       </div>
 
     </main>

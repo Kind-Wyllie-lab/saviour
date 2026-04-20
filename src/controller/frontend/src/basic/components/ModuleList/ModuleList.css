@@ -15,6 +15,27 @@
     grid-template-columns: 3fr 1fr 1fr 1fr 1fr;
     gap: 12px;
     align-items: center;
+    min-width: 0;
+}
+
+/* Prevent any cell from blowing past its allocated fraction */
+.module-list-header span,
+.module-list-item > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.module-list-item-start {
+    min-width: 0;
+}
+
+.module-list-item-start > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .module-list-header {
@@ -177,4 +198,33 @@
     background: color-mix(in srgb, red 80%, transparent);
     border-color: red;
     color: white;
+}
+
+/* ── ≤ 640px: drop Group and Version columns ─────────────────────────────── */
+@media (max-width: 640px) {
+    .module-list-header,
+    .module-list-item {
+        grid-template-columns: 3fr 1fr 1fr; /* name | status | ip */
+    }
+
+    .module-list-header span:nth-child(3),  /* Group header  */
+    .module-list-header span:nth-child(5),  /* Version header */
+    .module-group-cell,
+    .module-version {
+        display: none;
+    }
+}
+
+/* ── ≤ 440px: also drop IP, status text truncates to the dot icon ─────────── */
+@media (max-width: 440px) {
+    .module-list-header,
+    .module-list-item {
+        grid-template-columns: 1fr auto; /* name | status */
+    }
+
+    .module-list-header span:nth-child(4),  /* IP header */
+    .module-list-header span:nth-child(2),  /* Status header (redundant with dot) */
+    .module-ip {
+        display: none;
+    }
 }

@@ -13,6 +13,7 @@ import sys
 import os
 import logging
 import threading
+from typing import Optional
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -24,16 +25,17 @@ from controller.controller import Controller
 from apa_web import APAWeb # Import APA web interface manager
 
 class APAController(Controller):
-    def __init__(self, config_file_path=None):
-        super().__init__(config_file_path=config_file_path)
+    def __init__(self):
+        super().__init__()
+        self.config.load_controller_config("apa_controller_config.json")
 
         # Reinstantiate webapp  
         # self.web = APAWeb(config=self.config) # Instantiate an APA specific web class 
 
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
 
-
-        self.register_callbacks() # If reinstantiating web object make sure to re-register callbacks
+    def configure_controller(self, updated_keys: Optional[list[str]]):
+        pass
 
     def handle_special_module_status(self, module_id: str, status: str):
         match status:
@@ -45,7 +47,7 @@ class APAController(Controller):
                 return False    
 
 if __name__ == "__main__":
-    controller = APAController(config_file_path="apa_controller_config.json")
+    controller = APAController()
     try:
         # Start the main loop
         controller.start()

@@ -107,7 +107,17 @@ if [ "$CURRENT_ROLE" = "controller" ]; then
     fi
     # Leave pi's Samba password — it pre-existed and the pi user is not ours to remove.
 
-    echo "  Note: /home/pi/${SHARENAME}/ is left in place — remove manually if no longer needed."
+    if [ -d "/home/pi/${SHARENAME}" ]; then
+        echo ""
+        echo "  /home/pi/${SHARENAME}/ may contain recording data from modules."
+        read -p "  Delete /home/pi/${SHARENAME}/ and its contents? (yes/no): " DEL_SHARE
+        if [ "$DEL_SHARE" = "yes" ]; then
+            sudo rm -rf "/home/pi/${SHARENAME}"
+            echo "  Deleted /home/pi/${SHARENAME}/"
+        else
+            echo "  Kept /home/pi/${SHARENAME}/"
+        fi
+    fi
 else
     echo "  Skipped (not controller)"
 fi
@@ -258,9 +268,35 @@ echo ""
 echo "  The source directory ${INSTALL_DIR} contains the SAVIOUR codebase."
 read -p "  Delete ${INSTALL_DIR}? (yes/no): " DEL_SRC
 if [ "$DEL_SRC" = "yes" ]; then
-    # Self-deletion: copy this line after exec so the rm doesn't kill the script mid-run
     sudo rm -rf "${INSTALL_DIR}"
     echo "  Deleted ${INSTALL_DIR}"
+else
+    # Clear generated Samba credentials from base_config.json if source dir is kept
+    BASE_CONFIG="${INSTALL_DIR}/src/modules/config/base_config.json"
+    if [ -f "$BASE_CONFIG" ]; then
+        python3 - "$BASE_CONFIG" <<'PYEOF' 2>/dev/null && \
+            echo "  Cleared Samba credentials from base_config.json" || \
+            echo "  Could not clear base_config.json credentials — edit manually"
+import sys, json
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+export = cfg.get("export", {})
+export.pop("share_username", None)
+export.pop("share_password", None)
+if not export:
+    cfg.pop("export", None)
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+    fi
+fi
+
+# Remove git safe.directory entry added by setup.sh
+if git config --global --get safe.directory "${INSTALL_DIR}" &>/dev/null; then
+    git config --global --unset safe.directory "${INSTALL_DIR}" 2>/dev/null || true
+    echo "  Removed git safe.directory entry for ${INSTALL_DIR}"
 fi
 
 
@@ -275,8 +311,8 @@ echo ""
 echo "Not removed (manual cleanup if needed):"
 echo "  - System packages (linuxptp, samba, dnsmasq, ffmpeg, avahi-daemon, etc.)"
 echo "    Remove with: sudo apt-get remove <package>"
-echo "  - /home/pi/${SHARENAME}/ (may contain recordings)"
 echo "  - Hostname (currently $(hostname)) — change with: sudo hostnamectl set-hostname <name>"
+echo "  - /etc/cloud/cloud-init.disabled — if present, cloud-init is disabled; re-enable with: sudo rm /etc/cloud/cloud-init.disabled"
 if [ "$CURRENT_ROLE" = "controller" ]; then
 echo "  - pi Samba password (unchanged)"
 echo "  - nvm / Node.js (~/.nvm) — remove with: rm -rf ~/.nvm"

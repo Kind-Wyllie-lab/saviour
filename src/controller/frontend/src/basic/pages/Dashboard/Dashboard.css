@@ -21,8 +21,7 @@
 .dashboard-cameras {
   flex: 2;
   display: grid;
-  /* 2 cameras → 2 equal columns; 3-4 cameras → wraps to 2×2 */
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  /* column count set via inline style on the element */
   grid-auto-rows: 1fr;
   gap: 12px;
   min-width: 0;
@@ -110,4 +109,39 @@
 .dashboard-panel .mjpeg-stream-card {
   flex: none;
   height: 220px;
+}
+
+/* ── Compact layout (≤ 1280px) ──────────────────────────────────────────── */
+
+.dashboard-compact {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Multi-column stream grid — column count set via inline style */
+.dashboard-compact-streams {
+  display: grid;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Lock the video area to 16:9 so cards don't bloat with empty space */
+.dashboard-compact-streams .mjpeg-stream-video {
+  flex: none;
+  aspect-ratio: 16 / 9;
+}
+
+.dashboard-compact-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-compact-panel .card {
+  min-width: 0;
 }

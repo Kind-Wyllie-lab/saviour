@@ -219,8 +219,19 @@ class Module(ABC):
                 return {"result": "error", "output": "No internet connectivity — could not reach github.com"}
 
             self.logger.info("Updating SAVIOUR to the latest version from git")
+            # Convert SSH remote URL to HTTPS so the service user (no SSH key)
+            # can pull without auth. The on-disk remote is unchanged.
+            import re
+            url_result = subprocess.run(
+                ["git", "-C", INSTALL_DIR, "remote", "get-url", "origin"],
+                capture_output=True, text=True
+            )
+            remote_url = url_result.stdout.strip()
+            https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
+                               r'https://\1/\2.git', remote_url)
             result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR, "pull"],
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "pull", https_url],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode == 0:

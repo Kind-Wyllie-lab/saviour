@@ -116,6 +116,18 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
     setShowResetConfirm(false);
   };
 
+  const [applyAllConfirm, setApplyAllConfirm] = useState(null);
+  const confirmApplyToAll = () => {
+    if (!applyAllConfirm) return;
+    const { section, moduleType } = applyAllConfirm;
+    const filtered = filterPrivateKeys(formData);
+    const data = filtered?.[section];
+    if (data) {
+      socket.emit("apply_section_to_type", { module_type: moduleType ?? null, section, data });
+    }
+    setApplyAllConfirm(null);
+  };
+
   return (
     <div className={`config-card ttl-config-card ${collapsed ? "collapsed" : ""}`}>
       <div className="card-header">
@@ -272,6 +284,38 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                 : null;
             })()}
 
+            {/* ── Apply to all TTL / all modules ── */}
+            {(() => {
+              const filtered = filterPrivateKeys(formData) ?? {};
+              const allSections = Object.keys(filtered).filter(
+                k => filtered[k] !== null && typeof filtered[k] === "object"
+              );
+              if (allSections.length === 0) return null;
+              const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+              return (
+                <>
+                  <div className="copy-bar">
+                    <span className="copy-bar-label">Apply to all {module.type}s:</span>
+                    {allSections.map(key => (
+                      <button key={key} type="button" className="copy-btn"
+                        onClick={() => setApplyAllConfirm({ section: key, label: cap(key), moduleType: module.type })}>
+                        {cap(key)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="copy-bar">
+                    <span className="copy-bar-label">Apply to all modules:</span>
+                    {allSections.map(key => (
+                      <button key={key} type="button" className="copy-btn"
+                        onClick={() => setApplyAllConfirm({ section: key, label: cap(key), moduleType: null })}>
+                        {cap(key)}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
+
             {/* Action buttons */}
             <div className="ttl-action-row">
               <button className="save-button" type="button" onClick={saveConfig}>
@@ -320,6 +364,26 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             <div className="modal-buttons">
               <button className="reset-button" type="button" onClick={handleReset}>Reset</button>
               <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {applyAllConfirm && (
+        <div className="modal-overlay" onClick={() => setApplyAllConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>
+              Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
+              <strong>{module.name || id}</strong> to all connected{" "}
+              {applyAllConfirm.moduleType ? `${applyAllConfirm.moduleType} ` : ""}modules?
+            </p>
+            <p className="modal-subtext">
+              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
+              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
+            </p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button" onClick={confirmApplyToAll}>Apply to All</button>
+              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
             </div>
           </div>
         </div>

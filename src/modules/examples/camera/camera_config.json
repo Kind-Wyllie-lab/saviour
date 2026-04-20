@@ -17,7 +17,8 @@
         "_level": 4.2,
         "bitrate_mb": 2,
         "autofocus_mode": "manual",
-        "lens_position": 0.0
+        "lens_position": 0.0,
+        "sync_mode": "none"
     },
     "recording": {
         "_recording_filetype": "ts"

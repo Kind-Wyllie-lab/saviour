@@ -755,7 +755,7 @@ EOF
     systemctl --user restart wireplumber
 
     # Update the service file with necessary environment variables
-    sudo tee /etc/systemd/system/saviour.service >/dev/null <<'EOF'
+    sudo tee /etc/systemd/system/saviour.service >/dev/null <<EOF
 [Unit]
 Description=Saviour Service
 After=network.target ptp4l.service phc2sys.service

@@ -89,6 +89,15 @@ export default function System() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [moduleHealth, modules]);
 
+  // ── Remove module ─────────────────────────────────────────────────────────
+  const [removeTarget, setRemoveTarget] = useState(null); // { id, name, online }
+
+  const handleRemoveConfirm = () => {
+    if (!removeTarget) return;
+    socket.emit("remove_module", { id: removeTarget.id });
+    setRemoveTarget(null);
+  };
+
   // ── Update all devices ────────────────────────────────────────────────────
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
   const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | { success, output }
@@ -147,6 +156,7 @@ export default function System() {
               <th>Disk</th>
               <th>PTP offset</th>
               <th>Last seen</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -164,26 +174,39 @@ export default function System() {
               <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_free_gb)}</td>
               <td className="cell--muted">—</td>
               <td className="cell--muted">—</td>
+              <td></td>
             </tr>
 
             {/* Module rows */}
-            {moduleRows.map((row) => (
-              <tr key={row.id}>
-                <td>
-                  <span className="device-name">{row.name}</span>
-                  <span className="device-id">{row.id}</span>
-                </td>
-                <td>{statusCell(row.status ?? "offline")}</td>
-                <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
-                <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
-                <td>{cpuCell(row.cpu_usage)}</td>
-                <td>{tempCell(row.cpu_temp)}</td>
-                <td>{pctCell(row.memory_usage, 70, 85)}</td>
-                <td>{pctCell(row.disk_space, 75, 90)}</td>
-                <td>{ptpCell(row.ptp4l_offset)}</td>
-                <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
-              </tr>
-            ))}
+            {moduleRows.map((row) => {
+              const isOnline = modules[row.id]?.online ?? false;
+              return (
+                <tr key={row.id}>
+                  <td>
+                    <span className="device-name">{row.name}</span>
+                    <span className="device-id">{row.id}</span>
+                  </td>
+                  <td>{statusCell(row.status ?? "offline")}</td>
+                  <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
+                  <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
+                  <td>{cpuCell(row.cpu_usage)}</td>
+                  <td>{tempCell(row.cpu_temp)}</td>
+                  <td>{pctCell(row.memory_usage, 70, 85)}</td>
+                  <td>{pctCell(row.disk_space, 75, 90)}</td>
+                  <td>{ptpCell(row.ptp4l_offset)}</td>
+                  <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="remove-btn"
+                      onClick={() => setRemoveTarget({ id: row.id, name: row.name, online: isOnline })}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
 
             {moduleRows.length === 0 && (
               <tr>
@@ -244,6 +267,31 @@ export default function System() {
           </div>
         )}
       </div>
+
+      {removeTarget && (
+        <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Remove <strong>{removeTarget.name}</strong> from tracking?</p>
+            {removeTarget.online ? (
+              <p className="modal-subtext modal-subtext--warn">
+                This module is currently <strong>online</strong>. A shutdown command will be sent before it is removed — this will stop any active recording and power off the device. If it reconnects later it will be re-added automatically.
+              </p>
+            ) : (
+              <p className="modal-subtext">
+                This module is offline and will be removed from the system. If it comes back online it will be re-added automatically.
+              </p>
+            )}
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleRemoveConfirm}>
+                {removeTarget.online ? "Shutdown & Remove" : "Remove"}
+              </button>
+              <button className="save-button" type="button" onClick={() => setRemoveTarget(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showUpdateConfirm && (
         <div className="modal-overlay" onClick={() => setShowUpdateConfirm(false)}>

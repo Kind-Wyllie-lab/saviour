@@ -806,12 +806,14 @@ configure_apa_camera() {
         echo "[OK] imx500-all is already installed."
     fi
 
-    # ultralytics is used for YOLO-based rat detection
-    if ! "${DIR}/env/bin/python" -c "import ultralytics" &>/dev/null; then
-        echo "[INSTALLING] ultralytics (pip)"
-        "${DIR}/env/bin/pip" install ultralytics
+    # hailo-all provides the Hailo runtime, Python bindings, and pre-compiled HEF
+    # models (including yolov8n.hef) used by apa_camera_module.py for inference.
+    # python3-picamera2 >= 0.3.19 is needed for picamera2.devices.hailo support.
+    if ! dpkg -s hailo-all &>/dev/null; then
+        echo "[INSTALLING] hailo-all"
+        sudo apt-get install -y hailo-all
     else
-        echo "[OK] ultralytics is already installed."
+        echo "[OK] hailo-all is already installed."
     fi
 }
 

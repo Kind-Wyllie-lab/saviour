@@ -118,3 +118,22 @@
 .val--ok     { color: #2d9e4f; }
 .val--warn   { color: #d4820a; }
 .val--danger { color: #cc3333; }
+
+.remove-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, #cc3333 60%, var(--border-color));
+  background: transparent;
+  color: #cc3333;
+  cursor: pointer;
+  font-size: 0.82em;
+  white-space: nowrap;
+}
+
+.remove-btn:hover {
+  background: color-mix(in srgb, #cc3333 12%, transparent);
+}
+
+.modal-subtext--warn {
+  color: #cc3333;
+}

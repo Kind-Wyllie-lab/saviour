@@ -65,6 +65,12 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
   const streamPort = module.config?.monitoring?.port ?? 8081;
 
+  const sampleRate    = module.config?.microphone?._sample_rate ?? 192000;
+  const filetype      = module.config?.recording?._recording_filetype ?? "flac";
+  const bytesPerSec   = sampleRate * 2; // 16-bit mono
+  const rawGbPerHour  = (bytesPerSec * 3600) / 1e9;
+  const estGbPerHour  = filetype === "flac" ? rawGbPerHour * 0.6 : rawGbPerHour;
+
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
   }, [module.id]);
@@ -118,6 +124,11 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           <form>
             <ConfigFields data={formData} handleChange={handleChange} />
           </form>
+
+          <div className="filesize-preview">
+            ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz
+            {filetype === "flac" ? " (FLAC compressed)" : ` (${filetype.toUpperCase()} raw)`}
+          </div>
 
           <div className="copy-bar">
             <span className="copy-bar-label">Copy:</span>

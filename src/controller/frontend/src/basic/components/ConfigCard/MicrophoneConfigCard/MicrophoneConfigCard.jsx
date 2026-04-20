@@ -83,6 +83,12 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     ? `High frequency exceeds Nyquist (${(nyquist / 1000).toFixed(0)} kHz)`
     : null;
 
+  const timeWindowError = isNaN(timeWindow) || timeWindow < 0.5
+    ? "Time window must be at least 0.5 s"
+    : timeWindow > 60
+    ? "Time window must be 60 s or less"
+    : null;
+
   // Strip monitoring section from ConfigFields so we render it manually below
   const configFieldsData = (() => {
     if (!formData) return formData;
@@ -172,6 +178,12 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                   value={timeWindow}
                   onChange={e => handleChange(["monitoring", "time_window_s"], e)} />
               </div>
+              {timeWindowError && (
+                <div className="form-field">
+                  <label></label>
+                  <span className="config-sync-badge config-sync-badge--failed">{timeWindowError}</span>
+                </div>
+              )}
             </div>
           </fieldset>
 
@@ -195,7 +207,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           </div>
 
           <div className="config-action-buttons">
-            <button className="save-button" type="button" onClick={handleSave} disabled={!!freqError}>
+            <button className="save-button" type="button" onClick={handleSave} disabled={!!freqError || !!timeWindowError}>
               Save Config
             </button>
             <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>

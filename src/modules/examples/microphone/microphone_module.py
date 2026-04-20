@@ -59,7 +59,7 @@ class AudiomothModule(Module):
         # {serial: {'level_db': float, 'peak_db': float, 'spectrum_db': ndarray, 'freqs': ndarray}}
         self.monitor_data = {}
         self.monitor_data_lock = threading.Lock()
-        self.SPEC_COLS = 600   # number of FFT columns to retain per audiomoth
+        self.SPEC_COLS = 150   # number of FFT columns to retain per audiomoth (~3 s window)
         self.peak_hold_data = {}  # {serial: {'value_db': float, 'time': float}}
         self._register_monitoring_routes()
 
@@ -122,13 +122,14 @@ class AudiomothModule(Module):
             self.logger.warning("No audiomoths connected, cannot start recording")
             return
 
+        intended_start_at = getattr(self, "recording_intended_start_at", None)
         for serial, mic_id in self.audiomoths.items():
             filename = self._get_audio_filename(serial)
             self.current_recording_files[serial] = filename
             self.facade.add_session_file(filename)
             thread = threading.Thread(
                 target=self._record_microphone_segment,
-                args=(serial, mic_id, filename),
+                args=(serial, mic_id, filename, intended_start_at),
                 daemon=True,
                 name=f"audiomoth-{serial}"
             )
@@ -160,7 +161,7 @@ class AudiomothModule(Module):
             self.facade.add_session_file(filename)
             thread = threading.Thread(
                 target=self._record_microphone_segment,
-                args=(serial, mic_id, filename),
+                args=(serial, mic_id, filename, None),  # start_at only meaningful for first segment
                 daemon=True,
                 name=f"audiomoth-{serial}"
             )
@@ -170,7 +171,7 @@ class AudiomothModule(Module):
         self.logger.info(f"Switched to recording segment {self.facade.get_segment_id()}")
 
 
-    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str) -> None:
+    def _record_microphone_segment(self, serial: str, mic_id: str, filename: str, intended_start_at: float | None) -> None:
         """Record audio from one audiomoth to a single file until segment stop or recording stop."""
         sample_rate = self.config.get("microphone.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
@@ -183,11 +184,26 @@ class AudiomothModule(Module):
         try:
             microphone = soundcard.get_microphone(mic_id)
             with open(timestamps_filename, 'w') as timestamps_writer:
+                if intended_start_at is not None:
+                    timestamps_writer.write(f"START_AT {intended_start_at:.6f}\n")
                 with microphone.recorder(samplerate=sample_rate, blocksize=block_size) as recorder:
+                    # Timestamp the moment the recorder is open and ready — this is
+                    # the tightest available proxy for when the first audio sample
+                    # was captured.  Used for post-hoc alignment with video.
+                    actual_start = time.time()
+                    timestamps_writer.write(f"STARTED {actual_start:.6f}\n")
+                    if intended_start_at is not None:
+                        startup_latency_ms = (actual_start - intended_start_at) * 1000
+                        timestamps_writer.write(f"STARTUP_LATENCY_MS {startup_latency_ms:.1f}\n")
+                    timestamps_writer.flush()
                     with soundfile.SoundFile(filename, mode='x', samplerate=sample_rate, channels=1, subtype="PCM_16") as f:
                         while not self._recording_stop_event.is_set() and not self._segment_stop_event.is_set():
+                            # Timestamp BEFORE record() so it marks the start of
+                            # the block, not the end (each block is frame_num /
+                            # sample_rate seconds long, ~683 ms at default settings).
+                            block_start = time.time()
                             data = recorder.record(numframes=frame_num)
-                            timestamps_writer.write(str(time.time()) + "\n")
+                            timestamps_writer.write(f"{block_start}\n")
                             f.write(data)
         except Exception as e:
             self.logger.error(f"Recording thread error for audiomoth {serial}: {e}")
@@ -347,9 +363,15 @@ class AudiomothModule(Module):
                 cv2.putText(frame, label, (PADDING, y0 + 22),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
-                # ── Spectrogram ──────────────────────────────────────────────
+                # ── Spectrogram (20–70 kHz USV range) ───────────────────────
+                FREQ_LO_HZ = 20_000
+                FREQ_HI_HZ = 70_000
                 if spec_buf:
-                    spec_mat = np.array(spec_buf, dtype=np.float32).T
+                    spec_mat = np.array(spec_buf, dtype=np.float32).T  # (n_bins, n_cols)
+                    n_bins = spec_mat.shape[0]
+                    bin_lo = int(FREQ_LO_HZ / nyquist * n_bins)
+                    bin_hi = int(FREQ_HI_HZ / nyquist * n_bins)
+                    spec_mat = spec_mat[bin_lo:bin_hi, :]
                     spec_img = cv2.resize(spec_mat, (pw, PLOT_H),
                                           interpolation=cv2.INTER_LINEAR)
                     spec_img = np.flipud(spec_img)
@@ -360,10 +382,13 @@ class AudiomothModule(Module):
 
                 cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
 
-                # ── Y-axis: frequency labels (spectrogram) ───────────────────
-                freq_ticks_khz = [0, 20, 40, 60, 80, int(nyquist // 1000)]
+                # ── Y-axis: frequency labels (20–70 kHz) ─────────────────────
+                freq_lo_khz = FREQ_LO_HZ // 1000
+                freq_hi_khz = FREQ_HI_HZ // 1000
+                freq_range_khz = freq_hi_khz - freq_lo_khz
+                freq_ticks_khz = [20, 30, 40, 50, 60, 70]
                 for fk in freq_ticks_khz:
-                    fy = int(py1 - (fk * 1000 / nyquist) * PLOT_H)
+                    fy = int(py1 - ((fk - freq_lo_khz) / freq_range_khz) * PLOT_H)
                     cv2.line(frame, (px0 - 3, fy), (px0, fy), (110, 110, 110), 1)
                     cv2.putText(frame, f"{fk}k", (3, fy + 4),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.30, (110, 110, 110), 1)

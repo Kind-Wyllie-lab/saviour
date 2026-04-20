@@ -63,13 +63,32 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
   const { syncStatus, syncExport } = useExportSync(module.id);
 
-  const streamPort = module.config?.monitoring?.port ?? 8081;
+  const streamPort = module.config?.monitoring?._port ?? 8081;
 
   const sampleRate    = module.config?.microphone?._sample_rate ?? 192000;
   const filetype      = module.config?.recording?._recording_filetype ?? "flac";
   const bytesPerSec   = sampleRate * 2; // 16-bit mono
   const rawGbPerHour  = (bytesPerSec * 3600) / 1e9;
   const estGbPerHour  = filetype === "flac" ? rawGbPerHour * 0.6 : rawGbPerHour;
+
+  const nyquist    = sampleRate / 2;
+  const mon        = formData?.monitoring ?? {};
+  const freqLo     = Number(mon.freq_lo_hz ?? 20000);
+  const freqHi     = Number(mon.freq_hi_hz ?? 70000);
+  const timeWindow = Number(mon.time_window_s ?? 3.0);
+
+  const freqError = freqLo >= freqHi
+    ? `Low (${freqLo.toLocaleString()} Hz) must be less than high (${freqHi.toLocaleString()} Hz)`
+    : freqHi > nyquist
+    ? `High frequency exceeds Nyquist (${(nyquist / 1000).toFixed(0)} kHz)`
+    : null;
+
+  // Strip monitoring section from ConfigFields so we render it manually below
+  const configFieldsData = (() => {
+    if (!formData) return formData;
+    const { monitoring: _omit, ...rest } = formData;
+    return rest;
+  })();
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -122,8 +141,39 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           )}
 
           <form>
-            <ConfigFields data={formData} handleChange={handleChange} />
+            <ConfigFields data={configFieldsData} handleChange={handleChange} />
           </form>
+
+          {/* ── Monitoring display ── */}
+          <fieldset className="nested-fieldset">
+            <legend className="nested-fieldset-legend">monitoring</legend>
+            <div className="nested">
+              <div className="form-field">
+                <label>freq_lo_hz:</label>
+                <input type="number" min="0" max={nyquist} step="1000"
+                  value={freqLo}
+                  onChange={e => handleChange(["monitoring", "freq_lo_hz"], e)} />
+              </div>
+              <div className="form-field">
+                <label>freq_hi_hz:</label>
+                <input type="number" min="0" max={nyquist} step="1000"
+                  value={freqHi}
+                  onChange={e => handleChange(["monitoring", "freq_hi_hz"], e)} />
+              </div>
+              {freqError && (
+                <div className="form-field">
+                  <label></label>
+                  <span className="config-sync-badge config-sync-badge--failed">{freqError}</span>
+                </div>
+              )}
+              <div className="form-field">
+                <label>time_window_s:</label>
+                <input type="number" min="0.5" max="60" step="0.5"
+                  value={timeWindow}
+                  onChange={e => handleChange(["monitoring", "time_window_s"], e)} />
+              </div>
+            </div>
+          </fieldset>
 
           <div className="filesize-preview">
             ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz
@@ -145,7 +195,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           </div>
 
           <div className="config-action-buttons">
-            <button className="save-button" type="button" onClick={handleSave}>
+            <button className="save-button" type="button" onClick={handleSave} disabled={!!freqError}>
               Save Config
             </button>
             <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>

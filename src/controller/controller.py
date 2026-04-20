@@ -241,6 +241,7 @@ class Controller(ABC):
                         self.logger.info(f"Health response received from {module_id}")
                         self.modules.check_status(module_id, status_data)
                         self.health.update_module_health(module_id, status_data)
+                        self.web.broadcast_module_health()
 
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')

@@ -227,12 +227,19 @@ class APACameraModule(Module):
                 if self.config.get("camera.manual_exposure", False)
                 else int(1_000_000 / fps)
             )
-            self.picam2.set_controls({
+            live_controls = {
                 "AnalogueGain": self.config.get("camera.gain", 1),
                 "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness", 0),
                 "FrameRate": fps,
-            })
+            }
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode = _AF_MODE_MAP.get(self.config.get("camera.autofocus_mode", "manual"), 0)
+                live_controls["AfMode"] = af_mode
+                if af_mode == 0:
+                    live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+            self.picam2.set_controls(live_controls)
         else:
             try:
                 self._configure_camera()
@@ -327,6 +334,13 @@ class APACameraModule(Module):
                 "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness", 0),
             }
+
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode = _AF_MODE_MAP.get(self.config.get("camera.autofocus_mode", "manual"), 0)
+                controls["AfMode"] = af_mode
+                if af_mode == 0:
+                    controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
             config = self.picam2.create_video_configuration(
                 main=main, lores=lores, sensor=sensor,
@@ -709,7 +723,7 @@ class APACameraModule(Module):
             self.mask_center_y = int(shape[0] / 2) + self.mask_center_y_offset
 
         if self.mask_enabled and self.mask_radius is not None:
-            r = int(0.5 * self.mask_radius * shape[1])
+            r = int(0.5 * self.mask_radius * min(shape[0], shape[1]))
             if r > 0:
                 mask = np.zeros(shape, dtype="uint8")
                 cv2.circle(mask, (self.mask_center_x, self.mask_center_y), r, 255, -1)
@@ -760,7 +774,7 @@ class APACameraModule(Module):
             return
 
         shape = m.array.shape[:2]
-        self.outer_radius = int(0.5 * self.mask_radius * shape[1])
+        self.outer_radius = int(0.5 * self.mask_radius * min(shape[0], shape[1]))
         if self.outer_radius <= 0:
             return
 

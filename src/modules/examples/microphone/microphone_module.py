@@ -78,7 +78,7 @@ class AudiomothModule(Module):
         self.command.set_commands(self.audiomoth_commands)
 
 
-    @command
+    @command()
     def configure_audiomoth(self):
         """Configure all connected AudioMoths from current audiomoth config. Interrupts the stream briefly."""
         sample_rate = int(self.config.get("audiomoth.sample_rate", 192000))
@@ -122,7 +122,7 @@ class AudiomothModule(Module):
             return {"result": "Error", "error": str(e)}
 
 
-    @command
+    @command()
     def update_gain(self, gain=None):
         """Update AudioMoth gain without interrupting the audio stream."""
         if gain is None:
@@ -148,13 +148,13 @@ class AudiomothModule(Module):
             return {"result": "Error", "error": str(e)}
 
 
-    @command
+    @command()
     def list_audiomoths(self):
         """Returns dict containing list of audiomoths"""
         return {"result": "Success", "audiomoths": self.audiomoths}
 
 
-    @command
+    @command()
     def monitor(self):
         """Returns the URL of the monitoring MJPEG stream"""
         port = self.config.get("monitoring._port", 8081)

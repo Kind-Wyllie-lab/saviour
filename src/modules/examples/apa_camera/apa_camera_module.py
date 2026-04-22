@@ -275,6 +275,12 @@ class APACameraModule(Module):
             if self.picam2.started:
                 self.picam2.stop()
 
+            # Invalidate cached mask centre — must happen after picam2 stops so
+            # no old-resolution frames can race and re-set them before the new
+            # resolution is configured.
+            self.mask_center_x = None
+            self.mask_center_y = None
+
             self.fps    = self.config.get("camera.fps", 30)
             self.width  = self.config.get("camera.width", 1080)
             self.height = self.config.get("camera.height", 1080)

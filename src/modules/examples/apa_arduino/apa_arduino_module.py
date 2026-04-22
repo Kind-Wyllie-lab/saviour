@@ -183,10 +183,11 @@ class APAModule(Module):
             self.logger.warning("Stop motor called but no motor connected!")
     
 
+    @command()
     def _reset_pulse_counter(self):
         if self.shock:
             self.shock.reset_pulse_counter()
-        else: 
+        else:
             self.logger.warning("Reset pulse counter called but no shocker connected!")
 
 

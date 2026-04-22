@@ -734,6 +734,15 @@ EOF
 
 
 configure_microphone() {
+    echo "Installing AudioMoth udev rule..."
+    sudo tee /etc/udev/rules.d/99-audiomoth.rules > /dev/null <<'EOF'
+# Allow non-root access to AudioMoth USB Microphone (VID 16d0, PID 06f3)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="06f3", MODE="0666"
+EOF
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    echo "AudioMoth udev rule installed."
+
     echo "Installing pipewire"
 
     # Make the config directory if it doesn't already exist

@@ -37,14 +37,20 @@ class APAController(Controller):
     def configure_controller(self, updated_keys: Optional[list[str]]):
         pass
 
-    def handle_special_module_status(self, module_id: str, status: str):
-        match status:
+    def handle_special_module_status(self, module_id: str, status: dict):
+        match status.get('type'):
             case "arduino_state":
-                self.socketio.emit("arduino_state", status) 
-                return True    
+                self.web.socketio.emit("arduino_state", status)
+                return True
+            case "shock_started_being_delivered":
+                self.web.socketio.emit("shock_started_being_delivered", status)
+                return True
+            case "shock_stopped_being_delivered":
+                self.web.socketio.emit("shock_stopped_being_delivered", status)
+                return True
             case _:
-                self.logger.warning(f"APA web has no logic for {status} from {module_id}")
-                return False    
+                self.logger.warning(f"APA controller has no logic for {status.get('type')} from {module_id}")
+                return False
 
 if __name__ == "__main__":
     controller = APAController()

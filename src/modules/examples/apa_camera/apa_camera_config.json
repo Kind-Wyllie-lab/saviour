@@ -1,15 +1,24 @@
 {
     "camera": {
         "monochrome": false,
+        "sensor_mode_index": 0,
         "width": 1080,
         "height": 1080,
         "fps": 30,
-        "text_scale": 2,
-        "text_thickness": 3,
+        "overlay_timestamp": true,
+        "text_size": "medium",
+        "gain": 1,
+        "manual_exposure": false,
+        "exposure_time": 10000,
+        "brightness": 0,
+        "overlay_framerate_on_preview": false,
+        "bitrate_mb": 2,
+        "autofocus_mode": "manual",
+        "lens_position": 0.0,
+        "sync_mode": "none",
         "_codec": "h264",
         "_profile": "high",
-        "_level": 4.2,
-        "_bitrate": 2000000
+        "_level": 4.2
     },
     "object_detection": {
         "enabled": false,
@@ -31,14 +40,10 @@
         "shock_zone_angle_span_deg": 60,
         "shock_zone_start_angle_deg": 180,
         "shock_zone_inner_offset": 0.3,
-        "shock_zone_color": [
-            0,
-            255,
-            0
-        ],
+        "shock_zone_color": [0, 255, 0],
         "shock_zone_line_thickness": 3
     },
     "recording": {
-        "_recording_filetype": "mp4"
+        "_recording_filetype": "ts"
     }
 }

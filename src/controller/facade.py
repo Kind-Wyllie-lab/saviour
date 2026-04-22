@@ -137,6 +137,9 @@ class ControllerFacade():
     def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
         return self.controller.recording.delete_session(session_name, delete_files)
 
+    def add_module_to_session(self, session_name: str, module_id: str) -> dict:
+        return self.controller.recording.add_module_to_session(session_name, module_id)
+
     def module_stopped(self, module_id: str) -> None:
         self.controller.recording.module_stopped(module_id)
 

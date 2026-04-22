@@ -1,10 +1,66 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import socket from "/src/socket";
 import "./SessionList.css";
+
+function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
+  const [selectedId, setSelectedId] = useState("");
+  const selectRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    selectRef.current?.focus();
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const handleConfirm = () => {
+    if (!selectedId) return;
+    onConfirm(sessionName, selectedId);
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <p>Add a module to <strong>{sessionName}</strong></p>
+        <p className="modal-subtext">
+          The selected module will begin recording immediately and join the existing session.
+        </p>
+        <div className="form-field" style={{ marginBottom: "1rem" }}>
+          <label>Module:</label>
+          <select
+            ref={selectRef}
+            value={selectedId}
+            onChange={e => setSelectedId(e.target.value)}
+          >
+            <option value="">— select a module —</option>
+            {candidates.map(m => (
+              <option key={m.id} value={m.id}>{m.name || m.id}</option>
+            ))}
+          </select>
+        </div>
+        <div className="modal-buttons">
+          <button
+            className="save-button"
+            type="button"
+            disabled={!selectedId}
+            onClick={handleConfirm}
+          >
+            Add to Session
+          </button>
+          <button className="reset-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SessionList({ sessionList, modules = [] }) {
   const [expandedSessions, setExpandedSessions] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
 
   const handleStop = (sessionName) => {
     socket.emit("stop_session", { session_name: sessionName });
@@ -15,6 +71,10 @@ function SessionList({ sessionList, modules = [] }) {
     setPendingDelete(null);
   };
 
+  const handleAddModuleConfirm = (sessionName, moduleId) => {
+    socket.emit("add_module_to_session", { session_name: sessionName, module_id: moduleId });
+  };
+
   const toggleExpand = (sessionName) => {
     setExpandedSessions((prev) => ({
       ...prev,
@@ -23,6 +83,15 @@ function SessionList({ sessionList, modules = [] }) {
   };
 
   const sessions = Object.values(sessionList);
+
+  // Module IDs already committed to an active/error session — not available as candidates.
+  const allBusyModuleIds = new Set(
+    sessions
+      .filter(s => s.state === "active" || s.state === "error")
+      .flatMap(s => s.modules)
+  );
+
+  const candidates = modules.filter(m => !allBusyModuleIds.has(m.id));
 
   return (
     <div className="session-list card">
@@ -53,21 +122,20 @@ function SessionList({ sessionList, modules = [] }) {
           const exportStates   = session.module_export_states || {};
           const exportEntries  = Object.entries(exportStates);
           const pendingExports  = exportEntries.filter(([, s]) => s === "pending").length;
-          const failedExports   = exportEntries.filter(([, s]) => s === "failed").length;
           const completeExports = exportEntries.filter(([, s]) => s === "complete").length;
           const totalComplete   = session.total_exports_complete ?? 0;
           const totalFailed     = session.total_exports_failed ?? 0;
           const activeSegment   = pendingExports > 0 || completeExports > 0;
 
           // Stop progress
-          const stopStates   = session.module_stop_states || {};
+          const stopStates    = session.module_stop_states || {};
           const stillStopping = Object.values(stopStates).filter(s => s === "stopping").length;
 
           let sessionClass = "session";
-          if (isStarting)  sessionClass += " starting";
+          if (isStarting)       sessionClass += " starting";
           else if (isActive)    sessionClass += " active";
-          if (isStopped)   sessionClass += " stopped";
-          if (isError)     sessionClass += " error";
+          if (isStopped)        sessionClass += " stopped";
+          if (isError)          sessionClass += " error";
 
           return (
             <div key={session.session_name} className={sessionClass}>
@@ -180,6 +248,14 @@ function SessionList({ sessionList, modules = [] }) {
                         Cancel Schedule
                       </button>
                     )}
+                    {(isActive || isStarting || isError) && candidates.length > 0 && (
+                      <button
+                        className="session-btn session-btn--join"
+                        onClick={() => setAddModuleTarget(session.session_name)}
+                      >
+                        Add Module to Session
+                      </button>
+                    )}
                     {(isStopped || isError) && (
                       pendingDelete === session.session_name ? (
                         <div className="delete-confirm">
@@ -206,6 +282,15 @@ function SessionList({ sessionList, modules = [] }) {
             </div>
           );
         })
+      )}
+
+      {addModuleTarget && (
+        <AddModuleModal
+          sessionName={addModuleTarget}
+          candidates={candidates}
+          onConfirm={handleAddModuleConfirm}
+          onClose={() => setAddModuleTarget(null)}
+        />
       )}
     </div>
   );

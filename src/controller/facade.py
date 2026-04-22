@@ -252,3 +252,11 @@ class ControllerFacade():
     def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
         self.controller.modules.module_ip_changed(module_id, new_module_ip)
 
+
+
+    """Notifications"""
+    def send_alert(self, key: str, title: str, message: str, severity: str = "error") -> None:
+        self.controller.notifier.send_alert(key, title, message, severity)
+
+    def check_internet(self) -> bool:
+        return self.controller.notifier.check_internet()

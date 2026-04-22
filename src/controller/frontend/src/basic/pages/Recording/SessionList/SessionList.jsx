@@ -256,7 +256,7 @@ function SessionList({ sessionList, modules = [] }) {
                         Add Module to Session
                       </button>
                     )}
-                    {(isStopped || isError) && (
+                    {isStopped && (
                       pendingDelete === session.session_name ? (
                         <div className="delete-confirm">
                           <span>Delete session and all files?</span>

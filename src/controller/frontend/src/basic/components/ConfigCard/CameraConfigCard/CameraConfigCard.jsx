@@ -401,7 +401,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <option value="server" disabled={otherIsServer}>
                 Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
               </option>
-              <option value="client">Client (follows server)</option>
+              <option value="client" disabled={!otherIsServer}>
+                Client (follows server){!otherIsServer ? " — set another camera to Server first" : ""}
+              </option>
             </select>
           </div>
           {currentSyncMode === "server" && (

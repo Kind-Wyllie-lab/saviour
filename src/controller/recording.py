@@ -171,6 +171,12 @@ class Recording:
         self.logger.info(
             f"Session '{session_name}' created targeting {target} ({len(modules)} modules)"
         )
+        self.facade.send_alert(
+            key=f"session_started_{session_name}",
+            title=f"Recording started — {session_name}",
+            message=f"Session **{session_name}** started with {len(modules)} module(s): {', '.join(modules)}.",
+            severity="info",
+        )
         return {"success": True, "session_name": session_name}
 
 
@@ -411,6 +417,11 @@ class Recording:
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
             self.logger.info(f"Session '{session_name}' → ERROR: {module_id} offline")
+            self.facade.send_alert(
+                key=f"module_offline_{module_id}",
+                title=f"Module offline — {module_id}",
+                message=f"Module **{module_id}** went offline during recording session **{session_name}**.",
+            )
 
 
     def module_back_online(self, module_id: str) -> None:
@@ -522,6 +533,12 @@ class Recording:
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Scheduled session '{session_name}' started for {today}")
+        self.facade.send_alert(
+            key=f"session_started_{session_name}_{today}",
+            title=f"Scheduled recording started — {session_name}",
+            message=f"Session **{session_name}** started its daily run for {today} with {len(session.modules)} module(s).",
+            severity="info",
+        )
 
 
     def _stop_scheduled_session(self, session_name: str) -> None:
@@ -607,6 +624,14 @@ class Recording:
                                 session.error_message = msg
                                 session.state = SessionState.ERROR
                                 self.facade.update_sessions(self.sessions)
+                                self.facade.send_alert(
+                                    key=f"session_error_{session_name}",
+                                    title=f"Recording error — {session_name}",
+                                    message=(
+                                        f"Session **{session_name}** has entered an error state. "
+                                        f"The following modules are not recording: {', '.join(not_recording)}."
+                                    ),
+                                )
                         elif session.state == SessionState.ERROR:
                             session.error_message = ""
                             session.state = SessionState.ACTIVE

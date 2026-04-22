@@ -107,7 +107,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const GAIN_LABELS = ["Low", "Low-Medium", "Medium", "Medium-High", "High"];
   const AM_SAMPLE_RATES = [8000, 16000, 32000, 48000, 96000, 192000, 250000, 384000];
 
-  const [amConfigStatus, setAmConfigStatus] = useState(null);
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -284,22 +283,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                   <input type="checkbox" checked={!!am.led_enabled}
                     onChange={e => handleChange(["audiomoth", "led_enabled"], e)} />
                 </div>
-                <div className="config-action-buttons" style={{ marginTop: "6px" }}>
-                  <button type="button" className="save-button" onClick={() => {
-                    setAmConfigStatus("sending");
-                    socket.emit("send_command", {
-                      module_id: module.id,
-                      type: "configure_audiomoth",
-                      params: {}
-                    });
-                    setTimeout(() => setAmConfigStatus(null), 3000);
-                  }}>
-                    Configure Device
-                  </button>
-                </div>
-                {amConfigStatus === "sending" && (
-                  <span className="config-sync-badge config-sync-badge--pending">Sending…</span>
-                )}
               </div>
             </fieldset>
           )}

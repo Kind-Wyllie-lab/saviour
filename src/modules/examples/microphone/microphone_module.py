@@ -96,23 +96,34 @@ class AudiomothModule(Module):
         elif filter_type == "bpf":
             cmd += ["bpf", str(filter_lo), str(filter_hi)]
 
+        # CLI flag names: lgr / esm / d48  (not low/energy/no48)
         if self.config.get("audiomoth.low_gain_range", False):
-            cmd.append("low")
+            cmd.append("lgr")
         if self.config.get("audiomoth.energy_saver_mode", False):
-            cmd.append("energy")
+            cmd.append("esm")
         if self.config.get("audiomoth.disable_48hz_filter", False):
-            cmd.append("no48")
-        if self.config.get("audiomoth.led_enabled", True):
-            cmd.append("led")
+            cmd.append("d48")
+
+        def _run(c):
+            r = subprocess.run(c, capture_output=True, text=True, timeout=10)
+            # The binary writes errors to stdout (puts()), not stderr
+            msg = (r.stdout.strip() or r.stderr.strip())
+            return r.returncode, msg
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                self.logger.info(f"AudioMoth configured: {' '.join(cmd)}")
-                return {"result": "Success", "output": result.stdout.strip()}
-            else:
-                self.logger.error(f"AudioMoth config failed: {result.stderr.strip()}")
-                return {"result": "Error", "error": result.stderr.strip()}
+            rc, msg = _run(cmd)
+            if rc != 0:
+                self.logger.error(f"AudioMoth config failed: {msg}")
+                return {"result": "Error", "error": msg}
+            self.logger.info(f"AudioMoth configured: {' '.join(cmd)}")
+
+            # LED is a separate top-level operation, not a config flag
+            led_enabled = self.config.get("audiomoth.led_enabled", True)
+            led_rc, led_msg = _run([AUDIOMOTH_CMD, "led", "true" if led_enabled else "false"])
+            if led_rc != 0:
+                self.logger.warning(f"AudioMoth LED set failed: {led_msg}")
+
+            return {"result": "Success", "output": msg}
         except FileNotFoundError:
             self.logger.error(f"AudioMoth binary not found at {AUDIOMOTH_CMD}")
             return {"result": "Error", "error": "Binary not found — run setup.sh to install"}

@@ -267,26 +267,22 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 <div className="form-field">
                   <label>low_gain_range:</label>
                   <input type="checkbox" checked={!!am.low_gain_range}
-                    onChange={e => handleChange(["audiomoth", "low_gain_range"],
-                      { target: { value: e.target.checked } })} />
+                    onChange={e => handleChange(["audiomoth", "low_gain_range"], e)} />
                 </div>
                 <div className="form-field">
                   <label>energy_saver_mode:</label>
                   <input type="checkbox" checked={!!am.energy_saver_mode}
-                    onChange={e => handleChange(["audiomoth", "energy_saver_mode"],
-                      { target: { value: e.target.checked } })} />
+                    onChange={e => handleChange(["audiomoth", "energy_saver_mode"], e)} />
                 </div>
                 <div className="form-field">
                   <label>disable_48hz_filter:</label>
                   <input type="checkbox" checked={!!am.disable_48hz_filter}
-                    onChange={e => handleChange(["audiomoth", "disable_48hz_filter"],
-                      { target: { value: e.target.checked } })} />
+                    onChange={e => handleChange(["audiomoth", "disable_48hz_filter"], e)} />
                 </div>
                 <div className="form-field">
                   <label>led_enabled:</label>
                   <input type="checkbox" checked={!!am.led_enabled}
-                    onChange={e => handleChange(["audiomoth", "led_enabled"],
-                      { target: { value: e.target.checked } })} />
+                    onChange={e => handleChange(["audiomoth", "led_enabled"], e)} />
                 </div>
                 <div className="config-action-buttons" style={{ marginTop: "6px" }}>
                   <button type="button" className="save-button" onClick={() => {

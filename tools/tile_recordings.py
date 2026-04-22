@@ -39,10 +39,10 @@ LOCK_FILE     = Path("/var/tmp/tile_recordings.lock")
 # ── Grid layout ───────────────────────────────────────────────────────────────
 
 GRID = [
-    "A1", "A2", "A3", "A4",
-    "B1", "B2", "B3", "B4",
-    "C1", "C2", "C3", "C4",
-    "D1", "D2", "D3", "D4",
+    "A4", "A3", "A2", "A1",
+    "B4", "B3", "B2", "B1",
+    "C4", "C3", "C2", "C1",
+    "D4", "D3", "D2", "D1",
 ]
 TILE_SIZE = 1000  # px per camera; scale filter handles non-exact source sizes
 

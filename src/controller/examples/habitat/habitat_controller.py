@@ -1,9 +1,7 @@
 """
-A controller with APA specific functionality.
+Habitat controller.
 
-Inherits the habitat controller class.
-
-Serves up the system GUI and binds appropriate routes between GUI buttons and module commands.
+Inherits the base Controller class and serves the Habitat GUI.
 
 @author: Andrew SG
 @date: 080725
@@ -36,10 +34,11 @@ class HabitatController(Controller):
         pass
 
 
-    def handle_special_module_status(self, module_id: str, status: str):
-        match status:
+    def handle_special_module_status(self, module_id: str, status: dict):
+        match status.get('type'):
             case _:
-                return False    
+                self.logger.warning(f"Habitat controller has no logic for {status.get('type')} from {module_id}")
+                return False
 
 if __name__ == "__main__":
     controller = HabitatController()

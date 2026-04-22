@@ -66,7 +66,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
 
-  const sampleRate    = module.config?.microphone?._sample_rate ?? 192000;
+  const sampleRate    = module.config?.audiomoth?.sample_rate ?? module.config?.microphone?._sample_rate ?? 192000;
   const filetype      = module.config?.recording?._recording_filetype ?? "flac";
   const bytesPerSec   = sampleRate * 2; // 16-bit mono
   const rawGbPerHour  = (bytesPerSec * 3600) / 1e9;
@@ -90,12 +90,24 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     ? "Time window must be 60 s or less"
     : null;
 
-  // Strip monitoring section from ConfigFields so we render it manually below
+  // Strip monitoring and audiomoth sections — rendered manually below
   const configFieldsData = (() => {
     if (!formData) return formData;
-    const { monitoring: _omit, ...rest } = formData;
+    const { monitoring: _m, audiomoth: _a, ...rest } = formData;
     return rest;
   })();
+
+  const am       = formData?.audiomoth ?? {};
+  const amGain   = Number(am.gain ?? 2);
+  const amRate   = Number(am.sample_rate ?? 192000);
+  const amFilter = am.filter_type ?? "none";
+  const amLo     = Number(am.filter_lo_hz ?? 20000);
+  const amHi     = Number(am.filter_hi_hz ?? 90000);
+
+  const GAIN_LABELS = ["Low", "Low-Medium", "Medium", "Medium-High", "High"];
+  const AM_SAMPLE_RATES = [8000, 16000, 32000, 48000, 96000, 192000, 250000, 384000];
+
+  const [amConfigStatus, setAmConfigStatus] = useState(null);
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -202,6 +214,99 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               )}
             </div>
           </fieldset>
+
+          {/* ── AudioMoth hardware config ── */}
+          {formData?.audiomoth !== undefined && (
+            <fieldset className="nested-fieldset">
+              <legend className="nested-fieldset-legend">audiomoth</legend>
+              <div className="nested">
+                <div className="form-field">
+                  <label>sample_rate:</label>
+                  <select value={amRate}
+                    onChange={e => handleChange(["audiomoth", "sample_rate"], e)}>
+                    {AM_SAMPLE_RATES.map(r => (
+                      <option key={r} value={r}>{(r / 1000).toFixed(0)} kHz</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>gain:</label>
+                  <select value={amGain}
+                    onChange={e => handleChange(["audiomoth", "gain"], e)}>
+                    {GAIN_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{i} — {label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>filter_type:</label>
+                  <select value={amFilter}
+                    onChange={e => handleChange(["audiomoth", "filter_type"], e)}>
+                    <option value="none">None</option>
+                    <option value="lpf">Low-pass (LPF)</option>
+                    <option value="hpf">High-pass (HPF)</option>
+                    <option value="bpf">Band-pass (BPF)</option>
+                  </select>
+                </div>
+                {(amFilter === "hpf" || amFilter === "bpf") && (
+                  <div className="form-field">
+                    <label>{amFilter === "bpf" ? "filter_lo_hz:" : "cutoff_hz:"}</label>
+                    <input type="number" min="0" max={amRate / 2} step="1000"
+                      value={amLo}
+                      onChange={e => handleChange(["audiomoth", "filter_lo_hz"], e)} />
+                  </div>
+                )}
+                {(amFilter === "lpf" || amFilter === "bpf") && (
+                  <div className="form-field">
+                    <label>{amFilter === "bpf" ? "filter_hi_hz:" : "cutoff_hz:"}</label>
+                    <input type="number" min="0" max={amRate / 2} step="1000"
+                      value={amHi}
+                      onChange={e => handleChange(["audiomoth", "filter_hi_hz"], e)} />
+                  </div>
+                )}
+                <div className="form-field">
+                  <label>low_gain_range:</label>
+                  <input type="checkbox" checked={!!am.low_gain_range}
+                    onChange={e => handleChange(["audiomoth", "low_gain_range"],
+                      { target: { value: e.target.checked } })} />
+                </div>
+                <div className="form-field">
+                  <label>energy_saver_mode:</label>
+                  <input type="checkbox" checked={!!am.energy_saver_mode}
+                    onChange={e => handleChange(["audiomoth", "energy_saver_mode"],
+                      { target: { value: e.target.checked } })} />
+                </div>
+                <div className="form-field">
+                  <label>disable_48hz_filter:</label>
+                  <input type="checkbox" checked={!!am.disable_48hz_filter}
+                    onChange={e => handleChange(["audiomoth", "disable_48hz_filter"],
+                      { target: { value: e.target.checked } })} />
+                </div>
+                <div className="form-field">
+                  <label>led_enabled:</label>
+                  <input type="checkbox" checked={!!am.led_enabled}
+                    onChange={e => handleChange(["audiomoth", "led_enabled"],
+                      { target: { value: e.target.checked } })} />
+                </div>
+                <div className="config-action-buttons" style={{ marginTop: "6px" }}>
+                  <button type="button" className="save-button" onClick={() => {
+                    setAmConfigStatus("sending");
+                    socket.emit("send_command", {
+                      module_id: module.id,
+                      type: "configure_audiomoth",
+                      params: {}
+                    });
+                    setTimeout(() => setAmConfigStatus(null), 3000);
+                  }}>
+                    Configure Device
+                  </button>
+                </div>
+                {amConfigStatus === "sending" && (
+                  <span className="config-sync-badge config-sync-badge--pending">Sending…</span>
+                )}
+              </div>
+            </fieldset>
+          )}
 
           <div className="filesize-preview">
             ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz

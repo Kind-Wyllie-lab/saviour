@@ -75,6 +75,9 @@ SYSTEM_PACKAGES=(
     # mDNS
     avahi-daemon
     iptables-persistent
+    # AudioMoth USB HID support
+    libhidapi-dev
+    libhidapi-hidraw0
 )
 
 # Function to check if a package is installed
@@ -177,10 +180,83 @@ EOF
     echo "  Enable: sudo timedatectl set-ntp true"
 }
 
+install_audiomoth_usb_cmd() {
+    BINARY_PATH="/usr/local/bin/AudioMoth-USB-Microphone"
+    REPO="OpenAcousticDevices/AudioMoth-USB-Microphone-Cmd"
+
+    if [ -f "$BINARY_PATH" ]; then
+        echo "[OK] AudioMoth-USB-Microphone already installed at $BINARY_PATH"
+        return
+    fi
+
+    echo "Installing AudioMoth-USB-Microphone-Cmd..."
+
+    # Try to find a pre-built ARM64 binary in the latest GitHub release
+    RELEASE_JSON=$(curl -sf "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || echo "")
+    DOWNLOAD_URL=""
+    if [ -n "$RELEASE_JSON" ]; then
+        DOWNLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    name = a['name'].lower()
+    if ('arm64' in name or 'aarch64' in name) and 'linux' in name:
+        print(a['browser_download_url'])
+        break
+" 2>/dev/null || echo "")
+    fi
+
+    if [ -n "$DOWNLOAD_URL" ]; then
+        echo "Downloading pre-built ARM64 binary..."
+        sudo curl -sL "$DOWNLOAD_URL" -o "$BINARY_PATH"
+        sudo chmod +x "$BINARY_PATH"
+        echo "[OK] AudioMoth-USB-Microphone installed at $BINARY_PATH"
+        return
+    fi
+
+    # Fall back: clone and build from source
+    echo "No pre-built ARM64 binary found — building from source..."
+    BUILD_DIR=$(mktemp -d)
+    git clone --depth 1 "https://github.com/${REPO}.git" "$BUILD_DIR"
+
+    if [ -f "$BUILD_DIR/Makefile" ]; then
+        make -C "$BUILD_DIR"
+        BUILT_BIN=$(find "$BUILD_DIR" -maxdepth 3 -type f -executable ! -name "*.sh" | head -1)
+        if [ -n "$BUILT_BIN" ]; then
+            sudo cp "$BUILT_BIN" "$BINARY_PATH"
+            sudo chmod +x "$BINARY_PATH"
+            echo "[OK] AudioMoth-USB-Microphone built and installed at $BINARY_PATH"
+        else
+            echo "WARNING: Build produced no binary. Install AudioMoth-USB-Microphone-Cmd manually."
+        fi
+    elif [ -f "$BUILD_DIR/package.json" ]; then
+        # Node.js package — build with npx pkg or similar
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+        cd "$BUILD_DIR"
+        npm install
+        npm run build 2>/dev/null || true
+        BUILT_BIN=$(find "$BUILD_DIR/dist" -maxdepth 1 -type f -executable 2>/dev/null | head -1)
+        if [ -n "$BUILT_BIN" ]; then
+            sudo cp "$BUILT_BIN" "$BINARY_PATH"
+            sudo chmod +x "$BINARY_PATH"
+            echo "[OK] AudioMoth-USB-Microphone installed at $BINARY_PATH"
+        else
+            echo "WARNING: Could not build AudioMoth-USB-Microphone-Cmd. Install manually."
+        fi
+        cd "$TARGET_DIR"
+    else
+        echo "WARNING: Unknown build system. Install AudioMoth-USB-Microphone-Cmd manually."
+    fi
+
+    rm -rf "$BUILD_DIR"
+}
+
 install_system_packages
 configure_ntp_for_ptp
 create_python_environment
 configure_logging
+install_audiomoth_usb_cmd
 
 echo ""
 echo "Setup complete!"

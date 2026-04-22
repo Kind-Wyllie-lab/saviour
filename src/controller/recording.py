@@ -350,6 +350,49 @@ class Recording:
     # Module lifecycle events
     # -----------------------------------------------------------------------
 
+    def add_module_to_session(self, session_name: str, module_id: str) -> dict:
+        """Add a late-joining or replacement module to an active session.
+
+        If the session is in ERROR state (e.g. a module broke), broken modules
+        whose stop_state is "recording" but are not actually recording are marked
+        "stopped" so the monitor can clear the error once the new module starts.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+
+        session = self.sessions[session_name]
+
+        if session.state not in (SessionState.ACTIVE, SessionState.ERROR):
+            return {"success": False, "error": f"Session is not active (state: {session.state})"}
+
+        if module_id in session.modules:
+            return {"success": False, "error": f"{module_id} is already in this session"}
+
+        if module_id in self._busy_modules():
+            return {"success": False, "error": f"{module_id} is already recording in another session"}
+
+        with self._lock:
+            if session.state == SessionState.ERROR:
+                # Mark broken modules as stopped so the monitor can recover the session.
+                for m in session.modules:
+                    if (session.module_stop_states.get(m) == "recording"
+                            and not self.facade.is_module_recording(m)):
+                        session.module_stop_states[m] = "stopped"
+                session.error_message = ""
+                session.state = SessionState.ACTIVE
+
+            session.modules.append(module_id)
+            session.module_stop_states[module_id] = "recording"
+            session.module_export_states[module_id] = "idle"
+
+        params = {"duration": 0, "session_name": session_name}
+        self.facade.send_command(module_id, "start_recording", params)
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(f"Module {module_id} added to session '{session_name}'")
+        return {"success": True}
+
+
     def module_offline(self, module_id: str) -> None:
         """Record that a module went offline; if it was mid-stop, count it as done."""
         session_name = self.get_session_name_from_target(module_id)

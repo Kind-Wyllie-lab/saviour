@@ -269,6 +269,15 @@ class Web(ABC):
             result = self.facade.delete_session(session_name, delete_files)
             if "error" in result:
                 self.socketio.emit("session_error", {"error": result["error"]})
+
+        @self.socketio.on("add_module_to_session")
+        def handle_add_module_to_session(data):
+            session_name = data.get("session_name")
+            module_id = data.get("module_id")
+            self.logger.info(f"Received request to add module '{module_id}' to session '{session_name}'")
+            result = self.facade.add_module_to_session(session_name, module_id)
+            if not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
             
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status

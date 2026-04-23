@@ -72,6 +72,7 @@ class CameraModule(Module):
         self.last_frame_timestamp = None
         self.frame_lock = threading.Lock()
         self._last_stream_encode_time = 0.0
+        self._stream_interval_s = 0.0
 
         # Configure camera
         time.sleep(0.1)
@@ -265,6 +266,10 @@ class CameraModule(Module):
             self.height = self.config.get("camera.height", 720)
             self.lores_width = min(self.width, 640)
             self.lores_height = min(self.height, int(640 * self.height / self.width))
+            # Only throttle the preview stream for high-fps cameras.  When camera
+            # fps is close to _STREAM_FPS the fixed interval skips nearly every other
+            # frame (e.g. 25 fps camera with 41.7 ms interval → ~12.5 fps stream).
+            self._stream_interval_s = 0.0 if self.fps <= 35 else 1.0 / self._STREAM_FPS
 
             # Pick sensor mode from config (clamped to valid range)
             mode_index = self.config.get("camera.sensor_mode_index", 0)
@@ -806,25 +811,24 @@ class CameraModule(Module):
             return False
 
 
-    _STREAM_FPS = 24
-    _STREAM_INTERVAL_S = 1.0 / _STREAM_FPS
+    _STREAM_FPS = 24  # cap for high-fps cameras; low-fps cameras pass every frame
 
     def _stream_post_callback(self, request):
-        """Capture and JPEG-encode one lores frame, throttled to _STREAM_FPS.
+        """Capture and JPEG-encode one lores frame, throttled for high-fps cameras.
 
         The post-callback fires on every camera frame regardless of recording fps.
-        Without throttling, a 100fps recording would trigger 100 JPEG encodes per
-        second — far exceeding what the network stream needs and consuming enough
-        CPU to cause frame drops in the encoder.
+        For cameras running above 35 fps, frames are throttled to _STREAM_FPS to
+        avoid saturating the CPU with JPEG encodes. For cameras at or below 35 fps
+        every frame is passed through so the interval never accidentally skips
+        frames (e.g. a 25 fps camera with a 24 fps throttle loses every other frame).
         """
         try:
             now = time.monotonic()
-            if now - self._last_stream_encode_time < self._STREAM_INTERVAL_S:
+            if now - self._last_stream_encode_time < self._stream_interval_s:
                 return
             self._last_stream_encode_time = now
 
             frame = request.make_array("lores")
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if not ret:
                 return

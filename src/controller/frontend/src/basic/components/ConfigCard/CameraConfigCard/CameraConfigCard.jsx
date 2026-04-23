@@ -249,6 +249,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <label>Mode:</label>
             <select
               value={activePreset}
+              disabled={currentSyncMode === "client"}
               onChange={e => {
                 const preset = presets.find(p => p.key === e.target.value);
                 if (preset) handlePresetSelect(preset);
@@ -280,6 +281,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 <label>FPS:</label>
                 <input type="number" min="1" max={maxFpsAll} step="1"
                   value={currentFps ?? ""}
+                  disabled={currentSyncMode === "client"}
                   onChange={e => handleCustomChange("fps", e.target.value)} />
               </div>
             </>
@@ -419,6 +421,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           {currentSyncMode === "client" && syncServerModule && (
             <div className="sensor-mode-info">
               Syncing to {syncServerModule.name} ({syncServerModule.id}).
+              {serverFps != null && <> FPS locked to {serverFps} fps.</>}
             </div>
           )}
           {fpsMismatch && (

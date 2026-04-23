@@ -412,34 +412,11 @@ class CameraModule(Module):
         self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
         self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
 
-        # Enable sync before starting encoder (section 7.3 of picamera2 manual)
-        sync_mode_str = self.config.get("camera.sync_mode", "none")
-        _sync_enabled = sync_mode_str in ("server", "client")
-        if _sync_enabled:
-            self.main_encoder.sync_enable = True
-
         # Start recording
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
 
         self._open_timestamp_csv(filename)
-
-        if _sync_enabled:
-            sync_obj = self.main_encoder.sync
-            mode_label = sync_mode_str
-            def _wait_for_sync(sync, label):
-                self.logger.info(f"Waiting for frame sync ({label})...")
-                if sync.wait(timeout=10.0):
-                    self.logger.info("Frame sync achieved — recording is synchronised")
-                else:
-                    self.logger.warning(
-                        "Frame sync timed out after 10 s — recording started unsynchronised. "
-                        "Check that all cameras are running and that the server started last."
-                    )
-                    sync.set()  # unblock the encoder so it starts writing frames
-            threading.Thread(
-                target=_wait_for_sync, args=(sync_obj, mode_label), daemon=True, name="frame-sync-wait"
-            ).start()
 
 
     def _get_video_filename(self) -> str:

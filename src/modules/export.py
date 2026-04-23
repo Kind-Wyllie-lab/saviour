@@ -223,12 +223,15 @@ class Export:
 
 
     def add_session_file(self, filename: str) -> bool:
-        """Take a filename (abspath) and stage for export."""
+        """Register a file as part of the current session.
+
+        The file does not need to exist yet — video files are created by the
+        encoder on the first frame, so they are not on disk at registration time.
+        Existence is checked at export time by stage_file_for_export.
+        """
         self.logger.info(f"Adding {filename} to session files")
-        if not os.path.isfile(filename): # Check file exists
-            return False
-        abspath = os.path.abspath(filename) # Make path absolute
-        self.session_files.append(abspath) # Add to staged files
+        abspath = os.path.abspath(filename)
+        self.session_files.append(abspath)
         self.logger.info(f"Session files: {self.session_files}")
         return True
 

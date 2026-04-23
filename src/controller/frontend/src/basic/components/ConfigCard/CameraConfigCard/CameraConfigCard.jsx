@@ -5,7 +5,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import { useExportSync } from "/src/hooks/useExportSync";
+import ExportSyncButton from "../ExportSyncButton";
 
 // Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
 const HQ_PRESETS = [
@@ -58,7 +58,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
-  const { syncStatus, syncExport } = useExportSync(module.id);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -464,7 +463,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
 
           {/* ── Remaining config fields (non-camera sections) ── */}
           <form>
-            <ConfigFields data={configFieldsData} handleChange={handleChange} />
+            <ConfigFields data={configFieldsData} handleChange={handleChange}
+              sectionExtras={{ export: <ExportSyncButton moduleId={id} /> }} />
           </form>
 
           {/* ── Copy section buttons ── */}
@@ -533,29 +533,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
-
-          {formData?.export !== undefined && (
-            <div className="config-action-buttons">
-              <button type="button" className="save-button"
-                onClick={syncExport}
-                disabled={syncStatus === "syncing"}>
-                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
-              </button>
-              {syncStatus && syncStatus !== "syncing" && (
-                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         <div className="livestream-wrapper">
           <LivestreamCard module={module} />
-          <button type="button"
-            onClick={() => socket.emit("send_command", { module_id: module.id, type: "get_sensor_modes", params: {} })}>
-            Refresh Sensor Modes
-          </button>
         </div>
       </div>
 

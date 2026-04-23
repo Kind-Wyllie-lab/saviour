@@ -436,6 +436,7 @@ class CameraModule(Module):
                         "Frame sync timed out after 10 s — recording started unsynchronised. "
                         "Check that all cameras are running and that the server started last."
                     )
+                    sync.set()  # unblock the encoder so it starts writing frames
             threading.Thread(
                 target=_wait_for_sync, args=(sync_obj, mode_label), daemon=True, name="frame-sync-wait"
             ).start()

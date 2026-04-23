@@ -43,6 +43,7 @@ class Web(ABC):
 
         # Default experiment metadata
         self.experiment_metadata = {
+            'experimenter': '',
             'experiment': '',
             'rat_id': '',
             'strain': '',
@@ -88,6 +89,27 @@ class Web(ABC):
             name = "NO-NAME"
 
         return name
+
+
+    def _write_session_metadata(self, session_name: str, target: str) -> None:
+        """Write a session_metadata.json to the share folder for the session."""
+        from datetime import datetime, timezone
+        share_dir = self.habitat_share_dir / session_name
+        try:
+            share_dir.mkdir(parents=True, exist_ok=True)
+            # chmod so Samba clients (saviour_module) can create subdirectories inside
+            share_dir.chmod(0o777)
+            metadata = {
+                "session_name": session_name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "target": target,
+                **self.experiment_metadata,
+            }
+            with open(share_dir / "session_metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2)
+            self.logger.info(f"Wrote session_metadata.json for '{session_name}'")
+        except Exception as e:
+            self.logger.error(f"Failed to write session_metadata.json for '{session_name}': {e}")
 
 
     def register_additional_socketio_events(self, handler_func):
@@ -241,6 +263,8 @@ class Web(ABC):
             result = self.facade.create_session(session_name, target)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                self._write_session_metadata(result["session_name"], target)
 
 
         @self.socketio.on("create_scheduled_session")
@@ -253,6 +277,8 @@ class Web(ABC):
             result = self.facade.create_scheduled_session(session_name, target, start_time, end_time)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                self._write_session_metadata(result["session_name"], target)
 
 
         @self.socketio.on("stop_session")
@@ -348,18 +374,9 @@ class Web(ABC):
         def handle_update_experiment_metadata(data):
             """Handle experiment metadata updates from frontend"""
             # Update stored metadata
-            if 'experiment' in data:
-                self.experiment_metadata['experiment'] = data['experiment']
-            if 'rat_id' in data:
-                self.experiment_metadata['rat_id'] = data['rat_id']
-            if 'strain' in data:
-                self.experiment_metadata['strain'] = data['strain']
-            if 'batch' in data:
-                self.experiment_metadata['batch'] = data['batch']
-            if 'stage' in data:
-                self.experiment_metadata['stage'] = data['stage']
-            if 'trial' in data:
-                self.experiment_metadata['trial'] = data['trial']
+            for key in ('experimenter', 'experiment', 'rat_id', 'strain', 'batch', 'stage', 'trial'):
+                if key in data:
+                    self.experiment_metadata[key] = data[key]
 
             # Rebuild experiment name
             self.current_experiment_name = self._generate_experiment_name()
@@ -619,6 +636,9 @@ class Web(ABC):
                 health['version'] = result.stdout.strip() if result.returncode == 0 else None
             except Exception:
                 health['version'] = None
+            # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
+            from datetime import datetime, timezone as _tz
+            health['controller_time'] = datetime.now(_tz.utc).isoformat()
             self.socketio.emit("controller_health_response", health)
 
 

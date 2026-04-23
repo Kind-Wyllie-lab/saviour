@@ -103,17 +103,23 @@ class Export:
         return None
 
 
-    def export_staged(self, export_path: str = None) -> bool:
+    def export_staged(self, export_path: str = None) -> dict:
         """Export all files in to_export/, routing each file to its correct
         session folder on the NAS (derived from the filename prefix).
 
         Returns:
-            bool: True if all files were exported without error
+            dict mapping session name → True (success) / False (failure).
+            The triggered session (first component of export_path) is always
+            present in the result so callers can check it directly.
         """
         all_files = os.listdir(self.to_export_folder)
         self.staged_for_export = all_files
         self.logger.info(f"Attempting to export {all_files}")
         self.exporting = True
+
+        # Derive the session name that triggered this export (for result lookup)
+        triggered_session = export_path.split('/')[0] if export_path and '/' in export_path else export_path
+
         try:
             # Group files by the session they belong to
             session_file_map: dict[str, list[str]] = {}
@@ -124,16 +130,17 @@ class Export:
             source_folder = self.to_export_folder
             exported_count = 0
             exported: list[str] = []
-            all_ok = True
+            session_results: dict[str, bool] = {}
 
             for session, files in session_file_map.items():
                 session_export_path = self._setup_export(session)
                 if not session_export_path:
                     self.logger.error(f"Could not set up export path for session '{session}'; skipping {len(files)} file(s)")
-                    all_ok = False
+                    session_results[session] = False
                     continue
 
                 self.logger.info(f"Exporting {len(files)} file(s) to {session_export_path}")
+                session_ok = True
 
                 for filename in files:
                     try:
@@ -159,7 +166,9 @@ class Export:
 
                     except Exception as e:
                         self.logger.error(f"Failed to export {filename}: {e}")
-                        all_ok = False
+                        session_ok = False
+
+                session_results[session] = session_ok
 
                 # Create export manifest per session if enabled
                 if self.config.get("export.manifest_enabled", False):
@@ -175,12 +184,17 @@ class Export:
 
             self.logger.info(f"Successfully exported {exported_count} file(s) across {len(session_file_map)} session(s)")
             self.exporting = False
-            return all_ok
+
+            # Ensure triggered session always has an entry (handles empty to_export case)
+            if triggered_session and triggered_session not in session_results:
+                session_results[triggered_session] = True
+
+            return session_results
 
         except Exception as e:
             self.logger.error(f"Export error: {e}")
             self.exporting = False
-            return False
+            return {triggered_session: False} if triggered_session else {}
 
 
     def _delete_local_files(self, files: list) -> None:

@@ -417,18 +417,23 @@ class CameraModule(Module):
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
 
-        if _sync_enabled:
-            self.logger.info(f"Waiting for frame sync ({sync_mode_str})...")
-            synced = self.main_encoder.sync.wait(timeout=10.0)
-            if synced:
-                self.logger.info("Frame sync achieved — recording is synchronised")
-            else:
-                self.logger.warning(
-                    "Frame sync timed out after 10 s — recording started unsynchronised. "
-                    "Check that all cameras are running and that the server started last."
-                )
-
         self._open_timestamp_csv(filename)
+
+        if _sync_enabled:
+            sync_obj = self.main_encoder.sync
+            mode_label = sync_mode_str
+            def _wait_for_sync(sync, label):
+                self.logger.info(f"Waiting for frame sync ({label})...")
+                if sync.wait(timeout=10.0):
+                    self.logger.info("Frame sync achieved — recording is synchronised")
+                else:
+                    self.logger.warning(
+                        "Frame sync timed out after 10 s — recording started unsynchronised. "
+                        "Check that all cameras are running and that the server started last."
+                    )
+            threading.Thread(
+                target=_wait_for_sync, args=(sync_obj, mode_label), daemon=True, name="frame-sync-wait"
+            ).start()
 
 
     def _get_video_filename(self) -> str:

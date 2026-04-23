@@ -100,9 +100,12 @@ class Config:
         self.logger.info(f"Loading module config keys: {self.module_config_keys}")
 
         if os.path.exists(self.active_config_path):
-            # Active config exists: fill missing keys only
-            self.logger.info("Active config present — filling missing keys from module defaults")
+            # Active config exists: fill missing user-settable keys only, but always
+            # re-apply _-prefixed internal defaults (they are developer-controlled and
+            # must not be frozen at whatever value was in a stale active_config).
+            self.logger.info("Active config present — filling missing keys; re-applying internal defaults")
             self._merge_defaults(self.config, module_config)
+            self._merge_internal_defaults(self.config, module_config)
         else:
             # First-time run: perform full merge and create active config
             self.logger.info("No active config — performing full merge with module defaults")
@@ -134,6 +137,22 @@ class Config:
             self.logger.error(f"Failed to load {path}: {e}")
             return {}
 
+
+    def _merge_internal_defaults(self, target: Dict[str, Any], source: Dict[str, Any]) -> None:
+        """Recursively overwrite any _-prefixed keys in target with values from source.
+
+        _-prefixed keys are internal developer defaults (not user-settable). They must
+        always reflect the module config, so they are re-applied on every load even when
+        an active_config already exists.
+        """
+        for key, val in source.items():
+            if isinstance(val, dict):
+                if key in target and isinstance(target[key], dict):
+                    self._merge_internal_defaults(target[key], val)
+                else:
+                    target[key] = val
+            elif key.startswith("_"):
+                target[key] = val
 
     def _merge_defaults(self, target: Dict[str, Any], defaults: Dict[str, Any]) -> None:
         """

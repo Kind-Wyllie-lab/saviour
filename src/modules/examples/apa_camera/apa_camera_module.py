@@ -292,13 +292,9 @@ class APACameraModule(Module):
             self.width  = self.config.get("camera.width", 1080)
             self.height = self.config.get("camera.height", 1080)
 
-            # lores is used for the MJPEG preview stream
-            if self.width > 2000 or self.height > 2000:
-                self.lores_width  = int(self.width / 1.5)
-                self.lores_height = int(self.height / 1.5)
-            else:
-                self.lores_width  = self.width
-                self.lores_height = self.height
+            # lores is used for the MJPEG preview stream — cap at 640px wide
+            self.lores_width  = min(self.width, 640)
+            self.lores_height = min(self.height, int(640 * self.height / self.width))
 
             # APA uses sensor mode 0 (highest framerate)
             mode_index = max(0, min(
@@ -624,6 +620,7 @@ class APACameraModule(Module):
                 return
             self._last_stream_encode_time = now
             frame = req.make_array("lores")
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 with self.frame_lock:

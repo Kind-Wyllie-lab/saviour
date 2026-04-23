@@ -263,12 +263,8 @@ class CameraModule(Module):
             self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
             self.width = self.config.get("camera.width", 1280)
             self.height = self.config.get("camera.height", 720)
-            if self.width > 2000 or self.height > 2000:
-                self.lores_width = int(self.width/1.5)
-                self.lores_height = int(self.height/1.5)
-            else:
-                self.lores_width = self.width
-                self.lores_height = self.height
+            self.lores_width = min(self.width, 640)
+            self.lores_height = min(self.height, int(640 * self.height / self.width))
 
             # Pick sensor mode from config (clamped to valid range)
             mode_index = self.config.get("camera.sensor_mode_index", 0)
@@ -823,6 +819,7 @@ class CameraModule(Module):
             self._last_stream_encode_time = now
 
             frame = request.make_array("lores")
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if not ret:
                 return

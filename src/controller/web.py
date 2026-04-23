@@ -403,6 +403,49 @@ class Web(ABC):
             module_id = data['id']
             config = data.get("config", {})
             self.logger.info(f"Received request to save config to module {module_id} with data {config}")
+
+            camera_section = config.get("camera", {})
+            new_sync_mode = camera_section.get("sync_mode")
+
+            # When configuring a camera as a sync client, pin its fps and sensor_mode_index
+            # to match the sync server so frame synchronisation can work correctly.
+            if new_sync_mode == "client":
+                server_params = self.facade.get_sync_server_camera_params()
+                if server_params:
+                    camera_section["fps"] = server_params["fps"]
+                    camera_section["sensor_mode_index"] = server_params["sensor_mode_index"]
+                    config["camera"] = camera_section
+                    self.logger.info(
+                        f"Pinned {module_id} to sync server {server_params['module_id']}: "
+                        f"fps={server_params['fps']} sensor_mode_index={server_params['sensor_mode_index']}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"sync_mode=client set for {module_id} but no sync server found — "
+                        "fps/sensor_mode_index not auto-pinned"
+                    )
+
+            # When saving the sync server, propagate its fps and sensor_mode_index to all clients.
+            elif new_sync_mode == "server":
+                fps = camera_section.get("fps")
+                sensor_mode_index = camera_section.get("sensor_mode_index")
+                if fps is not None or sensor_mode_index is not None:
+                    client_ids = self.facade.get_sync_client_camera_ids()
+                    all_configs = self.facade.get_module_configs()
+                    for client_id in client_ids:
+                        client_true = dict((all_configs.get(client_id) or {}).get("true_config") or {})
+                        client_camera = dict(client_true.get("camera", {}))
+                        if fps is not None:
+                            client_camera["fps"] = fps
+                        if sensor_mode_index is not None:
+                            client_camera["sensor_mode_index"] = sensor_mode_index
+                        client_true["camera"] = client_camera
+                        self.logger.info(
+                            f"Propagating server fps/sensor_mode_index to sync client {client_id}"
+                        )
+                        self.facade.set_target_module_config(client_id, client_true)
+                        self.facade.send_command(client_id, "set_config", client_true)
+
             # Record intent on controller before sending - this sets status to PENDING
             # and stores the target so we can verify the round-trip when the module responds
             self.facade.set_target_module_config(module_id, config)

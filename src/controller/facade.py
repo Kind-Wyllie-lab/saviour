@@ -186,6 +186,34 @@ class ControllerFacade():
         )
 
 
+    def get_sync_server_camera_params(self) -> Optional[dict]:
+        """Return fps and sensor_mode_index of the camera with sync_mode='server', or None."""
+        modules = self.controller.modules
+        for mid, state in modules._config_states.items():
+            module = modules._modules.get(mid)
+            if not module or "camera" not in module.type:
+                continue
+            camera = (state.true_config or {}).get("camera", {})
+            if camera.get("sync_mode") == "server":
+                fps = camera.get("fps")
+                sensor_mode_index = camera.get("sensor_mode_index")
+                if fps is not None and sensor_mode_index is not None:
+                    return {"fps": fps, "sensor_mode_index": sensor_mode_index, "module_id": mid}
+        return None
+
+    def get_sync_client_camera_ids(self) -> list:
+        """Return module IDs of all cameras with sync_mode='client'."""
+        modules = self.controller.modules
+        clients = []
+        for mid, state in modules._config_states.items():
+            module = modules._modules.get(mid)
+            if not module or "camera" not in module.type:
+                continue
+            camera = (state.true_config or {}).get("camera", {})
+            if camera.get("sync_mode") == "client":
+                clients.append(mid)
+        return clients
+
     def sync_export_to_module(self, module_id: str) -> dict:
         """Push this controller's Samba credentials into a single module's export config.
 

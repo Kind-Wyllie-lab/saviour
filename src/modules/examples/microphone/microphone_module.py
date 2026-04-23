@@ -226,14 +226,15 @@ class AudiomothModule(Module):
 
     def _start_next_recording_segment(self) -> None:
         """Stage current files for export and start new recording segment for all audiomoths."""
-        # Stage current segment files for export
-        for filename in self.current_recording_files.values():
-            self.facade.stage_file_for_export(filename)
-
-        # Signal current threads to stop after their current audio block
-        self._segment_stop_event.set()
         for thread in self.audiomoth_threads:
             thread.join(timeout=10)
+
+        # Stage completed segment files (audio + timestamp sidecars) for export
+        for filename in self.current_recording_files.values():
+            self.facade.stage_file_for_export(filename)
+            timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
+            if os.path.isfile(timestamps_filename):
+                self.facade.stage_file_for_export(timestamps_filename)
 
         # Start new segment
         self._segment_stop_event.clear()
@@ -302,14 +303,17 @@ class AudiomothModule(Module):
             self.is_recording = False
             self._recording_stop_event.set()
 
-            # Stage the current segment's files for export
-            for filename in self.current_recording_files.values():
-                self.facade.stage_file_for_export(filename)
-
-            # Wait for recording threads to finish their current block
+            # Wait for recording threads to finish writing before staging files
             for thread in self.audiomoth_threads:
                 thread.join(timeout=10)
             self.audiomoth_threads = []
+
+            # Stage audio files and their timestamp sidecars for export
+            for filename in self.current_recording_files.values():
+                self.facade.stage_file_for_export(filename)
+                timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
+                if os.path.isfile(timestamps_filename):
+                    self.facade.stage_file_for_export(timestamps_filename)
 
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time

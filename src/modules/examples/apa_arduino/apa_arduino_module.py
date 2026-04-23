@@ -56,6 +56,7 @@ class APAModule(Module):
 
         # Recording-specific variables
         self._shock_file_handle = None
+        self.current_shock_events_filename = None
         self._time_series_file_handle = None
         self.recording_shocks: bool = False
         self.recording_start_time: int = None
@@ -375,6 +376,7 @@ class APAModule(Module):
 
     def _create_shock_event_file(self) ->  bool:
         filename = f"{self.current_filename_prefix}_shock_events.csv"
+        self.current_shock_events_filename = filename
         self.logger.info(f"Creating shock events file {filename}")
         self.add_session_file(filename)
         try:
@@ -392,10 +394,13 @@ class APAModule(Module):
 
 
     def _close_shock_event_file(self) -> bool:
-        """Close shock eventsf file"""
+        """Close shock events file"""
         try:
-            self._shock_file_handle = None
-            self.logger.info(f"Closed shock events file")
+            if self._shock_file_handle is not None:
+                self._shock_file_handle.flush()
+                self._shock_file_handle.close()
+                self._shock_file_handle = None
+            self.logger.info("Closed shock events file")
         except Exception as e:
             self.logger.warning(f"Error closing shock events file: {e}")
 
@@ -409,8 +414,9 @@ class APAModule(Module):
             # Set recording flag to false
             self.recording_shocks = False
 
-            # self.add_session_file(events_file)
             self._close_shock_event_file()
+            if self.current_shock_events_filename:
+                self.facade.stage_file_for_export(self.current_shock_events_filename)
             
             # Calculate duration
             if self.recording_start_time is not None:

@@ -149,10 +149,13 @@ class SoundModule(Module):
     def _close_sound_event_file(self) -> bool:
         """Close sound events file"""
         try:
-            self._sound_file_handle = None
-            self.logger.info(f"Closed shock events file")
+            if self._sound_file_handle is not None:
+                self._sound_file_handle.flush()
+                self._sound_file_handle.close()
+                self._sound_file_handle = None
+            self.logger.info("Closed sound events file")
         except Exception as e:
-            self.logger.warning(f"Error closing shock events file: {e}")
+            self.logger.warning(f"Error closing sound events file: {e}")
 
 
     def _start_new_recording(self):
@@ -162,26 +165,15 @@ class SoundModule(Module):
     
 
     def _start_next_recording_segment(self):
-        # Segment based recording - close file, open new one
-        # Stage current file for export
-        self.api.stage_file_for_export(self.current_sound_event_file)
-        self.api.add_session_file(self.current_sound_event_file)
-
-        # Close current file
         self._close_sound_event_file()
-
-        # Create new file
+        self.api.stage_file_for_export(self.current_sound_event_file)
         self._create_sound_event_file()
         return True
 
 
     def _stop_recording(self):
-        # Stage current file for export
-        self.api.stage_file_for_export(self.current_sound_event_file)
-        self.api.add_session_file(self.current_sound_event_file)
-
-        # Close current file
         self._close_sound_event_file()
+        self.api.stage_file_for_export(self.current_sound_event_file)
         return True
 
 

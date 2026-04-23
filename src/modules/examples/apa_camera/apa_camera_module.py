@@ -140,6 +140,7 @@ class APACameraModule(Module):
         self.last_frame_timestamp = None
         self.frame_lock = threading.Lock()
         self._last_stream_encode_time = 0.0
+        self._stream_interval_s = 0.0
         self.register_routes()
 
         # ── Configure camera ────────────────────────────────────────────────
@@ -295,6 +296,7 @@ class APACameraModule(Module):
             # lores is used for the MJPEG preview stream — cap at 640px wide
             self.lores_width  = min(self.width, 640)
             self.lores_height = min(self.height, int(640 * self.height / self.width))
+            self._stream_interval_s = 0.0 if self.fps <= 35 else 1.0 / self._STREAM_FPS
 
             # APA uses sensor mode 0 (highest framerate)
             mode_index = max(0, min(
@@ -610,17 +612,15 @@ class APACameraModule(Module):
             self.logger.error(f"Error in _apa_frame_precallback: {e}")
 
 
-    _STREAM_FPS = 24
-    _STREAM_INTERVAL_S = 1.0 / _STREAM_FPS
+    _STREAM_FPS = 24  # cap for high-fps cameras; low-fps cameras pass every frame
 
     def _stream_post_callback(self, req):
         try:
             now = time.monotonic()
-            if now - self._last_stream_encode_time < self._STREAM_INTERVAL_S:
+            if now - self._last_stream_encode_time < self._stream_interval_s:
                 return
             self._last_stream_encode_time = now
             frame = req.make_array("lores")
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 with self.frame_lock:

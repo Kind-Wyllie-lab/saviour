@@ -686,7 +686,7 @@ class Module(ABC):
 
 
     @command()
-    def set_export_config(self, share_ip: str, share_username: str, share_password: str) -> dict:
+    def set_export_config(self, share_ip: str, share_username: str, share_password: str, share_path: str = "") -> dict:
         """
         Update the export (Samba) credentials sent by the controller on discovery.
         Writes to base_config.json so the values survive a config reset, and also
@@ -696,7 +696,7 @@ class Module(ABC):
         if not self.config.get("export.use_controller_export", True):
             self.logger.info("set_export_config skipped — use_controller_export is false")
             return {"result": "skipped"}
-        self.logger.info(f"set_export_config called — updating share_ip to {share_ip}")
+        self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
         try:
             # Persist to base_config.json so a reset_config doesn't revert the credentials
             with open(self.config.base_config_path) as f:
@@ -705,6 +705,8 @@ class Module(ABC):
             export["share_ip"] = share_ip
             export["share_username"] = share_username
             export["share_password"] = share_password
+            if share_path:
+                export["share_path"] = share_path
             with open(self.config.base_config_path, "w") as f:
                 json.dump(base, f, indent=2)
                 f.write("\n")
@@ -713,6 +715,8 @@ class Module(ABC):
             self.config.set("export.share_ip", share_ip)
             self.config.set("export.share_username", share_username)
             self.config.set("export.share_password", share_password)
+            if share_path:
+                self.config.set("export.share_path", share_path)
 
             self.logger.info("Export config updated and persisted to base_config.json")
             return {"result": "success"}

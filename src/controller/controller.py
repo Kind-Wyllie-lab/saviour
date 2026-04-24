@@ -509,11 +509,24 @@ class Controller(ABC):
 
     def get_export_credentials(self) -> dict:
         """
-        Read the Samba credentials written by switch_role.sh and return them
-        alongside this controller's IP — ready to push to modules as
-        set_export_config params.
-        Returns an empty dict if the credentials file is missing.
+        Build the Samba credentials to push to modules.
+
+        If the controller config contains export.share_ip (e.g. a separate NAS),
+        that address and share_path are used.  Otherwise falls back to reading
+        /etc/saviour/samba_credentials and using the controller's own IP.
+        Returns an empty dict if neither source yields a usable address.
         """
+        # Prefer an explicitly configured NAS target
+        nas_ip = self.config.get("export.share_ip", "")
+        if nas_ip:
+            return {
+                "share_ip": nas_ip,
+                "share_path": self.config.get("export.share_path", "controller_share"),
+                "share_username": self.config.get("export.share_username", ""),
+                "share_password": self.config.get("export.share_password", ""),
+            }
+
+        # Fall back to controller-as-share using /etc/saviour/samba_credentials
         creds_path = "/etc/saviour/samba_credentials"
         try:
             username = ""
@@ -527,6 +540,7 @@ class Controller(ABC):
                         password = line.split("=", 1)[1]
             return {
                 "share_ip": self.network.ip,
+                "share_path": self.config.get("samba.share_name", "controller_share"),
                 "share_username": username,
                 "share_password": password,
             }

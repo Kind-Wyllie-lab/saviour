@@ -222,13 +222,16 @@ class Module(ABC):
             # Convert SSH remote URL to HTTPS so the service user (no SSH key)
             # can pull without auth. The on-disk remote is unchanged.
             import re
+            import threading
             url_result = subprocess.run(
-                ["git", "-C", INSTALL_DIR, "remote", "get-url", "origin"],
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "remote", "get-url", "origin"],
                 capture_output=True, text=True
             )
             remote_url = url_result.stdout.strip()
             if url_result.returncode != 0 or not remote_url:
-                return {"result": "error", "output": "No git remote 'origin' configured — run: git -C /usr/local/src/saviour remote add origin <url>"}
+                err = url_result.stderr.strip() or "No git remote 'origin' configured"
+                return {"result": "error", "output": err}
             https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
                                r'https://\1/\2.git', remote_url)
             result = subprocess.run(
@@ -239,7 +242,14 @@ class Module(ABC):
             if result.returncode == 0:
                 output = result.stdout.strip() or "Already up to date."
                 self.logger.info(f"SAVIOUR update successful: {output}")
-                return {"result": "success", "output": output}
+                # Restart the service after a short delay so this response is delivered first
+                def _restart_service():
+                    import time as _time
+                    _time.sleep(3)
+                    subprocess.run(["sudo", "systemctl", "restart", "saviour.service"],
+                                   capture_output=True)
+                threading.Thread(target=_restart_service, daemon=True).start()
+                return {"result": "success", "output": f"{output} (restarting…)"}
             else:
                 output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
                 self.logger.error(f"SAVIOUR update failed: {output}")

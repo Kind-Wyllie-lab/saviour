@@ -43,6 +43,7 @@ class Web(ABC):
 
         # Default experiment metadata
         self.experiment_metadata = {
+            'experimenter': '',
             'experiment': '',
             'rat_id': '',
             'strain': '',
@@ -88,6 +89,27 @@ class Web(ABC):
             name = "NO-NAME"
 
         return name
+
+
+    def _write_session_metadata(self, session_name: str, target: str) -> None:
+        """Write a session_metadata.json to the share folder for the session."""
+        from datetime import datetime, timezone
+        share_dir = self.habitat_share_dir / session_name
+        try:
+            share_dir.mkdir(parents=True, exist_ok=True)
+            # chmod so Samba clients (saviour_module) can create subdirectories inside
+            share_dir.chmod(0o777)
+            metadata = {
+                "session_name": session_name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "target": target,
+                **self.experiment_metadata,
+            }
+            with open(share_dir / "session_metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2)
+            self.logger.info(f"Wrote session_metadata.json for '{session_name}'")
+        except Exception as e:
+            self.logger.error(f"Failed to write session_metadata.json for '{session_name}': {e}")
 
 
     def register_additional_socketio_events(self, handler_func):
@@ -241,6 +263,8 @@ class Web(ABC):
             result = self.facade.create_session(session_name, target)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                self._write_session_metadata(result["session_name"], target)
 
 
         @self.socketio.on("create_scheduled_session")
@@ -253,6 +277,8 @@ class Web(ABC):
             result = self.facade.create_scheduled_session(session_name, target, start_time, end_time)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                self._write_session_metadata(result["session_name"], target)
 
 
         @self.socketio.on("stop_session")
@@ -269,6 +295,15 @@ class Web(ABC):
             result = self.facade.delete_session(session_name, delete_files)
             if "error" in result:
                 self.socketio.emit("session_error", {"error": result["error"]})
+
+        @self.socketio.on("add_module_to_session")
+        def handle_add_module_to_session(data):
+            session_name = data.get("session_name")
+            module_id = data.get("module_id")
+            self.logger.info(f"Received request to add module '{module_id}' to session '{session_name}'")
+            result = self.facade.add_module_to_session(session_name, module_id)
+            if not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
             
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
@@ -339,18 +374,9 @@ class Web(ABC):
         def handle_update_experiment_metadata(data):
             """Handle experiment metadata updates from frontend"""
             # Update stored metadata
-            if 'experiment' in data:
-                self.experiment_metadata['experiment'] = data['experiment']
-            if 'rat_id' in data:
-                self.experiment_metadata['rat_id'] = data['rat_id']
-            if 'strain' in data:
-                self.experiment_metadata['strain'] = data['strain']
-            if 'batch' in data:
-                self.experiment_metadata['batch'] = data['batch']
-            if 'stage' in data:
-                self.experiment_metadata['stage'] = data['stage']
-            if 'trial' in data:
-                self.experiment_metadata['trial'] = data['trial']
+            for key in ('experimenter', 'experiment', 'rat_id', 'strain', 'batch', 'stage', 'trial'):
+                if key in data:
+                    self.experiment_metadata[key] = data[key]
 
             # Rebuild experiment name
             self.current_experiment_name = self._generate_experiment_name()
@@ -394,6 +420,49 @@ class Web(ABC):
             module_id = data['id']
             config = data.get("config", {})
             self.logger.info(f"Received request to save config to module {module_id} with data {config}")
+
+            camera_section = config.get("camera", {})
+            new_sync_mode = camera_section.get("sync_mode")
+
+            # When configuring a camera as a sync client, pin its fps and sensor_mode_index
+            # to match the sync server so frame synchronisation can work correctly.
+            if new_sync_mode == "client":
+                server_params = self.facade.get_sync_server_camera_params()
+                if server_params:
+                    camera_section["fps"] = server_params["fps"]
+                    camera_section["sensor_mode_index"] = server_params["sensor_mode_index"]
+                    config["camera"] = camera_section
+                    self.logger.info(
+                        f"Pinned {module_id} to sync server {server_params['module_id']}: "
+                        f"fps={server_params['fps']} sensor_mode_index={server_params['sensor_mode_index']}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"sync_mode=client set for {module_id} but no sync server found — "
+                        "fps/sensor_mode_index not auto-pinned"
+                    )
+
+            # When saving the sync server, propagate its fps and sensor_mode_index to all clients.
+            elif new_sync_mode == "server":
+                fps = camera_section.get("fps")
+                sensor_mode_index = camera_section.get("sensor_mode_index")
+                if fps is not None or sensor_mode_index is not None:
+                    client_ids = self.facade.get_sync_client_camera_ids()
+                    all_configs = self.facade.get_module_configs()
+                    for client_id in client_ids:
+                        client_true = dict((all_configs.get(client_id) or {}).get("true_config") or {})
+                        client_camera = dict(client_true.get("camera", {}))
+                        if fps is not None:
+                            client_camera["fps"] = fps
+                        if sensor_mode_index is not None:
+                            client_camera["sensor_mode_index"] = sensor_mode_index
+                        client_true["camera"] = client_camera
+                        self.logger.info(
+                            f"Propagating server fps/sensor_mode_index to sync client {client_id}"
+                        )
+                        self.facade.set_target_module_config(client_id, client_true)
+                        self.facade.send_command(client_id, "set_config", client_true)
+
             # Record intent on controller before sending - this sets status to PENDING
             # and stores the target so we can verify the round-trip when the module responds
             self.facade.set_target_module_config(module_id, config)
@@ -567,6 +636,9 @@ class Web(ABC):
                 health['version'] = result.stdout.strip() if result.returncode == 0 else None
             except Exception:
                 health['version'] = None
+            # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
+            from datetime import datetime, timezone as _tz
+            health['controller_time'] = datetime.now(_tz.utc).isoformat()
             self.socketio.emit("controller_health_response", health)
 
 
@@ -624,6 +696,30 @@ class Web(ABC):
                 time.sleep(3)
                 subprocess.Popen(['sudo', 'reboot'])
             threading.Thread(target=_reboot, daemon=True).start()
+
+
+        @self.socketio.on("set_controller_time")
+        def handle_set_controller_time(data=None):
+            from datetime import datetime, timezone as _tz
+            self.logger.info("Set controller time requested")
+            try:
+                iso = (data or {}).get("iso", "")
+                dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(_tz.utc)
+                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                result = subprocess.run(
+                    ["timedatectl", "set-time", time_str],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    self.logger.info(f"Controller time set to {time_str} UTC")
+                    self.socketio.emit("set_time_result", {"success": True})
+                else:
+                    err = result.stderr.strip() or result.stdout.strip() or "timedatectl returned non-zero"
+                    self.logger.error(f"timedatectl set-time failed: {err}")
+                    self.socketio.emit("set_time_result", {"success": False, "error": err})
+            except Exception as e:
+                self.logger.error(f"set_controller_time error: {e}")
+                self.socketio.emit("set_time_result", {"success": False, "error": str(e)})
 
 
         """Viewing exported recordings on the share"""

@@ -340,9 +340,9 @@ class TTLModule(Module):
             self.recording_stop_time = time.time()
             self.is_recording = False
 
-            # self.add_session_file(events_file)
             self._close_ttl_event_file(filename=self.current_ttl_events_filename)
-            
+            self.facade.stage_file_for_export(self.current_ttl_events_filename)
+
             if self.recording.recording_start_time is None:
                 self.logger.warning("recording_start_time was None at stop — module may not have started recording")
 

@@ -7,7 +7,7 @@
         "fps": 25,
         "overlay_timestamp": true,
         "text_size": "medium",
-        "gain": 10,
+        "gain": 1,
         "manual_exposure": false,
         "exposure_time": 10000,
         "brightness": 0,

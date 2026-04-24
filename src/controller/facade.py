@@ -137,6 +137,9 @@ class ControllerFacade():
     def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
         return self.controller.recording.delete_session(session_name, delete_files)
 
+    def add_module_to_session(self, session_name: str, module_id: str) -> dict:
+        return self.controller.recording.add_module_to_session(session_name, module_id)
+
     def module_stopped(self, module_id: str) -> None:
         self.controller.recording.module_stopped(module_id)
 
@@ -182,6 +185,34 @@ class ControllerFacade():
             f"apply_section_to_type: sent '{section}' to {len(targets)} {label} module(s)"
         )
 
+
+    def get_sync_server_camera_params(self) -> Optional[dict]:
+        """Return fps and sensor_mode_index of the camera with sync_mode='server', or None."""
+        modules = self.controller.modules
+        for mid, state in modules._config_states.items():
+            module = modules._modules.get(mid)
+            if not module or "camera" not in module.type:
+                continue
+            camera = (state.true_config or {}).get("camera", {})
+            if camera.get("sync_mode") == "server":
+                fps = camera.get("fps")
+                sensor_mode_index = camera.get("sensor_mode_index")
+                if fps is not None and sensor_mode_index is not None:
+                    return {"fps": fps, "sensor_mode_index": sensor_mode_index, "module_id": mid}
+        return None
+
+    def get_sync_client_camera_ids(self) -> list:
+        """Return module IDs of all cameras with sync_mode='client'."""
+        modules = self.controller.modules
+        clients = []
+        for mid, state in modules._config_states.items():
+            module = modules._modules.get(mid)
+            if not module or "camera" not in module.type:
+                continue
+            camera = (state.true_config or {}).get("camera", {})
+            if camera.get("sync_mode") == "client":
+                clients.append(mid)
+        return clients
 
     def sync_export_to_module(self, module_id: str) -> dict:
         """Push this controller's Samba credentials into a single module's export config.
@@ -249,3 +280,11 @@ class ControllerFacade():
     def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
         self.controller.modules.module_ip_changed(module_id, new_module_ip)
 
+
+
+    """Notifications"""
+    def send_alert(self, key: str, title: str, message: str, severity: str = "error") -> None:
+        self.controller.notifier.send_alert(key, title, message, severity)
+
+    def check_internet(self) -> bool:
+        return self.controller.notifier.check_internet()

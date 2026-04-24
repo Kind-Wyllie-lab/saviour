@@ -10,6 +10,8 @@ import Settings from "./pages/Settings/Settings";
 import Recording from "./pages/Recording/Recording";
 import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
+import ClockModal from "./components/ClockModal/ClockModal";
+import useClockOnce from "/src/hooks/useClockOnce";
 
 
 document.title="SAVIOUR";
@@ -23,8 +25,23 @@ const pages = [
 ];
 
 
+const CLOCK_DRIFT_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+
 function App() {
   const [darkMode, setDarkMode] = useState(false);
+  const clockInfo = useClockOnce();
+  const [showClockModal, setShowClockModal] = useState(false);
+
+  useEffect(() => {
+    if (clockInfo == null) return;
+    if (
+      Math.abs(clockInfo.driftMs) > CLOCK_DRIFT_THRESHOLD_MS &&
+      !sessionStorage.getItem("saviour_clock_check")
+    ) {
+      sessionStorage.setItem("saviour_clock_check", "1");
+      setShowClockModal(true);
+    }
+  }, [clockInfo]);
 
   useEffect(() => {
     // Check if user prefers dark mode
@@ -57,6 +74,13 @@ function App() {
           <Route path="/system" element={<System />} />
         </Routes>
       </div>
+      {showClockModal && (
+        <ClockModal
+          driftMs={clockInfo?.driftMs}
+          controllerTime={clockInfo?.controllerTime}
+          onClose={() => setShowClockModal(false)}
+        />
+      )}
     </div>
   );
 }

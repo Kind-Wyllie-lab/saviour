@@ -39,11 +39,11 @@ class Motor:
         self.position = None
         self.rotating = False
         self.time_started_rotating = None
+        self.speed_error: str | None = None  # non-None when RPM is outside tolerance
 
-        # TODO: Take these from config.
-        self.time_to_reach_target_speed = 120 # Time to start reaching target speed in seconds
-        self.rpm_error_lower_threshold = 0.2 # % by which rpm may deviate below set point
-        self.rpm_error_upper_threshold = 0.1 # % by which rpm may deviate above set point
+        self.time_to_reach_target_speed = self.config.get("arduino.motor._validation_ramp_time_s", 120)
+        self.rpm_error_lower_threshold  = self.config.get("arduino.motor._rpm_error_lower_pct", 0.20)
+        self.rpm_error_upper_threshold  = self.config.get("arduino.motor._rpm_error_upper_pct", 0.10)
 
         self.configure_motor()
 
@@ -69,19 +69,23 @@ class Motor:
 
 
     def validate_state(self):
-        if not self.rotating:
+        if not self.rotating or self.speed is None or self.speed_from_arduino is None:
             return
+        if time.time() - self.time_started_rotating < self.time_to_reach_target_speed:
+            return  # still in ramp-up window
 
-        if time.time() - self.time_started_rotating > self.time_to_reach_target_speed:
-            error = self.speed - self.speed_from_arduino
-            if self.speed_from_arduino > (1+self.rpm_error_upper_threshold) * self.speed:
-                # self.logger.warning(f"MOTOR TOO FAST! Passed {self.time_to_reach_target_speed}s and motor has not reached target speed of {self.speed}rpm, actual speed {self.speed_from_arduino}rpm")
-                # TODO: Do something here.
-                pass
-            if self.speed_from_arduino < (1-self.rpm_error_lower_threshold) * self.speed:
-                # self.logger.warning(f"MOTOR TOO SLOW! It has been more than {self.time_to_reach_target_speed}s and motor has not reached target speed of {self.speed}rpm, actual speed {self.speed_from_arduino}rpm")
-                # TODO: Do something here.
-                pass
+        if self.speed_from_arduino > (1 + self.rpm_error_upper_threshold) * self.speed:
+            msg = f"overspeed: {self.speed_from_arduino:.1f} rpm vs {self.speed} rpm target"
+            if self.speed_error != msg:
+                self.logger.warning("Motor %s", msg)
+                self.speed_error = msg
+        elif self.speed_from_arduino < (1 - self.rpm_error_lower_threshold) * self.speed:
+            msg = f"underspeed: {self.speed_from_arduino:.1f} rpm vs {self.speed} rpm target"
+            if self.speed_error != msg:
+                self.logger.warning("Motor %s", msg)
+                self.speed_error = msg
+        else:
+            self.speed_error = None
 
 
 
@@ -115,6 +119,7 @@ class Motor:
         self.send_command(MSG_STOP_MOTOR, "")
         self.time_started_rotating = None
         self.rotating = False
+        self.speed_error = None
 
 
     def get_speed(self) -> float: 

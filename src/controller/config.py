@@ -46,6 +46,9 @@ class Config:
         if os.path.exists(self.active_config_path):
             self.logger.info(f"Loading existing active config: {self.active_config_path}")
             self.config = self._load_json(self.active_config_path)
+            base = self._load_json(self.base_config_path)
+            self._merge_defaults(self.config, base)
+            self.save_active()
         else:
             self.logger.info(f"No active config found - building from base config: {self.base_config_path}")
             self.config = self._load_json(self.base_config_path)

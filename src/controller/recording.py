@@ -480,9 +480,11 @@ class Recording:
 
     def _format_session_name(self, session_name: str, target: str = "all") -> str:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe = safe.replace(' ', '_')
         if target and target != "all":
-            return f"{session_name}-{target}-{timestamp}"
-        return f"{session_name}-{timestamp}"
+            return f"{safe}-{target}-{timestamp}"
+        return f"{safe}-{timestamp}"
 
 
     def _check_all_stopped(self, session_name: str) -> None:

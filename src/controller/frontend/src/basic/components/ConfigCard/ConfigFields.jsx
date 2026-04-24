@@ -7,7 +7,7 @@ import { filterPrivateKeys, isPlainObject } from "./configUtils";
  * Special-purpose cards (e.g. TTL) render this component for the generic
  * sections and handle their own overrides separately.
  */
-function ConfigFields({ data, handleChange }) {
+function ConfigFields({ data, handleChange, sectionExtras = {} }) {
   const [collapsedSections, setCollapsedSections] = useState({});
 
   const renderFields = (obj, path = []) => {
@@ -21,6 +21,7 @@ function ConfigFields({ data, handleChange }) {
       // Only recurse into plain objects — skip Arrays, ArrayBuffers, typed arrays, etc.
       if (isPlainObject(value)) {
         const isCollapsed = collapsedSections[fieldKey] ?? false;
+        const extra = path.length === 0 ? sectionExtras[key] : undefined;
         return (
           <fieldset key={fieldKey} className="nested-fieldset">
             <legend
@@ -33,7 +34,10 @@ function ConfigFields({ data, handleChange }) {
               {key}
             </legend>
             {!isCollapsed && (
-              <div className="nested">{renderFields(value, fieldPath)}</div>
+              <div className="nested">
+                {renderFields(value, fieldPath)}
+                {extra}
+              </div>
             )}
           </fieldset>
         );

@@ -5,7 +5,7 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import { useExportSync } from "/src/hooks/useExportSync";
+import ExportSyncButton from "../ExportSyncButton";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -62,26 +62,28 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const [hasSaved, setHasSaved]                 = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
-  const { syncStatus, syncExport } = useExportSync(module.id);
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
 
-  const sampleRate    = module.config?.microphone?._sample_rate ?? 192000;
+  const sampleRate    = module.config?.audiomoth?.sample_rate ?? module.config?.microphone?._sample_rate ?? 192000;
   const filetype      = module.config?.recording?._recording_filetype ?? "flac";
   const bytesPerSec   = sampleRate * 2; // 16-bit mono
   const rawGbPerHour  = (bytesPerSec * 3600) / 1e9;
   const estGbPerHour  = filetype === "flac" ? rawGbPerHour * 0.6 : rawGbPerHour;
 
-  const nyquist    = sampleRate / 2;
-  const mon        = formData?.monitoring ?? {};
-  const freqLo     = Number(mon.freq_lo_hz ?? 20000);
-  const freqHi     = Number(mon.freq_hi_hz ?? 70000);
-  const timeWindow = Number(mon.time_window_s ?? 3.0);
+  const nyquist       = sampleRate / 2;
+  const nyquistKhz    = nyquist / 1000;
+  const mon           = formData?.monitoring ?? {};
+  const freqLo        = Number(mon.freq_lo_hz ?? 20000);
+  const freqHi        = Number(mon.freq_hi_hz ?? 70000);
+  const freqLoKhz     = freqLo / 1000;
+  const freqHiKhz     = freqHi / 1000;
+  const timeWindow    = Number(mon.time_window_s ?? 3.0);
 
   const freqError = freqLo >= freqHi
-    ? `Low (${freqLo.toLocaleString()} Hz) must be less than high (${freqHi.toLocaleString()} Hz)`
+    ? `Low (${freqLoKhz} kHz) must be less than high (${freqHiKhz} kHz)`
     : freqHi > nyquist
-    ? `High frequency exceeds Nyquist (${(nyquist / 1000).toFixed(0)} kHz)`
+    ? `High frequency exceeds Nyquist (${nyquistKhz.toFixed(1)} kHz)`
     : null;
 
   const timeWindowError = isNaN(timeWindow) || timeWindow < 0.5
@@ -90,12 +92,26 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     ? "Time window must be 60 s or less"
     : null;
 
-  // Strip monitoring section from ConfigFields so we render it manually below
+  // Strip monitoring and audiomoth sections — rendered manually below
   const configFieldsData = (() => {
     if (!formData) return formData;
-    const { monitoring: _omit, ...rest } = formData;
+    const { monitoring: _m, audiomoth: _a, ...rest } = formData;
     return rest;
   })();
+
+  const am        = formData?.audiomoth ?? {};
+  const amGain    = Number(am.gain ?? 2);
+  const amRate    = Number(am.sample_rate ?? 192000);
+  const amFilter  = am.filter_type ?? "none";
+  const amLo      = Number(am.filter_lo_hz ?? 20000);
+  const amHi      = Number(am.filter_hi_hz ?? 90000);
+  const amLoKhz   = amLo / 1000;
+  const amHiKhz   = amHi / 1000;
+  const amNyquistKhz = amRate / 2000;
+
+  const GAIN_LABELS = ["Low", "Low-Medium", "Medium", "Medium-High", "High"];
+  const AM_SAMPLE_RATES = [8000, 16000, 32000, 48000, 96000, 192000, 250000, 384000];
+
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -108,6 +124,18 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       for (const [key, value] of Object.entries(clipboard.data)) {
         cloned[key] = structuredClone(value);
       }
+      return cloned;
+    });
+  };
+
+  // kHz display ↔ Hz storage: inputs show kHz floats, config stores integer Hz
+  const handleKhzChange = (path, khzValue) => {
+    const hz = Math.round(Number(khzValue) * 1000);
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      let node = cloned;
+      for (const key of path.slice(0, -1)) node = node[key];
+      node[path[path.length - 1]] = hz;
       return cloned;
     });
   };
@@ -163,7 +191,8 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           })()}
 
           <form>
-            <ConfigFields data={configFieldsData} handleChange={handleChange} />
+            <ConfigFields data={configFieldsData} handleChange={handleChange}
+              sectionExtras={{ export: <ExportSyncButton moduleId={module.id} /> }} />
           </form>
 
           {/* ── Monitoring display ── */}
@@ -171,16 +200,16 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             <legend className="nested-fieldset-legend">monitoring</legend>
             <div className="nested">
               <div className="form-field">
-                <label>freq_lo_hz:</label>
-                <input type="number" min="0" max={nyquist} step="1000"
-                  value={freqLo}
-                  onChange={e => handleChange(["monitoring", "freq_lo_hz"], e)} />
+                <label>Freq low (kHz):</label>
+                <input type="number" min="0" max={nyquistKhz} step="0.5"
+                  value={freqLoKhz}
+                  onChange={e => handleKhzChange(["monitoring", "freq_lo_hz"], e.target.value)} />
               </div>
               <div className="form-field">
-                <label>freq_hi_hz:</label>
-                <input type="number" min="0" max={nyquist} step="1000"
-                  value={freqHi}
-                  onChange={e => handleChange(["monitoring", "freq_hi_hz"], e)} />
+                <label>Freq high (kHz):</label>
+                <input type="number" min="0" max={nyquistKhz} step="0.5"
+                  value={freqHiKhz}
+                  onChange={e => handleKhzChange(["monitoring", "freq_hi_hz"], e.target.value)} />
               </div>
               {freqError && (
                 <div className="form-field">
@@ -202,6 +231,79 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               )}
             </div>
           </fieldset>
+
+          {/* ── AudioMoth hardware config ── */}
+          {formData?.audiomoth !== undefined && (
+            <fieldset className="nested-fieldset">
+              <legend className="nested-fieldset-legend">audiomoth</legend>
+              <div className="nested">
+                <div className="form-field">
+                  <label>sample_rate:</label>
+                  <select value={amRate}
+                    onChange={e => handleChange(["audiomoth", "sample_rate"], e)}>
+                    {AM_SAMPLE_RATES.map(r => (
+                      <option key={r} value={r}>{(r / 1000).toFixed(0)} kHz</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>gain:</label>
+                  <select value={amGain}
+                    onChange={e => handleChange(["audiomoth", "gain"], e)}>
+                    {GAIN_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{i} — {label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>filter_type:</label>
+                  <select value={amFilter}
+                    onChange={e => handleChange(["audiomoth", "filter_type"], e)}>
+                    <option value="none">None</option>
+                    <option value="lpf">Low-pass (LPF)</option>
+                    <option value="hpf">High-pass (HPF)</option>
+                    <option value="bpf">Band-pass (BPF)</option>
+                  </select>
+                </div>
+                {(amFilter === "hpf" || amFilter === "bpf") && (
+                  <div className="form-field">
+                    <label>{amFilter === "bpf" ? "Filter low (kHz):" : "Cutoff (kHz):"}</label>
+                    <input type="number" min="0" max={amNyquistKhz} step="0.5"
+                      value={amLoKhz}
+                      onChange={e => handleKhzChange(["audiomoth", "filter_lo_hz"], e.target.value)} />
+                  </div>
+                )}
+                {(amFilter === "lpf" || amFilter === "bpf") && (
+                  <div className="form-field">
+                    <label>{amFilter === "bpf" ? "Filter high (kHz):" : "Cutoff (kHz):"}</label>
+                    <input type="number" min="0" max={amNyquistKhz} step="0.5"
+                      value={amHiKhz}
+                      onChange={e => handleKhzChange(["audiomoth", "filter_hi_hz"], e.target.value)} />
+                  </div>
+                )}
+                <div className="form-field">
+                  <label>low_gain_range:</label>
+                  <input type="checkbox" checked={!!am.low_gain_range}
+                    onChange={e => handleChange(["audiomoth", "low_gain_range"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>energy_saver_mode:</label>
+                  <input type="checkbox" checked={!!am.energy_saver_mode}
+                    onChange={e => handleChange(["audiomoth", "energy_saver_mode"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>disable_48hz_filter:</label>
+                  <input type="checkbox" checked={!!am.disable_48hz_filter}
+                    onChange={e => handleChange(["audiomoth", "disable_48hz_filter"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>led_enabled:</label>
+                  <input type="checkbox" checked={!!am.led_enabled}
+                    onChange={e => handleChange(["audiomoth", "led_enabled"], e)} />
+                </div>
+              </div>
+            </fieldset>
+          )}
 
           <div className="filesize-preview">
             ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz
@@ -260,20 +362,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
 
-          {formData?.export !== undefined && (
-            <div className="config-action-buttons">
-              <button type="button" className="save-button"
-                onClick={syncExport}
-                disabled={syncStatus === "syncing"}>
-                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
-              </button>
-              {syncStatus && syncStatus !== "syncing" && (
-                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         <div className="livestream-wrapper">

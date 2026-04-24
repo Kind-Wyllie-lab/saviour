@@ -22,11 +22,24 @@
     },
     "object_detection": {
         "enabled": false,
+        "backend": "blob",
         "model_path": "/usr/share/hailo-models/yolov8n.hef",
         "labels": ["rat"],
         "threshold": 0.55,
         "max_detections": 2,
         "coordinate_smoothing": false
+    },
+    "blob_tracker": {
+        "process_width": 256,
+        "thr_hi": 5.0,
+        "gap_h_px": 15,
+        "gap_v_px": 15,
+        "close_px": 7,
+        "open_px": 5,
+        "min_area_px": 50,
+        "patience_frames": 10,
+        "smoothing_alpha": 0.3,
+        "track_square_size": 150
     },
     "mask": {
         "mask_radius": 0.65,

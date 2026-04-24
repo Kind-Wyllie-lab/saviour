@@ -1,119 +1,94 @@
-// src/pages/APADashboard.js
-import React, { useEffect, useState } from "react";
-import socket from "../../../socket";
-
-// Styling and components
+import React, { useState, useEffect } from "react";
+import "/src/basic/pages/Dashboard/Dashboard.css";
 import "./APADashboard.css";
 
-// SAVIOUR Imports
-import ModuleGrid from "../../../basic/components/ModuleGrid/ModuleGrid";
-import ExperimentMetadata from "../../../basic/components/ExperimentMetadata/ExperimentMetadata";
-import CommandsPanel from "../../../basic/components/CommandsPanel/CommandsPanel";
-
-// APA Imports
+import useModules from "/src/hooks/useModules";
+import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
+import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
+import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import APALivestreamCard from "../../components/APALivestreamCard/APALivestreamCard";
 import APACommands from "../../components/APACommands/APACommands";
 
-// Check websocket connection
-socket.on("connect", () => {
-  console.log("Connected to backend", socket.id);
-});
+const COMPACT_BREAKPOINT = 1440; // 3-col → 2-col
+const NARROW_BREAKPOINT  = 768;  // 2-col → stacked
 
-socket.on("disconnect", () => {
-  console.log("Disconnected from backend");
-});
-
-function APADashboard() {
-  const [modules, setModules] = useState({}); // Modules object returned from backend
-  const [experimentName, setExperimentName] = useState(""); // The experiment name 
-
+function useLayoutMode() {
+  const getMode = () => {
+    if (window.innerWidth <= NARROW_BREAKPOINT)  return "narrow";
+    if (window.innerWidth <= COMPACT_BREAKPOINT) return "compact";
+    return "wide";
+  };
+  const [mode, setMode] = useState(getMode);
   useEffect(() => {
-    console.log("Emitting get_modules");
-    socket.emit("get_modules"); // Ask backend for modules
-    socket.emit("get_module_configs"); // Ask backend for module configs
-    socket.emit("get_modules"); // Ask backend for modules
-    socket.emit("get_experiment_metadata");
-
-    // Expecting data.modules like
-    // { "camera_d610": { ip: "192.168.1.136", type: "camera", online: true } }
-    socket.on("modules_update", (data) => {
-      console.log("Received modules:", data);
-      // Add default ready/checks/error
-      const withDefaults = Object.fromEntries(
-        Object.entries(data).map(([id, m]) => [
-          id,
-          { ...m, id, ready: false, checks: {}, error: null },
-        ])
-      );
-      setModules(withDefaults);
-    });
-
-    socket.on("experiment_metadata_response", (data) => {
-      setExperimentName(data.experiment_name);
-    });
-
+    const narrowMq  = window.matchMedia(`(max-width: ${NARROW_BREAKPOINT}px)`);
+    const compactMq = window.matchMedia(`(max-width: ${COMPACT_BREAKPOINT}px)`);
+    const handler = () => setMode(getMode());
+    narrowMq.addEventListener("change", handler);
+    compactMq.addEventListener("change", handler);
     return () => {
-      socket.off("modules_update"); // Unregister listener to prevent multiple listeners on component re-render or remount
-      socket.off("experiment_metadata_response");
-      // socket.off("update_module_readiness"); // As above
+      narrowMq.removeEventListener("change", handler);
+      compactMq.removeEventListener("change", handler);
     };
   }, []);
+  return mode;
+}
 
-  useEffect(() => {
-    socket.on("experiment_metadata_updated", (data) => {
-      if (data.experiment_name) {
-        setExperimentName(data.experiment_name);
-      }
-    });
+function LivestreamOrTemplate({ module, moduleList }) {
+  if (module) return <APALivestreamCard module={module} moduleList={moduleList} />;
+  return (
+    <div className="apa-camera-template">
+      <p>APA camera not connected</p>
+    </div>
+  );
+}
 
-    // On mount, request latest metadata
-    socket.emit("get_experiment_metadata");
-
-    return () => socket.off("experiment_metadata_updated");
-  }, []);
-
-  // Convert modujles object to array for easy rendering
-  const moduleList = Object.values(modules);
-  const cameraModules = moduleList.filter((m) => m.type === "camera");
-  const apaCameraModules = moduleList.filter((m) => m.type === "apa_camera");
-  if (apaCameraModules.length > 1) {
-    console.error("Multiple modules of type apa_camera detected");
-  }
-
+function APADashboard() {
+  const { moduleList } = useModules();
+  const mode = useLayoutMode();
+  const apaCamera = moduleList.find((m) => m.type === "apa_camera") ?? null;
 
   return (
-    <main className="dashboard">
+    <div className="dashboard">
+      <RecordingStatusWidget />
 
-      <div className="dashboard-wrapper">
-        {/* left side */}
-        <div className="sidebar-container">
-          <section>
-            <ExperimentMetadata experimentName={experimentName} />
-          </section>
-          <section>
-            <CommandsPanel modules={moduleList} experimentName={experimentName} />
-          </section>
-          <section>
-            <ModuleGrid modules = {moduleList} />
-          </section>
-        </div>    
-        {/* right side */}
-        <div className="dashboard-container">
-          <section>
-            {apaCameraModules.length > 0 ? (
-              <APALivestreamCard key={apaCameraModules[0].id} module={apaCameraModules[0]} moduleList={moduleList} />
-            ) : (
-              <div className="apa-camera-template">
-                <p>APA camera not connected</p>
-              </div>
-            )}
-          </section>
-          <section>
+      {mode === "narrow" ? (
+        /* ── Narrow (<768px): single column, stream gets full width ── */
+        <div className="dashboard-compact">
+          <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
+          <div className="dashboard-compact-panel">
             <APACommands modules={moduleList} />
-          </section>
+            <HealthSummaryWidget />
+            <ModuleList modules={moduleList} />
+          </div>
         </div>
-      </div>
-    </main>
+
+      ) : mode === "compact" ? (
+        /* ── Compact (768–1280px): stream left, commands+panel right ── */
+        <div className="dashboard-main">
+          <div className="apa-livestream-col">
+            <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
+          </div>
+          <div className="dashboard-panel">
+            <APACommands modules={moduleList} />
+            <HealthSummaryWidget />
+            <ModuleList modules={moduleList} />
+          </div>
+        </div>
+
+      ) : (
+        /* ── Wide (≥1280px): three columns ── */
+        <div className="dashboard-main">
+          <div className="apa-livestream-col">
+            <LivestreamOrTemplate module={apaCamera} moduleList={moduleList} />
+          </div>
+          <APACommands modules={moduleList} />
+          <div className="dashboard-panel">
+            <HealthSummaryWidget />
+            <ModuleList modules={moduleList} />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

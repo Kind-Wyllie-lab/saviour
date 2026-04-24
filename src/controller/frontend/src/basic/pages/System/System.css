@@ -137,3 +137,14 @@
 .modal-subtext--warn {
   color: #cc3333;
 }
+
+.system-clock-display {
+  margin: 0;
+  font-size: 0.9em;
+  font-family: monospace;
+}
+
+.hsw-drift {
+  font-size: 0.85em;
+  margin-left: 8px;
+}

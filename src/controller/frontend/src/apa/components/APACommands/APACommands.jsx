@@ -1,96 +1,58 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import socket from "../../../socket";
 
 // Styling and components
 import "./APACommands.css";
 
 function APACommands( {modules} ) {
-    const [shockState, setShockState] = useState(null); // Will be updated by socketio event - indicates whether grid live, shock being delivered etc.
-    const [arduinoState, setArduinoState] = useState(null); // State object from the apa rig
+    const [shockState, setShockState] = useState(null);
+    const [arduinoState, setArduinoState] = useState(null);
     const [spacePressed, setSpacePressed] = useState(false);
-    const [shockerArmed, setShockerArmed] = useState(false);
+    // Persist arm state across page reloads within the same browser session
+    const [shockerArmed, setShockerArmed] = useState(
+        () => sessionStorage.getItem("apa_shocker_armed") === "1"
+    );
+    // Throttle rapid command emissions — 200 ms minimum between same command type
+    const lastCmdTime = useRef({});
 
     const apaModule = modules.filter((m) => m.type === "apa_arduino")[0];
     // apaModule ? console.log("APA Module Connected") : console.log("No APA module connected");
     // apaModule ? console.log(apaModule.ip) : null;
 
     useEffect(() => {
-        // Handle shock state changes
-        function onShockStartBeingDelivered() {
-            setShockState("Started shocking");
-        }
-
-        function onShockStopBeingDelivered() {
-            setShockState("Stopped shocking");
-        }
-
-        function onArduinoState(data) {
-            setArduinoState(data.state);
-        }
+        function onShockStartBeingDelivered() { setShockState("Started shocking"); }
+        function onShockStopBeingDelivered()  { setShockState("Stopped shocking"); }
+        function onArduinoState(data)          { setArduinoState(data.state); }
 
         socket.on('shock_started_being_delivered', onShockStartBeingDelivered);
         socket.on('shock_stopped_being_delivered', onShockStopBeingDelivered);
-        socket.on('arduino_state', (data) => {
-            // console.log(data);
-            onArduinoState(data);
-        });
+        socket.on('arduino_state', onArduinoState);
 
         return () => {
             socket.off('shock_started_being_delivered', onShockStartBeingDelivered);
             socket.off('shock_stopped_being_delivered', onShockStopBeingDelivered);
-        }
+            socket.off('arduino_state', onArduinoState);
+        };
     }, []);
 
-    const activateShock = () => {
-        console.log("Activating shocks");
-        socket.emit("send_command", {
-            type: "activate_shock",
-            module_id: apaModule?.id,
-            params: {},
-        });
+    const emitCommand = (type) => {
+        const now = Date.now();
+        if (now - (lastCmdTime.current[type] ?? 0) < 200) return;
+        lastCmdTime.current[type] = now;
+        socket.emit("send_command", { type, module_id: apaModule?.id, params: {} });
     };
 
-    const deactivateShock = () => {
-        console.log("Deactivating shocks");
-        socket.emit("send_command", {
-            type: "deactivate_shock",
-            module_id: apaModule?.id,
-            params: {},
-        });
-    };
-
-    const startMotor = () => {
-        socket.emit("send_command", {
-            type: "start_motor",
-            module_id: apaModule?.id,
-            params: {},
-        });
-    };
-
-    const stopMotor = () => {
-        socket.emit("send_command", {
-            type: "stop_motor",
-            module_id: apaModule?.id,
-            params: {},
-        });
-    };
-
-    const resetPulses = () => {
-        socket.emit("send_command", {
-            type: "reset_pulse_counter",
-            module_id: apaModule?.id,
-            params: {},
-        })
-    }
+    const activateShock   = () => emitCommand("activate_shock");
+    const deactivateShock = () => emitCommand("deactivate_shock");
+    const startMotor      = () => emitCommand("start_motor");
+    const stopMotor       = () => emitCommand("stop_motor");
+    const resetPulses     = () => emitCommand("reset_pulse_counter");
 
     const toggleShockerArmed = () => {
-        if (shockerArmed) {
-            console.log("Disarming shocker");
-        } else {
-            console.log("Arming shocker");
-        }
-        setShockerArmed(!shockerArmed);
-    }
+        const next = !shockerArmed;
+        sessionStorage.setItem("apa_shocker_armed", next ? "1" : "0");
+        setShockerArmed(next);
+    };
 
     useEffect(() => {
         const handleKeyDown = (event) => {
@@ -144,6 +106,9 @@ function APACommands( {modules} ) {
                             <p>Rotating</p>
                         ) : (
                             <p>Stationary</p>
+                        )}
+                        {arduinoState.speed_error && (
+                            <p className="apa-state-warning">⚠ Motor {arduinoState.speed_error}</p>
                         )}
                     </div>
                 ) : (

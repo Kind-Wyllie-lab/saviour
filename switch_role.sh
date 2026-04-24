@@ -734,6 +734,15 @@ EOF
 
 
 configure_microphone() {
+    echo "Installing AudioMoth udev rule..."
+    sudo tee /etc/udev/rules.d/99-audiomoth.rules > /dev/null <<'EOF'
+# Allow non-root access to AudioMoth USB Microphone (VID 16d0, PID 06f3)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="06f3", MODE="0666"
+EOF
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    echo "AudioMoth udev rule installed."
+
     echo "Installing pipewire"
 
     # Make the config directory if it doesn't already exist
@@ -784,6 +793,37 @@ EOF
     sudo systemctl enable saviour.service
 
     echo "Microphone SAVIOUR service updated."
+}
+
+
+configure_apa_camera() {
+    echo "Installing APA camera (IMX500) dependencies..."
+
+    # python3-openexr provides the 'Imath' Python module required by picamera2.devices.imx500
+    if ! dpkg -s python3-openexr &>/dev/null; then
+        echo "[INSTALLING] python3-openexr"
+        sudo apt-get install -y python3-openexr
+    else
+        echo "[OK] python3-openexr is already installed."
+    fi
+
+    # imx500-all provides the firmware and bundled AI models for the IMX500 AI camera
+    if ! dpkg -s imx500-all &>/dev/null; then
+        echo "[INSTALLING] imx500-all"
+        sudo apt-get install -y imx500-all
+    else
+        echo "[OK] imx500-all is already installed."
+    fi
+
+    # hailo-all provides the Hailo runtime, Python bindings, and pre-compiled HEF
+    # models (including yolov8n.hef) used by apa_camera_module.py for inference.
+    # python3-picamera2 >= 0.3.19 is needed for picamera2.devices.hailo support.
+    if ! dpkg -s hailo-all &>/dev/null; then
+        echo "[INSTALLING] hailo-all"
+        sudo apt-get install -y hailo-all
+    else
+        echo "[OK] hailo-all is already installed."
+    fi
 }
 
 
@@ -908,6 +948,11 @@ echo ""
 if [ "$DEVICE_TYPE" = "microphone" ]; then
     echo "Configuring microphone"
     configure_microphone
+fi
+
+if [ "$DEVICE_TYPE" = "apa_camera" ]; then
+    echo "Configuring APA camera"
+    configure_apa_camera
 fi
 
 

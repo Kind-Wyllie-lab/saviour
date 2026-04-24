@@ -270,3 +270,16 @@
   font-size: 0.85rem;
   color: #c62828;
 }
+
+/* ── Add module to session ─────────────────────────────────────────────── */
+
+.session-btn--join {
+  background: none;
+  color: #4a90d9;
+  border: 1px solid #4a90d9;
+}
+
+.session-btn--join:hover {
+  background: #4a90d9;
+  color: white;
+}

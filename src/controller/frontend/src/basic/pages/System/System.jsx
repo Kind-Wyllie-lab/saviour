@@ -2,6 +2,7 @@ import { useMemo, useEffect, useState } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
+import ClockModal from "../../components/ClockModal/ClockModal";
 import "./System.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,6 +98,13 @@ export default function System() {
     socket.emit("remove_module", { id: removeTarget.id });
     setRemoveTarget(null);
   };
+
+  // ── Set controller time ───────────────────────────────────────────────────
+  const [showClockModal, setShowClockModal] = useState(false);
+
+  const controllerDriftMs = controllerHealth?.controller_time
+    ? new Date(controllerHealth.controller_time).getTime() - Date.now()
+    : null;
 
   // ── Update all devices ────────────────────────────────────────────────────
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
@@ -270,6 +278,38 @@ export default function System() {
           </div>
         )}
       </div>
+
+      {/* ── Controller Time ── */}
+      <div className="system-update-section">
+        <div className="system-header">
+          <h2>Controller Time</h2>
+          <button className="refresh-btn" type="button" onClick={() => setShowClockModal(true)}>
+            Set Time
+          </button>
+        </div>
+        {controllerHealth?.controller_time ? (
+          <p className="system-clock-display">
+            {new Date(controllerHealth.controller_time).toUTCString().replace(/GMT$/, "UTC")}
+            {controllerDriftMs != null && Math.abs(controllerDriftMs) >= 5000 && (
+              <span className={`hsw-drift ${Math.abs(controllerDriftMs) >= 120000 ? "val--danger" : "val--warn"}`}>
+                {" "}({Math.abs(controllerDriftMs) >= 60000
+                  ? `${Math.round(Math.abs(controllerDriftMs) / 60000)}m`
+                  : `${Math.round(Math.abs(controllerDriftMs) / 1000)}s`} vs browser)
+              </span>
+            )}
+          </p>
+        ) : (
+          <p className="cell--muted">Waiting for health data…</p>
+        )}
+      </div>
+
+      {showClockModal && (
+        <ClockModal
+          driftMs={controllerDriftMs}
+          controllerTime={controllerHealth?.controller_time}
+          onClose={() => setShowClockModal(false)}
+        />
+      )}
 
       {removeTarget && (
         <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>

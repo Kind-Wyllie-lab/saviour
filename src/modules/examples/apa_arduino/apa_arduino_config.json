@@ -7,7 +7,10 @@
             "_manual_motor_speed_for_2rpm": 95,
             "motor_speed_rpm": 2,
             "_motor_speed_delay": 2,
-            "_encoder_pin": "A2"
+            "_encoder_pin": "A2",
+            "_validation_ramp_time_s": 120,
+            "_rpm_error_lower_pct": 0.20,
+            "_rpm_error_upper_pct": 0.10
         },
         "shocker": {
             "_max_current": 5.1,

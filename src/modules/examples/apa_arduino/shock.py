@@ -77,9 +77,13 @@ class Shocker:
         # A thread for shocking
         self.shock_thread = None
         self.stop_shock_flag = threading.Event()
+        self._shock_lock = threading.Lock()  # guards attempted_shocks / delivered_shocks
+
+        # Max shocks per trial — read from config so researchers can adjust
+        self._max_shocks = int(self.config.get("arduino.shocker._max_shocks", 50))
 
         # Callbacks for event communication
-        self.on_shock_stopped_being_attempted = None
+        self.on_shock_started_being_attempted = None
         self.on_shock_stopped_being_attempted = None
         self.on_shock_started_being_delivered = None
         self.on_shock_stopped_being_delivered = None
@@ -130,8 +134,12 @@ class Shocker:
             self.send_command(MSG_WRITE_PIN_HIGH, TRIGGER_OUT)
             time.sleep(self.time_off)
 
-            if self.attempted_shocks >= 50:
-                self.deactivate_shock()
+            # Don't call deactivate_shock() here — that joins this thread, causing a deadlock.
+            # Set the flag directly; activate_shock() handles cleanup on the next external call.
+            with self._shock_lock:
+                if self.attempted_shocks >= self._max_shocks:
+                    self.shock_activated = False
+                    self.stop_shock_flag.set()
 
     """SHOCK CONTROLLER SPECIFIC COMMANDS"""
     # Set methods
@@ -205,54 +213,59 @@ class Shocker:
         if not self.check_shock_set():
             self.logger.info("Cannot activate shock with current set to 0.")
             return False
-        if self.attempted_shocks >= 50 or self.attempted_shocks_from_arduino >= 50:
-            self.logger.warning("Cannot activate shocker as have already delivered limit of 50 shocks.")
-            return False
-        # self.send_command(MSG_WRITE_PIN_LOW, TRIGGER_OUT)
-        # self.send_command(MSG_ACTIVATE, "")
+        with self._shock_lock:
+            if self.attempted_shocks >= self._max_shocks or self.attempted_shocks_from_arduino >= self._max_shocks:
+                self.logger.warning("Cannot activate shocker as have already delivered limit of %d shocks.", self._max_shocks)
+                return False
         self.shock_activated = True
         self.stop_shock_flag.clear()
-        self.shock_thread = threading.Thread(target=self.start_shocking)
+        self.shock_thread = threading.Thread(target=self.start_shocking, daemon=True)
         self.shock_thread.start()
         return True
 
 
     def deactivate_shock(self):
-        # self.send_command(MSG_DEACTIVATE, "")
         self.shock_activated = False
         self.stop_shock_flag.set()
-        time.sleep(0.1)
-        self.shock_thread.join()
+        if self.shock_thread and self.shock_thread.is_alive():
+            self.shock_thread.join(timeout=5.0)
 
 
 
     def reset_pulse_counter(self):
-        """Used to reset the Arduino-side pulse counter, which prevents shocks exceeding 50 in a given session."""
+        """Used to reset the Arduino-side pulse counter, which prevents shocks exceeding the trial limit."""
         if not self.shock_activated:
             self.send_command(MSG_RESET_PULSE_COUNTER, "")
-            self.attempted_shocks = 0
-            self.delivered_shocks = 0
+            with self._shock_lock:
+                self.attempted_shocks = 0
+                self.delivered_shocks = 0
         else:
             self.logger.warning("CANNOT RESET PULSE COUNTER WHILE SHOCKER IS ACTIVE")
             return False
 
 
     def interpret_shock(self, state: list) -> None:
-        state = state.split(",")
-        self.state_buffer.append([ int(bit) for bit in state[0:11] ])
-        shock_settings = [ int(bit) for bit in state[0:8] ]
-        self.self_test_out = int(state[8])
-        self.self_test_in = int(state[9])
-        self.trigger_out = int(state[10])
-        self.current_from_arduino = float(self.calculate_shock(shock_settings))
-        self.time_on_from_arduino = float(state[11])
-        self.time_off_from_arduino = float(state[12])
-        self.attempted_shocks_from_arduino = int(state[13])
+        fields = state.split(",")
+        if len(fields) < 14:
+            self.logger.warning("Malformed shock state (%d fields, expected 14): %r", len(fields), state)
+            return
+        try:
+            self.state_buffer.append([int(bit) for bit in fields[0:11]])
+            shock_settings = [int(bit) for bit in fields[0:8]]
+            self.self_test_out = int(fields[8])
+            self.self_test_in = int(fields[9])
+            self.trigger_out = int(fields[10])
+            self.current_from_arduino = float(self.calculate_shock(shock_settings))
+            self.time_on_from_arduino = float(fields[11])
+            self.time_off_from_arduino = float(fields[12])
+            with self._shock_lock:
+                self.attempted_shocks_from_arduino = int(fields[13])
+        except (ValueError, IndexError) as e:
+            self.logger.warning("Could not parse shock state %r: %s", state, e)
+            return
 
         self.check_shock_events()
-
         self.validate_state()
-
         self.last_self_test_in = self.self_test_in
         self.last_trigger_out = self.trigger_out
 
@@ -294,8 +307,8 @@ class Shocker:
 
     def _on_shock_started_being_attempted(self, timestamp: int):
         self.shock_being_attempted = True
-        self.attempted_shocks += 1
-        # self.logger.info(f"Attempting shock at {time.time()}, total attempted: {self.attempted_shocks}")
+        with self._shock_lock:
+            self.attempted_shocks += 1
         self.on_shock_started_being_attempted(timestamp)
 
 
@@ -306,9 +319,9 @@ class Shocker:
 
 
     def _on_shock_started_being_delivered(self, timestamp: int):
-        self.delivered_shocks += 1
+        with self._shock_lock:
+            self.delivered_shocks += 1
         self.shock_being_delivered = True
-        # self.logger.info(f"Delivered shock at {time.time()}, total delivered {self.delivered_shocks}")
         self.on_shock_started_being_delivered(timestamp)
 
     

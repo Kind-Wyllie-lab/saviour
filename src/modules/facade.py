@@ -103,6 +103,11 @@ class ModuleFacade():
         return self.module.get_module_name()
 
 
+    def get_short_mac(self, interface: str = "eth0") -> str:
+        """Return the last 4 hex characters of the MAC address on the given interface."""
+        return self.module.get_mac_address(interface)[-4:]
+
+
     """Utility Methods"""
     def generate_session_id(self, module_id: str) -> str:
         return self.module.generate_session_id(module_id)

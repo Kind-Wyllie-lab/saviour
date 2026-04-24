@@ -64,26 +64,9 @@
     margin: 5px 0;
   }
   
-  .stream-controls {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    margin-top: 5px;
-  }
-  
-  .stream-controls button {
-    background-color: var(--accent-color);
-    color: white;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  
-  .stream-controls button:hover {
-    /* background-color: #0056b3; */
-    filter: brightness(1.2); /* Button gets brighter when hovering */
-  }
+  .stream-video--clickable {
+  cursor: pointer;
+}
   
   
   /* Fullscreen card styles */

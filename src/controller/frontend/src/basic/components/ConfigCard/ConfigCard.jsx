@@ -2,6 +2,7 @@
 import './ConfigCard.css';
 import GenericConfigCard      from "./GenericConfigCard/GenericConfigCard";
 import CameraConfigCard       from "./CameraConfigCard/CameraConfigCard";
+import APACameraConfigCard    from "./APACameraConfigCard/APACameraConfigCard";
 import MicrophoneConfigCard   from "./MicrophoneConfigCard/MicrophoneConfigCard";
 import ControllerConfigCard   from './ControllerConfigCard/ControllerConfigCard';
 import TTLConfigCard          from './TTLConfigCard/TTLConfigCard';
@@ -12,6 +13,9 @@ function ConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   }
   if (!module) {
     return <div className="config-card"><p style={{ padding: "12px", opacity: 0.5 }}>Loading module…</p></div>;
+  }
+  if (module.type === "apa_camera") {
+    return <APACameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} />;
   }
   if (module.type?.includes("camera")) {
     return <CameraConfigCard id={id} module={module} clipboard={clipboard} onCopy={onCopy} syncServerModule={syncServerModule} />;

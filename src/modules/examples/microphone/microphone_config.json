@@ -1,4 +1,15 @@
 {
+    "audiomoth": {
+        "sample_rate": 192000,
+        "gain": 2,
+        "filter_type": "none",
+        "filter_lo_hz": 20000,
+        "filter_hi_hz": 90000,
+        "low_gain_range": false,
+        "energy_saver_mode": false,
+        "disable_48hz_filter": false,
+        "led_enabled": true
+    },
     "microphone": {
         "_sample_rate": 192000,
         "_frame_num": 131072,

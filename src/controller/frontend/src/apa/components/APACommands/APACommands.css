@@ -35,3 +35,10 @@ button:disabled {
   background-color: grey;
   transition: ease;
 }
+
+.apa-state-warning {
+  color: #d4820a;
+  font-weight: 600;
+  font-size: 0.85em;
+  margin: 4px 0 0;
+}

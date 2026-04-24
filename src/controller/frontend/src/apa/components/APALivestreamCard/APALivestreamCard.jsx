@@ -18,7 +18,7 @@ function APALivestreamCard({ module, moduleList }) {
 
         <div className="stream-content">
           {showStream ? (
-            <div className="stream-video">
+            <div className="stream-video stream-video--clickable" onClick={() => setFullscreen(true)}>
               <img
                 src={`http://${module.ip}:8080/video_feed`}
                 alt={`Stream for ${module.id}`}
@@ -28,9 +28,6 @@ function APALivestreamCard({ module, moduleList }) {
                   setStreamKey(Date.now());
                 }}
               />
-              <div className="stream-controls">
-                <button onClick={() => setFullscreen(true)}>⛶ Fullscreen</button>
-              </div>
             </div>
           ) : (
             <div className="stream-placeholder">

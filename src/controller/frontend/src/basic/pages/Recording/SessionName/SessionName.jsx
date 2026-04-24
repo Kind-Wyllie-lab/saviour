@@ -4,6 +4,7 @@ import "./SessionName.css";
 
 function SessionName({ experimentName }) {
   const [metadata, setMetadata] = useState({
+    experimenter: "",
     experiment: "Not Set",
     rat_id: "",
     strain: "",
@@ -36,6 +37,10 @@ function SessionName({ experimentName }) {
 
   return (
     <div className="experiment-metadata-container">
+      <div className="metadata-form-row">
+        <label htmlFor="experimenter">Experimenter</label>
+        <input id="experimenter" value={metadata.experimenter} onChange={(e) => handleChange("experimenter", e.target.value)} placeholder="Your name" />
+      </div>
       <div className="metadata-form-row">
         <label htmlFor="experiment">Experiment</label>
         <input id="experiment" value={metadata.experiment} onChange={(e) => handleChange("experiment", e.target.value)} />

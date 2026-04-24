@@ -1,0 +1,42 @@
+.clock-modal {
+  max-width: 400px;
+}
+
+.clock-modal__drift {
+  color: var(--accent-color);
+  opacity: 1 !important;
+}
+
+.clock-modal__times {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 0.85em;
+  margin-bottom: 16px;
+  opacity: 0.75;
+}
+
+.clock-modal__label {
+  font-weight: 600;
+  opacity: 0.6;
+  font-size: 0.82em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.clock-modal__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.95em;
+  margin-bottom: 12px;
+}
+
+.clock-modal__msg {
+  margin: 0 0 12px;
+  font-size: 0.88em;
+}

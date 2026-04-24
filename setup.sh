@@ -75,6 +75,8 @@ SYSTEM_PACKAGES=(
     # mDNS
     avahi-daemon
     iptables-persistent
+    # AudioMoth USB HID support (required to build AudioMoth-USB-Microphone-Cmd)
+    libusb-1.0-0-dev
 )
 
 # Function to check if a package is installed
@@ -177,10 +179,40 @@ EOF
     echo "  Enable: sudo timedatectl set-ntp true"
 }
 
+install_audiomoth_usb_cmd() {
+    BINARY_PATH="/usr/local/bin/AudioMoth-USB-Microphone"
+    REPO="OpenAcousticDevices/AudioMoth-USB-Microphone-Cmd"
+
+    if [ -f "$BINARY_PATH" ]; then
+        echo "[OK] AudioMoth-USB-Microphone already installed at $BINARY_PATH"
+        return
+    fi
+
+    echo "Building AudioMoth-USB-Microphone from source..."
+
+    BUILD_DIR=$(mktemp -d)
+    git clone --depth 1 "https://github.com/${REPO}.git" "$BUILD_DIR"
+
+    gcc -Wall -std=c99 \
+        -I/usr/include/libusb-1.0 \
+        -I"${BUILD_DIR}/src/linux/" \
+        "${BUILD_DIR}/src/main.c" \
+        "${BUILD_DIR}/src/linux/hid.c" \
+        -o "${BUILD_DIR}/AudioMoth-USB-Microphone" \
+        -lusb-1.0 -lrt -lpthread
+
+    sudo cp "${BUILD_DIR}/AudioMoth-USB-Microphone" "$BINARY_PATH"
+    sudo chmod +x "$BINARY_PATH"
+    rm -rf "$BUILD_DIR"
+
+    echo "[OK] AudioMoth-USB-Microphone installed at $BINARY_PATH"
+}
+
 install_system_packages
 configure_ntp_for_ptp
 create_python_environment
 configure_logging
+install_audiomoth_usb_cmd
 
 echo ""
 echo "Setup complete!"

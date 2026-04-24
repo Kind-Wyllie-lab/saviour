@@ -35,11 +35,17 @@ class APAWeb(Web):
         Returns
             bool - True if handled, False if not
         """ 
-        match status:
+        match status.get('type'):
             case "arduino_state":
-                self.socketio.emit("arduino_state", status) 
-                return True    
+                self.socketio.emit("arduino_state", status)
+                return True
+            case "shock_started_being_delivered":
+                self.socketio.emit("shock_started_being_delivered", status)
+                return True
+            case "shock_stopped_being_delivered":
+                self.socketio.emit("shock_stopped_being_delivered", status)
+                return True
             case _:
-                self.logger.warning(f"APA web has no logic for {status} from {module_id}")
-                return False    
+                self.logger.warning(f"APA web has no logic for {status.get('type')} from {module_id}")
+                return False
     

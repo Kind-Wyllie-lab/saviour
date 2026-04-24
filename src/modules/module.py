@@ -234,9 +234,15 @@ class Module(ABC):
                 return {"result": "error", "output": err}
             https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
                                r'https://\1/\2.git', remote_url)
+            branch_result = subprocess.run(
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True
+            )
+            branch = branch_result.stdout.strip() or "main"
             result = subprocess.run(
                 ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "pull", https_url],
+                 "pull", https_url, branch],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode == 0:

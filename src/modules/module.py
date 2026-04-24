@@ -227,6 +227,8 @@ class Module(ABC):
                 capture_output=True, text=True
             )
             remote_url = url_result.stdout.strip()
+            if url_result.returncode != 0 or not remote_url:
+                return {"result": "error", "output": "No git remote 'origin' configured — run: git -C /usr/local/src/saviour remote add origin <url>"}
             https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
                                r'https://\1/\2.git', remote_url)
             result = subprocess.run(

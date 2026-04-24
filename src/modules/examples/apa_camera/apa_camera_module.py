@@ -308,6 +308,7 @@ class APACameraModule(Module):
 
         # ── APA: detection state ────────────────────────────────────────────
         self.detector: Optional[HailoDetector] = None
+        self._detector_backend: Optional[str] = None
         self._labels: List[str] = ["rat"]
         self._detection_buffer = deque(maxlen=3)
         self._last_known_det: Optional[Detection] = None
@@ -315,6 +316,7 @@ class APACameraModule(Module):
         # ── APA: position tracking ───────────────────────────────────────────
         self.last_cx = None
         self.last_cy = None
+        self._prev_in_zone: bool = False
 
         # ── APA: mask / shock zone geometry ─────────────────────────────────
         self.inner_offset = None
@@ -389,24 +391,34 @@ class APACameraModule(Module):
         self.max_detections = self.config.get("object_detection.max_detections", 2)
 
         if not self.config.get("object_detection.enabled", False):
+            if self.detector is not None:
+                self.detector.close()
+                self.detector = None
+                self._detector_backend = None
             return
+
+        new_backend = self.config.get("object_detection.backend", "hailo")
+        if self.detector is not None and self._detector_backend == new_backend:
+            return  # same backend already running
+
         if self.detector is not None:
-            return
+            self.detector.close()
+            self.detector = None
 
-        backend = self.config.get("object_detection.backend", "hailo")
+        self._detector_backend = new_backend
 
-        if backend == "blob":
+        if new_backend == "blob":
             bt = self.config.get("blob_tracker", {})
             self.detector = BlobTracker(
-                process_width   = bt.get("process_width",   256),
-                thr_hi          = bt.get("thr_hi",          5.0),
-                gap_h_px        = bt.get("gap_h_px",        15),
-                gap_v_px        = bt.get("gap_v_px",        15),
-                close_px        = bt.get("close_px",        7),
-                open_px         = bt.get("open_px",         5),
-                min_area_px     = bt.get("min_area_px",     50),
-                patience_frames = bt.get("patience_frames", 10),
-                smoothing_alpha = bt.get("smoothing_alpha", 0.3),
+                process_width     = bt.get("process_width",     256),
+                thr_hi            = bt.get("thr_hi",            5.0),
+                gap_h_px          = bt.get("gap_h_px",          15),
+                gap_v_px          = bt.get("gap_v_px",          15),
+                close_px          = bt.get("close_px",          7),
+                open_px           = bt.get("open_px",           5),
+                min_area_px       = bt.get("min_area_px",       50),
+                patience_frames   = bt.get("patience_frames",   10),
+                smoothing_alpha   = bt.get("smoothing_alpha",   0.3),
                 track_square_size = bt.get("track_square_size", 150),
             )
             self.logger.info("Blob tracker detector ready")
@@ -422,6 +434,7 @@ class APACameraModule(Module):
         except Exception as e:
             self.logger.error(f"Failed to initialise Hailo detector: {e}")
             self.detector = None
+            self._detector_backend = None
 
 
     # -----------------------------------------------------------------------
@@ -648,7 +661,8 @@ class APACameraModule(Module):
         self._timestamp_csv_file = open(self._current_csv_path, "w", newline="")
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
         self._timestamp_csv_writer.writerow(
-            ["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before"]
+            ["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before",
+             "det_cx", "det_cy", "in_zone"]
         )
         self._frame_id = 0
         self._csv_prev_ns = None
@@ -700,44 +714,33 @@ class APACameraModule(Module):
 
 
     def _apa_frame_precallback(self, req) -> None:
-        """Combined pre-callback: timestamps + APA overlays + Hailo detection."""
+        """Combined pre-callback: timestamps + APA overlays + object detection."""
         try:
             timestamp = self._get_frame_timestamp(req)
 
-            # ── Update per-frame CSV ────────────────────────────────────────
+            # ── Compute timing metrics (don't write CSV yet) ────────────────
             actual_fps = None
+            ts_label   = None
+            ts_utc = delta_ms = dropped = ""
             if timestamp is not None:
                 if self.last_frame_timestamp:
                     actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 3)
                 self.last_frame_timestamp = timestamp
-
-                if self._timestamp_csv_writer is not None:
-                    dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)
-                    ts_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
-                    if self._csv_prev_ns is not None and self.fps:
-                        delta_ms     = round((timestamp - self._csv_prev_ns) / 1e6, 3)
-                        dropped      = max(0, round(delta_ms / (1000.0 / self.fps)) - 1)
-                    else:
-                        delta_ms = dropped = ""
-                    self._csv_prev_ns = timestamp
-                    self._timestamp_csv_writer.writerow(
-                        [self._frame_id, timestamp, ts_utc, delta_ms, dropped]
-                    )
-                    self._frame_id += 1
-
-            # ── Format display timestamp ────────────────────────────────────
-            if timestamp is not None:
-                dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)
-                ts_label = (
-                    f"{self.facade.get_module_name()} "
-                    + dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00"
-                )
-            else:
-                ts_label = None
+                dt     = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)
+                ts_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
+                ts_label = (f"{self.facade.get_module_name()} "
+                            + dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00")
+                if self._csv_prev_ns is not None and self.fps:
+                    delta_ms = round((timestamp - self._csv_prev_ns) / 1e6, 3)
+                    dropped  = max(0, round(delta_ms / (1000.0 / self.fps)) - 1)
+                self._csv_prev_ns = timestamp
 
             monochrome        = self.config.get("camera.monochrome") is True
             overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
             detection_enabled = self.config.get("object_detection.enabled", False)
+
+            det_cx = det_cy = None
+            in_zone = False
 
             # ── Main stream (recorded) ──────────────────────────────────────
             with MappedArray(req, 'main') as m:
@@ -748,7 +751,30 @@ class APACameraModule(Module):
                     self._apply_timestamp_label(m, ts_label, "main")
                 if detection_enabled:
                     self._detect_objects(m)
+                    if self._last_known_det is not None:
+                        x, y, w, h = self._last_known_det.box
+                        det_cx  = int(x + w / 2)
+                        det_cy  = int(y + h / 2)
+                        in_zone = self._is_in_shock_zone(det_cx, det_cy)
                     self._draw_detections(m)
+
+            # ── Write per-frame CSV (includes position) ─────────────────────
+            if timestamp is not None and self._timestamp_csv_writer is not None:
+                self._timestamp_csv_writer.writerow([
+                    self._frame_id, timestamp, ts_utc, delta_ms, dropped,
+                    det_cx if det_cx is not None else "",
+                    det_cy if det_cy is not None else "",
+                    int(in_zone) if det_cx is not None else "",
+                ])
+                self._frame_id += 1
+
+            # ── Emit zone transition events ─────────────────────────────────
+            if detection_enabled and det_cx is not None and in_zone != self._prev_in_zone:
+                self.communication.send_status({
+                    "type": "zone_entered" if in_zone else "zone_exited",
+                    "timestamp_ns": timestamp,
+                })
+                self._prev_in_zone = in_zone
 
             # ── Lores stream (preview/MJPEG) ────────────────────────────────
             with MappedArray(req, 'lores') as m:
@@ -786,7 +812,7 @@ class APACameraModule(Module):
 
 
     # -----------------------------------------------------------------------
-    # Hailo object detection
+    # Object detection
     # -----------------------------------------------------------------------
 
     def _detect_objects(self, m: MappedArray):

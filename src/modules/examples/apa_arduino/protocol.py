@@ -7,20 +7,8 @@ Features:
 import serial
 import time
 import threading
-import json
-import re
-import argparse
-from typing import Dict, Callable, Optional
+from typing import Callable, Optional
 import logging
-from collections import deque
-
-parser = argparse.ArgumentParser(
-    prog="arduino_comms_test",
-    description="To test arduino comms protocol"
-)
-parser.add_argument('-p', '--port', default="/dev/ttyACM0")
-parser.add_argument('-b', '--baud', default=115200)
-args = parser.parse_args()
 
 
 # PROTOCOL
@@ -74,68 +62,53 @@ class Protocol:
     def listen(self):
         buf = ""
         while not self.stop_flag.is_set():
-            data = self.conn.read(self.conn.in_waiting or 1).decode("utf-8", errors="ignore")
-            buf += data
-            while "<" in buf and ">" in buf:
-                start = buf.index("<")
-                end = buf.index(">", start)
-                packet = buf[start+1:end]
-                buf = buf[end+1:]
-                self._parse_message(packet)
+            try:
+                data = self.conn.read(self.conn.in_waiting or 1).decode("utf-8", errors="ignore")
+                buf += data
+                while "<" in buf and ">" in buf:
+                    start = buf.index("<")
+                    end = buf.index(">", start)
+                    packet = buf[start+1:end]
+                    buf = buf[end+1:]
+                    self._parse_message(packet)
+            except serial.SerialException as e:
+                self.logger.error("Serial error on %s: %s", self.port, e)
+                buf = ""
+                if not self.stop_flag.is_set():
+                    self.reset_serial()
+                    if not (self.conn and self.conn.is_open):
+                        break
+            except Exception as e:
+                self.logger.error("Unexpected error in listen() on %s: %s", self.port, e)
+                buf = ""
     
 
     def _parse_message(self, packet: str):
-        msg_type = ""
-        seps = packet.split(":")
-        if len(seps) == 3:
-            msg_type = seps[0]
-            msg = ":".join(seps[1:])
-        elif len(seps) == 2:
-            msg_type = seps[0]
-            msg = seps[1]
-        
-        if msg_type and msg:
-            self._handle_message(msg_type, msg)
+        parts = packet.split(":", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
+            self._handle_message(parts[0], parts[1])
         else:
-            self.logger.warning(f"Cannot handle bad message: {packet}")
+            self.logger.warning("Cannot handle bad message: %r", packet)
 
-    def listen_old(self):
-        while not self.stop_flag.is_set():
-            try:
-                response = self.conn.readline().decode("utf-8")
-                # try:
-                #     response = response.decode("utf-8")
-                # except Exception as e:
-                #     self.logger.info(f"Exception decoding {response}: {e}")
-                matches = re.findall(r'<(.+?)>', response) # Look for any serial messages that match the <message> format
-                msg_type = ""
-                if not matches:
-                    continue
-                response = matches[0]
-                seps = response.split(":")
-                if len(seps) == 3:
-                    msg_type = seps[0]
-                    msg = ":".join(seps[1:])
-                elif len(seps) == 2:
-                    msg_type = seps[0]
-                    msg = seps[1]
-
-                self._handle_message(msg_type, msg)
-            except Exception as e:
-                self.logger.info(f"Exception listening on serial port {self.port}: {e}")
-                self.reset_serial()
-
-    
     def reset_serial(self):
-        self.logger.info(f"reset_serial() is not yet implemnted")
-        # self.logger.info(f"Resetting serial connection on {self.port}")
-        # self.pause_flag.set()
-        # self.conn.flushInput()
-        # self.pause_flag.clear()
-        # self.conn.close()
-        # time.sleep(0.5)
-        # self.conn.open()
-        # self.start()
+        self.logger.info("Resetting serial connection on %s", self.port)
+        try:
+            if self.conn and self.conn.is_open:
+                self.conn.close()
+        except Exception:
+            pass
+        for attempt in range(1, 6):
+            try:
+                time.sleep(1.0)
+                self.conn = serial.Serial(port=self.port, baudrate=self.baud, timeout=5)
+                time.sleep(1.0)
+                self.conn.flushInput()
+                self.send_command(MSG_IDENTITY, "")
+                self.logger.info("Serial connection restored on %s", self.port)
+                return
+            except Exception as e:
+                self.logger.warning("Reconnect attempt %d/5 on %s failed: %s", attempt, self.port, e)
+        self.logger.error("Could not restore serial connection on %s after 5 attempts", self.port)
     
 
     def _handle_message(self, cmd: str, param: str) -> None:

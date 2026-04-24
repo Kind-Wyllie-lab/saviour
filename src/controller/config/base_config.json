@@ -43,5 +43,9 @@
         "_cli": false,
         "_web_interface": true,
         "_web_interface_port": 5000
+    },
+    "teams": {
+        "webhook_url": "",
+        "alert_cooldown_secs": 600
     }
 } 

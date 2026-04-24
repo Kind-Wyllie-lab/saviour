@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import "./HealthSummaryWidget.css";
@@ -32,9 +33,46 @@ function ptpDisplay(ns) {
     : `${Math.round(ns)} ns`;
 }
 
+function driftClass(ms) {
+  const abs = Math.abs(ms);
+  if (abs >= 60000) return "val--danger";
+  if (abs >= 5000)  return "val--warn";
+  return "val--ok";
+}
+
+function formatDrift(ms) {
+  const abs = Math.abs(ms);
+  const sign = ms < 0 ? "-" : "+";
+  if (abs >= 60000) return `${sign}${Math.round(abs / 1000)}s`;
+  if (abs >= 1000)  return `${sign}${(abs / 1000).toFixed(1)}s`;
+  return `${sign}${Math.round(abs)}ms`;
+}
+
 export default function HealthSummaryWidget() {
   const { moduleHealth, controllerHealth } = useHealth();
   const { modules } = useModules();
+
+  // Live ticking controller clock — anchored each time health is received
+  const [clockRef, setClockRef] = useState(null);
+  useEffect(() => {
+    if (controllerHealth?.controller_time) {
+      setClockRef({
+        controllerMs: new Date(controllerHealth.controller_time).getTime(),
+        browserMs: Date.now(),
+      });
+    }
+  }, [controllerHealth?.controller_time]);
+
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const displayedControllerMs = clockRef
+    ? clockRef.controllerMs + (Date.now() - clockRef.browserMs)
+    : null;
+  const driftMs = clockRef ? clockRef.controllerMs - clockRef.browserMs : null;
 
   const entries = Object.entries(moduleHealth);
   const online  = entries.filter(([, h]) => h.status === "online").length;
@@ -96,6 +134,22 @@ export default function HealthSummaryWidget() {
         <h2>System Health</h2>
         <Link to="/system" className="hsw-view-link">View all →</Link>
       </div>
+
+      {displayedControllerMs != null && (
+        <div className="hsw-row">
+          <span className="hsw-label">Controller clock</span>
+          <span className="hsw-value hsw-clock">
+            <span className={driftMs != null ? driftClass(driftMs) : ""}>
+              {new Date(displayedControllerMs).toUTCString().replace(/^[A-Za-z]+,\s/, "").replace(" GMT", " UTC")}
+            </span>
+            {driftMs != null && Math.abs(driftMs) >= 1000 && (
+              <span className={`hsw-drift ${driftClass(driftMs)}`}>
+                {formatDrift(driftMs)} vs browser
+              </span>
+            )}
+          </span>
+        </div>
+      )}
 
       <div className="hsw-row">
         <span className="hsw-label">Modules online</span>

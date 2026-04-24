@@ -5,7 +5,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import { useExportSync } from "/src/hooks/useExportSync";
+import ExportSyncButton from "../ExportSyncButton";
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
@@ -14,7 +14,6 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const [hasSaved, setHasSaved] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
-  const { syncStatus, syncExport } = useExportSync(module.id);
 
   // Request fresh config from the module on mount.
   useEffect(() => {
@@ -93,7 +92,8 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
             );
           })()}
           <form>
-            <ConfigFields data={formData} handleChange={handleChange} />
+            <ConfigFields data={formData} handleChange={handleChange}
+              sectionExtras={{ export: <ExportSyncButton moduleId={module.id} /> }} />
           </form>
           <div className="copy-bar">
             <span className="copy-bar-label">Copy:</span>
@@ -150,20 +150,6 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
 
-          {formData?.export !== undefined && (
-            <div className="config-action-buttons">
-              <button type="button" className="save-button"
-                onClick={syncExport}
-                disabled={syncStatus === "syncing"}>
-                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
-              </button>
-              {syncStatus && syncStatus !== "syncing" && (
-                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         {module.type.includes("camera") && (

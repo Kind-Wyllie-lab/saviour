@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import { useExportSync } from "/src/hooks/useExportSync";
 import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import ExportSyncButton from "../ExportSyncButton";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
@@ -22,7 +22,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   // {pin: "idle" | "testing" | "done"}
   const [pinTestState, setPinTestState] = useState({});
   const { updateStatus, handleUpdate } = useModuleUpdate(id);
-  const { syncStatus, syncExport } = useExportSync(id);
 
   const ttlCfg = formData?.ttl ?? {};
   const availablePins = module.config?.ttl?._available_pins ?? [];
@@ -148,20 +147,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
 
-          {formData?.export !== undefined && (
-            <div className="config-action-buttons">
-              <button type="button" className="save-button"
-                onClick={syncExport}
-                disabled={syncStatus === "syncing"}>
-                {syncStatus === "syncing" ? "Syncing…" : "Sync Export from Controller"}
-              </button>
-              {syncStatus && syncStatus !== "syncing" && (
-                <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                  {syncStatus.success ? "Export synced" : `Sync failed: ${syncStatus.error}`}
-                </span>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -280,7 +265,8 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             {(() => {
               const { ttl, ...rest } = filterPrivateKeys(formData) ?? {};
               return Object.keys(rest).length > 0
-                ? <form><ConfigFields data={rest} handleChange={handleChange} /></form>
+                ? <form><ConfigFields data={rest} handleChange={handleChange}
+                    sectionExtras={{ export: <ExportSyncButton moduleId={id} /> }} /></form>
                 : null;
             })()}
 

@@ -57,6 +57,7 @@ from src.controller.modules import Modules
 from src.controller.facade import ControllerFacade
 from src.controller.recording import Recording
 from src.controller.export_queue import ExportQueue
+from src.controller.notify import Notifier
 
 # Habitat Controller Class
 class Controller(ABC):
@@ -99,6 +100,7 @@ class Controller(ABC):
         self.modules = Modules()
         self.recording = Recording()
         self.export_queue = ExportQueue(self.config)
+        self.notifier = Notifier(self.config)
         self.facade = ControllerFacade(self)
 
         # Register facade/callbacks

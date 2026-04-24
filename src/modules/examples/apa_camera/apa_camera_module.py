@@ -318,11 +318,7 @@ class APACameraModule(Module):
         self.last_cy = None
         self._prev_in_zone: bool = False
 
-        # ── APA: mask / shock zone geometry ─────────────────────────────────
-        self.inner_offset = None
-        self.outer_radius = None
-        self.start_angle = None
-        self.end_angle = None
+        # (mask/shock-zone geometry is computed per-frame from the current array shape)
 
         # ── Health checks ────────────────────────────────────────────────────
         self.module_checks = {self._check_picam}
@@ -445,12 +441,6 @@ class APACameraModule(Module):
         try:
             if self.picam2.started:
                 self.picam2.stop()
-
-            # Invalidate cached mask centre — must happen after picam2 stops so
-            # no old-resolution frames can race and re-set them before the new
-            # resolution is configured.
-            self.mask_center_x = None
-            self.mask_center_y = None
 
             self.fps    = self.config.get("camera.fps", 30)
             self.width  = self.config.get("camera.width", 1080)
@@ -876,8 +866,6 @@ class APACameraModule(Module):
     def _configure_mask_and_shock_zone(self):
         try:
             self.mask_radius          = self.config.get("mask.mask_radius")
-            self.mask_center_x        = None
-            self.mask_center_y        = None
             self.mask_center_x_offset = self.config.get("mask.mask_center_x_offset") or 0
             self.mask_center_y_offset = self.config.get("mask.mask_center_y_offset") or 0
             self.mask_enabled         = self.config.get("mask.mask_enabled")
@@ -895,18 +883,16 @@ class APACameraModule(Module):
 
 
     def _apply_mask(self, m: MappedArray) -> None:
-        shape = m.array.shape[:2]
-        if self.mask_center_x is None:
-            self.mask_center_x = int(shape[1] / 2) + self.mask_center_x_offset
-        if self.mask_center_y is None:
-            self.mask_center_y = int(shape[0] / 2) + self.mask_center_y_offset
-
-        if self.mask_enabled and self.mask_radius is not None:
-            r = int(0.5 * self.mask_radius * min(shape[0], shape[1]))
-            if r > 0:
-                mask = np.zeros(shape, dtype="uint8")
-                cv2.circle(mask, (self.mask_center_x, self.mask_center_y), r, 255, -1)
-                m.array[:] = cv2.bitwise_and(m.array, m.array, mask=mask)
+        if not self.mask_enabled or self.mask_radius is None:
+            return
+        h, w = m.array.shape[:2]
+        cx = w // 2 + self.mask_center_x_offset
+        cy = h // 2 + self.mask_center_y_offset
+        r  = int(0.5 * self.mask_radius * min(h, w))
+        if r > 0:
+            mask_img = np.zeros((h, w), dtype="uint8")
+            cv2.circle(mask_img, (cx, cy), r, 255, -1)
+            m.array[:] = cv2.bitwise_and(m.array, m.array, mask=mask_img)
 
 
     def _apply_grayscale(self, m: MappedArray) -> None:
@@ -962,43 +948,49 @@ class APACameraModule(Module):
     def _apply_shock_zone(self, m: MappedArray) -> None:
         if not self.shock_zone_display or self.mask_radius is None:
             return
-
-        shape = m.array.shape[:2]
-        self.outer_radius = int(0.5 * self.mask_radius * min(shape[0], shape[1]))
-        if self.outer_radius <= 0:
+        h, w    = m.array.shape[:2]
+        cx      = w // 2 + self.mask_center_x_offset
+        cy      = h // 2 + self.mask_center_y_offset
+        outer_r = int(0.5 * self.mask_radius * min(h, w))
+        if outer_r <= 0:
             return
-
-        self.inner_offset = max(0, int(self.shock_zone_inner_offset * self.outer_radius))
-        self.start_angle  = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5)
-        self.end_angle    = self.start_angle + self.shock_zone_angle_span
-
-        sr, er  = np.radians(self.start_angle), np.radians(self.end_angle)
-        cx, cy  = self.mask_center_x, self.mask_center_y
+        inner_r     = max(0, int(self.shock_zone_inner_offset * outer_r))
+        start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5)
+        end_angle   = start_angle + self.shock_zone_angle_span
+        sr, er  = np.radians(start_angle), np.radians(end_angle)
         color   = self.shock_zone_color
         thick   = max(1, self.shock_zone_thickness)
-
-        cv2.ellipse(m.array, (cx, cy), (self.outer_radius, self.outer_radius),
-                    0, self.start_angle, self.end_angle, color, thick)
-        cv2.ellipse(m.array, (cx, cy), (self.inner_offset, self.inner_offset),
-                    0, self.start_angle, self.end_angle, color, thick)
+        cv2.ellipse(m.array, (cx, cy), (outer_r, outer_r), 0, start_angle, end_angle, color, thick)
+        cv2.ellipse(m.array, (cx, cy), (inner_r, inner_r), 0, start_angle, end_angle, color, thick)
         for angle in (sr, er):
-            ox, oy = int(cx + self.outer_radius * np.cos(angle)), int(cy + self.outer_radius * np.sin(angle))
-            ix, iy = int(cx + self.inner_offset * np.cos(angle)), int(cy + self.inner_offset * np.sin(angle))
+            ox = int(cx + outer_r * np.cos(angle))
+            oy = int(cy + outer_r * np.sin(angle))
+            ix = int(cx + inner_r * np.cos(angle))
+            iy = int(cy + inner_r * np.sin(angle))
             cv2.line(m.array, (ox, oy), (ix, iy), color, thick)
 
 
     def _is_in_shock_zone(self, cx: int, cy: int) -> bool:
-        if self.inner_offset is None or self.outer_radius is None:
+        """Check whether (cx, cy) — in main-stream pixel coordinates — lies in the shock zone."""
+        if self.mask_radius is None or self.width is None or self.height is None:
             return False
-        dx, dy = cx - self.mask_center_x, cy - self.mask_center_y
+        # Compute geometry in main-stream space
+        frame_cx    = self.width  // 2 + self.mask_center_x_offset
+        frame_cy    = self.height // 2 + self.mask_center_y_offset
+        outer_r     = int(0.5 * self.mask_radius * min(self.height, self.width))
+        inner_r     = max(0, int(self.shock_zone_inner_offset * outer_r))
+        start_angle = self.shock_zone_start_angle - (self.shock_zone_angle_span * 0.5)
+        end_angle   = start_angle + self.shock_zone_angle_span
+
+        dx, dy = cx - frame_cx, cy - frame_cy
         r      = np.hypot(dx, dy)
         theta  = (np.degrees(np.arctan2(dy, dx)) + 360) % 360
 
-        if not (self.inner_offset <= r <= self.outer_radius):
+        if not (inner_r <= r <= outer_r):
             return False
-        if self.start_angle < self.end_angle:
-            return self.start_angle <= theta <= self.end_angle
-        return theta >= self.start_angle or theta <= self.end_angle
+        if start_angle < end_angle:
+            return start_angle <= theta <= end_angle
+        return theta >= start_angle or theta <= end_angle
 
 
     # -----------------------------------------------------------------------

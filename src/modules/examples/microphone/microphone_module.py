@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import logging
+import subprocess
 import numpy as np
 import threading
 import soundfile
@@ -23,6 +24,8 @@ import soundcard
 import re
 import cv2
 from flask import Flask, Response
+
+AUDIOMOTH_CMD = "/usr/local/bin/AudioMoth-USB-Microphone"
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -68,18 +71,101 @@ class AudiomothModule(Module):
         # Set up audiomoth-specific callbacks for the command handler
         self.audiomoth_commands = {
             'monitor': self.monitor,
-            'list_audiomoths': self.list_audiomoths
+            'list_audiomoths': self.list_audiomoths,
+            'configure_audiomoth': self.configure_audiomoth,
+            'update_gain': self.update_gain,
         }
         self.command.set_commands(self.audiomoth_commands)
 
 
-    @command
+    @command()
+    def configure_audiomoth(self):
+        """Configure all connected AudioMoths from current audiomoth config. Interrupts the stream briefly."""
+        sample_rate = int(self.config.get("audiomoth.sample_rate", 192000))
+        gain        = int(self.config.get("audiomoth.gain", 2))
+        filter_type = self.config.get("audiomoth.filter_type", "none")
+        filter_lo   = int(self.config.get("audiomoth.filter_lo_hz", 20000))
+        filter_hi   = int(self.config.get("audiomoth.filter_hi_hz", 90000))
+
+        cmd = [AUDIOMOTH_CMD, "config", str(sample_rate), "gain", str(gain)]
+
+        if filter_type == "lpf":
+            cmd += ["lpf", str(filter_hi)]
+        elif filter_type == "hpf":
+            cmd += ["hpf", str(filter_lo)]
+        elif filter_type == "bpf":
+            cmd += ["bpf", str(filter_lo), str(filter_hi)]
+
+        # CLI flag names: lgr / esm / d48  (not low/energy/no48)
+        if self.config.get("audiomoth.low_gain_range", False):
+            cmd.append("lgr")
+        if self.config.get("audiomoth.energy_saver_mode", False):
+            cmd.append("esm")
+        if self.config.get("audiomoth.disable_48hz_filter", False):
+            cmd.append("d48")
+
+        def _run(c):
+            r = subprocess.run(c, capture_output=True, text=True, timeout=10)
+            # The binary writes errors to stdout (puts()), not stderr
+            msg = (r.stdout.strip() or r.stderr.strip())
+            return r.returncode, msg
+
+        try:
+            rc, msg = _run(cmd)
+            if rc != 0:
+                self.logger.error(f"AudioMoth config failed: {msg}")
+                return {"result": "Error", "error": msg}
+            self.logger.info(f"AudioMoth configured: {' '.join(cmd)}")
+
+            # LED is a separate top-level operation, not a config flag
+            led_enabled = self.config.get("audiomoth.led_enabled", True)
+            led_rc, led_msg = _run([AUDIOMOTH_CMD, "led", "true" if led_enabled else "false"])
+            if led_rc != 0:
+                self.logger.warning(f"AudioMoth LED set failed: {led_msg}")
+
+            return {"result": "Success", "output": msg}
+        except FileNotFoundError:
+            self.logger.error(f"AudioMoth binary not found at {AUDIOMOTH_CMD}")
+            return {"result": "Error", "error": "Binary not found — run setup.sh to install"}
+        except subprocess.TimeoutExpired:
+            return {"result": "Error", "error": "Command timed out"}
+        except Exception as e:
+            return {"result": "Error", "error": str(e)}
+
+
+    @command()
+    def update_gain(self, gain=None):
+        """Update AudioMoth gain without interrupting the audio stream."""
+        if gain is None:
+            gain = int(self.config.get("audiomoth.gain", 2))
+        gain = int(gain)
+
+        try:
+            result = subprocess.run(
+                [AUDIOMOTH_CMD, "update", "gain", str(gain)],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                self.logger.info(f"AudioMoth gain updated to {gain}")
+                return {"result": "Success", "gain": gain}
+            else:
+                self.logger.error(f"AudioMoth gain update failed: {result.stderr.strip()}")
+                return {"result": "Error", "error": result.stderr.strip()}
+        except FileNotFoundError:
+            return {"result": "Error", "error": "Binary not found — run setup.sh to install"}
+        except subprocess.TimeoutExpired:
+            return {"result": "Error", "error": "Command timed out"}
+        except Exception as e:
+            return {"result": "Error", "error": str(e)}
+
+
+    @command()
     def list_audiomoths(self):
         """Returns dict containing list of audiomoths"""
         return {"result": "Success", "audiomoths": self.audiomoths}
 
 
-    @command
+    @command()
     def monitor(self):
         """Returns the URL of the monitoring MJPEG stream"""
         port = self.config.get("monitoring._port", 8081)
@@ -140,14 +226,15 @@ class AudiomothModule(Module):
 
     def _start_next_recording_segment(self) -> None:
         """Stage current files for export and start new recording segment for all audiomoths."""
-        # Stage current segment files for export
-        for filename in self.current_recording_files.values():
-            self.facade.stage_file_for_export(filename)
-
-        # Signal current threads to stop after their current audio block
-        self._segment_stop_event.set()
         for thread in self.audiomoth_threads:
             thread.join(timeout=10)
+
+        # Stage completed segment files (audio + timestamp sidecars) for export
+        for filename in self.current_recording_files.values():
+            self.facade.stage_file_for_export(filename)
+            timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
+            if os.path.isfile(timestamps_filename):
+                self.facade.stage_file_for_export(timestamps_filename)
 
         # Start new segment
         self._segment_stop_event.clear()
@@ -172,7 +259,7 @@ class AudiomothModule(Module):
 
     def _record_microphone_segment(self, serial: str, mic_id: str, filename: str, intended_start_at: float | None) -> None:
         """Record audio from one audiomoth to a single file until segment stop or recording stop."""
-        sample_rate = self.config.get("microphone.sample_rate", 192000)
+        sample_rate = self.config.get("audiomoth.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
         block_size = self.config.get("microphone.block_size", 1024 * 128)
 
@@ -216,14 +303,17 @@ class AudiomothModule(Module):
             self.is_recording = False
             self._recording_stop_event.set()
 
-            # Stage the current segment's files for export
-            for filename in self.current_recording_files.values():
-                self.facade.stage_file_for_export(filename)
-
-            # Wait for recording threads to finish their current block
+            # Wait for recording threads to finish writing before staging files
             for thread in self.audiomoth_threads:
                 thread.join(timeout=10)
             self.audiomoth_threads = []
+
+            # Stage audio files and their timestamp sidecars for export
+            for filename in self.current_recording_files.values():
+                self.facade.stage_file_for_export(filename)
+                timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
+                if os.path.isfile(timestamps_filename):
+                    self.facade.stage_file_for_export(timestamps_filename)
 
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
@@ -262,7 +352,7 @@ class AudiomothModule(Module):
 
     def _monitoring_params(self):
         """Return sanitized (freq_lo_hz, freq_hi_hz, time_window_s) from config."""
-        sample_rate = self.config.get("microphone.sample_rate", 192000)
+        sample_rate = self.config.get("audiomoth.sample_rate", 192000)
         nyquist = sample_rate / 2
 
         freq_lo = int(self.config.get("monitoring.freq_lo_hz", 20_000))
@@ -296,7 +386,7 @@ class AudiomothModule(Module):
         Runs as a separate recorder from the recording thread — PulseAudio/
         PipeWire supports multiple simultaneous readers on the same device.
         """
-        sample_rate = self.config.get("microphone.sample_rate", 192000)
+        sample_rate = self.config.get("audiomoth.sample_rate", 192000)
         fft_size = self.config.get("monitoring._fft_size", 4096)  # ~21ms at 192kHz
 
         self.logger.info(f"Monitor thread started for audiomoth {serial}")
@@ -354,7 +444,7 @@ class AudiomothModule(Module):
             with self.monitor_data_lock:
                 data_snapshot = dict(self.monitor_data)
 
-            sample_rate = self.config.get("microphone.sample_rate", 192000)
+            sample_rate = self.config.get("audiomoth.sample_rate", 192000)
             nyquist = sample_rate / 2
 
             WIDTH    = 800
@@ -598,7 +688,16 @@ class AudiomothModule(Module):
     """Module lifecycle"""
 
     def configure_module_special(self, updated_keys=None):
-        pass
+        if updated_keys is None:
+            return
+        audiomoth_keys = {k for k in updated_keys if k.startswith("audiomoth.")}
+        if not audiomoth_keys:
+            return
+        # Gain-only change while streaming: use non-disruptive update
+        if audiomoth_keys == {"audiomoth.gain"} and self.is_streaming:
+            self.update_gain()
+        else:
+            self.configure_audiomoth()
 
 
     def get_latest_recording(self):

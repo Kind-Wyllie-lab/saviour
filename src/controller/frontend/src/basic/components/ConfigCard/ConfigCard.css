@@ -107,6 +107,12 @@ min-width: 300px;
   font-size: 0.88em;
 }
 
+.form-field input[type="text"]:disabled,
+.form-field input[type="number"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .form-field select {
   flex: 1;
   min-width: 0;
@@ -116,6 +122,11 @@ min-width: 300px;
   background-color: var(--bg-color);
   color: var(--text-color);
   font-size: 0.88em;
+}
+
+.form-field select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .form-field input[type="checkbox"] {

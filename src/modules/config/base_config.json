@@ -19,7 +19,6 @@
   "recording": {
     "segment_length_mins": 60,
     "_recording_folder": "/var/lib/saviour/recordings",
-    "_recording_filetype": "NOT SET",
     "_record_health_metadata": true,
     "_health_metadata_recording_interval": 5
   },

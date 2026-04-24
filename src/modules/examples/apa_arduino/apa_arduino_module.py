@@ -18,7 +18,7 @@ import json
 import threading
 import csv
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 import serial.tools.list_ports
 
 # Add the current directory to the path for imports
@@ -50,12 +50,12 @@ class APAModule(Module):
         self._find_arduino_ports()
 
         # Sending state to controller
-        self.send_state_period: float = 0.2 # Send state every this many seconds
-        self.last_sent_state: int = time.time()
+        self.send_state_period: float = 0.2
         self.send_state_thread: threading.Thread = None
 
         # Recording-specific variables
         self._shock_file_handle = None
+        self.current_shock_events_filename = None
         self._time_series_file_handle = None
         self.recording_shocks: bool = False
         self.recording_start_time: int = None
@@ -123,13 +123,15 @@ class APAModule(Module):
                 
 
     def _validate_available_ports(self, ports: list) -> list:
-        """Remove any ports that do not begin with /dev/ttyACM"""
+        """Return only ports whose device path begins with /dev/ttyACM."""
+        valid = []
         for port in ports:
-            self.logger.info(f"  - {port.device}: {port.description}")
-            if not port.device.startswith("/dev/ttyACM"):
-                self.logger.info(f"Removing port {port} as it does not match format /dev/ttyACM")
-                ports.remove(port)
-        return ports
+            self.logger.info("  - %s: %s", port.device, port.description)
+            if port.device.startswith("/dev/ttyACM"):
+                valid.append(port)
+            else:
+                self.logger.info("Skipping %s: does not match /dev/ttyACM", port.device)
+        return valid
 
 
     def _test_port_identity(self, port_info) -> None:
@@ -183,27 +185,24 @@ class APAModule(Module):
             self.logger.warning("Stop motor called but no motor connected!")
     
 
+    @command()
     def _reset_pulse_counter(self):
         if self.shock:
             self.shock.reset_pulse_counter()
-        else: 
+        else:
             self.logger.warning("Reset pulse counter called but no shocker connected!")
 
 
     """Self Check"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
-        self.logger.info(f"Performing {self.module_type} specific checks")
+        self.logger.info("Performing %s specific checks", self.module_type)
         for check in self.module_checks:
-            self.logger.info(f"Running {check.__name__}")
+            self.logger.info("Running %s", check.__name__)
             result, message = check()
-            if result == False:
-                self.logger.info(f"A check failed: {check.__name__}, {message}")
+            if not result:
+                self.logger.info("Check failed: %s — %s", check.__name__, message)
                 return False, message
-                break # Exit loop on first failed check
-        if result == False:
-            return result, message
-        else:
-            return True, "No implementation yet..."
+        return True, "All checks passed"
 
 
     @check()
@@ -247,18 +246,23 @@ class APAModule(Module):
 
     @check()
     def _check_shocks_not_above_50(self) -> tuple[bool, str]:
-        if self.shock.attempted_shocks >= 50 or self.shock.attempted_shocks_from_arduino >= 50:
-            return False, "Have already delivered limit of 50 shocks per trial - please manually reset pulse counter (GUI button)"
-        else:
-            return True, ""
-            
+        limit = self.shock._max_shocks
+        with self.shock._shock_lock:
+            attempted = self.shock.attempted_shocks
+            attempted_arduino = self.shock.attempted_shocks_from_arduino
+        if attempted >= limit or attempted_arduino >= limit:
+            return False, f"Have already delivered limit of {limit} shocks per trial — please reset pulse counter (GUI button)"
+        return True, ""
+
 
     @check()
     def _check_shocks_equal_zero(self) -> tuple[bool, str]:
-        if self.shock.attempted_shocks != 0 or self.shock.attempted_shocks_from_arduino != 0:
-            return False, "Shock pulse counter is not 0 - please manually reset pulse counter (GUI button)"
-        else:
-            return True, ""
+        with self.shock._shock_lock:
+            attempted = self.shock.attempted_shocks
+            attempted_arduino = self.shock.attempted_shocks_from_arduino
+        if attempted != 0 or attempted_arduino != 0:
+            return False, "Shock pulse counter is not 0 — please reset pulse counter (GUI button)"
+        return True, ""
 
     # TODO: Checks to make sure RPM, shocks etc are set?
 
@@ -305,14 +309,19 @@ class APAModule(Module):
 
     
     def send_controller_arduino_state(self):
+        with self.shock._shock_lock:
+            attempted = self.shock.attempted_shocks
+            attempted_arduino = self.shock.attempted_shocks_from_arduino
+            delivered = self.shock.delivered_shocks
         state = {
             "shock_activated": self.shock.shock_activated,
             "grid_live": self.shock.grid_is_live,
-            "attempted_shocks": self.shock.attempted_shocks,
-            "attemped_shocks_from_arduino": self.shock.attempted_shocks_from_arduino,
-            "delivered_shocks": self.shock.delivered_shocks,
+            "attempted_shocks": attempted,
+            "attempted_shocks_from_arduino": attempted_arduino,
+            "delivered_shocks": delivered,
             "rpm": self.motor.speed_from_arduino,
-            "rotating": self.motor.rotating
+            "rotating": self.motor.rotating,
+            "speed_error": self.motor.speed_error,
         }
         status = {
             "type": "arduino_state",
@@ -323,9 +332,8 @@ class APAModule(Module):
     
     def send_state_loop(self):
         while True:
-            if (time.time() - self.last_sent_state) > self.send_state_period:
-                self.send_controller_arduino_state()
-                self.last_sent_state = time.time()
+            time.sleep(self.send_state_period)
+            self.send_controller_arduino_state()
 
 
     """Recording Methods"""
@@ -374,6 +382,7 @@ class APAModule(Module):
 
     def _create_shock_event_file(self) ->  bool:
         filename = f"{self.current_filename_prefix}_shock_events.csv"
+        self.current_shock_events_filename = filename
         self.logger.info(f"Creating shock events file {filename}")
         self.add_session_file(filename)
         try:
@@ -391,10 +400,13 @@ class APAModule(Module):
 
 
     def _close_shock_event_file(self) -> bool:
-        """Close shock eventsf file"""
+        """Close shock events file"""
         try:
-            self._shock_file_handle = None
-            self.logger.info(f"Closed shock events file")
+            if self._shock_file_handle is not None:
+                self._shock_file_handle.flush()
+                self._shock_file_handle.close()
+                self._shock_file_handle = None
+            self.logger.info("Closed shock events file")
         except Exception as e:
             self.logger.warning(f"Error closing shock events file: {e}")
 
@@ -408,8 +420,9 @@ class APAModule(Module):
             # Set recording flag to false
             self.recording_shocks = False
 
-            # self.add_session_file(events_file)
             self._close_shock_event_file()
+            if self.current_shock_events_filename:
+                self.facade.stage_file_for_export(self.current_shock_events_filename)
             
             # Calculate duration
             if self.recording_start_time is not None:
@@ -447,6 +460,12 @@ class APAModule(Module):
     """Configuration"""
     def configure_module(self, updated_keys: Optional[list[str]]):
         self.logger.info("Configuring APA ARDUINO module...")
+        if not self.shock or not self.motor:
+            self.logger.warning(
+                "Cannot configure: not all arduinos connected (motor=%s, shock=%s)",
+                bool(self.motor), bool(self.shock)
+            )
+            return False
         if self.shock.shock_activated:
             self.logger.warning("Cannot configure APA rig while shocks are active!")
             return False
@@ -456,9 +475,22 @@ class APAModule(Module):
 
     """Cleanup"""
     def cleanup(self):
-        """Clean up resources"""
-        # TODO: close serial connections?
-
+        if self.motor:
+            try:
+                self.motor.stop_motor()
+            except Exception as e:
+                self.logger.warning("Error stopping motor during cleanup: %s", e)
+        if self.shock:
+            try:
+                self.shock.deactivate_shock()
+            except Exception as e:
+                self.logger.warning("Error deactivating shock during cleanup: %s", e)
+        for identity, protocol in list(self.connected_arduinos.items()):
+            try:
+                protocol.stop()
+                self.logger.info("Closed serial connection to %s", identity)
+            except Exception as e:
+                self.logger.warning("Error closing serial connection to %s: %s", identity, e)
         self.logger.info("APA system shutdown complete")
 
 

@@ -63,7 +63,7 @@ dev = [
 
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["src/controller/tests", "src/tests"]
 python_files = ["test_*.py"]
 addopts = "-v"
 

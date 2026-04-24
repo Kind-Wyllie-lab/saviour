@@ -921,7 +921,11 @@ class Module(ABC):
     def _run_export(self, export_path: str) -> None:
         """Background thread: run export and report outcome to controller."""
         try:
-            success = self.facade.export_staged(export_path)
+            session_results = self.facade.export_staged(export_path)
+            # Determine success based on the triggered session only —
+            # stale files from other sessions failing should not taint this result.
+            triggered_session = export_path.split('/')[0] if export_path and '/' in export_path else export_path
+            success = session_results.get(triggered_session, False)
             if success:
                 self.facade.send_status({
                     "type": "export_complete",

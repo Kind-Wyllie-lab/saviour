@@ -108,6 +108,134 @@ class HailoDetector:
 
 
 # ---------------------------------------------------------------------------
+# Blob-differencing tracker
+# ---------------------------------------------------------------------------
+
+class BlobTracker:
+    """
+    Frame-differencing blob tracker — no neural network required.
+
+    Computes the absolute pixel difference between consecutive frames, applies
+    morphological bridge-filling to merge fragmented blobs, then finds the
+    largest connected component above a minimum area.  Centroid position is
+    exponentially smoothed and held for `patience_frames` after the blob is
+    lost.
+
+    Compatible with the HailoDetector.detect() interface so the calling code
+    in the module callback is unchanged.  The returned Detection always has
+    conf=1.0 and a square bounding box centred on the smoothed centroid.
+
+    The circular arena mask is already applied to the frame before detect() is
+    called, so the blacked-out region outside the arena contributes zero diff
+    and acts as a natural ROI — no separate ROI mask is needed.
+    """
+
+    def __init__(self,
+                 process_width: int = 256,
+                 thr_hi: float = 5.0,
+                 gap_h_px: int = 15,
+                 gap_v_px: int = 15,
+                 close_px: int = 7,
+                 open_px: int = 5,
+                 min_area_px: int = 50,
+                 patience_frames: int = 10,
+                 smoothing_alpha: float = 0.3,
+                 track_square_size: int = 150):
+        self._process_width   = process_width
+        self._thr_hi          = thr_hi
+        self._min_area        = min_area_px
+        self._patience        = patience_frames
+        self._alpha           = smoothing_alpha
+        self._square          = track_square_size
+
+        def _rect(w, h): return cv2.getStructuringElement(cv2.MORPH_RECT, (w, h))
+        def _ellipse(s): return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (s, s))
+
+        self._kern_h     = _rect(max(1, gap_h_px), 1)     if gap_h_px  > 1 else None
+        self._kern_v     = _rect(1, max(1, gap_v_px))     if gap_v_px  > 1 else None
+        self._kern_close = _ellipse(max(1, close_px))     if close_px  > 1 else None
+        self._kern_open  = _ellipse(max(1, open_px))      if open_px   > 1 else None
+
+        self._prev_gray:    Optional[np.ndarray]          = None
+        self._last_center:  Optional[tuple]               = None
+        self._miss_count:   int                           = 0
+
+    def reset(self) -> None:
+        """Clear temporal state.  Call between recording sessions."""
+        self._prev_gray   = None
+        self._last_center = None
+        self._miss_count  = 0
+
+    def detect(self, frame: np.ndarray, labels: list) -> List[Detection]:
+        """
+        Process one BGR (or grayscale) frame.
+        Returns a one-element list with the rat's Detection, or [] if not found.
+        """
+        orig_h, orig_w = frame.shape[:2]
+
+        # Downsample for speed, convert to grayscale
+        proc_w = min(self._process_width, orig_w)
+        proc_h = max(1, int(round(proc_w * orig_h / orig_w)))
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        proc = cv2.resize(gray, (proc_w, proc_h), interpolation=cv2.INTER_AREA)
+
+        if self._prev_gray is None or self._prev_gray.shape != proc.shape:
+            self._prev_gray = proc
+            return []
+
+        # Absolute frame difference → threshold
+        diff = np.abs(proc.astype(np.float32) - self._prev_gray.astype(np.float32))
+        self._prev_gray = proc
+        mask = (diff >= self._thr_hi).astype(np.uint8)
+
+        # Bridge-fill horizontal and vertical gaps, then morphological close/open
+        for kern, op in (
+            (self._kern_h,     cv2.MORPH_CLOSE),
+            (self._kern_v,     cv2.MORPH_CLOSE),
+            (self._kern_close, cv2.MORPH_CLOSE),
+            (self._kern_open,  cv2.MORPH_OPEN),
+        ):
+            if kern is not None:
+                mask = cv2.morphologyEx(mask, op, kern)
+
+        # Largest connected component above area threshold
+        n_labels, _, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        best_label, best_area = 0, 0
+        for lab in range(1, n_labels):
+            area = int(stats[lab, cv2.CC_STAT_AREA])
+            if area >= self._min_area and area > best_area:
+                best_area = area
+                best_label = lab
+
+        scale_x = orig_w / proc_w
+        scale_y = orig_h / proc_h
+
+        if best_label > 0:
+            cx = float(centroids[best_label][0]) * scale_x
+            cy = float(centroids[best_label][1]) * scale_y
+            if self._last_center is not None and self._alpha > 0:
+                cx = (1 - self._alpha) * self._last_center[0] + self._alpha * cx
+                cy = (1 - self._alpha) * self._last_center[1] + self._alpha * cy
+            self._last_center = (cx, cy)
+            self._miss_count  = 0
+        else:
+            if self._last_center is not None:
+                self._miss_count += 1
+                if self._miss_count > self._patience:
+                    self._last_center = None
+                    self._miss_count  = 0
+            return []
+
+        cx, cy  = self._last_center
+        half    = self._square / 2.0
+        box     = (int(cx - half), int(cy - half), self._square, self._square)
+        return [Detection(category=0, conf=1.0, box=box)]
+
+    def close(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Module
 # ---------------------------------------------------------------------------
 
@@ -174,6 +302,9 @@ class APACameraModule(Module):
         self._current_csv_path = None
         self._frame_id = 0
         self._csv_prev_ns = None
+        # Offset captured once per segment so PTP step-corrections mid-recording
+        # don't create inconsistent offsets across rows in the same file.
+        self._wall_mono_offset_ns: int = int((time.time() - time.monotonic()) * 1e9)
 
         # ── APA: detection state ────────────────────────────────────────────
         self.detector: Optional[HailoDetector] = None
@@ -260,6 +391,25 @@ class APACameraModule(Module):
         if not self.config.get("object_detection.enabled", False):
             return
         if self.detector is not None:
+            return
+
+        backend = self.config.get("object_detection.backend", "hailo")
+
+        if backend == "blob":
+            bt = self.config.get("blob_tracker", {})
+            self.detector = BlobTracker(
+                process_width   = bt.get("process_width",   256),
+                thr_hi          = bt.get("thr_hi",          5.0),
+                gap_h_px        = bt.get("gap_h_px",        15),
+                gap_v_px        = bt.get("gap_v_px",        15),
+                close_px        = bt.get("close_px",        7),
+                open_px         = bt.get("open_px",         5),
+                min_area_px     = bt.get("min_area_px",     50),
+                patience_frames = bt.get("patience_frames", 10),
+                smoothing_alpha = bt.get("smoothing_alpha", 0.3),
+                track_square_size = bt.get("track_square_size", 150),
+            )
+            self.logger.info("Blob tracker detector ready")
             return
 
         model_path = self.config.get(
@@ -439,6 +589,8 @@ class APACameraModule(Module):
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
         self._open_timestamp_csv(filename)
+        if hasattr(self.detector, 'reset'):
+            self.detector.reset()
 
 
     def _start_next_recording_segment(self) -> None:
@@ -500,6 +652,9 @@ class APACameraModule(Module):
         )
         self._frame_id = 0
         self._csv_prev_ns = None
+        # Snapshot the wall↔monotonic offset once per segment so all rows in this
+        # file share a consistent epoch, unaffected by any PTP step-corrections.
+        self._wall_mono_offset_ns = int((time.time() - time.monotonic()) * 1e9)
         self.facade.add_session_file(self._current_csv_path)
 
 
@@ -537,8 +692,7 @@ class APACameraModule(Module):
             metadata = req.get_metadata()
             sensor_ts = metadata.get('SensorTimestamp')
             if sensor_ts is not None:
-                offset_ns = int((time.time() - time.monotonic()) * 1e9)
-                return sensor_ts + offset_ns
+                return sensor_ts + self._wall_mono_offset_ns
             return metadata.get('FrameWallClock')
         except Exception as e:
             self.logger.error(f"Timestamp error: {e}")
@@ -605,7 +759,8 @@ class APACameraModule(Module):
                 if overlay_timestamp and ts_label:
                     self._apply_timestamp_label(m, ts_label, "lores")
                 if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
-                    self._apply_framerate_label(m, str(actual_fps))
+                    stream_fps = self._STREAM_FPS if self._stream_interval_s > 0 else None
+                    self._apply_framerate_label(m, str(actual_fps), stream_fps)
                 if detection_enabled:
                     self._draw_detections(m)
 
@@ -757,14 +912,25 @@ class APACameraModule(Module):
                     cv2.FONT_HERSHEY_SIMPLEX, scale, (50, 255, 50), thick)
 
 
-    def _apply_framerate_label(self, m: MappedArray, fps_str: str) -> None:
-        text = f"{fps_str}fps"
-        font  = cv2.FONT_HERSHEY_SIMPLEX
-        scale = max(0.2, self.lores_height * 0.02 / 18)
-        tw, th = cv2.getTextSize(text, font, scale, 1)[0]
-        x = int((self.lores_width - tw) / 2)
-        y = self.lores_height - max(4, int(self.lores_height * 0.01))
-        cv2.putText(m.array, text, (x, y), font, scale, (50, 255, 50), 1)
+    def _apply_framerate_label(self, m: MappedArray, fps_str: str, stream_fps: int | None = None) -> None:
+        font   = cv2.FONT_HERSHEY_SIMPLEX
+        scale  = max(0.2, self.lores_height * 0.02 / 18)
+        margin = max(4, int(self.lores_height * 0.01))
+        color  = (50, 255, 50)
+
+        if stream_fps is not None:
+            lines = [f"{fps_str}fps rec", f"~{stream_fps}fps stream"]
+        else:
+            lines = [f"{fps_str}fps"]
+
+        _, th = cv2.getTextSize(lines[0], font, scale, 1)[0]
+        line_h = th + margin
+        y = self.lores_height - margin
+        for line in reversed(lines):
+            tw, _ = cv2.getTextSize(line, font, scale, 1)[0]
+            x = int((self.lores_width - tw) / 2)
+            cv2.putText(m.array, line, (x, y), font, scale, color, 1)
+            y -= line_h
 
 
     def _apply_shock_zone(self, m: MappedArray) -> None:

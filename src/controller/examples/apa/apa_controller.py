@@ -21,18 +21,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Import habitat controller
 from controller.controller import Controller
 
-# Import APA specific manager classes
-from apa_web import APAWeb # Import APA web interface manager
-
 class APAController(Controller):
     def __init__(self):
         super().__init__()
         self.config.load_controller_config("apa_controller_config.json")
-
-        # Reinstantiate webapp  
-        # self.web = APAWeb(config=self.config) # Instantiate an APA specific web class 
-
-        self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
+        self.web.handle_special_module_status = self.handle_special_module_status
 
     def configure_controller(self, updated_keys: Optional[list[str]]):
         pass

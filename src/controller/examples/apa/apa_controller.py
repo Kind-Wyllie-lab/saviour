@@ -41,6 +41,12 @@ class APAController(Controller):
             case "shock_stopped_being_delivered":
                 self.web.socketio.emit("shock_stopped_being_delivered", status)
                 return True
+            case "zone_entered":
+                self.web.socketio.emit("zone_entered", status)
+                return True
+            case "zone_exited":
+                self.web.socketio.emit("zone_exited", status)
+                return True
             case _:
                 self.logger.warning(f"APA controller has no logic for {status.get('type')} from {module_id}")
                 return False

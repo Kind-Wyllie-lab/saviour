@@ -18,7 +18,7 @@ import json
 import threading
 import csv
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 import serial.tools.list_ports
 
 # Add the current directory to the path for imports

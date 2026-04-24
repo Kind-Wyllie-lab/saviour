@@ -80,6 +80,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const [maskOpen, setMaskOpen]           = useState(true);
   const [shockZoneOpen, setShockZoneOpen] = useState(true);
   const [detectionOpen, setDetectionOpen] = useState(false);
+  const [blobOpen, setBlobOpen]           = useState(true);
   const { updateStatus, handleUpdate }    = useModuleUpdate(module.id);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
@@ -203,10 +204,11 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
     setApplyAllConfirm(null);
   };
 
-  const cam       = formData?.camera ?? {};
-  const mask      = formData?.mask ?? {};
-  const shockZone = formData?.shock_zone ?? {};
-  const detection = formData?.object_detection ?? {};
+  const cam         = formData?.camera ?? {};
+  const mask        = formData?.mask ?? {};
+  const shockZone   = formData?.shock_zone ?? {};
+  const detection   = formData?.object_detection ?? {};
+  const blobTracker = formData?.blob_tracker ?? {};
 
   const selectedMode = sensorModes[cam.sensor_mode_index ?? 0];
   const maxFps    = selectedMode?.fps ?? null;
@@ -218,7 +220,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const gbPerHour  = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
   const colorHex   = rgbToHex(shockZone.shock_zone_color);
 
-  const COPY_SECTIONS = ["camera", "mask", "shock_zone", "object_detection"];
+  const COPY_SECTIONS = ["camera", "mask", "shock_zone", "object_detection", "blob_tracker"];
   const sectionLabel = key => key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
   return (
@@ -497,30 +499,110 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
             {(detection.enabled ?? false) && (
               <>
                 <div className="form-field">
-                  <label>Threshold: {Number(detection.threshold ?? 0.55).toFixed(2)}</label>
-                  <input type="range" min="0.05" max="1" step="0.01"
-                    value={detection.threshold ?? 0.55}
-                    className="brightness-slider"
-                    onChange={e => handleChange(["object_detection", "threshold"], e)} />
+                  <label>Backend:</label>
+                  <select
+                    value={detection.backend ?? "blob"}
+                    onChange={e => handleChange(["object_detection", "backend"], e)}
+                  >
+                    <option value="blob">Blob tracker (no model required)</option>
+                    <option value="hailo">Hailo .hef model</option>
+                  </select>
                 </div>
-                <div className="form-field">
-                  <label>Max detections:</label>
-                  <input type="number" min="1" max="10" step="1"
-                    value={detection.max_detections ?? 2}
-                    onChange={e => handleChange(["object_detection", "max_detections"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Coordinate smoothing:</label>
-                  <input type="checkbox"
-                    checked={detection.coordinate_smoothing ?? false}
-                    onChange={e => handleChange(["object_detection", "coordinate_smoothing"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Model path:</label>
-                  <input type="text"
-                    value={detection.model_path ?? ""}
-                    onChange={e => handleChange(["object_detection", "model_path"], e)} />
-                </div>
+
+                {(detection.backend ?? "blob") === "hailo" ? (
+                  <>
+                    <div className="form-field">
+                      <label>Model path:</label>
+                      <input type="text"
+                        value={detection.model_path ?? ""}
+                        onChange={e => handleChange(["object_detection", "model_path"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Threshold: {Number(detection.threshold ?? 0.55).toFixed(2)}</label>
+                      <input type="range" min="0.05" max="1" step="0.01"
+                        value={detection.threshold ?? 0.55}
+                        className="brightness-slider"
+                        onChange={e => handleChange(["object_detection", "threshold"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Max detections:</label>
+                      <input type="number" min="1" max="10" step="1"
+                        value={detection.max_detections ?? 2}
+                        onChange={e => handleChange(["object_detection", "max_detections"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Coordinate smoothing:</label>
+                      <input type="checkbox"
+                        checked={detection.coordinate_smoothing ?? false}
+                        onChange={e => handleChange(["object_detection", "coordinate_smoothing"], e)} />
+                    </div>
+                  </>
+                ) : (
+                  <Section title="Blob tracker settings" open={blobOpen} onToggle={() => setBlobOpen(p => !p)}>
+                    <div className="form-field">
+                      <label>Process width (px):</label>
+                      <input type="number" min="64" max="1920" step="16"
+                        value={blobTracker.process_width ?? 256}
+                        onChange={e => handleChange(["blob_tracker", "process_width"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Diff threshold: {Number(blobTracker.thr_hi ?? 5).toFixed(1)}</label>
+                      <input type="range" min="1" max="50" step="0.5"
+                        value={blobTracker.thr_hi ?? 5}
+                        className="brightness-slider"
+                        onChange={e => handleChange(["blob_tracker", "thr_hi"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>H gap fill (px):</label>
+                      <input type="number" min="0" max="100" step="1"
+                        value={blobTracker.gap_h_px ?? 15}
+                        onChange={e => handleChange(["blob_tracker", "gap_h_px"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>V gap fill (px):</label>
+                      <input type="number" min="0" max="100" step="1"
+                        value={blobTracker.gap_v_px ?? 15}
+                        onChange={e => handleChange(["blob_tracker", "gap_v_px"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Close kernel (px):</label>
+                      <input type="number" min="0" max="50" step="1"
+                        value={blobTracker.close_px ?? 7}
+                        onChange={e => handleChange(["blob_tracker", "close_px"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Open kernel (px):</label>
+                      <input type="number" min="0" max="50" step="1"
+                        value={blobTracker.open_px ?? 5}
+                        onChange={e => handleChange(["blob_tracker", "open_px"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Min blob area (px²):</label>
+                      <input type="number" min="1" max="10000" step="10"
+                        value={blobTracker.min_area_px ?? 50}
+                        onChange={e => handleChange(["blob_tracker", "min_area_px"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Patience (frames):</label>
+                      <input type="number" min="0" max="120" step="1"
+                        value={blobTracker.patience_frames ?? 10}
+                        onChange={e => handleChange(["blob_tracker", "patience_frames"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Smoothing: {Number(blobTracker.smoothing_alpha ?? 0.3).toFixed(2)}</label>
+                      <input type="range" min="0" max="1" step="0.05"
+                        value={blobTracker.smoothing_alpha ?? 0.3}
+                        className="brightness-slider"
+                        onChange={e => handleChange(["blob_tracker", "smoothing_alpha"], e)} />
+                    </div>
+                    <div className="form-field">
+                      <label>Track box size (px):</label>
+                      <input type="number" min="20" max="600" step="10"
+                        value={blobTracker.track_square_size ?? 150}
+                        onChange={e => handleChange(["blob_tracker", "track_square_size"], e)} />
+                    </div>
+                  </Section>
+                )}
               </>
             )}
           </Section>

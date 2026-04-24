@@ -698,6 +698,30 @@ class Web(ABC):
             threading.Thread(target=_reboot, daemon=True).start()
 
 
+        @self.socketio.on("set_controller_time")
+        def handle_set_controller_time(data=None):
+            from datetime import datetime, timezone as _tz
+            self.logger.info("Set controller time requested")
+            try:
+                iso = (data or {}).get("iso", "")
+                dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(_tz.utc)
+                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                result = subprocess.run(
+                    ["timedatectl", "set-time", time_str],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    self.logger.info(f"Controller time set to {time_str} UTC")
+                    self.socketio.emit("set_time_result", {"success": True})
+                else:
+                    err = result.stderr.strip() or result.stdout.strip() or "timedatectl returned non-zero"
+                    self.logger.error(f"timedatectl set-time failed: {err}")
+                    self.socketio.emit("set_time_result", {"success": False, "error": err})
+            except Exception as e:
+                self.logger.error(f"set_controller_time error: {e}")
+                self.socketio.emit("set_time_result", {"success": False, "error": str(e)})
+
+
         """Viewing exported recordings on the share"""
         @self.socketio.on('get_exported_recordings')
         def handle_get_exported_recordings():

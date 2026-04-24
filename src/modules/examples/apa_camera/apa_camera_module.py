@@ -833,7 +833,9 @@ class APACameraModule(Module):
             if w <= 0 or h <= 0:
                 return
 
-            cx, cy = int(x + w / 2), int(y + h / 2)
+            # Zone check and smoothing always in main-stream pixel space
+            cx = int(x + w / 2)
+            cy = int(y + h / 2)
 
             if self.config.get("object_detection.coordinate_smoothing"):
                 alpha = 0.5
@@ -845,7 +847,15 @@ class APACameraModule(Module):
 
             in_zone = self._is_in_shock_zone(cx, cy)
             color = (0, 0, 255) if in_zone else (0, 255, 0)
-            cv2.circle(m.array, (cx, cy), 5, color, -1)
+
+            # Scale to the current frame's dimensions for drawing
+            fh, fw = m.array.shape[:2]
+            sx = fw / self.width  if self.width  else 1.0
+            sy = fh / self.height if self.height else 1.0
+            draw_cx = int(cx * sx)
+            draw_cy = int(cy * sy)
+
+            cv2.circle(m.array, (draw_cx, draw_cy), 5, color, -1)
 
             if in_zone:
                 cv2.putText(m.array, "IN SHOCK ZONE", (50, 100),
@@ -853,7 +863,7 @@ class APACameraModule(Module):
 
             lbl = (f"{self._labels[det.category]}" if det.category < len(self._labels)
                    else f"cls{det.category}")
-            cv2.putText(m.array, f"{lbl} ({det.conf:.2f})", (cx + 10, cy - 10),
+            cv2.putText(m.array, f"{lbl} ({det.conf:.2f})", (draw_cx + 10, draw_cy - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         except Exception as e:
             self.logger.error(f"Error in _draw_detections: {e}")

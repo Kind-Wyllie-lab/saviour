@@ -58,6 +58,9 @@ class ControllerFacade():
     def get_export_credentials(self) -> dict:
         return self.controller.get_export_credentials()
 
+    def get_controller_own_share_info(self) -> dict:
+        return self.controller.get_controller_own_share_info()
+
 
     def get_share_path(self):
         return "/home/pi/controller_share"

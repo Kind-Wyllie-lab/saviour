@@ -38,7 +38,7 @@ function SessionName({ experimentName }) {
   return (
     <div className="experiment-metadata-container">
       <div className="metadata-form-row">
-        <label htmlFor="experimenter">Experimenter</label>
+        <label htmlFor="experimenter">Researcher</label>
         <input id="experimenter" value={metadata.experimenter} onChange={(e) => handleChange("experimenter", e.target.value)} placeholder="Your name" />
       </div>
       <div className="metadata-form-row">

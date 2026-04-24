@@ -4,6 +4,7 @@ import socket from "/src/socket";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
+import ExportConfigSection from "./ExportConfigSection";
 
 function ControllerConfigCard() {
   const { formData, setFormData, handleChange } = useConfigForm();
@@ -75,7 +76,18 @@ function ControllerConfigCard() {
       <div className="config-card-body">
         <div className="config-form">
           <form>
-            <ConfigFields data={formData} handleChange={handleChange} />
+            {(() => {
+              const { export: exportConfig, ...rest } = formData;
+              return (
+                <>
+                  <ConfigFields data={rest} handleChange={handleChange} />
+                  <ExportConfigSection
+                    exportConfig={exportConfig}
+                    handleChange={handleChange}
+                  />
+                </>
+              );
+            })()}
           </form>
           <button className="save-button" type="button" onClick={handleSave}>
             Save Config

@@ -153,12 +153,9 @@ class ControllerFacade():
 
     """Set config"""
     def set_config(self, new_config: dict) -> bool:
-        self.controller.config.set_all(new_config)
+        self.controller.config.set_all(new_config, persist=True)
         updated_config = self.controller.config.get_all()
-        if new_config != updated_config:
-            return False
-        else: 
-            return True
+        return new_config == updated_config
 
     """Module Management"""
     def is_module_recording(self, module_id: str) -> bool:
@@ -218,18 +215,22 @@ class ControllerFacade():
         return clients
 
     def sync_export_to_module(self, module_id: str) -> dict:
-        """Push this controller's Samba credentials into a single module's export config.
-
-        Returns {"success": True} or {"success": False, "error": "..."}.
-        """
+        """Push this controller's saved export credentials to a single module."""
         creds = self.controller.get_export_credentials()
         if not creds:
-            return {"success": False, "error": "Credentials file not found on controller"}
-        result = self.controller.modules.apply_section_to_module(module_id, "export", creds)
-        if result is None:
-            return {"success": False, "error": "Module not found or config not yet confirmed"}
-        _, config = result
-        self.controller.communication.send_command(module_id, "set_config", config)
+            return {"success": False, "error": "No export credentials configured on controller"}
+        return self._push_export_creds_to_module(module_id, creds)
+
+    def sync_export_with_creds(self, module_id: str, creds: dict) -> dict:
+        """Push explicit export credentials to a single module."""
+        return self._push_export_creds_to_module(module_id, creds)
+
+    def _push_export_creds_to_module(self, module_id: str, creds: dict) -> dict:
+        """Send set_export_config to a module, persisting to base_config.json on the module."""
+        modules = self.controller.modules.get_modules()
+        if module_id not in modules:
+            return {"success": False, "error": "Module not found"}
+        self.controller.communication.send_command(module_id, "set_export_config", creds)
         return {"success": True}
 
 

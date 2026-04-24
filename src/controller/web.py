@@ -550,11 +550,31 @@ class Web(ABC):
 
         @self.socketio.on('sync_export_to_all')
         def handle_sync_export_to_all(data=None):
-            """Push export credentials to every connected module."""
+            """Push export credentials to every connected module.
+
+            If the frontend sends share_ip/share_path/share_username/share_password
+            in the payload, those values are used and also persisted to the controller
+            config.  Otherwise falls back to the currently saved controller config.
+            """
+            data = data or {}
+            if "share_ip" in data:
+                creds = {
+                    "share_ip":       data.get("share_ip", ""),
+                    "share_path":     data.get("share_path", "controller_share"),
+                    "share_username": data.get("share_username", ""),
+                    "share_password": data.get("share_password", ""),
+                }
+                # Persist so future auto-pushes (on module discovery) use the same values
+                current = self.facade.get_config()
+                current.setdefault("export", {}).update(creds)
+                self.facade.set_config(current)
+            else:
+                creds = self.facade.get_export_credentials()
+
             modules = self.facade.get_modules()
             results = {}
             for module_id in modules:
-                results[module_id] = self.facade.sync_export_to_module(module_id)
+                results[module_id] = self.facade.sync_export_with_creds(module_id, creds)
             success_count = sum(1 for r in results.values() if r.get("success"))
             self.socketio.emit("export_sync_all_result", {
                 "results": results,

@@ -555,6 +555,29 @@ class Controller(ABC):
             return {}
 
 
+    def get_controller_own_share_info(self) -> dict:
+        """Return this controller's own Samba share details, ignoring any NAS override."""
+        creds_path = "/etc/saviour/samba_credentials"
+        username = ""
+        password = ""
+        try:
+            with open(creds_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("username="):
+                        username = line.split("=", 1)[1]
+                    elif line.startswith("password="):
+                        password = line.split("=", 1)[1]
+        except Exception:
+            pass
+        return {
+            "share_ip": self.network.ip,
+            "share_path": self.config.get("samba.share_name", "controller_share"),
+            "share_username": username,
+            "share_password": password,
+        }
+
+
     def get_samba_info(self):
         """Get Samba share information from configuration"""
         try:

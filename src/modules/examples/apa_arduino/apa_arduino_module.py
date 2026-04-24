@@ -350,7 +350,10 @@ class APAModule(Module):
             self._create_shock_event_file()
 
             # Start motor
-            self.motor.start_motor()
+            if self.motor:
+                self.motor.start_motor()
+            else:
+                self.logger.warning("start_recording: no motor connected, skipping motor start")
 
             # Set recording flag - this happens in module.py too but just to be safe
             self.recording_shocks = True

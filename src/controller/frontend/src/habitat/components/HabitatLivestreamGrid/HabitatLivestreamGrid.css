@@ -1,88 +1,149 @@
+/* ── Wrapper — fills the livestream-square container ─────────────────────── */
+
 .habitat-grid-wrapper {
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
   height: 100%;
-  gap: 16px;
-  align-items: center;
+  width: 100%;
 }
 
+/* ── Grid ─────────────────────────────────────────────────────────────────── */
+
 .habitat-grid {
-    height: 100%;
-    aspect-ratio: 1/1;
-    width: auto;
+  height: 100%;
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  width: auto;
+  display: grid;
+  box-sizing: border-box;
+  padding: 8px;
+  gap: 0;
+  overflow: hidden;
+}
 
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(4, 1fr);
-    
-    box-sizing: border-box;
-    padding: 8px; 
+.habitat-grid-cell {
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
+}
 
-    gap: 0; /* no seams */
-    overflow: hidden;
-  }
-  
-  .habitat-grid-cell {
-    min-height: 0;
-    min-width: 0;
-    box-sizing: border-box;
-  }
-  
-  .habitat-grid-cell.highlighted {
-    outline: 2px solid #4da3ff;
-    outline-offset: -2px;
-  }
-  
+.habitat-grid-cell.highlighted {
+  outline: 2px solid #4da3ff;
+  outline-offset: -2px;
+}
 
-  .empty-cell {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #777;
-    border: 1px solid#444;
-    height: 100%;
-    width: 100%;
-    box-sizing: border-box;
-  }
-  
-  .habitat-grid-controls {
-    min-width: 80px;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    justify-content: center;
-    align-items: center;
-    background-color: var(--card-bg-color);
-    border-radius: 8px;
-    padding: 12px;
-  }
+.empty-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  border: 1px solid #444;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
 
-  .habitat-grid-controls h3 {
-    padding: 0; margin: 0;
-  }
+/* ── Corner overlay buttons ───────────────────────────────────────────────── */
 
-  .habitat-grid-controls label {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-  }
+.habitat-grid-corner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 0 6px;
+  align-self: flex-start;
+}
 
-  .habitat-grid-controls button {
-    border-radius: 4px;
-  }
+.habitat-grid-icon-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--card-bg-color) 80%, transparent);
+  color: var(--text-color);
+  font-size: 1em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
 
-  .duplicate-modules {
-    background-color: black;
-    height: 100%;
-    width: 100%;
-    color: red;
-    display: flex;
-    align-items: center;
-    text-align: center;
-    justify-content: center;
-    flex-direction: column;
-  }
+.habitat-grid-icon-btn:hover {
+  opacity: 1;
+}
 
-    .duplicate-modules a:hover {
-      color: lightblue;
-    }
+.habitat-grid-icon-btn--active {
+  opacity: 1;
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+/* ── Settings popover ─────────────────────────────────────────────────────── */
+
+.habitat-grid-settings-wrap {
+  position: relative;
+}
+
+.habitat-grid-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--card-bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
+.habitat-grid-popover-title {
+  margin: 0;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+}
+
+.habitat-grid-popover label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9em;
+}
+
+.habitat-grid-popover-reset {
+  align-self: stretch;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+/* ── Duplicate-module error cell ──────────────────────────────────────────── */
+
+.duplicate-modules {
+  background-color: black;
+  height: 100%;
+  width: 100%;
+  color: red;
+  display: flex;
+  align-items: center;
+  text-align: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.duplicate-modules a:hover {
+  color: lightblue;
+}

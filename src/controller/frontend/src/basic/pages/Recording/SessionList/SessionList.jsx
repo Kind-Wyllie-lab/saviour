@@ -2,6 +2,21 @@ import React, { useState, useEffect, useRef } from "react";
 import socket from "/src/socket";
 import "./SessionList.css";
 
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function formatDuration(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+function formatScheduledDays(days) {
+  if (!days || days.length === 0 || days.length === 7) return "every day";
+  return [...days].sort((a, b) => a - b).map(d => DAY_NAMES[d]).join(", ");
+}
+
 function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
   const [selectedId, setSelectedId] = useState("");
   const selectRef = useRef(null);
@@ -199,10 +214,21 @@ function SessionList({ sessionList, modules = [] }) {
                       </>
                     )}
 
+                    {session.timed_stop_at && session.duration_minutes && (
+                      <>
+                        <span className="session-meta-label">Duration</span>
+                        <span>{formatDuration(session.duration_minutes)}</span>
+                      </>
+                    )}
+
                     {isScheduled && session.scheduled_start_time && (
                       <>
                         <span className="session-meta-label">Schedule</span>
-                        <span>{session.scheduled_start_time} – {session.scheduled_end_time}</span>
+                        <span>
+                          {session.scheduled_start_time} – {session.scheduled_end_time}
+                          {", "}
+                          {formatScheduledDays(session.scheduled_days)}
+                        </span>
                       </>
                     )}
                   </div>

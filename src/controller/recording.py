@@ -71,6 +71,14 @@ class RecordingSession:
     # Set by _stop_scheduled_session so _check_all_stopped returns to SCHEDULED
     # rather than STOPPED when the day's run finishes.
     scheduled_stopping:        bool = False
+    # Timed sessions: requested duration in minutes (for display purposes).
+    duration_minutes:          Optional[int]   = None
+    # Timed sessions: epoch timestamp at which the session should auto-stop.
+    # None means no auto-stop (infinite / manual stop).
+    timed_stop_at:             Optional[float] = None
+    # Scheduled sessions: weekday ints (0=Mon…6=Sun) on which to run.
+    # Empty list means every day.
+    scheduled_days:            list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +128,8 @@ class Recording:
         except Exception as e:
             return f"Controller share not writable ({share}): {e}"
 
-    def create_session(self, session_name: str, target: str) -> dict:
+    def create_session(self, session_name: str, target: str,
+                       duration_minutes: Optional[int] = None) -> dict:
         """Create a session that begins recording immediately.
 
         Returns a result dict so the caller can surface errors to the frontend.
@@ -147,6 +156,7 @@ class Recording:
         session_name = self._format_session_name(session_name, target)
 
         start_at = time.time() + LEAD_SECS
+        timed_stop_at = (start_at + duration_minutes * 60) if duration_minutes else None
 
         session = RecordingSession(
             session_name=session_name,
@@ -157,6 +167,8 @@ class Recording:
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
             recording_start_at=start_at,
+            duration_minutes=duration_minutes,
+            timed_stop_at=timed_stop_at,
         )
 
         with self._lock:
@@ -181,8 +193,12 @@ class Recording:
 
 
     def create_scheduled_session(self, session_name: str, target: str,
-                                  start_time: str, end_time: str) -> dict:
-        """Create a session that records daily between start_time and end_time (HH:MM)."""
+                                  start_time: str, end_time: str,
+                                  days: Optional[list] = None) -> dict:
+        """Create a session that records on specified days between start_time and end_time (HH:MM).
+
+        days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
+        """
         if not session_name or not session_name.strip():
             return {"success": False, "error": "Session name cannot be empty"}
         if not start_time or not end_time:
@@ -202,6 +218,7 @@ class Recording:
             scheduled=True,
             scheduled_start_time=start_time,
             scheduled_end_time=end_time,
+            scheduled_days=days or [],
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
         )
@@ -580,9 +597,17 @@ class Recording:
                         continue
 
                     if session.scheduled:
-                        # Start if not already started today and time has come
+                        today_weekday = date.today().weekday()
+                        days_match = (
+                            not session.scheduled_days
+                            or today_weekday in session.scheduled_days
+                        )
+
+                        # Start if today matches the day filter, not already started today,
+                        # and the start time has been reached
                         if (session.state != SessionState.ACTIVE
                                 and session.scheduled_last_start_date != today
+                                and days_match
                                 and current_time >= session.scheduled_start_time):
                             self._start_scheduled_session(session_name, today)
 
@@ -595,6 +620,16 @@ class Recording:
                     elif session.state in (SessionState.ACTIVE, SessionState.ERROR):
                         # Skip health check while still in the synchronised lead window
                         if session.recording_start_at and time.time() < session.recording_start_at:
+                            continue
+
+                        # Auto-stop timed sessions when their duration has elapsed
+                        if (session.timed_stop_at
+                                and time.time() >= session.timed_stop_at
+                                and session.state == SessionState.ACTIVE):
+                            self.logger.info(
+                                f"Timed session '{session_name}' duration elapsed — stopping"
+                            )
+                            self.stop_session(session_name)
                             continue
 
                         # Probe any modules whose state is unknown (e.g. after black start).

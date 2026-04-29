@@ -337,7 +337,7 @@ class APAModule(Module):
 
 
     """Recording Methods"""
-    def _start_recording(self):
+    def _start_new_recording(self):
         """Start APA recording - motor rotation and data collection"""      
         try:
             # Initialize recording variables
@@ -411,6 +411,12 @@ class APAModule(Module):
             self.logger.warning(f"Error closing shock events file: {e}")
 
 
+    def _start_next_recording_segment(self) -> bool:
+        """Start a new recording segment — opens a fresh shock events CSV."""
+        self._close_shock_event_file()
+        self._create_shock_event_file()
+        return True
+
     def _stop_recording(self) -> bool:
         """Stop APA recording and save data"""       
         try:
@@ -458,7 +464,7 @@ class APAModule(Module):
     
 
     """Configuration"""
-    def configure_module(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
         self.logger.info("Configuring APA ARDUINO module...")
         if not self.shock or not self.motor:
             self.logger.warning(

@@ -27,6 +27,10 @@ _MONITOR_INTERVAL_SECS = 5
 # PTP-synchronised clocks mean all modules hit this timestamp together.
 LEAD_SECS = 3
 
+# How long after recording_start_at to suppress fault detection.
+# Modules take a few seconds to spin up after their scheduled start time.
+_STARTUP_GRACE_SECS = 15
+
 
 # ---------------------------------------------------------------------------
 # State enums
@@ -630,8 +634,9 @@ class Recording:
                             self._stop_scheduled_session(session_name)
 
                     elif session.state in (SessionState.ACTIVE, SessionState.ERROR):
-                        # Skip health check while still in the synchronised lead window
-                        if session.recording_start_at and time.time() < session.recording_start_at:
+                        # Skip health check during lead window and startup grace period
+                        if (session.recording_start_at
+                                and time.time() < session.recording_start_at + _STARTUP_GRACE_SECS):
                             continue
 
                         # Auto-stop timed sessions when their duration has elapsed

@@ -4,6 +4,22 @@ import "./SessionList.css";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+function Countdown({ timedStopAt }) {
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+  useEffect(() => {
+    const tick = () => setRemaining(Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [timedStopAt]);
+  if (remaining <= 0) return <span>ending…</span>;
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return <span>{h > 0 ? `${h}h ${mm}m ${ss}s` : `${mm}m ${ss}s`}</span>;
+}
+
 function formatDuration(minutes) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -221,6 +237,12 @@ function SessionList({ sessionList, modules = [] }) {
                       <>
                         <span className="session-meta-label">Duration</span>
                         <span>{formatDuration(session.duration_minutes)}</span>
+                        {(isActive || isError) && (
+                          <>
+                            <span className="session-meta-label">Remaining</span>
+                            <span><Countdown timedStopAt={session.timed_stop_at} /></span>
+                          </>
+                        )}
                       </>
                     )}
 

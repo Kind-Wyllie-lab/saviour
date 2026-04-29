@@ -108,11 +108,12 @@
   flex-shrink: 0;
 }
 
-.session-state-label--starting  { color: #e8a020; }
-.session-state-label--recording { color: #2e7d32; }
-.session-state-label--stopped   { color: var(--text-muted, #888); }
-.session-state-label--scheduled { color: #4a90d9; }
-.session-state-label--error     { color: #c62828; }
+.session-state-label--starting   { color: #e8a020; }
+.session-state-label--recording  { color: #2e7d32; }
+.session-state-label--stopped    { color: var(--text-muted, #888); }
+.session-state-label--scheduled  { color: #4a90d9; }
+.session-state-label--error      { color: #c62828; }
+.session-state-label--past-fault { color: #c0580a; }
 
 .session-expand-toggle {
   font-size: 0.75rem;
@@ -182,6 +183,15 @@
   font-size: 0.85rem;
   color: #c62828;
   background: rgba(198, 40, 40, 0.07);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin: 0;
+}
+
+.session-past-fault-message {
+  font-size: 0.85rem;
+  color: #c0580a;
+  background: rgba(192, 88, 10, 0.07);
   border-radius: 4px;
   padding: 5px 8px;
   margin: 0;

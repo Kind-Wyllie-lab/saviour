@@ -1,17 +1,19 @@
 // import logo from './logo.svg';
 import './App.css';
-import React,  { useEffect, useState } from "react";
+import React,  { useEffect, useRef, useState } from "react";
 
 // SAVIOUR Imports
 import Sidebar from "./components/Sidebar/Sidebar";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import Settings from "./pages/Settings/Settings";
 import Recording from "./pages/Recording/Recording";
 import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
 import ClockModal from "./components/ClockModal/ClockModal";
+import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
 import useClockOnce from "/src/hooks/useClockOnce";
+import useSessions from "/src/hooks/useSessions";
 
 
 document.title="SAVIOUR";
@@ -27,10 +29,41 @@ const pages = [
 
 const CLOCK_DRIFT_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
 
+// Keyed by "session_name::error_time" so a new fault on the same session re-alerts.
+function faultKey(session) {
+  return `saviour_fault_ack::${session.session_name}::${session.error_time ?? "unknown"}`;
+}
+
 function App() {
   const [darkMode, setDarkMode] = useState(false);
   const clockInfo = useClockOnce();
+  const { sessionList } = useSessions();
+  const [pendingFaults, setPendingFaults] = useState([]);
   const [showClockModal, setShowClockModal] = useState(false);
+  const location = useLocation();
+  const prevPathname = useRef(location.pathname);
+
+  // useEffect(() => {
+  //   const unacked = sessionList.filter(
+  //     (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
+  //   );
+  //   setPendingFaults(unacked);
+  // }, [sessionList]);
+
+  // Dismiss fault modal (and mark acknowledged) when the user navigates to another page
+  useEffect(() => {
+    if (location.pathname === prevPathname.current) return;
+    prevPathname.current = location.pathname;
+    setPendingFaults((faults) => {
+      faults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
+      return [];
+    });
+  }, [location.pathname]);
+
+  const handleAcknowledge = () => {
+    pendingFaults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
+    setPendingFaults([]);
+  };
 
   useEffect(() => {
     if (clockInfo == null) return;
@@ -79,6 +112,13 @@ function App() {
           driftMs={clockInfo?.driftMs}
           controllerTime={clockInfo?.controllerTime}
           onClose={() => setShowClockModal(false)}
+        />
+      )}
+
+      {pendingFaults.length > 0 && (
+        <FaultAlertModal
+          faultedSessions={pendingFaults}
+          onAcknowledge={handleAcknowledge}
         />
       )}
     </div>

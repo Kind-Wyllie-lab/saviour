@@ -1,19 +1,16 @@
-// import logo from './logo.svg';
 import './App.css';
-import React,  { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
 
-// SAVIOUR Imports
 import Sidebar from '../basic/components/Sidebar/Sidebar';
 import Settings from "../basic/pages/Settings/Settings";
-import Debug from "../basic/pages/Debug/Debug";
 import System from "../basic/pages/System/System";
 import Recording from '../basic/pages/Recording/Recording';
 
-
-// Habitat Imports
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Monitor from "./pages/Monitor/Monitor";
+import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
+import useSessions from "/src/hooks/useSessions";
 
 
 document.title="Habitat";
@@ -25,29 +22,41 @@ const pages = [
   { label: "Monitor", path: "/monitor" },
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
-  // { label: "Debug", path: "/debug", disabled: true }
 ];
 
+// Key used to track which faults have been acknowledged this browser session.
+// Keyed by "session_name:error_time" so a new fault on the same session re-alerts.
+function faultKey(session) {
+  return `saviour_fault_ack::${session.session_name}::${session.error_time ?? "unknown"}`;
+}
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);
+  const { sessionList } = useSessions();
+  const [pendingFaults, setPendingFaults] = useState([]);
+
+  // Detect unacknowledged faults whenever the session list changes
+  useEffect(() => {
+    const unacked = sessionList.filter(
+      (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
+    );
+    setPendingFaults(unacked);
+  }, [sessionList]);
+
+  const handleAcknowledge = () => {
+    pendingFaults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
+    setPendingFaults([]);
+  };
 
   useEffect(() => {
-    // Check if user prefers dark mode
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     setDarkMode(prefersDark);
-
-    // Optional: listen for changes in system preference
     const listener = (e) => setDarkMode(e.matches);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", listener);
-
-    return () => {
-      window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", listener);
-    };
+    return () => window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", listener);
   }, []);
 
   useEffect(() => {
-    // Apply the theme by toggling a class on body
     if (darkMode) document.body.classList.add("dark-mode");
     else document.body.classList.remove("dark-mode");
   }, [darkMode]);
@@ -64,6 +73,13 @@ function App() {
           <Route path="/system" element={<System />} />
         </Routes>
       </div>
+
+      {pendingFaults.length > 0 && (
+        <FaultAlertModal
+          faultedSessions={pendingFaults}
+          onAcknowledge={handleAcknowledge}
+        />
+      )}
     </div>
   );
 }

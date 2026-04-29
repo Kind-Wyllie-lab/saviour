@@ -71,6 +71,9 @@ class RecordingSession:
     # Set by _stop_scheduled_session so _check_all_stopped returns to SCHEDULED
     # rather than STOPPED when the day's run finishes.
     scheduled_stopping:        bool = False
+    # Timestamp (YYYYMMDD-HHMMSS) when this session most recently entered ERROR state.
+    # Never cleared after recovery — preserves the fault record for display.
+    error_time:                Optional[str] = None
     # Timed sessions: requested duration in minutes (for display purposes).
     duration_minutes:          Optional[int]   = None
     # Timed sessions: epoch timestamp at which the session should auto-stop.
@@ -284,16 +287,23 @@ class Recording:
 
         with self._lock:
             for module_id in session.modules:
-                session.module_stop_states[module_id] = "stopping"
+                # Modules that aren't actually recording can't respond — count them done immediately
+                if not self.facade.is_module_recording(module_id):
+                    session.module_stop_states[module_id] = "stopped"
+                else:
+                    session.module_stop_states[module_id] = "stopping"
 
         for module_id in session.modules:
-            self.facade.send_command(module_id, "stop_recording", {})
+            if session.module_stop_states.get(module_id) == "stopping":
+                self.facade.send_command(module_id, "stop_recording", {})
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(
             f"Stop command sent to {len(session.modules)} module(s) in '{session_name}'"
         )
+        # If all modules were already offline, complete the transition immediately
+        self._check_all_stopped(session_name)
 
 
     def module_stopped(self, module_id: str) -> None:
@@ -430,6 +440,8 @@ class Recording:
 
         if session.state != SessionState.STOPPED:
             session.error_message = f"{module_id} is offline"
+            if session.state != SessionState.ERROR:
+                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
             session.state = SessionState.ERROR
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
@@ -659,6 +671,8 @@ class Recording:
                             msg = f"Not recording: {', '.join(not_recording)}"
                             if session.error_message != msg or session.state != SessionState.ERROR:
                                 session.error_message = msg
+                                if session.state != SessionState.ERROR:
+                                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                                 session.state = SessionState.ERROR
                                 self.facade.update_sessions(self.sessions)
                                 self.facade.send_alert(
@@ -669,7 +683,10 @@ class Recording:
                                         f"The following modules are not recording: {', '.join(not_recording)}."
                                     ),
                                 )
-                        elif session.state == SessionState.ERROR:
+                        elif session.state == SessionState.ERROR and should_be_recording:
+                            # All modules we were actively checking are now recording — recover.
+                            # Guard: if should_be_recording is empty (e.g. all states are "unknown"
+                            # after a restart) we cannot confirm recovery, so leave the ERROR state.
                             session.error_message = ""
                             session.state = SessionState.ACTIVE
                             self.facade.update_sessions(self.sessions)
@@ -712,6 +729,7 @@ class Recording:
                 session = RecordingSession(**d)
                 if session.state == SessionState.ACTIVE:
                     session.state = SessionState.ERROR
+                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"
                     session.module_stop_states = {m: "unknown" for m in session.modules}
                 self.sessions[name] = session

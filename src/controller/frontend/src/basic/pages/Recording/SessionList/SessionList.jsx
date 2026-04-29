@@ -181,6 +181,9 @@ function SessionList({ sessionList, modules = [] }) {
                     <span className="session-name">{session.session_name}</span>
                     {isStarting  && <span className="session-state-label session-state-label--starting">Starting…</span>}
                     {isActive && !isStarting && <span className="session-state-label session-state-label--recording">Recording</span>}
+                    {isActive && !isStarting && session.error_time && (
+                      <span className="session-state-label session-state-label--past-fault">fault recorded</span>
+                    )}
                     {isStopped   && <span className="session-state-label session-state-label--stopped">Stopped</span>}
                     {isScheduled && <span className="session-state-label session-state-label--scheduled">Scheduled</span>}
                     {isError     && <span className="session-state-label session-state-label--error">Error</span>}
@@ -237,6 +240,15 @@ function SessionList({ sessionList, modules = [] }) {
                     <p className="session-error-message">{session.error_message}</p>
                   )}
 
+                  {isActive && session.error_time && (
+                    <p className="session-past-fault-message">
+                      Fault recorded at {session.error_time.replace(
+                        /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/,
+                        "$4:$5"
+                      )}{session.error_message ? ` — ${session.error_message}` : ""}
+                    </p>
+                  )}
+
                   {stillStopping > 0 && (
                     <p className="session-info-text">
                       Waiting for {stillStopping} module{stillStopping !== 1 ? "s" : ""} to stop…
@@ -258,7 +270,7 @@ function SessionList({ sessionList, modules = [] }) {
                   )}
 
                   <div className="session-actions">
-                    {(isActive || isStarting) && (
+                    {(isActive || isStarting || isError) && (
                       <button
                         className="session-btn session-btn--stop"
                         onClick={() => handleStop(session.session_name)}

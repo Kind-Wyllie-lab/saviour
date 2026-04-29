@@ -4,6 +4,38 @@ import "./SessionList.css";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+function copyToClipboard(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.style.cssText = "position:fixed;top:-9999px;left:-9999px";
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand("copy");
+  document.body.removeChild(el);
+}
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    copyToClipboard(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button type="button" className="session-share-notice__copy-btn" onClick={handleCopy}>
+      {copied ? "Copied to clipboard!" : "Copy"}
+    </button>
+  );
+}
+
 function Countdown({ timedStopAt }) {
   const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
   useEffect(() => {
@@ -92,6 +124,14 @@ function SessionList({ sessionList, modules = [] }) {
   const [expandedSessions, setExpandedSessions] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
   const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
+  const [shareInfo, setShareInfo] = useState(null);
+
+  useEffect(() => {
+    socket.emit("get_controller_samba_info");
+    const handler = (data) => setShareInfo(data);
+    socket.on("controller_samba_info_response", handler);
+    return () => socket.off("controller_samba_info_response", handler);
+  }, []);
 
   const handleStop = (sessionName) => {
     socket.emit("stop_session", { session_name: sessionName });
@@ -289,6 +329,27 @@ function SessionList({ sessionList, modules = [] }) {
                         </span>
                       )}
                     </p>
+                  )}
+
+                  {isStopped && shareInfo && (
+                    <div className="session-share-notice">
+                      <p className="session-share-notice__instruction">
+                        Copy this path into your file explorer to access files:
+                      </p>
+                      <div className="session-share-notice__path-row">
+                        <p className="session-share-notice__path">
+                          \\{shareInfo.share_ip}\{shareInfo.share_path}
+                        </p>
+                        <CopyButton text={`\\\\${shareInfo.share_ip}\\${shareInfo.share_path}`} />
+                      </div>
+                      <div className="session-share-notice__creds">
+                        <span>Username: <strong>researcher</strong></span>
+                        <span>Password: <strong>getmyfiles</strong></span>
+                      </div>
+                      <p className="session-share-notice__warning">
+                        ⚠ Always check files are present after a recording, and export them to a safe long-term storage location!
+                      </p>
+                    </div>
                   )}
 
                   <div className="session-actions">

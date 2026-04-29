@@ -130,8 +130,9 @@ function ExportConfigSection({ exportConfig, handleChange }) {
             {syncStatus === "syncing" ? "Syncing…" : "Sync to All Modules"}
           </button>
           {syncStatus && syncStatus !== "syncing" && (
-            <span className="config-sync-badge config-sync-badge--synced">
-              {syncStatus.success_count}/{syncStatus.total} synced
+            <span className={`config-sync-badge ${syncStatus.success_count === syncStatus.total ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+              {syncStatus.success_count}/{syncStatus.total} sent
+              {syncStatus.success_count < syncStatus.total && ` (${syncStatus.total - syncStatus.success_count} unreachable)`}
             </span>
           )}
         </div>

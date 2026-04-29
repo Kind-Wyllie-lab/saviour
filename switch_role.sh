@@ -11,6 +11,14 @@ DIR="$(dirname "$SCRIPT_PATH")"
 SHARENAME="controller_share"
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+is_installed() {
+    dpkg -s "$1" &>/dev/null
+}
+
 # Function to check current role
 get_current_role() {
     if [ -f /etc/saviour/config ]; then
@@ -30,13 +38,17 @@ TYPE=${DEVICE_TYPE}
 EOF
 }
 
+# ---------------------------------------------------------------------------
+# Role / type selection
+# ---------------------------------------------------------------------------
+
 # Function to ask user about their role
 ask_user_role() {
     echo "Please specify the new role of this device:"
     echo "1) Controller - Central device that coordinates other modules and presents a GUI"
     echo "2) Module - Peripheral device that connects to a controller and executes received commands"
     echo ""
-    
+
     while true; do
         read -p "Enter your choice (1 or 2): " choice
         case $choice in
@@ -69,11 +81,11 @@ ask_module_type() {
         echo "6) APA RIG - Arduino module that drives rig motor and shock generator"
         echo "7) SOUND - HifiBerry sound producing module that can drive speakers"
         echo ""
-        
+
         while true; do
-            read -p "Enter your choice: " choice
+            read -p "Enter your choice (1-7): " choice
             case $choice in
-                1) 
+                1)
                     DEVICE_TYPE="camera"
                     break
                     ;;
@@ -102,7 +114,7 @@ ask_module_type() {
                     break
                     ;;
                 *)
-                    echo "Invalid choice. Please enter 1-2."
+                    echo "Invalid choice. Please enter 1-7."
                     ;;
             esac
         done
@@ -117,9 +129,9 @@ ask_controller_type() {
         echo "3) Habitat"
         echo "4) Acoustic Startle"
         echo ""
-        
+
         while true; do
-            read -p "Enter your choice (1-5): " choice
+            read -p "Enter your choice (1-4): " choice
             case $choice in
                 1)
                     DEVICE_TYPE="basic"
@@ -129,22 +141,26 @@ ask_controller_type() {
                     DEVICE_TYPE="apa"
                     break
                     ;;
-                3) 
+                3)
                     DEVICE_TYPE="habitat"
                     break
                     ;;
-                4) 
+                4)
                     DEVICE_TYPE="acoustic_startle"
                     break
                     ;;
                 *)
-                    echo "Invalid choice. Please enter 1-2."
+                    echo "Invalid choice. Please enter 1-4."
                     ;;
             esac
         done
     fi
 }
 
+
+# ---------------------------------------------------------------------------
+# Hostname / path helpers
+# ---------------------------------------------------------------------------
 
 # Find the directory and name of the python script for the systemd service
 get_python_directory() {
@@ -217,14 +233,18 @@ create_recording_folder() {
 }
 
 
+# ---------------------------------------------------------------------------
+# Systemd service
+# ---------------------------------------------------------------------------
+
 # Function to configure systemd service
 configure_service() {
     echo "Configuring SAVIOUR Systemd Service"
-        
+
     # Stop existing service if running
     sudo systemctl stop saviour.service 2>/dev/null || true
-    
-    # Create service file 
+
+    # Create service file
     sudo tee /etc/systemd/system/saviour.service > /dev/null <<EOF
 [Unit]
 Description=Saviour Service
@@ -256,6 +276,10 @@ EOF
 }
 
 
+# ---------------------------------------------------------------------------
+# Samba share
+# ---------------------------------------------------------------------------
+
 configure_samba_share() {
     echo "Configuring Samba Share"
 
@@ -266,7 +290,7 @@ configure_samba_share() {
         echo "Created group: saviour"
     fi
 
-    # Add pi to the saviour group so it can write as a regular member
+    # Add pi to the saviour group so it can write to the share directory
     sudo usermod -aG saviour pi
 
     # Create saviour_module system user (no login shell, no home dir)
@@ -276,15 +300,29 @@ configure_samba_share() {
         echo "Created system user: saviour_module"
     fi
 
+    # Create researcher system user (read-only access to the share)
+    if ! id researcher > /dev/null 2>&1; then
+        sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid saviour researcher
+        echo "Created system user: researcher"
+    fi
+
+    # Create sidbit system user (IT admin, full access to the share)
+    if ! id sidbit > /dev/null 2>&1; then
+        sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid saviour sidbit
+        echo "Created system user: sidbit"
+    fi
+
     # ── 2. Share directory ────────────────────────────────────────────────
     # Allow non-pi users to traverse /home/pi to reach the share
     sudo chmod 711 /home/pi
     sudo mkdir -p /home/pi/${SHARENAME}
     sudo chown pi:saviour /home/pi/${SHARENAME}
-    # 1775 = rwxrwsr-t: group-write so saviour_module can create files;
-    # sticky bit so only the file owner/root can delete files.
-    sudo chmod 1775 /home/pi/${SHARENAME}
-    echo "Share directory: /home/pi/${SHARENAME} (mode 1775, owner pi:saviour)"
+    # 2775 = rwxrwsr-x: setgid so new files inherit the saviour group;
+    # group-write lets saviour_module, researcher, and sidbit all create and delete files.
+    sudo chmod 2775 /home/pi/${SHARENAME}
+    echo "Share directory: /home/pi/${SHARENAME} (mode 2775, owner pi:saviour)"
 
     # ── 3. Generate a random password for saviour_module ─────────────────
     sudo mkdir -p /etc/saviour
@@ -330,7 +368,6 @@ PYEOF
    workgroup = WORKGROUP
    server string = SAVIOUR Controller
    server role = standalone server
-   map to guest = bad user
    dns proxy = no
    log level = 1
    log file = /var/log/samba/%m.log
@@ -340,22 +377,26 @@ PYEOF
    comment = SAVIOUR Controller Share
    path = /home/pi/${SHARENAME}
    browseable = yes
-   # Guests (unauthenticated) get read-only access
-   guest ok = yes
    read only = yes
-   # saviour_module and pi can write; pi is also admin (bypasses UNIX perms)
-   write list = saviour_module, pi
-   admin users = pi
+   valid users = researcher, saviour_module, sidbit
+   write list = researcher, saviour_module, sidbit
+   admin users = sidbit
    create mask = 0664
    directory mask = 0775
+   oplocks = no
+   level2 oplocks = no
+   notify daemon = yes
 EOF
 
     # ── 6. Set Samba passwords ────────────────────────────────────────────
     echo "Setting Samba password for saviour_module..."
     printf '%s\n%s\n' "${MODULE_PASS}" "${MODULE_PASS}" | sudo smbpasswd -s -a saviour_module
 
-    echo "Setting Samba password for pi (default: saviour)..."
-    echo -e "saviour\nsaviour" | sudo smbpasswd -s -a pi
+    echo "Setting Samba password for researcher..."
+    printf 'getmyfiles\ngetmyfiles\n' | sudo smbpasswd -s -a researcher
+
+    echo "Setting Samba password for sidbit..."
+    printf 'espressocreme\nespressocreme\n' | sudo smbpasswd -s -a sidbit
 
     # ── 7. Restart and enable Samba ───────────────────────────────────────
     sudo systemctl restart smbd nmbd
@@ -368,9 +409,9 @@ EOF
     echo "  Path       : /home/pi/${SHARENAME}"
     echo ""
     echo "Access tiers:"
-    echo "  Guest (read-only) : smb://${CONTROLLER_IP}/${SHARENAME}"
-    echo "  Module (write)    : username=saviour_module  password stored in /etc/saviour/samba_credentials"
-    echo "  Admin (full)      : username=pi  password=saviour"
+    echo "  Researcher (read/write/delete) : username=researcher   password=getmyfiles"
+    echo "  Module (write)         : username=saviour_module  password stored in /etc/saviour/samba_credentials"
+    echo "  Admin (full)           : username=sidbit       password=espressocreme"
 }
 
 disable_samba_share() {
@@ -379,56 +420,110 @@ disable_samba_share() {
     echo Stopped and disabled smbd and nmbd
 }
 
-check_for_gateway() {
-    GATEWAY=""
-    echo ""
-    echo "Does this controller sit behind a gateway/router (e.g. 10.0.x.2 or 192.168.x.2)?"
-    read -p "Scan for gateway? (y/n, default n): " scan_choice
-    if [ "$scan_choice" != "y" ] && [ "$scan_choice" != "Y" ]; then
-        echo "  Skipping gateway scan — will default to 10.0.0.x addressing"
-        return
-    fi
 
-    echo "Scanning for gateway (pinging 10.0.x.2 and 192.168.x.2 for x in 1..254)..."
-    for i in {1..254}; do
-        printf "\r  Trying subnet %d/254..." "$i"
-        ping -c 1 -w 1 10.0.$i.2    >/dev/null 2>&1 && GATEWAY="10.0.$i.2"    &
-        ping -c 1 -w 1 192.168.$i.2 >/dev/null 2>&1 && GATEWAY="192.168.$i.2" &
-        wait
-        [ -n "$GATEWAY" ] && break
-    done
+# ---------------------------------------------------------------------------
+# Gateway / network configuration
+# ---------------------------------------------------------------------------
+
+# Ask how the PoE network connects to the internet (or doesn't).
+# Sets globals: GATEWAY_MODE ("none" | "external" | "controller")
+#               GATEWAY      (IP of external router, if GATEWAY_MODE=external)
+#               WAN_INTERFACE (outbound interface, if GATEWAY_MODE=controller)
+ask_gateway_mode() {
+    GATEWAY=""
+    GATEWAY_MODE=""
+    WAN_INTERFACE=""
+
     echo ""
-    if [ -n "$GATEWAY" ]; then
-        echo "  Gateway found: $GATEWAY"
-    else
-        echo "  No gateway found — will default to 10.0.0.x addressing"
-    fi
+    echo "How should this controller handle internet connectivity for the PoE network?"
+    echo "1) No gateway — offline network (modules have no internet access)"
+    echo "2) External gateway — a router at a known IP provides internet"
+    echo "3) Controller is the gateway — this device shares internet from wlan0 (or another interface)"
+    echo ""
+
+    while true; do
+        read -p "Enter your choice (1-3): " choice
+        case $choice in
+            1)
+                GATEWAY_MODE="none"
+                echo "  Offline network — no gateway will be advertised to modules."
+                break
+                ;;
+            2)
+                GATEWAY_MODE="external"
+                # Try to detect an existing default route on this device
+                DETECTED_GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
+                if [ -n "$DETECTED_GW" ]; then
+                    echo "  Detected existing default gateway: $DETECTED_GW"
+                    read -p "  Use $DETECTED_GW? (y/n): " use_detected
+                    if [ "$use_detected" = "y" ] || [ "$use_detected" = "Y" ]; then
+                        GATEWAY="$DETECTED_GW"
+                    fi
+                fi
+                if [ -z "$GATEWAY" ]; then
+                    read -p "  Enter gateway IP (e.g. 10.0.0.2 or 192.168.1.1): " GATEWAY
+                fi
+                echo "  External gateway: $GATEWAY"
+                break
+                ;;
+            3)
+                GATEWAY_MODE="controller"
+                # Detect the WAN interface (the default route that isn't eth0)
+                DETECTED_WAN=$(ip route show default 2>/dev/null | awk '/default/ && $5 != "eth0" {print $5; exit}')
+                if [ -n "$DETECTED_WAN" ]; then
+                    echo "  Detected internet-facing interface: $DETECTED_WAN"
+                    read -p "  Use $DETECTED_WAN as the WAN interface? (y/n): " use_wan
+                    if [ "$use_wan" = "y" ] || [ "$use_wan" = "Y" ]; then
+                        WAN_INTERFACE="$DETECTED_WAN"
+                    fi
+                fi
+                if [ -z "$WAN_INTERFACE" ]; then
+                    read -p "  Enter the internet-facing interface (e.g. wlan0, eth1): " WAN_INTERFACE
+                fi
+                echo "  Controller will share internet from $WAN_INTERFACE to the PoE network."
+                break
+                ;;
+            *)
+                echo "Invalid choice. Please enter 1, 2, or 3."
+                ;;
+        esac
+    done
 }
 
 set_own_ip() {
-    if [ -n "$GATEWAY" ]; then
-        # Extract subnet from gateway IP
+    # Derive the first three octets from the external gateway IP, or use 10.0.0 as default.
+    if [ "$GATEWAY_MODE" = "external" ] && [ -n "$GATEWAY" ]; then
         IFS='.' read -r a b c d <<< "$GATEWAY"
     else
-        a="10"
-        b="0"
-        c="0"
-    fi
-    DEVICE_IP="$a.$b.$c.1/16" # Set controller IP
-    echo "Detected IP: $DEVICE_IP on $INTERFACE with gateway $GATEWAY"
-    read -p "Do you want to set these manually? (y/n): " choice
-
-    if [ "$choice" = "y" ] || [ "$choice" = "Y" ]; then
-        read -p "Enter the desired IP address (e.g., 10.0.3.1/16): " DEVICE_IP
-        read -p "Enter the desired gateway (e.g., 10.0.3.2): " GATEWAY
-
-        IFS='.' read -r a b c d <<< "$DEVICE_IP"
+        a="10"; b="0"; c="0"
     fi
 
-    if [ -n "$GATEWAY" ]; then
-        sudo nmcli connection modify "$INTERFACE" ipv4.addresses $DEVICE_IP ipv4.gateway $GATEWAY ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual
+    DEVICE_IP="$a.$b.$c.1/16"
+    echo "Proposed controller IP: $DEVICE_IP on $INTERFACE"
+    read -p "Accept this IP? (press Enter to accept, or type a custom address e.g. 10.0.0.1/16): " ip_choice
+
+    if [ -n "$ip_choice" ]; then
+        DEVICE_IP="$ip_choice"
+    fi
+
+    # Re-parse octets from the final chosen IP (strip prefix length for later use in DHCP config)
+    IFS='.' read -r a b c d <<< "${DEVICE_IP%%/*}"
+
+    echo "Setting controller IP to $DEVICE_IP on $INTERFACE"
+
+    if [ "$GATEWAY_MODE" = "external" ] && [ -n "$GATEWAY" ]; then
+        sudo nmcli connection modify "$INTERFACE" \
+            ipv4.addresses "$DEVICE_IP" \
+            ipv4.gateway "$GATEWAY" \
+            ipv4.dns "8.8.8.8,1.1.1.1" \
+            ipv4.method manual
     else
-        sudo nmcli connection modify "$INTERFACE" ipv4.addresses $DEVICE_IP ipv4.dns "8.8.8.8,1.1.1.1" ipv4.method manual
+        # none or controller modes: no upstream gateway on the PoE interface
+        sudo nmcli connection modify "$INTERFACE" \
+            ipv4.addresses "$DEVICE_IP" \
+            ipv4.gateway "" \
+            ipv4.dns "" \
+            ipv4.method manual
     fi
 }
 
@@ -437,16 +532,57 @@ detect_interface_name() {
 }
 
 
+# Enable IP forwarding and NAT masquerade so the PoE network can reach the
+# internet through this controller's WAN_INTERFACE (e.g. wlan0).
+configure_ip_forwarding() {
+    echo "Enabling IP forwarding and NAT masquerade on ${WAN_INTERFACE}..."
+
+    # Persist IP forwarding across reboots
+    sudo tee /etc/sysctl.d/99-saviour-forwarding.conf > /dev/null <<EOF
+net.ipv4.ip_forward = 1
+EOF
+    sudo sysctl -p /etc/sysctl.d/99-saviour-forwarding.conf
+
+    # NAT masquerade: rewrite source addresses for traffic leaving via WAN_INTERFACE
+    # so return packets are routed back correctly.
+    # Delete first to avoid duplicates on re-run.
+    sudo iptables -t nat -D POSTROUTING -o "$WAN_INTERFACE" -j MASQUERADE 2>/dev/null || true
+    sudo iptables -t nat -A POSTROUTING -o "$WAN_INTERFACE" -j MASQUERADE
+
+    # Allow forwarded traffic in both directions
+    sudo iptables -D FORWARD -i eth0 -o "$WAN_INTERFACE" -j ACCEPT 2>/dev/null || true
+    sudo iptables -D FORWARD -i "$WAN_INTERFACE" -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    sudo iptables -A FORWARD -i eth0 -o "$WAN_INTERFACE" -j ACCEPT
+    sudo iptables -A FORWARD -i "$WAN_INTERFACE" -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+    # Ensure iptables-persistent is installed so rules survive reboots
+    if ! is_installed "iptables-persistent"; then
+        echo "[INSTALLING] iptables-persistent"
+        echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | sudo debconf-set-selections
+        echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | sudo debconf-set-selections
+        sudo apt-get install -y iptables-persistent
+    else
+        echo "[OK] iptables-persistent already installed."
+    fi
+    sudo netfilter-persistent save
+
+    echo "  IP forwarding and NAT masquerade configured on ${WAN_INTERFACE}."
+}
+
+
+# ---------------------------------------------------------------------------
+# DHCP server
+# ---------------------------------------------------------------------------
+
 # Function to configure DHCP server
 configure_dhcp_server() {
     echo "Configuring DHCP Server"
-    
-    # Setup static ip
+
+    # Setup static IP
     echo "Setting static IP with nmcli"
     detect_interface_name
-    check_for_gateway
     set_own_ip
-    
+
     # Install dnsmasq
     if ! is_installed "dnsmasq"; then
         echo "[INSTALLING] dnsmasq"
@@ -455,111 +591,98 @@ configure_dhcp_server() {
         echo "[OK] dnsmasq is already installed."
     fi
 
-    # Modify DNSMasq service description to start after interfaces are up
+    # Modify DNSMasq service to start after interfaces are up
     echo "Modifying DNSMasq service description..."
     if [ -f /lib/systemd/system/dnsmasq.service ]; then
-        # Backup original service file
         sudo cp /lib/systemd/system/dnsmasq.service /lib/systemd/system/dnsmasq.service.backup
         echo "Backed up original dnsmasq.service"
-        
-        # Modify the service file to start after network interfaces are up
+
         sudo sed -i 's/Requires=network.target/Requires=network-online.target/g' /lib/systemd/system/dnsmasq.service
         sudo sed -i 's/After=network.target/After=network-online.target/g' /lib/systemd/system/dnsmasq.service
         echo "Modified DNSMasq service to start after network interfaces are up"
     else
         echo "Warning: dnsmasq.service not found at /lib/systemd/system/dnsmasq.service"
     fi
-    
+
     # Backup original config
     if [ -f /etc/dnsmasq.conf ]; then
         sudo cp /etc/dnsmasq.conf /etc/dnsmasq.conf.backup
         echo "Backed up original dnsmasq.conf"
     fi
-    
-    # Create new dnsmasq configuration for local network only
-    echo "Creating dnsmasq configuration for local network..."
-    if [ -n "$GATEWAY" ]; then
-        DHCP_OPTION="dhcp-option=3,$GATEWAY"
-    else
-        DHCP_OPTION="dhcp-option=3"
-    fi
 
+    # Build the dhcp-option=3 line based on gateway mode:
+    #   none       → no default gateway advertised to modules
+    #   external   → advertise the upstream router
+    #   controller → advertise this controller's own PoE IP as the gateway
+    case "$GATEWAY_MODE" in
+        external)
+            DHCP_OPTION="dhcp-option=3,$GATEWAY"
+            ;;
+        controller)
+            DHCP_OPTION="dhcp-option=3,$a.$b.$c.1"
+            ;;
+        *)
+            DHCP_OPTION="dhcp-option=3"
+            ;;
+    esac
+
+    # DHCP range: .10–.200 within the same /24 segment as the controller,
+    # with an explicit /16 subnet mask so all 10.0.x.x addresses are reachable.
     sudo tee /etc/dnsmasq.conf > /dev/null <<EOF
-# dnsmasq configuration for Saviour local network
-# This Pi acts as DHCP server for local network only
-# No internet routing - devices must use wlan0 for internet
-
-# Listen on ethernet interface only (not wlan0)
+# dnsmasq configuration for SAVIOUR local network
 interface=eth0
 bind-interfaces
 
-# DHCP range for local network (adjust as needed)
-dhcp-range=$a.$b.$c.128,$a.$b.$c.255,12h
+# DHCP range — .10 to .200 in the controller's /24, /16 subnet mask
+dhcp-range=$a.$b.$c.10,$a.$b.$c.200,255.255.0.0,12h
 
-# Don't use controller as default gateway. Allows clients to still access internet on their other network interfaces.
+# Default gateway advertised to DHCP clients
 $DHCP_OPTION
 
-# Disable DNS server functionality (we only want DHCP)
+# Disable DNS server (DHCP only)
 port=0
 
 # Log DHCP leases
 dhcp-leasefile=/var/lib/misc/dnsmasq.leases
 
-# Additional options
 dhcp-authoritative
 log-queries
 log-dhcp
 EOF
 
-    # Create systemd service override to disable at boot by default
-    sudo mkdir -p /etc/systemd/system/dnsmasq.service.d
-    sudo tee /etc/systemd/system/dnsmasq.service.d/override.conf > /dev/null <<EOF
-[Unit]
-Description=DHCP Server for SAVIOUR Local Network
-
-[Service]
-# Don't start automatically at boot
-ExecStartPre=/bin/true
-
-[Install]
-# Don't enable at boot by default
-WantedBy=multi-user.target
-EOF
-
-    # Reload systemd and disable dnsmasq at boot
     sudo systemctl daemon-reload
     sudo systemctl enable dnsmasq
     sudo systemctl restart dnsmasq.service
-    
+
     echo "DHCP server configured and enabled."
-    echo "To start DHCP server: sudo systemctl start dnsmasq"
-    echo "To stop DHCP server: sudo systemctl stop dnsmasq"
 }
 
 disable_dhcp_server() {
     echo Disabling DHCP server and reverting IP address to automatic assignment
 
     detect_interface_name
-    # Change IP to automatic assignment
     sudo nmcli connection modify "$INTERFACE" ipv4.method auto
 
-    # Stop DHCP server
     sudo systemctl stop dnsmasq.service
     sudo systemctl disable dnsmasq.service
 
     echo DHCP server disabled
 }
 
+
+# ---------------------------------------------------------------------------
+# mDNS / iptables
+# ---------------------------------------------------------------------------
+
 configure_mdns() {
     echo "Configuring controller mDNS via avahi daemon"
     if ! is_installed "avahi-daemon"; then
-        echo "Installing avahi-daemon";
+        echo "[INSTALLING] avahi-daemon"
         sudo apt install avahi-daemon -y
     else
-        echo "avahi-daemon is already installed"
+        echo "[OK] avahi-daemon is already installed."
     fi
 
-    # Configure avahi
     sudo tee /etc/avahi/avahi-daemon.conf > /dev/null <<EOF
 # avahi daemon configuration for SAVIOUR local network
 [server]
@@ -578,7 +701,6 @@ enable-wide-area=yes
 publish-hinfo=no
 publish-workstation=yes
 EOF
-    # Reload systemd and enable
     sudo systemctl daemon-reload
     sudo systemctl enable --now avahi-daemon
     sudo systemctl restart avahi-daemon.service
@@ -586,37 +708,51 @@ EOF
     echo "mDNS server configured and enabled."
     echo "Controller will appear on network as saviour.local"
 
+    # Ensure iptables-persistent is installed before saving rules
+    if ! is_installed "iptables-persistent"; then
+        echo "[INSTALLING] iptables-persistent"
+        echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | sudo debconf-set-selections
+        echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | sudo debconf-set-selections
+        sudo apt-get install -y iptables-persistent
+    else
+        echo "[OK] iptables-persistent already installed."
+    fi
+
     echo "Configuring iptables to forward port 80 traffic to port 5000"
+    # Remove existing rule first to avoid duplicates on re-run
+    sudo iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
     sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
     sudo netfilter-persistent save
 }
 
 disable_mdns() {
-    echo Disabling mDNS 
+    echo Disabling mDNS
     sudo systemctl disable avahi-daemon.service
     sudo systemctl stop avahi-daemon.service
 
-    # Stop forwarding port 80 traffic
-    # Check if the rule exists before trying to delete it
     if sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null; then
         sudo iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
         echo "Port forwarding rule deleted"
     else
         echo "Port forwarding rule does not exist"
     fi
-    sudo netfilter-persistent save
+    if is_installed "iptables-persistent"; then
+        sudo netfilter-persistent save
+    fi
     echo mDNS disabled
 }
 
 
+# ---------------------------------------------------------------------------
+# PTP
+# ---------------------------------------------------------------------------
+
 configure_ptp_timetransmitter() {
     echo "Configuring PTP to act as timeTransmitter"
-    
-    # Stop existing services if running
+
     sudo systemctl stop ptp4l 2>/dev/null || true
     sudo systemctl stop phc2sys 2>/dev/null || true
-    
-    # Create ptp4l service file
+
     echo "Creating ptp4l systemd service..."
     sudo tee /etc/systemd/system/ptp4l.service > /dev/null <<EOF
 [Unit]
@@ -636,7 +772,6 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    # Create phc2sys service file
     echo "Creating phc2sys systemd service..."
     sudo tee /etc/systemd/system/phc2sys.service > /dev/null <<EOF
 [Unit]
@@ -659,10 +794,7 @@ EOF
     echo "  - ptp4l: timeTransmitter mode (-m flag, log level 6)"
     echo "  - phc2sys: Autoconfiguration with system clock sync (-a -r -r)"
 
-    # Reload systemd and enable services
     sudo systemctl daemon-reload
-    
-    # Enable services to start at boot
     sudo systemctl enable ptp4l
     sudo systemctl enable phc2sys
 }
@@ -672,16 +804,13 @@ configure_ptp_timereceiver() {
     echo "Configuring PTP to act as timeReceiver"
 
     # Disable timesyncd — it conflicts with phc2sys on modules.
-    # The controller keeps NTP/timesyncd running so PTP can broadcast internet time.
     echo "Disabling systemd-timesyncd (conflicts with phc2sys on timeReceiver)"
     sudo timedatectl set-ntp false
     sudo systemctl disable --now systemd-timesyncd 2>/dev/null || true
 
-    # Stop existing services if running
     sudo systemctl stop ptp4l 2>/dev/null || true
     sudo systemctl stop phc2sys 2>/dev/null || true
-    
-    # Create ptp4l service file
+
     echo "Creating ptp4l systemd service..."
     sudo tee /etc/systemd/system/ptp4l.service > /dev/null <<EOF
 [Unit]
@@ -701,7 +830,6 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    # Create phc2sys service file
     echo "Creating phc2sys systemd service..."
     sudo tee /etc/systemd/system/phc2sys.service > /dev/null <<EOF
 [Unit]
@@ -724,14 +852,15 @@ EOF
     echo "  - ptp4l: timeReceiver mode (-s -m flags)"
     echo "  - phc2sys: Manual configuration with PTP hardware clock (-s /dev/ptp0 -w -m)"
 
-    # Reload systemd and enable services
     sudo systemctl daemon-reload
-    
-    # Enable services to start at boot
     sudo systemctl enable ptp4l
     sudo systemctl enable phc2sys
 }
 
+
+# ---------------------------------------------------------------------------
+# Module-specific setup
+# ---------------------------------------------------------------------------
 
 configure_microphone() {
     echo "Installing AudioMoth udev rule..."
@@ -745,17 +874,14 @@ EOF
 
     echo "Installing pipewire"
 
-    # Make the config directory if it doesn't already exist
     sudo mkdir -p /etc/pipewire/pipewire.conf.d
 
-    # Write the samplerate configuration
     sudo tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf >/dev/null <<'EOF'
 context.properties = {
     default.clock.rate = 192000
     default.clock.allowed-rates = [ 96000 192000 384000]
 }
 EOF
-    # Restart PipeWire and related services at the user level
     systemctl --user enable pipewire
     systemctl --user enable pipewire-pulse
     systemctl --user enable wireplumber
@@ -763,7 +889,6 @@ EOF
     systemctl --user restart pipewire-pulse
     systemctl --user restart wireplumber
 
-    # Update the service file with necessary environment variables
     sudo tee /etc/systemd/system/saviour.service >/dev/null <<EOF
 [Unit]
 Description=Saviour Service
@@ -788,7 +913,6 @@ Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
 [Install]
 WantedBy=multi-user.target
 EOF
-    # Reload systemd and enable service
     sudo systemctl daemon-reload
     sudo systemctl enable saviour.service
 
@@ -799,26 +923,21 @@ EOF
 configure_apa_camera() {
     echo "Installing APA camera (IMX500) dependencies..."
 
-    # python3-openexr provides the 'Imath' Python module required by picamera2.devices.imx500
-    if ! dpkg -s python3-openexr &>/dev/null; then
+    if ! is_installed "python3-openexr"; then
         echo "[INSTALLING] python3-openexr"
         sudo apt-get install -y python3-openexr
     else
         echo "[OK] python3-openexr is already installed."
     fi
 
-    # imx500-all provides the firmware and bundled AI models for the IMX500 AI camera
-    if ! dpkg -s imx500-all &>/dev/null; then
+    if ! is_installed "imx500-all"; then
         echo "[INSTALLING] imx500-all"
         sudo apt-get install -y imx500-all
     else
         echo "[OK] imx500-all is already installed."
     fi
 
-    # hailo-all provides the Hailo runtime, Python bindings, and pre-compiled HEF
-    # models (including yolov8n.hef) used by apa_camera_module.py for inference.
-    # python3-picamera2 >= 0.3.19 is needed for picamera2.devices.hailo support.
-    if ! dpkg -s hailo-all &>/dev/null; then
+    if ! is_installed "hailo-all"; then
         echo "[INSTALLING] hailo-all"
         sudo apt-get install -y hailo-all
     else
@@ -827,20 +946,21 @@ configure_apa_camera() {
 }
 
 
+# ---------------------------------------------------------------------------
+# Frontend build
+# ---------------------------------------------------------------------------
+
 build_frontend() {
     echo "Installing nvm, Node.js, vite, and building frontend"
-    # Check if nvm is installed
     if [ -d "$HOME/.nvm" ]; then
         echo "[OK] nvm already installed"
     else
         echo "Installing nvm"
         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
     fi
-    # Load nvm into the current shell session
     export NVM_DIR="$HOME/.nvm"
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-    # Check if Node.js v22 is installed
     if nvm ls 22 >/dev/null 2>&1; then
         echo "[OK] Node.js v22 already installed"
     else
@@ -878,7 +998,11 @@ EOF
     cd ../../../
 }
 
+
+# ---------------------------------------------------------------------------
 # Main Program
+# ---------------------------------------------------------------------------
+
 get_current_role
 echo "Device is currently configured as a(n) $CURRENT_TYPE $CURRENT_ROLE";
 
@@ -912,9 +1036,13 @@ fi
 
 if $ROLE_CHANGED; then
     if [ "$DEVICE_ROLE" = "controller" ]; then
+        ask_gateway_mode
         configure_ptp_timetransmitter
         configure_samba_share
         configure_dhcp_server
+        if [ "$GATEWAY_MODE" = "controller" ]; then
+            configure_ip_forwarding
+        fi
         configure_mdns
     fi
     if [ "$DEVICE_ROLE" = "module" ]; then
@@ -922,7 +1050,6 @@ if $ROLE_CHANGED; then
         disable_samba_share
         disable_dhcp_server
         disable_mdns
-
     fi
 fi
 

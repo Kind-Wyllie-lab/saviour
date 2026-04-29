@@ -136,6 +136,7 @@ class Module(ABC):
             "reboot": self.reboot,
             "reset_config": self.reset_config,
             "start_export": self.start_export,
+            "set_export_config": self.set_export_config,
         }
 
         # Register callbacks and facade
@@ -222,22 +223,40 @@ class Module(ABC):
             # Convert SSH remote URL to HTTPS so the service user (no SSH key)
             # can pull without auth. The on-disk remote is unchanged.
             import re
+            import threading
             url_result = subprocess.run(
-                ["git", "-C", INSTALL_DIR, "remote", "get-url", "origin"],
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "remote", "get-url", "origin"],
                 capture_output=True, text=True
             )
             remote_url = url_result.stdout.strip()
+            if url_result.returncode != 0 or not remote_url:
+                err = url_result.stderr.strip() or "No git remote 'origin' configured"
+                return {"result": "error", "output": err}
             https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
                                r'https://\1/\2.git', remote_url)
+            branch_result = subprocess.run(
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True
+            )
+            branch = branch_result.stdout.strip() or "main"
             result = subprocess.run(
                 ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "pull", https_url],
+                 "pull", https_url, branch],
                 capture_output=True, text=True, timeout=60
             )
             if result.returncode == 0:
                 output = result.stdout.strip() or "Already up to date."
                 self.logger.info(f"SAVIOUR update successful: {output}")
-                return {"result": "success", "output": output}
+                # Restart the service after a short delay so this response is delivered first
+                def _restart_service():
+                    import time as _time
+                    _time.sleep(3)
+                    subprocess.run(["sudo", "systemctl", "restart", "saviour.service"],
+                                   capture_output=True)
+                threading.Thread(target=_restart_service, daemon=True).start()
+                return {"result": "success", "output": f"{output} (restarting…)"}
             else:
                 output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
                 self.logger.error(f"SAVIOUR update failed: {output}")
@@ -686,7 +705,7 @@ class Module(ABC):
 
 
     @command()
-    def set_export_config(self, share_ip: str, share_username: str, share_password: str) -> dict:
+    def set_export_config(self, share_ip: str, share_username: str, share_password: str, share_path: str = "") -> dict:
         """
         Update the export (Samba) credentials sent by the controller on discovery.
         Writes to base_config.json so the values survive a config reset, and also
@@ -696,7 +715,7 @@ class Module(ABC):
         if not self.config.get("export.use_controller_export", True):
             self.logger.info("set_export_config skipped — use_controller_export is false")
             return {"result": "skipped"}
-        self.logger.info(f"set_export_config called — updating share_ip to {share_ip}")
+        self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
         try:
             # Persist to base_config.json so a reset_config doesn't revert the credentials
             with open(self.config.base_config_path) as f:
@@ -705,6 +724,8 @@ class Module(ABC):
             export["share_ip"] = share_ip
             export["share_username"] = share_username
             export["share_password"] = share_password
+            if share_path:
+                export["share_path"] = share_path
             with open(self.config.base_config_path, "w") as f:
                 json.dump(base, f, indent=2)
                 f.write("\n")
@@ -713,6 +734,8 @@ class Module(ABC):
             self.config.set("export.share_ip", share_ip)
             self.config.set("export.share_username", share_username)
             self.config.set("export.share_password", share_password)
+            if share_path:
+                self.config.set("export.share_path", share_path)
 
             self.logger.info("Export config updated and persisted to base_config.json")
             return {"result": "success"}

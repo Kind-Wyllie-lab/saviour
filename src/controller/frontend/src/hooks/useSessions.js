@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import socket from "../socket";
 
 function normaliseSessions(data) {
@@ -39,9 +39,11 @@ export default function useSessions({ autoRequest = true } = {}) {
     };
   }, [autoRequest]);
 
+  const sessionList = useMemo(() => Object.values(sessions), [sessions]);
+
   return {
     sessions,
-    sessionList: Object.values(sessions),
+    sessionList,
     hasSessions: Object.keys(sessions).length > 0,
   };
 }

@@ -27,6 +27,10 @@ _MONITOR_INTERVAL_SECS = 5
 # PTP-synchronised clocks mean all modules hit this timestamp together.
 LEAD_SECS = 3
 
+# How long after recording_start_at to suppress fault detection.
+# Modules take a few seconds to spin up after their scheduled start time.
+_STARTUP_GRACE_SECS = 15
+
 
 # ---------------------------------------------------------------------------
 # State enums
@@ -71,6 +75,18 @@ class RecordingSession:
     # Set by _stop_scheduled_session so _check_all_stopped returns to SCHEDULED
     # rather than STOPPED when the day's run finishes.
     scheduled_stopping:        bool = False
+    # Timestamp (YYYYMMDD-HHMMSS) when this session most recently entered ERROR state.
+    # Never cleared after recovery — preserves the fault record for display.
+    error_time:                Optional[str] = None
+    # Timed sessions: requested duration in minutes (for display purposes).
+    duration_minutes:          Optional[int]   = None
+    # Timed sessions: epoch timestamp at which the session should auto-stop.
+    # None means no auto-stop (infinite / manual stop).
+    timed_stop_at:             Optional[float] = None
+    # Scheduled sessions: weekday ints (0=Mon…6=Sun) on which to run.
+    # Empty list means every day.
+    scheduled_days:            list = field(default_factory=list)
+    researcher:                Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +136,9 @@ class Recording:
         except Exception as e:
             return f"Controller share not writable ({share}): {e}"
 
-    def create_session(self, session_name: str, target: str) -> dict:
+    def create_session(self, session_name: str, target: str,
+                       duration_minutes: Optional[int] = None,
+                       researcher: Optional[str] = None) -> dict:
         """Create a session that begins recording immediately.
 
         Returns a result dict so the caller can surface errors to the frontend.
@@ -147,6 +165,7 @@ class Recording:
         session_name = self._format_session_name(session_name, target)
 
         start_at = time.time() + LEAD_SECS
+        timed_stop_at = (start_at + duration_minutes * 60) if duration_minutes else None
 
         session = RecordingSession(
             session_name=session_name,
@@ -157,6 +176,9 @@ class Recording:
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
             recording_start_at=start_at,
+            duration_minutes=duration_minutes,
+            timed_stop_at=timed_stop_at,
+            researcher=researcher or None,
         )
 
         with self._lock:
@@ -181,8 +203,13 @@ class Recording:
 
 
     def create_scheduled_session(self, session_name: str, target: str,
-                                  start_time: str, end_time: str) -> dict:
-        """Create a session that records daily between start_time and end_time (HH:MM)."""
+                                  start_time: str, end_time: str,
+                                  days: Optional[list] = None,
+                                  researcher: Optional[str] = None) -> dict:
+        """Create a session that records on specified days between start_time and end_time (HH:MM).
+
+        days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
+        """
         if not session_name or not session_name.strip():
             return {"success": False, "error": "Session name cannot be empty"}
         if not start_time or not end_time:
@@ -202,8 +229,10 @@ class Recording:
             scheduled=True,
             scheduled_start_time=start_time,
             scheduled_end_time=end_time,
+            scheduled_days=days or [],
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
+            researcher=researcher or None,
         )
 
         with self._lock:
@@ -267,16 +296,23 @@ class Recording:
 
         with self._lock:
             for module_id in session.modules:
-                session.module_stop_states[module_id] = "stopping"
+                # Modules that aren't actually recording can't respond — count them done immediately
+                if not self.facade.is_module_recording(module_id):
+                    session.module_stop_states[module_id] = "stopped"
+                else:
+                    session.module_stop_states[module_id] = "stopping"
 
         for module_id in session.modules:
-            self.facade.send_command(module_id, "stop_recording", {})
+            if session.module_stop_states.get(module_id) == "stopping":
+                self.facade.send_command(module_id, "stop_recording", {})
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(
             f"Stop command sent to {len(session.modules)} module(s) in '{session_name}'"
         )
+        # If all modules were already offline, complete the transition immediately
+        self._check_all_stopped(session_name)
 
 
     def module_stopped(self, module_id: str) -> None:
@@ -413,6 +449,8 @@ class Recording:
 
         if session.state != SessionState.STOPPED:
             session.error_message = f"{module_id} is offline"
+            if session.state != SessionState.ERROR:
+                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
             session.state = SessionState.ERROR
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
@@ -580,9 +618,17 @@ class Recording:
                         continue
 
                     if session.scheduled:
-                        # Start if not already started today and time has come
+                        today_weekday = date.today().weekday()
+                        days_match = (
+                            not session.scheduled_days
+                            or today_weekday in session.scheduled_days
+                        )
+
+                        # Start if today matches the day filter, not already started today,
+                        # and the start time has been reached
                         if (session.state != SessionState.ACTIVE
                                 and session.scheduled_last_start_date != today
+                                and days_match
                                 and current_time >= session.scheduled_start_time):
                             self._start_scheduled_session(session_name, today)
 
@@ -593,8 +639,19 @@ class Recording:
                             self._stop_scheduled_session(session_name)
 
                     elif session.state in (SessionState.ACTIVE, SessionState.ERROR):
-                        # Skip health check while still in the synchronised lead window
-                        if session.recording_start_at and time.time() < session.recording_start_at:
+                        # Skip health check during lead window and startup grace period
+                        if (session.recording_start_at
+                                and time.time() < session.recording_start_at + _STARTUP_GRACE_SECS):
+                            continue
+
+                        # Auto-stop timed sessions when their duration has elapsed
+                        if (session.timed_stop_at
+                                and time.time() >= session.timed_stop_at
+                                and session.state == SessionState.ACTIVE):
+                            self.logger.info(
+                                f"Timed session '{session_name}' duration elapsed — stopping"
+                            )
+                            self.stop_session(session_name)
                             continue
 
                         # Probe any modules whose state is unknown (e.g. after black start).
@@ -624,6 +681,8 @@ class Recording:
                             msg = f"Not recording: {', '.join(not_recording)}"
                             if session.error_message != msg or session.state != SessionState.ERROR:
                                 session.error_message = msg
+                                if session.state != SessionState.ERROR:
+                                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                                 session.state = SessionState.ERROR
                                 self.facade.update_sessions(self.sessions)
                                 self.facade.send_alert(
@@ -634,7 +693,10 @@ class Recording:
                                         f"The following modules are not recording: {', '.join(not_recording)}."
                                     ),
                                 )
-                        elif session.state == SessionState.ERROR:
+                        elif session.state == SessionState.ERROR and should_be_recording:
+                            # All modules we were actively checking are now recording — recover.
+                            # Guard: if should_be_recording is empty (e.g. all states are "unknown"
+                            # after a restart) we cannot confirm recovery, so leave the ERROR state.
                             session.error_message = ""
                             session.state = SessionState.ACTIVE
                             self.facade.update_sessions(self.sessions)
@@ -677,6 +739,7 @@ class Recording:
                 session = RecordingSession(**d)
                 if session.state == SessionState.ACTIVE:
                     session.state = SessionState.ERROR
+                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"
                     session.module_stop_states = {m: "unknown" for m in session.modules}
                 self.sessions[name] = session

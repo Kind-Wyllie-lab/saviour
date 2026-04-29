@@ -2,6 +2,69 @@ import React, { useState, useEffect, useRef } from "react";
 import socket from "/src/socket";
 import "./SessionList.css";
 
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function copyToClipboard(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.style.cssText = "position:fixed;top:-9999px;left:-9999px";
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand("copy");
+  document.body.removeChild(el);
+}
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    copyToClipboard(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button type="button" className="session-share-notice__copy-btn" onClick={handleCopy}>
+      {copied ? "Copied to clipboard!" : "Copy"}
+    </button>
+  );
+}
+
+function Countdown({ timedStopAt }) {
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+  useEffect(() => {
+    const tick = () => setRemaining(Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [timedStopAt]);
+  if (remaining <= 0) return <span>ending…</span>;
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return <span>{h > 0 ? `${h}h ${mm}m ${ss}s` : `${mm}m ${ss}s`}</span>;
+}
+
+function formatDuration(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+function formatScheduledDays(days) {
+  if (!days || days.length === 0 || days.length === 7) return "every day";
+  return [...days].sort((a, b) => a - b).map(d => DAY_NAMES[d]).join(", ");
+}
+
 function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
   const [selectedId, setSelectedId] = useState("");
   const selectRef = useRef(null);
@@ -61,6 +124,14 @@ function SessionList({ sessionList, modules = [] }) {
   const [expandedSessions, setExpandedSessions] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
   const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
+  const [shareInfo, setShareInfo] = useState(null);
+
+  useEffect(() => {
+    socket.emit("get_controller_samba_info");
+    const handler = (data) => setShareInfo(data);
+    socket.on("controller_samba_info_response", handler);
+    return () => socket.off("controller_samba_info_response", handler);
+  }, []);
 
   const handleStop = (sessionName) => {
     socket.emit("stop_session", { session_name: sessionName });
@@ -166,6 +237,9 @@ function SessionList({ sessionList, modules = [] }) {
                     <span className="session-name">{session.session_name}</span>
                     {isStarting  && <span className="session-state-label session-state-label--starting">Starting…</span>}
                     {isActive && !isStarting && <span className="session-state-label session-state-label--recording">Recording</span>}
+                    {isActive && !isStarting && session.error_time && (
+                      <span className="session-state-label session-state-label--past-fault">fault recorded</span>
+                    )}
                     {isStopped   && <span className="session-state-label session-state-label--stopped">Stopped</span>}
                     {isScheduled && <span className="session-state-label session-state-label--scheduled">Scheduled</span>}
                     {isError     && <span className="session-state-label session-state-label--error">Error</span>}
@@ -199,16 +273,42 @@ function SessionList({ sessionList, modules = [] }) {
                       </>
                     )}
 
+                    {session.timed_stop_at && session.duration_minutes && (
+                      <>
+                        <span className="session-meta-label">Duration</span>
+                        <span>{formatDuration(session.duration_minutes)}</span>
+                        {(isActive || isError) && (
+                          <>
+                            <span className="session-meta-label">Remaining</span>
+                            <span><Countdown timedStopAt={session.timed_stop_at} /></span>
+                          </>
+                        )}
+                      </>
+                    )}
+
                     {isScheduled && session.scheduled_start_time && (
                       <>
                         <span className="session-meta-label">Schedule</span>
-                        <span>{session.scheduled_start_time} – {session.scheduled_end_time}</span>
+                        <span>
+                          {session.scheduled_start_time} – {session.scheduled_end_time}
+                          {", "}
+                          {formatScheduledDays(session.scheduled_days)}
+                        </span>
                       </>
                     )}
                   </div>
 
                   {isError && (
                     <p className="session-error-message">{session.error_message}</p>
+                  )}
+
+                  {isActive && session.error_time && (
+                    <p className="session-past-fault-message">
+                      Fault recorded at {session.error_time.replace(
+                        /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/,
+                        "$4:$5"
+                      )}{session.error_message ? ` — ${session.error_message}` : ""}
+                    </p>
                   )}
 
                   {stillStopping > 0 && (
@@ -231,8 +331,29 @@ function SessionList({ sessionList, modules = [] }) {
                     </p>
                   )}
 
+                  {isStopped && shareInfo && (
+                    <div className="session-share-notice">
+                      <p className="session-share-notice__instruction">
+                        Copy this path into your file explorer to access files:
+                      </p>
+                      <div className="session-share-notice__path-row">
+                        <p className="session-share-notice__path">
+                          \\{shareInfo.share_ip}\{shareInfo.share_path}
+                        </p>
+                        <CopyButton text={`\\\\${shareInfo.share_ip}\\${shareInfo.share_path}`} />
+                      </div>
+                      <div className="session-share-notice__creds">
+                        <span>Username: <strong>researcher</strong></span>
+                        <span>Password: <strong>getmyfiles</strong></span>
+                      </div>
+                      <p className="session-share-notice__warning">
+                        ⚠ Always check files are present after a recording, and export them to a safe long-term storage location!
+                      </p>
+                    </div>
+                  )}
+
                   <div className="session-actions">
-                    {(isActive || isStarting) && (
+                    {(isActive || isStarting || isError) && (
                       <button
                         className="session-btn session-btn--stop"
                         onClick={() => handleStop(session.session_name)}

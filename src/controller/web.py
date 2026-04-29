@@ -92,24 +92,61 @@ class Web(ABC):
 
 
     def _write_session_metadata(self, session_name: str, target: str) -> None:
-        """Write a session_metadata.json to the share folder for the session."""
+        """Write a session_metadata.json to the export target for the session.
+
+        If export.share_ip is configured (separate NAS), mounts the share, writes
+        there, then unmounts.  Otherwise falls back to the local controller_share dir.
+        """
+        import subprocess
         from datetime import datetime, timezone
-        share_dir = self.habitat_share_dir / session_name
-        try:
-            share_dir.mkdir(parents=True, exist_ok=True)
-            # chmod so Samba clients (saviour_module) can create subdirectories inside
-            share_dir.chmod(0o777)
-            metadata = {
-                "session_name": session_name,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "target": target,
-                **self.experiment_metadata,
-            }
-            with open(share_dir / "session_metadata.json", "w") as f:
-                json.dump(metadata, f, indent=2)
-            self.logger.info(f"Wrote session_metadata.json for '{session_name}'")
-        except Exception as e:
-            self.logger.error(f"Failed to write session_metadata.json for '{session_name}': {e}")
+
+        metadata = {
+            "session_name": session_name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "target": target,
+            **self.experiment_metadata,
+        }
+
+        nas_ip = self.config.get("export.share_ip", "")
+        if nas_ip:
+            share_path = self.config.get("export.share_path", "controller_share")
+            username = self.config.get("export.share_username", "")
+            password = self.config.get("export.share_password", "")
+            mount_point = Path("/mnt/controller_export")
+            try:
+                mount_point.mkdir(parents=True, exist_ok=True)
+                if mount_point.is_mount():
+                    subprocess.run(["sudo", "umount", str(mount_point)], check=False)
+                auth_opts = f"username={username},password={password}" if username else "guest"
+                mount_cmd = [
+                    "sudo", "mount", "-t", "cifs",
+                    f"//{nas_ip}/{share_path}",
+                    str(mount_point),
+                    "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775",
+                ]
+                result = subprocess.run(mount_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.logger.error(f"Failed to mount NAS for metadata write: {result.stderr}")
+                    return
+                share_dir = mount_point / session_name
+                share_dir.mkdir(parents=True, exist_ok=True)
+                with open(share_dir / "session_metadata.json", "w") as f:
+                    json.dump(metadata, f, indent=2)
+                self.logger.info(f"Wrote session_metadata.json for '{session_name}' to NAS {nas_ip}")
+            except Exception as e:
+                self.logger.error(f"Failed to write session_metadata.json to NAS: {e}")
+            finally:
+                subprocess.run(["sudo", "umount", str(mount_point)], check=False)
+        else:
+            share_dir = self.habitat_share_dir / session_name
+            try:
+                share_dir.mkdir(parents=True, exist_ok=True)
+                share_dir.chmod(0o777)
+                with open(share_dir / "session_metadata.json", "w") as f:
+                    json.dump(metadata, f, indent=2)
+                self.logger.info(f"Wrote session_metadata.json for '{session_name}'")
+            except Exception as e:
+                self.logger.error(f"Failed to write session_metadata.json for '{session_name}': {e}")
 
 
     def register_additional_socketio_events(self, handler_func):
@@ -259,8 +296,10 @@ class Web(ABC):
         def handle_create_session(data):
             target = data.get("target")
             session_name = data.get("session_name")
-            self.logger.info(f"Received request to create session {session_name} targeting {target}")
-            result = self.facade.create_session(session_name, target)
+            duration_minutes = data.get("duration_minutes")  # None = infinite
+            researcher = data.get("researcher") or None
+            self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
+            result = self.facade.create_session(session_name, target, duration_minutes, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -273,8 +312,10 @@ class Web(ABC):
             session_name = data.get("session_name")
             start_time = data.get("start_time")
             end_time = data.get("end_time")
-            self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time}")
-            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+            days = data.get("days")  # list of ints (0=Mon…6=Sun), None/[] = every day
+            researcher = data.get("researcher") or None
+            self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
+            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -511,6 +552,46 @@ class Web(ABC):
             result = self.facade.sync_export_to_module(module_id)
             self.socketio.emit("export_sync_result", {"module_id": module_id, **result})
 
+        @self.socketio.on('sync_export_to_all')
+        def handle_sync_export_to_all(data=None):
+            """Push export credentials to every connected module.
+
+            If the frontend sends share_ip/share_path/share_username/share_password
+            in the payload, those values are used and also persisted to the controller
+            config.  Otherwise falls back to the currently saved controller config.
+            """
+            data = data or {}
+            if "share_ip" in data:
+                creds = {
+                    "share_ip":       data.get("share_ip", ""),
+                    "share_path":     data.get("share_path", "controller_share"),
+                    "share_username": data.get("share_username", ""),
+                    "share_password": data.get("share_password", ""),
+                }
+                # Persist so future auto-pushes (on module discovery) use the same values
+                current = self.facade.get_config()
+                current.setdefault("export", {}).update(creds)
+                self.facade.set_config(current)
+            else:
+                creds = self.facade.get_export_credentials()
+
+            modules = self.facade.get_modules()
+            results = {}
+            for module_id in modules:
+                results[module_id] = self.facade.sync_export_with_creds(module_id, creds)
+            success_count = sum(1 for r in results.values() if r.get("success"))
+            self.socketio.emit("export_sync_all_result", {
+                "results": results,
+                "success_count": success_count,
+                "total": len(results),
+            })
+
+        @self.socketio.on('get_controller_samba_info')
+        def handle_get_controller_samba_info(data=None):
+            """Return this controller's own Samba share info for the 'Controller Share' preset."""
+            info = self.facade.get_controller_own_share_info()
+            self.socketio.emit("controller_samba_info_response", info)
+
         """Controller System State"""
         @self.socketio.on("get_system_state")
         def handle_get_system_state(data=None):
@@ -639,6 +720,8 @@ class Web(ABC):
             # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
             from datetime import datetime, timezone as _tz
             health['controller_time'] = datetime.now(_tz.utc).isoformat()
+            # Controller uptime in seconds
+            health['uptime'] = round(self.facade.get_uptime())
             self.socketio.emit("controller_health_response", health)
 
 
@@ -951,44 +1034,41 @@ class Web(ABC):
 
 
     def mount_nas(self):
-        """Mount the NAS share"""
+        """Mount the NAS/export share defined in export.* controller config."""
         try:
             import subprocess
-            
-            # NAS configuration - updated to match working module_export_manager implementation
-            nas_ip = self.config.get("nas.ip")
-            share_path = self.config.get("nas.share_path")
-            username = self.config.get("nas.username")
-            password = self.config.get("nas.password")
-            mount_point = self.config.get("nas.local_mount")
-            
-            # Create mount point if it doesn't exist
-            mount_path = Path(mount_point)
-            mount_path.mkdir(exist_ok=True)
-            
-            # Unmount if already mounted
-            if mount_path.is_mount():
-                subprocess.run(['sudo', 'umount', mount_point], check=True)
-            
-            # Mount the NAS share - matching module_export_manager implementation
+
+            nas_ip = self.config.get("export.share_ip", "")
+            if not nas_ip:
+                self.logger.warning("mount_nas: export.share_ip not configured")
+                return False
+            share_path = self.config.get("export.share_path", "controller_share")
+            username = self.config.get("export.share_username", "")
+            password = self.config.get("export.share_password", "")
+            mount_point = Path("/mnt/controller_export")
+
+            mount_point.mkdir(parents=True, exist_ok=True)
+            if mount_point.is_mount():
+                subprocess.run(["sudo", "umount", str(mount_point)], check=False)
+
+            auth_opts = f"username={username},password={password}" if username else "guest"
             mount_cmd = [
-                'sudo', 'mount', '-t', 'cifs',
-                f'//{nas_ip}/{share_path}',
-                mount_point,
-                '-o', f'username={username},password={password}'
+                "sudo", "mount", "-t", "cifs",
+                f"//{nas_ip}/{share_path}",
+                str(mount_point),
+                "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775",
             ]
-            
+
             result = subprocess.run(mount_cmd, capture_output=True, text=True)
-            
             if result.returncode != 0:
                 self.logger.error(f"Failed to mount NAS: {result.stderr}")
                 return False
-            
-            self.logger.info(f"Successfully mounted NAS at {mount_point}")
+
+            self.logger.info(f"Successfully mounted //{nas_ip}/{share_path} at {mount_point}")
             return True
-            
+
         except Exception as e:
-            self.logger.error(f"NAS mount failed: {str(e)}")
+            self.logger.error(f"NAS mount failed: {e}")
             return False
 
 

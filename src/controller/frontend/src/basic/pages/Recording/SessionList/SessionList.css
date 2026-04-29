@@ -108,11 +108,12 @@
   flex-shrink: 0;
 }
 
-.session-state-label--starting  { color: #e8a020; }
-.session-state-label--recording { color: #2e7d32; }
-.session-state-label--stopped   { color: var(--text-muted, #888); }
-.session-state-label--scheduled { color: #4a90d9; }
-.session-state-label--error     { color: #c62828; }
+.session-state-label--starting   { color: #e8a020; }
+.session-state-label--recording  { color: #2e7d32; }
+.session-state-label--stopped    { color: var(--text-muted, #888); }
+.session-state-label--scheduled  { color: #4a90d9; }
+.session-state-label--error      { color: #c62828; }
+.session-state-label--past-fault { color: #c0580a; }
 
 .session-expand-toggle {
   font-size: 0.75rem;
@@ -182,6 +183,15 @@
   font-size: 0.85rem;
   color: #c62828;
   background: rgba(198, 40, 40, 0.07);
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin: 0;
+}
+
+.session-past-fault-message {
+  font-size: 0.85rem;
+  color: #c0580a;
+  background: rgba(192, 88, 10, 0.07);
   border-radius: 4px;
   padding: 5px 8px;
   margin: 0;
@@ -282,4 +292,76 @@
 .session-btn--join:hover {
   background: #4a90d9;
   color: white;
+}
+
+/* ── Share access notice (stopped sessions) ───────────────────────────── */
+
+.session-share-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 12px 14px;
+  background: var(--card-bg, #f5f7fa);
+  border: 1px solid var(--border-color, #dde1e7);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: var(--text-color, #333);
+}
+
+.session-share-notice p {
+  margin: 0;
+}
+
+.session-share-notice__instruction {
+  color: var(--text-muted, #666);
+}
+
+.session-share-notice__path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-share-notice__path {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.9rem;
+  font-weight: 600;
+  word-break: break-all;
+  padding: 4px 8px;
+  background: var(--input-bg, #fff);
+  border: 1px solid var(--border-color, #dde1e7);
+  border-radius: 5px;
+  color: #1a1a1a;
+}
+
+.session-share-notice__copy-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  background: var(--card-bg, #f5f7fa);
+  border: 1px solid var(--border-color, #dde1e7);
+  border-radius: 5px;
+  cursor: pointer;
+  color: #1a1a1a;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.session-share-notice__copy-btn:hover {
+  background: var(--border-color, #dde1e7);
+}
+
+.session-share-notice__creds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-muted, #555);
+}
+
+.session-share-notice__warning {
+  color: #b45309;
+  font-weight: 500;
+  margin-top: 2px;
 }

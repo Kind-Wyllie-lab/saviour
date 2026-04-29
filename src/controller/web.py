@@ -297,8 +297,9 @@ class Web(ABC):
             target = data.get("target")
             session_name = data.get("session_name")
             duration_minutes = data.get("duration_minutes")  # None = infinite
+            researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
-            result = self.facade.create_session(session_name, target, duration_minutes)
+            result = self.facade.create_session(session_name, target, duration_minutes, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -312,8 +313,9 @@ class Web(ABC):
             start_time = data.get("start_time")
             end_time = data.get("end_time")
             days = data.get("days")  # list of ints (0=Mon…6=Sun), None/[] = every day
+            researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
-            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days)
+            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import socket from "/src/socket";
 import "./NewSessionForm.css";
 
@@ -11,7 +11,20 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 
 function NewSessionForm({ modules, sessionList = {} }) {
   const [target, setTarget] = useState("all");
-  const { experimentName } = useExperimentTitle();
+  const { experimentName, experimenter } = useExperimentTitle();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const sessionNamePreview = useMemo(() => {
+    if (!experimentName) return "—";
+    const p = (n) => String(n).padStart(2, "0");
+    const ts = `${now.getFullYear()}${p(now.getMonth()+1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
+    const safe = experimentName.replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");
+    return target !== "all" ? `${safe}-${target}-${ts}` : `${safe}-${ts}`;
+  }, [experimentName, target, now]);
 
   const [recordingMode, setRecordingMode] = useState("immediate");
 
@@ -101,12 +114,14 @@ function NewSessionForm({ modules, sessionList = {} }) {
         start_time: `${startHour}:${startMinute}`,
         end_time:   `${endHour}:${endMinute}`,
         days: daysArray,
+        researcher: experimenter || null,
       });
     } else {
       socket.emit("create_session", {
         target,
         session_name: experimentName,
         duration_minutes: recordingMode === "timed" ? totalDurationMins : null,
+        researcher: experimenter || null,
       });
     }
 
@@ -225,7 +240,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
             <p>{targetLabel} will record from {startHour}:{startMinute} to {endHour}:{endMinute}, {daysDescription}.</p>
           )}
           <div className="session-name-preview-block">
-            Session name <strong>{experimentName ? `${experimentName}-(TIMESTAMP)` : "—"}</strong>
+            Session name <strong>{sessionNamePreview}</strong>
           </div>
         </div>
 

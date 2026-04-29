@@ -86,6 +86,7 @@ class RecordingSession:
     # Scheduled sessions: weekday ints (0=Mon…6=Sun) on which to run.
     # Empty list means every day.
     scheduled_days:            list = field(default_factory=list)
+    researcher:                Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +137,8 @@ class Recording:
             return f"Controller share not writable ({share}): {e}"
 
     def create_session(self, session_name: str, target: str,
-                       duration_minutes: Optional[int] = None) -> dict:
+                       duration_minutes: Optional[int] = None,
+                       researcher: Optional[str] = None) -> dict:
         """Create a session that begins recording immediately.
 
         Returns a result dict so the caller can surface errors to the frontend.
@@ -176,6 +178,7 @@ class Recording:
             recording_start_at=start_at,
             duration_minutes=duration_minutes,
             timed_stop_at=timed_stop_at,
+            researcher=researcher or None,
         )
 
         with self._lock:
@@ -201,7 +204,8 @@ class Recording:
 
     def create_scheduled_session(self, session_name: str, target: str,
                                   start_time: str, end_time: str,
-                                  days: Optional[list] = None) -> dict:
+                                  days: Optional[list] = None,
+                                  researcher: Optional[str] = None) -> dict:
         """Create a session that records on specified days between start_time and end_time (HH:MM).
 
         days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
@@ -228,6 +232,7 @@ class Recording:
             scheduled_days=days or [],
             module_stop_states={m: "recording" for m in modules},
             module_export_states={m: "idle" for m in modules},
+            researcher=researcher or None,
         )
 
         with self._lock:

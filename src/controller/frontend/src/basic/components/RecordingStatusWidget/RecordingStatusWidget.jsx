@@ -29,6 +29,22 @@ function formatTime(date) {
   return `${hh}:${mm}`;
 }
 
+function Countdown({ timedStopAt }) {
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+  useEffect(() => {
+    const tick = () => setRemaining(Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [timedStopAt]);
+  if (remaining <= 0) return <span className="rsw-countdown"> · ending…</span>;
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return <span className="rsw-countdown"> · {h > 0 ? `${h}h ${mm}m ${ss}s` : `${mm}m ${ss}s`} left</span>;
+}
+
 function SessionEntry({ session, modules, moduleHealth }) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -78,6 +94,7 @@ function SessionEntry({ session, modules, moduleHealth }) {
           {hasPastFault && (
             <span className="rsw-past-fault"> · fault at {formatTime(faultDate)}</span>
           )}
+          {session.timed_stop_at && <Countdown timedStopAt={session.timed_stop_at} />}
         </span>
       )}
 

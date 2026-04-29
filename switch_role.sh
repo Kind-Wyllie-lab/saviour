@@ -290,7 +290,7 @@ configure_samba_share() {
         echo "Created group: saviour"
     fi
 
-    # Add pi to the saviour group so it can write as a regular member
+    # Add pi to the saviour group so it can write to the share directory
     sudo usermod -aG saviour pi
 
     # Create saviour_module system user (no login shell, no home dir)
@@ -300,15 +300,29 @@ configure_samba_share() {
         echo "Created system user: saviour_module"
     fi
 
+    # Create researcher system user (read-only access to the share)
+    if ! id researcher > /dev/null 2>&1; then
+        sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid saviour researcher
+        echo "Created system user: researcher"
+    fi
+
+    # Create sidbit system user (IT admin, full access to the share)
+    if ! id sidbit > /dev/null 2>&1; then
+        sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid saviour sidbit
+        echo "Created system user: sidbit"
+    fi
+
     # ── 2. Share directory ────────────────────────────────────────────────
     # Allow non-pi users to traverse /home/pi to reach the share
     sudo chmod 711 /home/pi
     sudo mkdir -p /home/pi/${SHARENAME}
     sudo chown pi:saviour /home/pi/${SHARENAME}
-    # 1775 = rwxrwsr-t: group-write so saviour_module can create files;
-    # sticky bit so only the file owner/root can delete files.
-    sudo chmod 1775 /home/pi/${SHARENAME}
-    echo "Share directory: /home/pi/${SHARENAME} (mode 1775, owner pi:saviour)"
+    # 2775 = rwxrwsr-x: setgid so new files inherit the saviour group;
+    # group-write lets saviour_module, researcher, and sidbit all create and delete files.
+    sudo chmod 2775 /home/pi/${SHARENAME}
+    echo "Share directory: /home/pi/${SHARENAME} (mode 2775, owner pi:saviour)"
 
     # ── 3. Generate a random password for saviour_module ─────────────────
     sudo mkdir -p /etc/saviour
@@ -354,7 +368,6 @@ PYEOF
    workgroup = WORKGROUP
    server string = SAVIOUR Controller
    server role = standalone server
-   map to guest = bad user
    dns proxy = no
    log level = 1
    log file = /var/log/samba/%m.log
@@ -364,12 +377,10 @@ PYEOF
    comment = SAVIOUR Controller Share
    path = /home/pi/${SHARENAME}
    browseable = yes
-   # Guests (unauthenticated) get read-only access
-   guest ok = yes
    read only = yes
-   # saviour_module and pi can write; pi is also admin (bypasses UNIX perms)
-   write list = saviour_module, pi
-   admin users = pi
+   valid users = researcher, saviour_module, sidbit
+   write list = researcher, saviour_module, sidbit
+   admin users = sidbit
    create mask = 0664
    directory mask = 0775
 EOF
@@ -378,8 +389,11 @@ EOF
     echo "Setting Samba password for saviour_module..."
     printf '%s\n%s\n' "${MODULE_PASS}" "${MODULE_PASS}" | sudo smbpasswd -s -a saviour_module
 
-    echo "Setting Samba password for pi (default: saviour)..."
-    echo -e "saviour\nsaviour" | sudo smbpasswd -s -a pi
+    echo "Setting Samba password for researcher..."
+    printf 'getmyfiles\ngetmyfiles\n' | sudo smbpasswd -s -a researcher
+
+    echo "Setting Samba password for sidbit..."
+    printf 'espressocreme\nespressocreme\n' | sudo smbpasswd -s -a sidbit
 
     # ── 7. Restart and enable Samba ───────────────────────────────────────
     sudo systemctl restart smbd nmbd
@@ -392,9 +406,9 @@ EOF
     echo "  Path       : /home/pi/${SHARENAME}"
     echo ""
     echo "Access tiers:"
-    echo "  Guest (read-only) : smb://${CONTROLLER_IP}/${SHARENAME}"
-    echo "  Module (write)    : username=saviour_module  password stored in /etc/saviour/samba_credentials"
-    echo "  Admin (full)      : username=pi  password=saviour"
+    echo "  Researcher (read/write/delete) : username=researcher   password=getmyfiles"
+    echo "  Module (write)         : username=saviour_module  password stored in /etc/saviour/samba_credentials"
+    echo "  Admin (full)           : username=sidbit       password=espressocreme"
 }
 
 disable_samba_share() {

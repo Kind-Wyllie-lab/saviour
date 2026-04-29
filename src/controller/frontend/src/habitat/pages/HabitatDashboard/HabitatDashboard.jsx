@@ -2,6 +2,7 @@ import React from "react";
 import "./HabitatDashboard.css";
 
 import useModules from "/src/hooks/useModules";
+import useSessions from "/src/hooks/useSessions";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
@@ -9,6 +10,7 @@ import HabitatModuleStatusList from "../../components/HabitatModuleStatusList/Ha
 
 function HabitatDashboard() {
   const { modules } = useModules();
+  const { sessionList } = useSessions();
 
   return (
     <main className="habitat-dashboard">
@@ -17,7 +19,7 @@ function HabitatDashboard() {
       <div className="habitat-dashboard-body">
         <section className="habitat-dashboard-left">
           <HealthSummaryWidget />
-          <HabitatModuleStatusList modules={modules} />
+          <HabitatModuleStatusList modules={modules} sessions={sessionList} />
         </section>
 
         <section className="habitat-dashboard-right">

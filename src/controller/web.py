@@ -718,6 +718,8 @@ class Web(ABC):
             # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
             from datetime import datetime, timezone as _tz
             health['controller_time'] = datetime.now(_tz.utc).isoformat()
+            # Controller uptime in seconds
+            health['uptime'] = round(self.facade.get_uptime())
             self.socketio.emit("controller_health_response", health)
 
 

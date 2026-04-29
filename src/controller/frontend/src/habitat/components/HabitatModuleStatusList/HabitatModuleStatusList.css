@@ -63,6 +63,16 @@
 .hmsl-dot.recording { background-color: #2e7d32; animation: hmsl-pulse 2s ease-in-out infinite; }
 .hmsl-dot.waiting   { background-color: #e8a020; }
 .hmsl-dot.offline   { background-color: #bbb; }
+.hmsl-dot.fault     { background-color: #c0580a; animation: hmsl-fault-pulse 1.2s ease-in-out infinite; }
+
+.hmsl-item--fault .hmsl-name {
+  color: #c0580a;
+}
+
+@keyframes hmsl-fault-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(192, 88, 10, 0.3); }
+  50%       { box-shadow: 0 0 0 5px rgba(192, 88, 10, 0.05); }
+}
 
 @keyframes hmsl-pulse {
   0%, 100% { box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.25); }

@@ -1,0 +1,113 @@
+.fault-alert-overlay {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.fault-alert-modal {
+  max-width: 460px;
+  border-top: 3px solid #c0580a;
+}
+
+.fault-alert-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.fault-alert-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.fault-alert-icon {
+  font-size: 1.4rem;
+  color: #c0580a;
+  line-height: 1;
+}
+
+.fault-alert-intro {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.fault-alert-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fault-alert-session {
+  background: color-mix(in srgb, #c0580a 8%, var(--card-bg-color));
+  border: 1px solid color-mix(in srgb, #c0580a 25%, var(--border-color));
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+}
+
+.fault-alert-session--recovered {
+  background: color-mix(in srgb, #c0580a 4%, var(--card-bg-color));
+  border-color: color-mix(in srgb, #c0580a 15%, var(--border-color));
+  opacity: 0.85;
+}
+
+.fault-alert-session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.fault-alert-session-name {
+  font-weight: 600;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.fault-alert-session-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.fault-alert-session-badge--error {
+  background: rgba(192, 88, 10, 0.15);
+  color: #c0580a;
+}
+
+.fault-alert-session-badge--recovered {
+  background: rgba(100, 100, 100, 0.12);
+  color: var(--text-muted, #888);
+}
+
+.fault-alert-time {
+  opacity: 0.7;
+  font-size: 0.82rem;
+  margin-bottom: 3px;
+}
+
+.fault-alert-message {
+  color: #c0580a;
+  font-size: 0.82rem;
+}
+
+.fault-alert-note {
+  font-size: 0.82rem;
+  opacity: 0.65;
+  margin: 0 0 18px;
+  line-height: 1.5;
+}
+
+.fault-alert-ack {
+  background-color: #c0580a;
+}
+
+.fault-alert-ack:hover {
+  filter: brightness(0.88);
+}

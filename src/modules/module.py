@@ -136,6 +136,7 @@ class Module(ABC):
             "reboot": self.reboot,
             "reset_config": self.reset_config,
             "start_export": self.start_export,
+            "set_export_config": self.set_export_config,
         }
 
         # Register callbacks and facade

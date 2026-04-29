@@ -14,6 +14,7 @@ Created: ?
 
 
 import logging
+import subprocess
 import time
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
@@ -296,8 +297,10 @@ class Web(ABC):
         def handle_create_session(data):
             target = data.get("target")
             session_name = data.get("session_name")
-            self.logger.info(f"Received request to create session {session_name} targeting {target}")
-            result = self.facade.create_session(session_name, target)
+            duration_minutes = data.get("duration_minutes")  # None = infinite
+            researcher = data.get("researcher") or None
+            self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
+            result = self.facade.create_session(session_name, target, duration_minutes, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -310,8 +313,10 @@ class Web(ABC):
             session_name = data.get("session_name")
             start_time = data.get("start_time")
             end_time = data.get("end_time")
-            self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time}")
-            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time)
+            days = data.get("days")  # list of ints (0=Mon…6=Sun), None/[] = every day
+            researcher = data.get("researcher") or None
+            self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
+            result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -716,6 +721,8 @@ class Web(ABC):
             # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
             from datetime import datetime, timezone as _tz
             health['controller_time'] = datetime.now(_tz.utc).isoformat()
+            # Controller uptime in seconds
+            health['uptime'] = round(self.facade.get_uptime())
             self.socketio.emit("controller_health_response", health)
 
 

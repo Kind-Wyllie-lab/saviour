@@ -1,8 +1,17 @@
-import React from "react";
+import React, { useMemo } from "react";
 import "./HabitatModuleStatusList.css";
 
-function HabitatModuleStatusList({ modules }) {
+function HabitatModuleStatusList({ modules, sessions = [] }) {
   const list = Object.values(modules);
+
+  // Module IDs that appear in any session currently in error state
+  const faultedModuleIds = useMemo(() => {
+    const ids = new Set();
+    sessions.forEach((s) => {
+      if (s.state === "error") s.modules?.forEach((id) => ids.add(id));
+    });
+    return ids;
+  }, [sessions]);
 
   const sorted = [...list].sort((a, b) => {
     const ga = a.group || "";
@@ -27,13 +36,15 @@ function HabitatModuleStatusList({ modules }) {
           const group = module.group || "";
           const showGroup = group !== lastGroup;
           lastGroup = group;
+          const isFaulted = faultedModuleIds.has(module.id);
+          const dotStatus = isFaulted ? "fault" : module.status?.toLowerCase();
           return (
             <React.Fragment key={module.id}>
               {showGroup && group && (
                 <div className="hmsl-group">{group}</div>
               )}
-              <div className="hmsl-item">
-                <div className={`hmsl-dot ${module.status?.toLowerCase()}`} />
+              <div className={`hmsl-item${isFaulted ? " hmsl-item--fault" : ""}`}>
+                <div className={`hmsl-dot ${dotStatus}`} />
                 <span className="hmsl-name">{module.name}</span>
                 <span className="hmsl-type">{module.type}</span>
               </div>

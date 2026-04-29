@@ -383,6 +383,9 @@ PYEOF
    admin users = sidbit
    create mask = 0664
    directory mask = 0775
+   oplocks = no
+   level2 oplocks = no
+   notify daemon = yes
 EOF
 
     # ── 6. Set Samba passwords ────────────────────────────────────────────

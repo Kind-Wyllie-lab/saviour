@@ -293,3 +293,75 @@
   background: #4a90d9;
   color: white;
 }
+
+/* ── Share access notice (stopped sessions) ───────────────────────────── */
+
+.session-share-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 12px 14px;
+  background: var(--card-bg, #f5f7fa);
+  border: 1px solid var(--border-color, #dde1e7);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: var(--text-color, #333);
+}
+
+.session-share-notice p {
+  margin: 0;
+}
+
+.session-share-notice__instruction {
+  color: var(--text-muted, #666);
+}
+
+.session-share-notice__path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-share-notice__path {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.9rem;
+  font-weight: 600;
+  word-break: break-all;
+  padding: 4px 8px;
+  background: var(--input-bg, #fff);
+  border: 1px solid var(--border-color, #dde1e7);
+  border-radius: 5px;
+  color: #1a1a1a;
+}
+
+.session-share-notice__copy-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  background: var(--card-bg, #f5f7fa);
+  border: 1px solid var(--border-color, #dde1e7);
+  border-radius: 5px;
+  cursor: pointer;
+  color: #1a1a1a;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.session-share-notice__copy-btn:hover {
+  background: var(--border-color, #dde1e7);
+}
+
+.session-share-notice__creds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-muted, #555);
+}
+
+.session-share-notice__warning {
+  color: #b45309;
+  font-weight: 500;
+  margin-top: 2px;
+}

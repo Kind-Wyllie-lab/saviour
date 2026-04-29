@@ -515,12 +515,15 @@ class Export:
 
             # Attempt to mount
             try: 
+                if self.samba_share_username:
+                    auth_opts = f'username={self.samba_share_username},password={self.samba_share_password}'
+                else:
+                    auth_opts = 'guest'
                 mount_cmd = [
                     'sudo', 'mount', '-t', 'cifs',
                     f'//{self.samba_share_ip}/{self.samba_share_path}',
                     self.mount_point,
-                    '-o', f'username={self.samba_share_username},password={self.samba_share_password},'
-                          'uid=pi,gid=pi,file_mode=0664,dir_mode=0775'
+                    '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775'
                 ]
 
                 result = subprocess.run(mount_cmd, capture_output=True, text=True)

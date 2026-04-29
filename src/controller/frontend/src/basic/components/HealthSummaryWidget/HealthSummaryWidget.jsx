@@ -33,6 +33,16 @@ function ptpDisplay(ns) {
     : `${Math.round(ns)} ns`;
 }
 
+function formatUptime(secs) {
+  if (secs == null) return null;
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 function driftClass(ms) {
   const abs = Math.abs(ms);
   if (abs >= 60000) return "val--danger";
@@ -148,6 +158,13 @@ export default function HealthSummaryWidget() {
               </span>
             )}
           </span>
+        </div>
+      )}
+
+      {controllerHealth?.uptime != null && (
+        <div className="hsw-row">
+          <span className="hsw-label">Uptime</span>
+          <span className="hsw-value val--ok">{formatUptime(controllerHealth.uptime)}</span>
         </div>
       )}
 

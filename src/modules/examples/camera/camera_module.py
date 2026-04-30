@@ -691,28 +691,29 @@ class CameraModule(Module):
     def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
         """Apply the frame timestamp to the image.
 
-        Font scale and text position are cached after the first call per stream —
-        the timestamp string is always the same length so the layout never changes.
+        Layout is cached per (stream, size_preset) and recomputed whenever the
+        text_size config changes or the actual frame dimensions differ from the cache.
         """
+        size_preset = self.config.get("camera.text_size", "medium")
         cache_attr = f"_ts_layout_{stream}"
-        layout = getattr(self, cache_attr, None)
-        if layout is None:
-            width  = self.width  if stream == "main" else self.lores_width
-            height = self.height if stream == "main" else self.lores_height
+        cached = getattr(self, cache_attr, None)  # (preset, height, width, font_scale, thickness, x, y)
+
+        actual_height, actual_width = m.array.shape[:2]
+
+        if cached is None or cached[0] != size_preset or cached[1] != actual_height or cached[2] != actual_width:
             font = cv2.FONT_HERSHEY_SIMPLEX
-            size_preset = self.config.get("camera.text_size", "medium")
             target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
             thickness = 2 if size_preset == "large" else 1
             ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
-            font_scale = max(0.3, (target_fraction * width) / ref_width)
+            font_scale = max(0.3, (target_fraction * actual_width) / ref_width)
             text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
-            x = int((width - text_width) / 2)
-            padding = max(4, int(height * 0.01))
+            x = int((actual_width - text_width) / 2)
+            padding = max(4, int(actual_height * 0.01))
             y = text_height + padding
-            layout = (font_scale, thickness, x, y)
-            setattr(self, cache_attr, layout)
+            cached = (size_preset, actual_height, actual_width, font_scale, thickness, x, y)
+            setattr(self, cache_attr, cached)
 
-        font_scale, thickness, x, y = layout
+        _, _, _, font_scale, thickness, x, y = cached
         cv2.putText(
             img=m.array,
             text=timestamp,

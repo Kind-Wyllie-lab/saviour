@@ -77,6 +77,9 @@ class Modules:
         # Config state registry – keyed by module_id
         self._config_states: Dict[str, ModuleConfigState] = {}
 
+        # IDs explicitly removed this session — suppress re-discovery until restart
+        self._removed_ids: set = set()
+
         # Background thread: revert READY/NOT_READY modules that have timed out
         self._ready_timeout_thread = threading.Thread(
             target=self._ready_timeout_checker,
@@ -111,7 +114,11 @@ class Modules:
     def remove_module(self, module_id: str) -> None:
         self._modules.pop(module_id, None)
         self._config_states.pop(module_id, None)
+        self._removed_ids.add(module_id)
         self.broadcast_updated_modules()
+
+    def is_removed(self, module_id: str) -> bool:
+        return module_id in self._removed_ids
 
 
     def module_discovery(self, module: Module) -> None:
@@ -144,6 +151,14 @@ class Modules:
             self._config_states[new_id] = self._config_states.pop(old_id)
         self.broadcast_updated_modules()
 
+
+    def update_module_version(self, module_id: str, version: str) -> None:
+        if module_id not in self._modules:
+            return
+        if self._modules[module_id].version == version:
+            return
+        self._modules[module_id].version = version
+        self.broadcast_updated_modules()
 
     def module_ip_changed(self, module_id: str, new_ip: str) -> None:
         if module_id not in self._modules:

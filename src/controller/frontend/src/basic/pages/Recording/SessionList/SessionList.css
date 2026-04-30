@@ -3,6 +3,7 @@
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
 }
 
 .session-list__header h2 {
@@ -23,6 +24,31 @@
   color: var(--text-muted, #888);
   font-size: 0.9rem;
   padding: 8px 0;
+}
+
+.session-list__clear-all-btn {
+  margin-left: auto;
+  font-size: 0.78rem;
+  padding: 3px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.session-list__clear-all-btn:hover {
+  opacity: 1;
+}
+
+.session-list__clear-all-confirm {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
 }
 
 /* ── Session card ─────────────────────────────────────────────────────── */

@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import socket from "../../../socket";
+import useSessions from "/src/hooks/useSessions";
 
 // Styling and components
 import "./APACommands.css";
 
 function APACommands( {modules} ) {
+    const { sessionList } = useSessions();
+    const activeSessions = sessionList.filter(s => s.state === "active" || s.state === "error");
+    const [confirmStop, setConfirmStop] = useState(null); // session_name | null
+
     const [shockState, setShockState] = useState(null);
     const [arduinoState, setArduinoState] = useState(null);
     const [spacePressed, setSpacePressed] = useState(false);
@@ -90,12 +95,12 @@ function APACommands( {modules} ) {
                 {arduinoState? (
                     <div>
                         {arduinoState.shock_activated? (
-                            <p>Shock Sequence Active</p>
+                            <p className="apa-state--shock-active">Shock Sequence Active</p>
                         ): (
                             <p>Shock Sequence Inactive</p>
                         )}
                         {arduinoState.grid_live? (
-                            <p>Grid Live</p>
+                            <p className="apa-state--grid-live">Grid Live</p>
                         ) : (
                             <p>Grid Not Live</p>
                         )}
@@ -160,6 +165,40 @@ function APACommands( {modules} ) {
                     disabled={!apaModule}>
                     Reset Pulse Counter
                 </button>
+
+                {activeSessions.length > 0 && (
+                    <div className="apa-end-session-section">
+                        {activeSessions.map(s => (
+                            confirmStop === s.session_name ? (
+                                <div key={s.session_name} className="apa-end-session-confirm">
+                                    <span>End &ldquo;{s.session_name}&rdquo;?</span>
+                                    <div className="apa-end-session-confirm-btns">
+                                        <button
+                                            className="apa-end-session-yes"
+                                            onClick={() => { socket.emit("stop_session", { session_name: s.session_name }); setConfirmStop(null); }}
+                                        >
+                                            Yes, end
+                                        </button>
+                                        <button
+                                            className="apa-end-session-cancel"
+                                            onClick={() => setConfirmStop(null)}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button
+                                    key={s.session_name}
+                                    className="apa-end-session-btn"
+                                    onClick={() => setConfirmStop(s.session_name)}
+                                >
+                                    End Session{activeSessions.length > 1 ? `: ${s.session_name}` : ""}
+                                </button>
+                            )
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -125,6 +125,7 @@ function SessionList({ sessionList, modules = [] }) {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
   const [shareInfo, setShareInfo] = useState(null);
+  const [pendingClearAll, setPendingClearAll] = useState(false);
 
   useEffect(() => {
     socket.emit("get_controller_samba_info");
@@ -142,6 +143,11 @@ function SessionList({ sessionList, modules = [] }) {
     setPendingDelete(null);
   };
 
+  const handleClearAllConfirm = () => {
+    socket.emit("clear_ended_sessions", { delete_files: true });
+    setPendingClearAll(false);
+  };
+
   const handleAddModuleConfirm = (sessionName, moduleId) => {
     socket.emit("add_module_to_session", { session_name: sessionName, module_id: moduleId });
   };
@@ -154,6 +160,7 @@ function SessionList({ sessionList, modules = [] }) {
   };
 
   const sessions = Object.values(sessionList);
+  const endedSessions = sessions.filter(s => s.state !== "active" && s.state !== "error" && s.state !== "scheduled");
 
   // Module IDs already committed to an active/error session — not available as candidates.
   const allBusyModuleIds = new Set(
@@ -170,6 +177,22 @@ function SessionList({ sessionList, modules = [] }) {
         <h2>Sessions</h2>
         {sessions.length > 0 && (
           <span className="session-list__count">{sessions.length}</span>
+        )}
+        {endedSessions.length > 0 && !pendingClearAll && (
+          <button
+            type="button"
+            className="session-list__clear-all-btn"
+            onClick={() => setPendingClearAll(true)}
+          >
+            Clear all ended
+          </button>
+        )}
+        {pendingClearAll && (
+          <span className="session-list__clear-all-confirm">
+            Clear {endedSessions.length} ended session{endedSessions.length !== 1 ? "s" : ""}?
+            <button type="button" className="session-btn session-btn--delete-confirm" onClick={handleClearAllConfirm}>Yes</button>
+            <button type="button" className="session-btn session-btn--cancel" onClick={() => setPendingClearAll(false)}>No</button>
+          </span>
         )}
       </div>
 

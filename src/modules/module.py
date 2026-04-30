@@ -246,6 +246,11 @@ class Module(ABC):
                  "pull", https_url, branch],
                 capture_output=True, text=True, timeout=60
             )
+            subprocess.run(
+                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                 "fetch", https_url, "--tags"],
+                capture_output=True, text=True, timeout=30
+            )
             if result.returncode == 0:
                 output = result.stdout.strip() or "Already up to date."
                 self.logger.info(f"SAVIOUR update successful: {output}")

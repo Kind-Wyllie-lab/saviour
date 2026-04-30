@@ -748,18 +748,28 @@ class Web(ABC):
                     # Resolve the remote URL and convert SSH to HTTPS so the
                     # service user (which has no SSH key) can pull without auth.
                     # The on-disk remote stays as-is, so dev machines can still push over SSH.
+                    import re
+                    # Rewrite SSH → HTTPS inline via -c so the on-disk remote is unchanged
+                    # and a plain `git pull` (which respects tracking config) can be used.
                     url_result = subprocess.run(
                         ['git', '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
                         capture_output=True, text=True
                     )
                     remote_url = url_result.stdout.strip()
-                    import re
-                    https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
-                                       r'https://\1/\2.git', remote_url)
+                    ssh_prefix = re.match(r'^git@([^:]+):', remote_url)
+                    url_rewrite = []
+                    if ssh_prefix:
+                        host = ssh_prefix.group(1)
+                        url_rewrite = [f'-c', f'url.https://{host}/.insteadOf=git@{host}:']
+                    git_base = ['git', '-c', 'safe.directory=/usr/local/src/saviour',
+                                '-C', '/usr/local/src/saviour'] + url_rewrite
                     result = subprocess.run(
-                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                         '-C', '/usr/local/src/saviour', 'pull', https_url],
+                        git_base + ['pull'],
                         capture_output=True, text=True, timeout=60
+                    )
+                    subprocess.run(
+                        git_base + ['fetch', '--tags'],
+                        capture_output=True, text=True, timeout=30
                     )
                     success = result.returncode == 0
                     output = result.stdout.strip() if success else result.stderr.strip()

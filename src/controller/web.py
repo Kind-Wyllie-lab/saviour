@@ -756,10 +756,21 @@ class Web(ABC):
                     import re
                     https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
                                        r'https://\1/\2.git', remote_url)
+                    branch_result = subprocess.run(
+                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
+                         '-C', '/usr/local/src/saviour', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                        capture_output=True, text=True
+                    )
+                    branch = branch_result.stdout.strip() or 'main'
                     result = subprocess.run(
                         ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                         '-C', '/usr/local/src/saviour', 'pull', https_url],
+                         '-C', '/usr/local/src/saviour', 'pull', https_url, branch],
                         capture_output=True, text=True, timeout=60
+                    )
+                    subprocess.run(
+                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
+                         '-C', '/usr/local/src/saviour', 'fetch', https_url, '--tags'],
+                        capture_output=True, text=True, timeout=30
                     )
                     success = result.returncode == 0
                     output = result.stdout.strip() if success else result.stderr.strip()

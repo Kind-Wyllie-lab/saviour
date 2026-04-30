@@ -277,6 +277,16 @@ class Recording:
         self.logger.info(f"Session '{session_name}' deleted (delete_files={delete_files})")
         return {"success": True}
 
+    def clear_ended_sessions(self, delete_files: bool = False) -> dict:
+        """Remove all stopped/error sessions. Files are not deleted by default."""
+        ended = [
+            name for name, s in list(self.sessions.items())
+            if s.state not in (SessionState.ACTIVE, SessionState.SCHEDULED)
+        ]
+        for name in ended:
+            self.delete_session(name, delete_files=delete_files)
+        return {"cleared": len(ended)}
+
     def stop_session(self, session_name: str) -> None:
         """Stop a recording session.
 
@@ -517,7 +527,7 @@ class Recording:
     # -----------------------------------------------------------------------
 
     def _format_session_name(self, session_name: str, target: str = "all") -> str:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now().strftime("%H%M%S")
         safe = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe = safe.replace(' ', '_')
         if target and target != "all":

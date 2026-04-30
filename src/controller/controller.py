@@ -156,6 +156,8 @@ class Controller(ABC):
     def handle_status_update(self, topic: str, data: str):
         """Handle a status update from a module"""
         module_id = topic.split('/')[1] # get module id from topic
+        if self.modules.is_removed(module_id):
+            return
         try:
             import json
             status_data = json.loads(data)
@@ -471,6 +473,9 @@ class Controller(ABC):
     def on_module_discovered(self, module):
         """Callback for when a new module is discovered"""
         self.logger.info(f"Module discovered: {module.id}")
+        if self.modules.is_removed(module.id):
+            self.logger.info(f"Ignoring rediscovery of explicitly removed module {module.id}")
+            return
         
         # Add module to health monitor with initial offline status
         # This allows the health monitor to track the module even before it sends heartbeat

@@ -636,9 +636,21 @@ class CameraModule(Module):
 
             monochrome = self.config.get("camera.monochrome") is True
             overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
+            hflip = self.config.get("camera.hflip", False) is True
+            vflip = self.config.get("camera.vflip", False) is True
+            if hflip and vflip:
+                flip_code = -1
+            elif hflip:
+                flip_code = 1
+            elif vflip:
+                flip_code = 0
+            else:
+                flip_code = None
 
             # Modify main stream - used for recording.
             with MappedArray(req, 'main') as m:
+                if flip_code is not None:
+                    m.array[:] = cv2.flip(m.array, flip_code)
                 if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -647,6 +659,8 @@ class CameraModule(Module):
 
             # Modify lores stream - used for streaming.
             with MappedArray(req, "lores") as m:
+                if flip_code is not None:
+                    m.array[:] = cv2.flip(m.array, flip_code)
                 if monochrome:
                     gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                     m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)

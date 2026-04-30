@@ -350,7 +350,10 @@ class APAModule(Module):
             self._create_shock_event_file()
 
             # Start motor
-            self.motor.start_motor()
+            if self.motor:
+                self.motor.start_motor()
+            else:
+                self.logger.warning("start_recording: no motor connected, skipping motor start")
 
             # Set recording flag - this happens in module.py too but just to be safe
             self.recording_shocks = True
@@ -381,10 +384,10 @@ class APAModule(Module):
 
 
     def _create_shock_event_file(self) ->  bool:
-        filename = f"{self.current_filename_prefix}_shock_events.csv"
+        filename = f"{self.facade.get_filename_prefix()}_shock_events.csv"
         self.current_shock_events_filename = filename
         self.logger.info(f"Creating shock events file {filename}")
-        self.add_session_file(filename)
+        self.facade.add_session_file(filename)
         try:
             self._shock_file_handle = open(filename, "w", buffering=1)  # line-buffered
             # Write header with metadata

@@ -626,15 +626,16 @@ configure_dhcp_server() {
             ;;
     esac
 
-    # DHCP range: .10–.200 within the same /24 segment as the controller,
+    # DHCP range: .128–.255 within the same /24 segment as the controller,
     # with an explicit /16 subnet mask so all 10.0.x.x addresses are reachable.
+    # .1–.127 reserved for static assignments (controller, switches, etc).
     sudo tee /etc/dnsmasq.conf > /dev/null <<EOF
 # dnsmasq configuration for SAVIOUR local network
 interface=eth0
 bind-interfaces
 
-# DHCP range — .10 to .200 in the controller's /24, /16 subnet mask
-dhcp-range=$a.$b.$c.10,$a.$b.$c.200,255.255.0.0,12h
+# DHCP range — .128 to .255 in the controller's /24, /16 subnet mask
+dhcp-range=$a.$b.$c.128,$a.$b.$c.255,255.255.0.0,12h
 
 # Default gateway advertised to DHCP clients
 $DHCP_OPTION

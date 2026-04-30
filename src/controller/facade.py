@@ -140,6 +140,9 @@ class ControllerFacade():
     def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
         return self.controller.recording.delete_session(session_name, delete_files)
 
+    def clear_ended_sessions(self, delete_files: bool = False) -> dict:
+        return self.controller.recording.clear_ended_sessions(delete_files)
+
     def add_module_to_session(self, session_name: str, module_id: str) -> dict:
         return self.controller.recording.add_module_to_session(session_name, module_id)
 
@@ -280,6 +283,9 @@ class ControllerFacade():
         self.controller.modules.module_id_changed(old_module_id, new_module_id)
         self.controller.health.module_id_changed(old_module_id, new_module_id)
     
+
+    def update_module_version(self, module_id: str, version: str) -> None:
+        self.controller.modules.update_module_version(module_id, version)
 
     def module_ip_changed(self, module_id: str, new_module_ip: str) -> None:
         self.controller.modules.module_ip_changed(module_id, new_module_ip)

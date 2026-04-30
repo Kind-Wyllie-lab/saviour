@@ -49,12 +49,15 @@ function ExportConfigSection({ exportConfig, handleChange }) {
 
   const syncAll = () => {
     setSyncStatus("syncing");
-    socket.emit("sync_export_to_all", {
-      share_ip:       exp.share_ip       ?? "",
-      share_path:     exp.share_path     ?? "",
-      share_username: exp.share_username ?? "",
-      share_password: exp.share_password ?? "",
-    });
+    const creds = mode === "controller" && controllerShare
+      ? controllerShare
+      : {
+          share_ip:       exp.share_ip       ?? "",
+          share_path:     exp.share_path     ?? "",
+          share_username: exp.share_username ?? "",
+          share_password: exp.share_password ?? "",
+        };
+    socket.emit("sync_export_to_all", creds);
   };
 
   const exp = exportConfig ?? {};

@@ -107,7 +107,8 @@ class Health:
             'ptp4l_freq': ptp_status.get('ptp4l_freq'),
             'phc2sys_offset': ptp_status.get('phc2sys_offset'),
             'phc2sys_freq': ptp_status.get('phc2sys_freq'),
-            'recording': self.facade.get_recording_status()
+            'recording': self.facade.get_recording_status(),
+            'version': self.facade.get_saviour_version(),
         }
 
     def get_cpu_temp(self):

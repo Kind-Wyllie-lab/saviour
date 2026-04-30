@@ -28,7 +28,9 @@ button:disabled {
   margin: 5px;
   display: flex;
   flex-direction: column;
-  max-width: 260px;
+  width: 260px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .hold-to-shock:hover:active:enabled {
@@ -36,9 +38,67 @@ button:disabled {
   transition: ease;
 }
 
+.apa-state--grid-live {
+  color: #d4820a;
+  font-weight: 600;
+}
+
+.apa-state--shock-active {
+  color: #c0392b;
+  font-weight: 600;
+}
+
 .apa-state-warning {
   color: #d4820a;
   font-weight: 600;
   font-size: 0.85em;
   margin: 4px 0 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.apa-end-session-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.apa-end-session-btn {
+  background-color: #c0392b;
+}
+
+.apa-end-session-btn:hover:enabled {
+  background-color: #a93226;
+}
+
+.apa-end-session-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85em;
+}
+
+.apa-end-session-confirm span {
+  opacity: 0.85;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.apa-end-session-confirm-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.apa-end-session-yes {
+  background-color: #c0392b;
+  flex: 1;
+}
+
+.apa-end-session-cancel {
+  background-color: var(--border-color);
+  color: var(--text-color);
+  flex: 1;
 }

@@ -121,8 +121,10 @@ class Recording():
         self.facade.when_recording_starts()
 
         # Set up recording - filename and folder
+        module_name = self.facade.get_module_name()
         short_mac = self.facade.get_short_mac()
-        self.recording_session_id = f"{self.facade.get_module_name()}_{short_mac}"
+        # Append MAC only when the name is custom (default module IDs already embed the MAC)
+        self.recording_session_id = module_name if short_mac in module_name else f"{module_name}_{short_mac}"
 
         if session_name:
             self.current_filename_prefix = f"{self.recording_folder}/{self.current_session_name}_{self.recording_session_id}"

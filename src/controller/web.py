@@ -78,7 +78,8 @@ class Web(ABC):
         parts = []
 
         # Iterate through metadata keys in desired order
-        for key in ['experiment', 'rat_id', 'strain', 'batch', 'stage', 'trial']:
+        # strain and batch are omitted from the path (they are still saved in session_metadata.json)
+        for key in ['experiment', 'rat_id', 'stage', 'trial']:
             value = str(md.get(key, "")).strip()
             if value:  # Only append non-empty strings
                 parts.append(value)
@@ -337,6 +338,12 @@ class Web(ABC):
             result = self.facade.delete_session(session_name, delete_files)
             if "error" in result:
                 self.socketio.emit("session_error", {"error": result["error"]})
+
+        @self.socketio.on("clear_ended_sessions")
+        def handle_clear_ended_sessions(data):
+            delete_files = data.get("delete_files", False) if data else False
+            self.logger.info(f"Received request to clear ended sessions (delete_files={delete_files})")
+            self.facade.clear_ended_sessions(delete_files)
 
         @self.socketio.on("add_module_to_session")
         def handle_add_module_to_session(data):
@@ -1120,7 +1127,9 @@ class Web(ABC):
                     })
                 
                 case "heartbeat":
-                    pass
+                    version = status.get("version")
+                    if version:
+                        self.facade.update_module_version(module_id, version)
 
                 case "cmd_ack":
                     command = status.get("command")

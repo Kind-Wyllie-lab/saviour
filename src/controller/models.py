@@ -37,3 +37,4 @@ class Module:
     config: Dict[str, Any] = field(default_factory=dict)
     ready_time: float = 0.0 # Time at which a module went ready, so as to flip it back to NOT_READY if time elapsed.
     ready_message: str = "" # Message associated with a ready update
+    last_heartbeat_time: float = 0.0 # Epoch of last received status message; used to detect ungraceful disconnects

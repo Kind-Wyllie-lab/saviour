@@ -803,10 +803,23 @@ class Web(ABC):
         def handle_set_controller_time(data=None):
             from datetime import datetime, timezone as _tz
             self.logger.info("Set controller time requested")
+            ntp_was_enabled = False
             try:
                 iso = (data or {}).get("iso", "")
                 dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(_tz.utc)
                 time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+                # timedatectl set-time refuses to run while NTP sync is active.
+                # Check current state, disable if needed, and restore afterwards.
+                ntp_check = subprocess.run(
+                    ["timedatectl", "show", "--property=NTP"],
+                    capture_output=True, text=True, timeout=5
+                )
+                ntp_was_enabled = ntp_check.stdout.strip() == "NTP=yes"
+                if ntp_was_enabled:
+                    subprocess.run(["timedatectl", "set-ntp", "false"],
+                                   capture_output=True, timeout=5)
+
                 result = subprocess.run(
                     ["timedatectl", "set-time", time_str],
                     capture_output=True, text=True, timeout=10
@@ -821,6 +834,10 @@ class Web(ABC):
             except Exception as e:
                 self.logger.error(f"set_controller_time error: {e}")
                 self.socketio.emit("set_time_result", {"success": False, "error": str(e)})
+            finally:
+                if ntp_was_enabled:
+                    subprocess.run(["timedatectl", "set-ntp", "true"],
+                                   capture_output=True, timeout=5)
 
 
         """Viewing exported recordings on the share"""

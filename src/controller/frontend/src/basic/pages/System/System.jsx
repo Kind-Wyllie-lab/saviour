@@ -102,9 +102,28 @@ export default function System() {
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
 
-  const controllerDriftMs = controllerHealth?.controller_time
-    ? new Date(controllerHealth.controller_time).getTime() - Date.now()
+  // Anchor controller time when health arrives, then tick every second so the
+  // displayed time and drift stay live between 30 s health polls.
+  const [clockRef, setClockRef] = useState(null);
+  useEffect(() => {
+    if (controllerHealth?.controller_time) {
+      setClockRef({
+        controllerMs: new Date(controllerHealth.controller_time).getTime(),
+        browserMs: Date.now(),
+      });
+    }
+  }, [controllerHealth?.controller_time]);
+
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const displayedControllerMs = clockRef
+    ? clockRef.controllerMs + (Date.now() - clockRef.browserMs)
     : null;
+  const controllerDriftMs = clockRef ? clockRef.controllerMs - clockRef.browserMs : null;
 
   // ── Update all devices ────────────────────────────────────────────────────
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
@@ -287,9 +306,9 @@ export default function System() {
             Set Time
           </button>
         </div>
-        {controllerHealth?.controller_time ? (
+        {displayedControllerMs != null ? (
           <p className="system-clock-display">
-            {new Date(controllerHealth.controller_time).toUTCString().replace(/GMT$/, "UTC")}
+            {new Date(displayedControllerMs).toUTCString().replace(/GMT$/, "UTC")}
             {controllerDriftMs != null && Math.abs(controllerDriftMs) >= 5000 && (
               <span className={`hsw-drift ${Math.abs(controllerDriftMs) >= 120000 ? "val--danger" : "val--warn"}`}>
                 {" "}({Math.abs(controllerDriftMs) >= 60000
@@ -306,7 +325,7 @@ export default function System() {
       {showClockModal && (
         <ClockModal
           driftMs={controllerDriftMs}
-          controllerTime={controllerHealth?.controller_time}
+          controllerTime={displayedControllerMs ? new Date(displayedControllerMs).toISOString() : controllerHealth?.controller_time}
           onClose={() => setShowClockModal(false)}
         />
       )}

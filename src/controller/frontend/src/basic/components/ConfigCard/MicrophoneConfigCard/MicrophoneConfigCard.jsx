@@ -65,7 +65,21 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
 
-  const sampleRate    = module.config?.audiomoth?.sample_rate ?? module.config?.microphone?._sample_rate ?? 192000;
+  // Audiomoth values come from formData so all derived quantities (Nyquist,
+  // filesize estimate) stay live as the user edits, before they hit Save.
+  const am           = formData?.audiomoth ?? {};
+  const amGain       = Number(am.gain ?? 2);
+  const amRate       = Number(am.sample_rate ?? 192000);
+  const amFilter     = am.filter_type ?? "none";
+  const amLo         = Number(am.filter_lo_hz ?? 20000);
+  const amHi         = Number(am.filter_hi_hz ?? 90000);
+  const amLoKhz      = amLo / 1000;
+  const amHiKhz      = amHi / 1000;
+  const amNyquistKhz = amRate / 2000;
+
+  const sampleRate    = formData?.audiomoth !== undefined
+    ? amRate
+    : (module.config?.microphone?._sample_rate ?? 192000);
   const filetype      = module.config?.recording?._recording_filetype ?? "flac";
   const bytesPerSec   = sampleRate * 2; // 16-bit mono
   const rawGbPerHour  = (bytesPerSec * 3600) / 1e9;
@@ -99,16 +113,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     return rest;
   })();
 
-  const am        = formData?.audiomoth ?? {};
-  const amGain    = Number(am.gain ?? 2);
-  const amRate    = Number(am.sample_rate ?? 192000);
-  const amFilter  = am.filter_type ?? "none";
-  const amLo      = Number(am.filter_lo_hz ?? 20000);
-  const amHi      = Number(am.filter_hi_hz ?? 90000);
-  const amLoKhz   = amLo / 1000;
-  const amHiKhz   = amHi / 1000;
-  const amNyquistKhz = amRate / 2000;
-
   const GAIN_LABELS = ["Low", "Low-Medium", "Medium", "Medium-High", "High"];
   const AM_SAMPLE_RATES = [8000, 16000, 32000, 48000, 96000, 192000, 250000, 384000];
 
@@ -136,6 +140,21 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       let node = cloned;
       for (const key of path.slice(0, -1)) node = node[key];
       node[path[path.length - 1]] = hz;
+      return cloned;
+    });
+  };
+
+  // When sample rate drops, auto-clamp freq_hi to the new Nyquist so the form
+  // stays valid and the user doesn't get locked out of Save.
+  const handleSampleRateChange = (e) => {
+    const newRate = Number(e.target.value);
+    const newNyquist = newRate / 2;
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      cloned.audiomoth.sample_rate = newRate;
+      if (cloned.monitoring && cloned.monitoring.freq_hi_hz > newNyquist) {
+        cloned.monitoring.freq_hi_hz = newNyquist;
+      }
       return cloned;
     });
   };
@@ -240,7 +259,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 <div className="form-field">
                   <label>sample_rate:</label>
                   <select value={amRate}
-                    onChange={e => handleChange(["audiomoth", "sample_rate"], e)}>
+                    onChange={handleSampleRateChange}>
                     {AM_SAMPLE_RATES.map(r => (
                       <option key={r} value={r}>{(r / 1000).toFixed(0)} kHz</option>
                     ))}

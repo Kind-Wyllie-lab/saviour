@@ -298,62 +298,27 @@ class Export:
 
 
     def _export_config_file(self) -> bool:
-        """Export the module's config file for traceability
-        
-        Args:
-            export_folder: Destination export folder
-            
-        Returns:
-            bool: True if config file was exported successfully
-        """
+        """Export the module's active config for traceability."""
         try:
             export_path = self.facade.get_current_session_name()
             export_path = self._setup_export(export_path)
             if not export_path:
                 return False
 
-            # Look for config files in common locations
-            config_locations = [
-                f"{self.module_id}_config.json",  # Module-specific config
-                "config.json",  # Generic config
-                "apa_arduino_config.json",  # APA Arduino config
-                "apa_camera_config.json",   # APA Camera config
-                os.path.join(os.path.dirname(self.facade.get_recording_folder()), "config.json"),  # Parent directory
-                os.path.join(os.path.dirname(self.facade.get_recording_folder()), f"{self.module_id}_config.json")  # Parent with module ID
-            ]
-            
-            config_source = None
-            for config_path in config_locations:
-                if os.path.exists(config_path):
-                    config_source = config_path
-                    break
-            
-            if not config_source:
-                # Try to find config in the module's directory
-                module_dir = os.path.dirname(os.path.abspath(__file__))
-                for root, dirs, files in os.walk(module_dir):
-                    for file in files:
-                        if file.endswith('_config.json') and self.module_id.split('_')[0] in file:
-                            config_source = os.path.join(root, file)
-                            break
-                    if config_source:
-                        break
-            
-            if config_source and os.path.exists(config_source):
-                # Copy config file to export folder with timestamp for this export session
-                if not os.path.exists(os.path.join(export_path, "config.json")):
-                    # timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-                    # timestamped_config = f"config_export_{timestamp}.json"
-                    dest_path = os.path.join(export_path, "config.json")
-                    shutil.copy2(config_source, dest_path)
-                    # self.logger.info(f"Exported config file: {timestamped_config}")
-                else:
-                    self.logger.info(f"Config already exported for this session; skipping")
+            dest_path = os.path.join(export_path, "config.json")
+            if os.path.exists(dest_path):
+                self.logger.info("Config already exported for this session; skipping")
                 return True
-            else:
-                self.logger.warning(f"No config file found for module {self.module_id}")
-                return False
-                
+
+            source = self.config.active_config_path
+            if os.path.exists(source):
+                shutil.copy2(source, dest_path)
+                self.logger.info(f"Exported active config: {dest_path}")
+                return True
+
+            self.logger.warning(f"Active config not found at {source}")
+            return False
+
         except Exception as e:
             self.logger.error(f"Error exporting config file: {e}")
             return False

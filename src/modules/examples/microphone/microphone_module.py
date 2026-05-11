@@ -292,7 +292,7 @@ class AudiomothModule(Module):
                             timestamps_writer.write(f"{block_start}\n")
                             f.write(data)
         except Exception as e:
-            self.logger.error(f"Recording thread error for audiomoth {serial}: {e}")
+            self.logger.error(f"Recording thread error for audiomoth {serial}: {e}", exc_info=True)
 
         self.logger.info(f"Recording thread finished for audiomoth {serial}")
 

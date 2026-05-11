@@ -640,8 +640,9 @@ dhcp-range=$a.$b.$c.128,$a.$b.$c.255,255.255.0.0,12h
 # Default gateway advertised to DHCP clients
 $DHCP_OPTION
 
-# Disable DNS server (DHCP only)
-port=0
+# DNS: resolve saviour.local only — prevents Windows from flagging the PoE
+# interface as "No internet access", which blocks mDNS on public profiles
+address=/saviour.local/$a.$b.$c.1
 
 # Log DHCP leases
 dhcp-leasefile=/var/lib/misc/dnsmasq.leases
@@ -689,7 +690,7 @@ configure_mdns() {
 [server]
 host-name=saviour
 use-ipv4=yes
-use-ipv6=yes
+use-ipv6=no
 allow-interfaces=eth0
 deny-interfaces=wlan0
 ratelimit-interval-usec=1000000

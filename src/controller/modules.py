@@ -68,6 +68,9 @@ class Modules:
     # How long a module stays in READY/NOT_READY before reverting to DEFAULT
     READY_TIMEOUT_SECS = 120
 
+    # Heartbeats are sent every 30 s by default; declare offline after 3 missed heartbeats
+    HEARTBEAT_TIMEOUT_SECS = 90
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
@@ -184,6 +187,14 @@ class Modules:
         module = self._modules.get(module_id)
         if module is None:
             return
+
+        module.last_heartbeat_time = time.time()
+
+        # If the module was marked offline (heartbeat timeout) and is now heard from, bring it back.
+        if not module.online:
+            self.logger.info(f"Heartbeat received from offline module {module_id} — marking online")
+            module.online = True
+            self.broadcast_updated_modules()
 
         is_recording = status_data.get("recording")
         if is_recording is True and module.status != ModuleStatus.RECORDING:
@@ -527,7 +538,8 @@ class Modules:
 
 
     def _ready_timeout_checker(self) -> None:
-        """Background thread: revert READY/NOT_READY modules that have timed out."""
+        """Background thread: revert READY/NOT_READY modules that have timed out,
+        and mark online modules offline when their heartbeat goes stale."""
         while True:
             now = time.time()
             for module_id, module in list(self._modules.items()):
@@ -538,6 +550,19 @@ class Modules:
                         )
                         module.status = ModuleStatus.DEFAULT
                         self.broadcast_updated_modules()
+
+                # Heartbeat-based offline detection: only applies once at least one
+                # heartbeat has been received (last_heartbeat_time > 0).
+                if (module.online
+                        and module.last_heartbeat_time > 0
+                        and now - module.last_heartbeat_time > self.HEARTBEAT_TIMEOUT_SECS):
+                    self.logger.warning(
+                        f"{module_id} has not sent a heartbeat for "
+                        f"{now - module.last_heartbeat_time:.0f}s — marking offline"
+                    )
+                    module.online = False
+                    module.status = ModuleStatus.OFFLINE
+                    self.broadcast_updated_modules()
             time.sleep(5)
 
 

@@ -112,6 +112,46 @@ The React frontend communicates with Flask exclusively via **Socket.IO** (not RE
 - Systemd-aware logging: timestamps are skipped when `INVOCATION_ID` env var is set (systemd sets this)
 - PTP log parsing lives in `src/*/ptp.py`; health metrics in `src/*/health.py`
 
+## TODO
+
+Known issues and planned improvements, grouped by priority. Check these off (`- [x]`) as they are completed.
+
+### High priority — silent data loss / correctness
+
+- [x] **`export.py`: Samba mount not retried** — if the mount fails at session start the entire segment is never exported; add a retry loop with backoff.
+- [x] **`export_queue.py`: failed exports dropped permanently** — `on_export_failed()` removes the module from `_active` without re-queuing; add retry logic so transient NAS outages don't silently lose data.
+- [x] **`export.py`: `PENDING_*` rename not rolled back on copy failure** — if `shutil.copy2()` fails after `os.rename()`, the source file is left in a broken state with no recovery path.
+- [x] **`export.py`: `self.exporting` flag and `self.staged_for_export` list lack thread locks** — written from recording, export, and command-handler threads simultaneously; wrap with `threading.Lock`.
+- [x] **`config.py`: `_recursive_update()` modifies shared dict without a lock** — other threads can read a half-merged config; guard with a lock in `set_all()`.
+- [x] **`modules.py`: config sync status transitions not atomic** — `received_module_config()` compares `target_config` and writes status in two unsynchronised steps; a concurrent `set_target_module_config()` call corrupts state.
+
+### Medium priority — reliability / UX
+
+- [ ] **`export.py` / `module.py`: blocking subprocess calls on network thread** — `_mount_share()` has no timeout and `update_saviour()` blocks ZMQ command processing; move to background threads.
+- [ ] **`config.py`: `set()` fires `on_module_config_change()` even when value is unchanged** — guard with an equality check before calling `configure_module()`.
+- [ ] **`config.py`: `reset_to_defaults()` doesn't purge stale keys** — keys removed from the module config file persist in `active_config.json` after a reset; rebuild from scratch rather than merging.
+- [ ] **`web.py`: `_`-prefixed (internal) config keys not filtered on inbound socket events** — the frontend can overwrite `_communication.*`, `_codec`, etc.; apply `filterPrivateKeys` equivalent server-side before merging.
+- [ ] **`modules.py`: online/offline status can oscillate without hysteresis** — a single delayed heartbeat immediately brings a module back online; add a short debounce (e.g. require 2 consecutive heartbeats before marking online again).
+- [ ] **`controller/network.py`: infinite loop waiting for `nmcli`** — if NetworkManager is not running the controller hangs at startup; add a timeout and a clear error message.
+- [ ] **Session metadata not retried if NAS unavailable at session start** — `_write_session_metadata()` in `web.py` runs once; add retry on NAS recovery.
+- [ ] **`facade.py`: `apply_section_to_type` has no ack timeout** — bulk config pushes that are never acknowledged leave the frontend in a permanent "pending" state.
+
+### Low priority — observability / maintenance
+
+- [ ] **No correlation IDs on ZMQ commands** — matching a `cmd_ack` to its originating command is impossible under concurrent load; add a `msg_id` round-trip in the command envelope.
+- [ ] **PTP offset stored as raw nanoseconds with no unit annotation** — annotate the field name (`ptp4l_offset_ns`) or normalise to µs so the frontend doesn't have to guess units.
+- [ ] **Hardcoded IP ranges in three files** — `192.168.1.` and `10.0.0.` appear in `src/modules/network.py`, `src/controller/network.py`, and `src/modules/export.py`; centralise in `base_config.json`.
+- [ ] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — a typo or injection can embed shell syntax in `/etc/saviour/config`; validate against an allowlist.
+- [ ] **`setup.sh`: package install exit codes not checked** — a failed `apt-get install` mid-script lets execution continue with misleading downstream errors; add `set -e` or per-step checks.
+- [ ] **Module version stays stale after restart** — zeroconf properties are not re-read on rediscovery; force a property refresh on `module_discovery()`.
+
+### Tests
+
+- [ ] **Config merge has no unit tests** — `_merge_defaults`, `_merge_dicts`, `_merge_internal_defaults`, and `reset_to_defaults` are all untested; add `pytest` cases covering each merge path and edge cases (stale keys, `_`-prefix re-application).
+- [ ] **Export pipeline has no unit tests** — mock the Samba mount and verify PENDING rename, copy, cleanup, and failure rollback paths.
+- [ ] **No integration test for multi-module recording** — add a test that simulates controller + 2 modules, a full record/stop/export cycle, and a mid-session module dropout.
+- [ ] **No config schema regression test** — a renamed or removed config key silently breaks modules loading old `active_config.json`; add a test that loads each `*_config.json` against the current base and asserts all required keys are present.
+
 ## Hardware gotchas
 
 ### AudioMoth USB microphone

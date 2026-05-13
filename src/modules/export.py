@@ -21,6 +21,7 @@ import logging
 import subprocess
 import datetime
 import time
+import threading
 
 
 from src.modules.config import Config
@@ -48,6 +49,7 @@ class Export:
         self._update_samba_settings()
 
         self.exporting = False # Flag to indicate whether export in progress
+        self._export_lock = threading.Lock()  # Guards exporting flag and staged_for_export
 
         # Staged files for export
         self.session_files = [] # Record of all recorded files in the session
@@ -113,12 +115,16 @@ class Export:
             present in the result so callers can check it directly.
         """
         all_files = os.listdir(self.to_export_folder)
-        self.staged_for_export = all_files
-        self.logger.info(f"Attempting to export {all_files}")
-        self.exporting = True
-
-        # Derive the session name that triggered this export (for result lookup)
         triggered_session = export_path.split('/')[0] if export_path and '/' in export_path else export_path
+
+        with self._export_lock:
+            if self.exporting:
+                self.logger.warning("Export already in progress; ignoring concurrent call")
+                return {triggered_session: False} if triggered_session else {}
+            self.staged_for_export = all_files
+            self.exporting = True
+
+        self.logger.info(f"Attempting to export {all_files}")
 
         try:
             # Group files by the session they belong to
@@ -143,29 +149,43 @@ class Export:
                 session_ok = True
 
                 for filename in files:
+                    filename = pathlib.Path(filename).name
+                    source_path      = f"{source_folder}/{filename}"
+                    temp_source_path = f"{source_folder}/PENDING_{filename}"
+                    temp_dest_path   = f"{session_export_path}/PENDING_{filename}"
+                    dest_path        = f"{session_export_path}/{filename}"
+
                     try:
-                        filename = pathlib.Path(filename).name
-                        temp_filename = f"PENDING_{filename}"
-
-                        source_path      = f"{source_folder}/{filename}"
-                        temp_source_path = f"{source_folder}/{temp_filename}"
-                        temp_dest_path   = f"{session_export_path}/{temp_filename}"
-                        dest_path        = f"{session_export_path}/{filename}"
-
                         os.rename(source_path, temp_source_path)
+                    except OSError as e:
+                        self.logger.error(f"Failed to stage {filename} for export: {e}")
+                        session_ok = False
+                        continue
+
+                    try:
                         shutil.copy2(temp_source_path, temp_dest_path)
                         with open(temp_dest_path, "rb") as _f:
                             os.fsync(_f.fileno())
                         os.rename(temp_dest_path, dest_path)
                         os.rename(temp_source_path, source_path)
                         shutil.move(source_path, f"{self.exported_folder}/{filename}")
-
                         self.logger.info(f"Exported: {dest_path}")
                         exported_count += 1
                         exported.append(filename)
-
                     except Exception as e:
                         self.logger.error(f"Failed to export {filename}: {e}")
+                        # Roll back PENDING_ rename so the source file is recoverable
+                        try:
+                            if os.path.exists(temp_source_path):
+                                os.rename(temp_source_path, source_path)
+                        except OSError:
+                            self.logger.error(f"Could not restore {temp_source_path} after failed export")
+                        # Remove any partial NAS copy
+                        try:
+                            if os.path.exists(temp_dest_path):
+                                os.remove(temp_dest_path)
+                        except OSError:
+                            pass
                         session_ok = False
 
                 session_results[session] = session_ok
@@ -180,10 +200,7 @@ class Export:
             if self.config.get("export.delete_on_export", True):
                 self._delete_local_files(exported)
 
-            self.staged_for_export = []
-
             self.logger.info(f"Successfully exported {exported_count} file(s) across {len(session_file_map)} session(s)")
-            self.exporting = False
 
             # Ensure triggered session always has an entry (handles empty to_export case)
             if triggered_session and triggered_session not in session_results:
@@ -193,8 +210,12 @@ class Export:
 
         except Exception as e:
             self.logger.error(f"Export error: {e}")
-            self.exporting = False
             return {triggered_session: False} if triggered_session else {}
+
+        finally:
+            with self._export_lock:
+                self.staged_for_export = []
+                self.exporting = False
 
 
     def _delete_local_files(self, files: list) -> None:
@@ -467,43 +488,67 @@ class Export:
         # result = subprocess.run(add_filter_cmd, shell=True, check=True, text=True, capture_output=True)
         self._run_shell_command(add_filter_cmd)
 
+    _MOUNT_MAX_ATTEMPTS = 3
+    _MOUNT_RETRY_DELAY_S = 2.0
+    _MOUNT_TIMEOUT_S = 30
+
     def _mount_share(self) -> bool:
-        """Mount Samba share using preconfigured options"""
+        """Mount Samba share, retrying up to _MOUNT_MAX_ATTEMPTS times with a
+        per-attempt timeout so a unreachable NAS never hangs the export thread."""
         try:
             self._update_samba_settings()
-            self.logger.info(f"Attempting to mount share: //{self.samba_share_ip}/{self.samba_share_path} as user {self.samba_share_username}")
+            self.logger.info(
+                f"Attempting to mount share: //{self.samba_share_ip}/{self.samba_share_path} "
+                f"as user {self.samba_share_username}"
+            )
 
-            # Unmount if already mounted
             if os.path.ismount(self.mount_point):
                 self.logger.info(f"Unmounting existing mount at {self.mount_point}")
-                subprocess.run(['sudo', 'umount', self.mount_point], check=True)
+                subprocess.run(
+                    ['sudo', 'umount', self.mount_point],
+                    check=True,
+                    timeout=self._MOUNT_TIMEOUT_S,
+                )
 
-            # Attempt to mount
-            try: 
-                if self.samba_share_username:
-                    auth_opts = f'username={self.samba_share_username},password={self.samba_share_password}'
-                else:
-                    auth_opts = 'guest'
-                mount_cmd = [
-                    'sudo', 'mount', '-t', 'cifs',
-                    f'//{self.samba_share_ip}/{self.samba_share_path}',
-                    self.mount_point,
-                    '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775'
-                ]
+            auth_opts = (
+                f'username={self.samba_share_username},password={self.samba_share_password}'
+                if self.samba_share_username
+                else 'guest'
+            )
+            mount_cmd = [
+                'sudo', 'mount', '-t', 'cifs',
+                f'//{self.samba_share_ip}/{self.samba_share_path}',
+                self.mount_point,
+                '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775',
+            ]
 
-                result = subprocess.run(mount_cmd, capture_output=True, text=True)
+            for attempt in range(1, self._MOUNT_MAX_ATTEMPTS + 1):
+                try:
+                    result = subprocess.run(
+                        mount_cmd, capture_output=True, text=True,
+                        timeout=self._MOUNT_TIMEOUT_S,
+                    )
+                    if result.returncode == 0:
+                        self.logger.info(f"Successfully mounted controller share at {self.mount_point}")
+                        return True
+                    self.logger.warning(
+                        f"Mount attempt {attempt}/{self._MOUNT_MAX_ATTEMPTS} failed: "
+                        f"{result.stderr.strip()}"
+                    )
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(
+                        f"Mount attempt {attempt}/{self._MOUNT_MAX_ATTEMPTS} timed out "
+                        f"after {self._MOUNT_TIMEOUT_S}s"
+                    )
+                if attempt < self._MOUNT_MAX_ATTEMPTS:
+                    time.sleep(self._MOUNT_RETRY_DELAY_S)
 
+            self.logger.error(
+                f"Failed to mount //{self.samba_share_ip}/{self.samba_share_path} "
+                f"after {self._MOUNT_MAX_ATTEMPTS} attempts"
+            )
+            return False
 
-                if result.returncode == 0:
-                    self.logger.info(f"Successfully mounted controller share at {self.mount_point}")
-                    return True
-                else:
-                    self.logger.warning(f"Failed to mount with SMB: {result.stderr}")
-                    
-            except subprocess.CalledProcessError as e:
-                self.logger.warning(f"Mount command failed with SMB: {e}")
-                return False
-        
         except Exception as e:
             self.logger.warning(f"Error mounting share: {e}")
             return False

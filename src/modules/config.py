@@ -14,6 +14,7 @@ Centralizes configuration management for SAVIOUR modules, including:
 import os
 import json
 import logging
+import threading
 from typing import Dict, Any, Optional, Union
 
 class Config:
@@ -41,6 +42,7 @@ class Config:
             active_config_path: Path to the active configuration file (optional)
         """
         self.logger = logging.getLogger(__name__)
+        self._lock = threading.Lock()
 
         self.base_config_path = os.path.abspath(base_config_path) # Base config, i.e. defaults for SAVIOUR framework
         self.active_config_path = os.path.abspath(active_config_path) # Active config, aggregates base config + module specific config
@@ -329,7 +331,8 @@ class Config:
                         config_updated = True
                         updated_keys.append(full_key)
 
-        _recursive_update(self.config, updates)
+        with self._lock:
+            _recursive_update(self.config, updates)
 
         self.logger.info(f"Finished updating config. Updated keys: {updated_keys}")
 

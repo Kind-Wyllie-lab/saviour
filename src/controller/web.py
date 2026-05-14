@@ -752,7 +752,8 @@ class Web(ABC):
                     # Rewrite SSH → HTTPS inline via -c so the on-disk remote is unchanged
                     # and a plain `git pull` (which respects tracking config) can be used.
                     url_result = subprocess.run(
-                        ['git', '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
+                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
+                         '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
                         capture_output=True, text=True
                     )
                     remote_url = url_result.stdout.strip()

@@ -152,12 +152,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
       {!collapsed && (
         <div className="ttl-body">
-          {/* ── Left column: stream ── */}
-          <div className="ttl-stream-col">
-            <MJPEGStreamCard ip={module.ip} port={8082} />
-          </div>
-
-          {/* ── Right column: config ── */}
+          {/* ── Left column: config ── */}
           <div className="ttl-config-col">
             {/* Active logic */}
             <div className="form-field">
@@ -322,6 +317,11 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                 Reboot
               </button>
             </div>
+          </div>
+
+          {/* ── Right column: stream ── */}
+          <div className="ttl-stream-col">
+            <MJPEGStreamCard ip={module.ip} port={8082} />
           </div>
         </div>
       )}

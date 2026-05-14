@@ -203,6 +203,11 @@ class AudiomothModule(Module):
         self.current_recording_files = {}
         self.recording_start_time = time.time()
 
+        # Re-scan PulseAudio for fresh device IDs. The AudioMoth encodes its
+        # sample rate in its USB device name, so configure_audiomoth() causes a
+        # re-enumeration that invalidates any IDs stored since startup.
+        self._find_audiomoths()
+
         if not self.audiomoths:
             self.logger.warning("No audiomoths connected, cannot start recording")
             return
@@ -698,6 +703,9 @@ class AudiomothModule(Module):
             self.update_gain()
         else:
             self.configure_audiomoth()
+            # Sample rate change re-enumerates the USB device with a new name,
+            # so refresh stored IDs immediately after reconfiguration.
+            self._find_audiomoths()
 
 
     def get_latest_recording(self):

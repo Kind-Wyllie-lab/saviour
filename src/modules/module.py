@@ -717,8 +717,8 @@ class Module(ABC):
         updates the running config immediately.
         Skipped if export.use_controller_export is false (custom export route).
         """
-        if not self.config.get("export.use_controller_export", True):
-            self.logger.info("set_export_config skipped — use_controller_export is false")
+        if self.config.get("export.export_target", "controller") != "controller":
+            self.logger.info("set_export_config skipped — export_target is not controller")
             return {"result": "skipped"}
         self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
         try:

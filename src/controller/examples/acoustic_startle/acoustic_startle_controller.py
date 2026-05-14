@@ -39,13 +39,14 @@ class AcousticStartleController(Controller):
 
     def handle_special_module_status(self, module_id: str, status: dict):
         status_type = status.get("type")
+        command = status.get("command")
         match status_type:
-            case "list_sound_files":
+            case "cmd_ack" if command == "list_sound_files":
                 data = dict((k, status[k]) for k in ("sound_files", "selected_file"))
                 self.web.socketio.emit("list_sound_files", data)
             case _:
                 # self.logger.warning(f"No logic for {status} from {module_id}")
-                return False    
+                return False
         return True
 
 
@@ -54,14 +55,14 @@ class AcousticStartleController(Controller):
         def handle_play_sound(data):
             module_id = data.get("module_id")
             self.logger.info(f"Playing sound on {module_id}")
-            self.api.send_command(module_id, "play_sound", {})
+            self.facade.send_command(module_id, "play_sound", {})
 
 
         @socketio.on("list_sound_files")
         def list_sound_files(data):
             module_id = data.get("module_id")
             self.logger.info(f"Requesting sound files from {module_id}")
-            self.api.send_command(module_id, "list_sound_files", {})
+            self.facade.send_command(module_id, "list_sound_files", {})
 
 
         @socketio.on("change_sound_file")
@@ -70,7 +71,7 @@ class AcousticStartleController(Controller):
             module_id = data.get("module_id")
             target_file = data.get("selected_file")
             self.logger.info(f"Telling {module_id} to use {target_file}")
-            self.api.send_command(module_id, "use_this_sound_file", {"filename": target_file})
+            self.facade.send_command(module_id, "use_this_sound_file", {"filename": target_file})
 
 
 if __name__ == "__main__":

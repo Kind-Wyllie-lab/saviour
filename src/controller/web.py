@@ -1175,6 +1175,8 @@ class Web(ABC):
                             "success": status.get("result") == "success",
                             "output": status.get("output", ""),
                         })
+                    else:
+                        self.handle_special_module_status(module_id, status)
 
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)

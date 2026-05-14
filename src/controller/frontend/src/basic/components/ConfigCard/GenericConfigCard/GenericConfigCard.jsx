@@ -5,7 +5,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import ExportSyncButton from "../ExportSyncButton";
+import ExportConfigSection from "../ExportConfigSection";
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
@@ -93,7 +93,7 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
           })()}
           <form>
             <ConfigFields data={formData} handleChange={handleChange}
-              sectionExtras={{ export: <ExportSyncButton moduleId={module.id} /> }} />
+              sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={module.id} /> }} />
           </form>
           <div className="copy-bar">
             <span className="copy-bar-label">Copy:</span>

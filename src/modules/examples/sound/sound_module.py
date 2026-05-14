@@ -79,7 +79,7 @@ class SoundModule(Module):
         ffmpeg_proc.stdout.close()
         aplay_proc.communicate()
 
-        if self.api.get_recording_status() == True:
+        if self.facade.get_recording_status() == True:
             self._write_sound_event_to_file(timestamp)
 
         # TODO: Check if was successful
@@ -118,8 +118,8 @@ class SoundModule(Module):
     """Recording"""
     def _get_sound_segment_filename(self) -> str:
         """Return a filename for the current sound events segment""" 
-        strtime = self.api.get_utc_time(self.api.get_segment_start_time())
-        return f"{self.api.get_filename_prefix()}_sound_events_({self.api.get_segment_id()}_{strtime}).csv"
+        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
+        return f"{self.facade.get_filename_prefix()}_sound_events_({self.facade.get_segment_id()}_{strtime}).csv"
 
 
     def _write_sound_event_to_file(self, timestamp_ns: int):
@@ -137,8 +137,8 @@ class SoundModule(Module):
             # Write header with metadata
             f = self._sound_file_handle
             f.write("# Sound Events Recording\n")
-            f.write(f"# Session ID / Segment: {self.api.get_recording_session_id()}_{self.api.get_segment_id()}\n")
-            f.write(f"# Segment Start: {self.api.get_segment_start_time()}\n")
+            f.write(f"# Session ID / Segment: {self.facade.get_recording_session_id()}_{self.facade.get_segment_id()}\n")
+            f.write(f"# Segment Start: {self.facade.get_segment_start_time()}\n")
             f.write("#\n")
             f.write("Timestamp (ns), sound played, volume factor, duration (s)\n")
         except Exception as e:
@@ -166,14 +166,14 @@ class SoundModule(Module):
 
     def _start_next_recording_segment(self):
         self._close_sound_event_file()
-        self.api.stage_file_for_export(self.current_sound_event_file)
+        self.facade.stage_file_for_export(self.current_sound_event_file)
         self._create_sound_event_file()
         return True
 
 
     def _stop_recording(self):
         self._close_sound_event_file()
-        self.api.stage_file_for_export(self.current_sound_event_file)
+        self.facade.stage_file_for_export(self.current_sound_event_file)
         return True
 
 

@@ -821,8 +821,11 @@ class CameraModule(Module):
                 return
             self._last_stream_encode_time = now
 
-            frame = request.make_array("lores")
-            ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            high_quality = self.config.get("camera.livestream_quality", "normal") == "high"
+            stream_name = "main" if high_quality else "lores"
+            jpeg_quality = 90 if high_quality else 80
+            frame = request.make_array(stream_name)
+            ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ret:
                 return
             with self.frame_lock:

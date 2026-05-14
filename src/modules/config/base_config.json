@@ -23,12 +23,12 @@
     "_health_metadata_recording_interval": 5
   },
   "export": {
+    "export_target": "controller",
     "auto_export": true,
     "delete_on_export": true,
     "_manifest_enabled": false,
-    "use_controller_export": true,
-    "share_path": "controller_share",
     "share_ip": "10.0.0.1",
+    "share_path": "controller_share",
     "share_username": "saviour_module",
     "share_password": "Yr7tHXDOvCdWTw0KY1jE",
     "max_bitrate_mb": 950,

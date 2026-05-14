@@ -15,6 +15,7 @@ import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import socket from "/src/socket";
 
 import PlaySound from "/src/acoustic_startle/components/PlaySound/PlaySound";
+import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 
 
 function Dashboard() {
@@ -25,9 +26,8 @@ function Dashboard() {
     socket.emit("get_module_configs"); // Ask backend for module configs
   }, []);
 
-  const cameraModules = (moduleList || []).filter(
-    (m) => m.type === "camera"
-  );
+  const cameraModules = (moduleList || []).filter((m) => m.type === "camera");
+  const ttlModules = (moduleList || []).filter((m) => m.type === "ttl");
 
   return (
     <main className="dashboard">
@@ -41,6 +41,15 @@ function Dashboard() {
         {/* <ExperimentMetadata experimentName={experimentName} />
         <CommandsPanel modules={moduleList} experimentName={experimentName} /> */}
         <PlaySound modules={moduleList} />
+        {ttlModules.map((m) => (
+          <MJPEGStreamCard
+            key={m.id}
+            ip={m.ip}
+            port={8082}
+            label={`${m.name} — TTL`}
+            isRecording={m.status === "RECORDING"}
+          />
+        ))}
       </div>
     </main>
   );

@@ -43,7 +43,7 @@
 /* ── Two-column body ─────────────────────────────────────────────────── */
 .ttl-body {
   display: grid;
-  grid-template-columns: 3fr 2fr;
+  grid-template-columns: 2fr 3fr;
   gap: 16px;
   padding: 14px;
 }

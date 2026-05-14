@@ -20,7 +20,8 @@
         "bitrate_mb": 2,
         "autofocus_mode": "manual",
         "lens_position": 0.0,
-        "sync_mode": "none"
+        "sync_mode": "none",
+        "livestream_quality": "normal"
     },
     "recording": {
         "_recording_filetype": "ts"

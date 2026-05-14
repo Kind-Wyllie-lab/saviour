@@ -5,7 +5,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import ExportSyncButton from "../ExportSyncButton";
+import ExportConfigSection from "../ExportConfigSection";
 
 // Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
 const HQ_PRESETS = [
@@ -211,7 +211,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
       monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb, autofocus_mode, lens_position, sync_mode,
+      bitrate_mb, autofocus_mode, lens_position, sync_mode, livestream_quality,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -357,6 +357,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             ~{gbPerHour} GB / hr at {bitrateMb} Mbps
           </div>
 
+          {/* ── Livestream ── */}
+          <div className="form-field">
+            <label>Livestream quality:</label>
+            <select
+              value={cam.livestream_quality ?? "normal"}
+              onChange={e => handleChange(["camera", "livestream_quality"], e)}
+            >
+              <option value="normal">Normal (low-res)</option>
+              <option value="high">High (recording resolution)</option>
+            </select>
+          </div>
+
           {/* ── Autofocus (Camera Module 3 / IMX708 only) ── */}
           {hasAutofocus && (
             <>
@@ -464,7 +476,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           {/* ── Remaining config fields (non-camera sections) ── */}
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange}
-              sectionExtras={{ export: <ExportSyncButton moduleId={id} /> }} />
+              sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={id} /> }} />
           </form>
 
           {/* ── Copy section buttons ── */}

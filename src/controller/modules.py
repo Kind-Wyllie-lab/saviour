@@ -80,6 +80,10 @@ class Modules:
         # Config state registry – keyed by module_id
         self._config_states: Dict[str, ModuleConfigState] = {}
 
+        # Serialises config state reads/writes across received_module_config
+        # and set_target_module_config, which may run on different threads.
+        self._config_lock = threading.Lock()
+
         # IDs explicitly removed this session — suppress re-discovery until restart
         self._removed_ids: set = set()
 
@@ -259,12 +263,8 @@ class Modules:
         Updates `true_config`, compares against `target_config`, and resolves
         the sync status accordingly.
         """
-        state = self._get_or_create_config_state(module_id)
-        state.true_config = config
-
-        # If the module was never registered via zeroconf (e.g. add_service crashed),
-        # auto-register it now so the frontend can see it.  IP and version will be
-        # filled in properly once zeroconf rediscovers the module.
+        # Auto-register must happen before taking the config lock so add_module
+        # (which doesn't touch _config_states) doesn't deadlock if it ever calls back.
         if module_id not in self._modules:
             self.logger.warning(
                 f"Received config for unregistered module {module_id} — "
@@ -278,29 +278,33 @@ class Modules:
                 ip="",
             ))
 
-        # Keep Module.config in sync for serialisation / frontend delivery
-        if module_id in self._modules:
-            self._modules[module_id].config = config
-            self._update_module_name(module_id)
+        with self._config_lock:
+            state = self._get_or_create_config_state(module_id)
+            state.true_config = config
 
-        # Resolve pending status if we were waiting for confirmation
-        if state.target_config:
-            public_true = self._filter_private_keys(config)
-            diffs = self._diff_dicts(public_true, state.target_config)
-            state.diffs = diffs
-            if diffs:
-                self.logger.warning(
-                    f"Config mismatch for {module_id} after update: {diffs}"
-                )
-                state.status = ConfigSyncStatus.FAILED
+            # Keep Module.config in sync for serialisation / frontend delivery
+            if module_id in self._modules:
+                self._modules[module_id].config = config
+                self._update_module_name(module_id)
+
+            # Resolve pending status if we were waiting for confirmation
+            if state.target_config:
+                public_true = self._filter_private_keys(config)
+                diffs = self._diff_dicts(public_true, state.target_config)
+                state.diffs = diffs
+                if diffs:
+                    self.logger.warning(
+                        f"Config mismatch for {module_id} after update: {diffs}"
+                    )
+                    state.status = ConfigSyncStatus.FAILED
+                else:
+                    state.status = ConfigSyncStatus.SYNCED
             else:
+                # No target set yet — treat initial fetch as synced baseline.
+                # Store the filtered version so future diffs (which also filter
+                # true_config) are comparing apples-to-apples.
+                state.target_config = self._filter_private_keys(config)
                 state.status = ConfigSyncStatus.SYNCED
-        else:
-            # No target set yet — treat initial fetch as synced baseline.
-            # Store the filtered version so future diffs (which also filter
-            # true_config) are comparing apples-to-apples.
-            state.target_config = self._filter_private_keys(config)
-            state.status = ConfigSyncStatus.SYNCED
 
         self.broadcast_updated_modules()
 
@@ -310,20 +314,22 @@ class Modules:
         Called when the frontend submits a new config for a module (before the
         command is sent to the module). Records intent and marks status PENDING.
         """
-        state = self._get_or_create_config_state(module_id)
+        with self._config_lock:
+            state = self._get_or_create_config_state(module_id)
 
-        # Warn if submitted config is missing keys relative to current true config
-        if state.true_config:
-            missing = set(state.true_config.keys()) - set(config.keys())
-            if missing:
-                self.logger.warning(
-                    f"set_target_module_config for {module_id}: "
-                    f"submitted config missing top-level keys: {missing}"
-                )
+            # Warn if submitted config is missing keys relative to current true config
+            if state.true_config:
+                missing = set(state.true_config.keys()) - set(config.keys())
+                if missing:
+                    self.logger.warning(
+                        f"set_target_module_config for {module_id}: "
+                        f"submitted config missing top-level keys: {missing}"
+                    )
 
-        state.target_config = config
-        state.status = ConfigSyncStatus.PENDING
-        state.pending_since = time.time()
+            state.target_config = config
+            state.status = ConfigSyncStatus.PENDING
+            state.pending_since = time.time()
+
         self.broadcast_updated_modules()
 
 

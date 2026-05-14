@@ -719,7 +719,8 @@ class Web(ABC):
             # Version
             try:
                 result = subprocess.run(
-                    ["git", "-C", os.path.dirname(__file__), "describe", "--tags", "--always"],
+                    ["git", "-c", "safe.directory=/usr/local/src/saviour",
+                     "-C", os.path.dirname(__file__), "describe", "--tags", "--always"],
                     capture_output=True, text=True, timeout=5
                 )
                 health['version'] = result.stdout.strip() if result.returncode == 0 else None

@@ -5,7 +5,7 @@ import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
-import ExportSyncButton from "../ExportSyncButton";
+import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
@@ -266,7 +266,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               const { ttl, ...rest } = filterPrivateKeys(formData) ?? {};
               return Object.keys(rest).length > 0
                 ? <form><ConfigFields data={rest} handleChange={handleChange}
-                    sectionExtras={{ export: <ExportSyncButton moduleId={id} /> }} /></form>
+                    sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={id} /> }} /></form>
                 : null;
             })()}
 

@@ -5,7 +5,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import ExportSyncButton from "../ExportSyncButton";
+import ExportConfigSection from "../ExportConfigSection";
 
 // Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
 const HQ_PRESETS = [
@@ -476,7 +476,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           {/* ── Remaining config fields (non-camera sections) ── */}
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange}
-              sectionExtras={{ export: <ExportSyncButton moduleId={id} /> }} />
+              sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={id} /> }} />
           </form>
 
           {/* ── Copy section buttons ── */}

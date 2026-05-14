@@ -5,7 +5,7 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import ExportSyncButton from "../ExportSyncButton";
+import ExportConfigSection from "../ExportConfigSection";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -211,7 +211,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
           <form>
             <ConfigFields data={configFieldsData} handleChange={handleChange}
-              sectionExtras={{ export: <ExportSyncButton moduleId={module.id} /> }} />
+              sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={module.id} /> }} />
           </form>
 
           {/* ── Monitoring display ── */}

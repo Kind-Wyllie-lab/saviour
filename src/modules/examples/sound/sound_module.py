@@ -110,7 +110,7 @@ class SoundModule(Module):
 
 
     """Config"""
-    def configure_module(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
         # Configure self however necessary
         pass
 

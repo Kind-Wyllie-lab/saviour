@@ -12,6 +12,7 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 // Hooks
 import useModules from "/src/hooks/useModules";
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
+import socket from "/src/socket";
 
 import PlaySound from "/src/acoustic_startle/components/PlaySound/PlaySound";
 

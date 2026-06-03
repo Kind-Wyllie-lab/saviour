@@ -198,6 +198,8 @@ class CameraModule(Module):
                 "camera.height",
                 "camera.bitrate_mb",
                 "camera.sync_mode",
+                "camera.sync_lock_exposure",
+                "camera.sync_lock_awb",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -329,6 +331,12 @@ class CameraModule(Module):
                     else lc.rpi.SyncModeEnum.Client
                 )
                 self.logger.info(f"Camera sync mode: {sync_mode_str}")
+                if self.config.get("camera.sync_lock_exposure", False):
+                    controls["AeEnable"] = False
+                    self.logger.info("AEC disabled (sync_lock_exposure)")
+                if self.config.get("camera.sync_lock_awb", False):
+                    controls["AwbEnable"] = False
+                    self.logger.info("AWB disabled (sync_lock_awb)")
 
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")

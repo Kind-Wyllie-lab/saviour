@@ -211,7 +211,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
       monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb, autofocus_mode, lens_position, sync_mode, livestream_quality,
+      bitrate_mb, autofocus_mode, lens_position, sync_mode, sync_lock_exposure, sync_lock_awb, livestream_quality,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -444,6 +444,22 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="fov-label fov-cropped" style={{ opacity: 0.8 }}>
               Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ between cameras.
             </div>
+          )}
+          {currentSyncMode !== "none" && (
+            <>
+              <div className="form-field">
+                <label>Lock exposure:</label>
+                <input type="checkbox"
+                  checked={cam.sync_lock_exposure ?? false}
+                  onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
+              </div>
+              <div className="form-field">
+                <label>Lock white balance:</label>
+                <input type="checkbox"
+                  checked={cam.sync_lock_awb ?? false}
+                  onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
+              </div>
+            </>
           )}
 
           {/* ── Overlays ── */}

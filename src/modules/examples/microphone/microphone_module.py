@@ -180,7 +180,7 @@ class AudiomothModule(Module):
     def _label_for(self, serial: str) -> str:
         """Return the user-defined label for a serial, or the serial itself if none is set."""
         labels = self.config.get("audiomoth_labels", {})
-        return labels.get(serial, serial) if isinstance(labels, dict) else serial
+        return (labels.get(serial) or serial) if isinstance(labels, dict) else serial
 
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()

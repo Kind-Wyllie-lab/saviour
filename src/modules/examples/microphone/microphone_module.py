@@ -177,6 +177,11 @@ class AudiomothModule(Module):
         }
 
 
+    def _label_for(self, serial: str) -> str:
+        """Return the user-defined label for a serial, or the serial itself if none is set."""
+        labels = self.config.get("audiomoth_labels", {})
+        return labels.get(serial, serial) if isinstance(labels, dict) else serial
+
     def _find_audiomoths(self):
         self.mics = soundcard.all_microphones()
         for mic in self.mics:
@@ -192,7 +197,8 @@ class AudiomothModule(Module):
         """Build a per-audiomoth filename for the current recording segment."""
         strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
         filetype = self.config.get("recording.recording_filetype", "flac")
-        return f"{self.facade.get_filename_prefix()}_{serial}_({self.facade.get_segment_id()}_{strtime}).{filetype}"
+        label = self._label_for(serial)
+        return f"{self.facade.get_filename_prefix()}_{label}_({self.facade.get_segment_id()}_{strtime}).{filetype}"
 
 
     def _start_new_recording(self) -> None:
@@ -483,7 +489,8 @@ class AudiomothModule(Module):
                 py1 = py0 + PLOT_H
 
                 # ── Header ──────────────────────────────────────────────────
-                label = f"Audiomoth {serial}    RMS {level_db:.1f} dBFS    Peak {peak_db:.1f} dBFS"
+                display_name = self._label_for(serial)
+                label = f"{display_name}    RMS {level_db:.1f} dBFS    Peak {peak_db:.1f} dBFS"
                 cv2.putText(frame, label, (PADDING, y0 + 22),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 

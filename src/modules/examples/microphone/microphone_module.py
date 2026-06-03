@@ -404,6 +404,8 @@ class AudiomothModule(Module):
         try:
             microphone = soundcard.get_microphone(mic_id)
             window = np.hanning(fft_size)
+            window_sum = np.sum(window) / 2
+            freqs = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
             with microphone.recorder(samplerate=sample_rate, blocksize=fft_size) as recorder:
                 while not self.should_stop_monitoring_stream:
                     data = recorder.record(numframes=fft_size)
@@ -419,9 +421,7 @@ class AudiomothModule(Module):
 
                     # Windowed FFT magnitude spectrum in dBFS
                     fft_vals = np.abs(np.fft.rfft(mono * window))
-                    # Normalise by window sum so full-scale sine = 0 dBFS
-                    spectrum_db = 20 * np.log10(fft_vals / (np.sum(window) / 2) + 1e-10)
-                    freqs = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
+                    spectrum_db = 20 * np.log10(fft_vals / window_sum + 1e-10)
 
                     _, _, time_window_s = self._monitoring_params()
                     spec_cols = max(10, int(time_window_s * sample_rate / fft_size))
@@ -433,6 +433,7 @@ class AudiomothModule(Module):
                             'peak_db':     peak_db,
                             'spec_buffer': new_buf,
                             'freqs':       freqs,
+                            'timestamp':   time.time(),
                         }
         except Exception as e:
             self.logger.error(f"Monitor thread error for audiomoth {serial}: {e}")
@@ -481,18 +482,21 @@ class AudiomothModule(Module):
 
             for row, (serial, data) in enumerate(data_snapshot.items()):
                 y0       = row * ROW_H
-                level_db = data.get('level_db', DB_MIN)
-                peak_db  = data.get('peak_db',  DB_MIN)
-                spec_buf = data.get('spec_buffer', [])
+                level_db  = data.get('level_db', DB_MIN)
+                peak_db   = data.get('peak_db',  DB_MIN)
+                spec_buf  = data.get('spec_buffer', [])
+                timestamp = data.get('timestamp', 0)
+                is_stale  = (time.time() - timestamp) > 0.5
 
                 py0 = y0 + 30
                 py1 = py0 + PLOT_H
 
                 # ── Header ──────────────────────────────────────────────────
                 display_name = self._label_for(serial)
+                header_colour = (80, 80, 80) if is_stale else (200, 200, 200)
                 label = f"{display_name}    RMS {level_db:.1f} dBFS    Peak {peak_db:.1f} dBFS"
                 cv2.putText(frame, label, (PADDING, y0 + 22),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, header_colour, 1)
 
                 # ── Spectrogram ───────────────────────────────────────────────
                 freq_lo_hz, freq_hi_hz, _ = self._monitoring_params()
@@ -511,6 +515,14 @@ class AudiomothModule(Module):
                     frame[py0:py1, px0:px1] = spec_colored
 
                 cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
+
+                if is_stale:
+                    cv2.rectangle(frame, (px0, py0), (px1, py1), (30, 30, 30), -1)
+                    msg = "NO SIGNAL"
+                    (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                    cv2.putText(frame, msg,
+                                (px0 + (pw - tw) // 2, py0 + (PLOT_H + th) // 2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (60, 60, 60), 2)
 
                 # ── Y-axis: frequency labels ──────────────────────────────────
                 freq_lo_khz = freq_lo_hz / 1000

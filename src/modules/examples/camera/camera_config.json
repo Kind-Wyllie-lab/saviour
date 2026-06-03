@@ -21,6 +21,8 @@
         "autofocus_mode": "manual",
         "lens_position": 0.0,
         "sync_mode": "none",
+        "sync_lock_exposure": false,
+        "sync_lock_awb": false,
         "livestream_quality": "normal"
     },
     "recording": {

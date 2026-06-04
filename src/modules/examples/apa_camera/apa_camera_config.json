@@ -22,10 +22,10 @@
     },
     "object_detection": {
         "enabled": false,
-        "backend": "blob",
-        "model_path": "/usr/share/hailo-models/yolov8n.hef",
+        "backend": "hailo_raw",
+        "model_path": "/usr/local/src/saviour/src/modules/examples/apa_camera/rats_yolov8n.hef",
         "labels": ["rat"],
-        "threshold": 0.55,
+        "threshold": 0.4,
         "max_detections": 2,
         "coordinate_smoothing": false
     },

@@ -15,6 +15,7 @@ No PyTorch / CUDA required.  To use a custom model, export ratnet.pt → ONNX
 Author: Andrew SG
 """
 
+import contextlib
 import csv
 import datetime
 import sys
@@ -105,6 +106,130 @@ class HailoDetector:
 
     def close(self):
         self._hailo.close()
+
+
+# ---------------------------------------------------------------------------
+# Hailo raw inference backend (hailo_platform direct API)
+# ---------------------------------------------------------------------------
+
+class HailoRawDetector:
+    """
+    Uses hailo_platform directly for models that output raw YOLOv8 tensors
+    (DFL-encoded box distributions + sigmoid scores) rather than post-processed
+    hailo-all detections.  Required for the custom rats_yolov8n.hef model.
+
+    Keeps InferVStreams and network_group.activate() contexts open for the
+    object lifetime via an ExitStack; call close() to release the device.
+    """
+
+    INPUT_SIZE = 416
+
+    def __init__(self, hef_path: str, threshold: float = 0.4, iou_thresh: float = 0.45):
+        import hailo_platform as hpf
+        self._threshold  = threshold
+        self._iou_thresh = iou_thresh
+
+        self._target = hpf.VDevice()
+        hef = hpf.HEF(hef_path)
+        cfg_params = hpf.ConfigureParams.create_from_hef(
+            hef, interface=hpf.HailoStreamInterface.PCIe
+        )
+        network_groups           = self._target.configure(hef, cfg_params)
+        self._network_group      = network_groups[0]
+        self._ng_params          = self._network_group.create_params()
+        self._input_vstream_info = hef.get_input_vstream_infos()[0]
+
+        in_params  = hpf.InputVStreamParams.make_from_network_group(
+            self._network_group, quantized=False, format_type=hpf.FormatType.FLOAT32
+        )
+        out_params = hpf.OutputVStreamParams.make_from_network_group(
+            self._network_group, quantized=False, format_type=hpf.FormatType.FLOAT32
+        )
+
+        self._stack    = contextlib.ExitStack()
+        self._pipeline = self._stack.enter_context(
+            hpf.InferVStreams(self._network_group, in_params, out_params)
+        )
+        self._stack.enter_context(self._network_group.activate(self._ng_params))
+
+        self._anchors = self._build_anchors()
+        self.last_max_score: float = 0.0
+
+    @staticmethod
+    def _build_anchors() -> np.ndarray:
+        anchors = []
+        for stride in [8, 16, 32]:
+            gs = HailoRawDetector.INPUT_SIZE // stride
+            for gy in range(gs):
+                for gx in range(gs):
+                    anchors.append((gx + 0.5, gy + 0.5, stride))
+        return np.array(anchors, dtype=np.float32)
+
+    def detect(self, frame: np.ndarray, labels: List[str]) -> List[Detection]:
+        orig_h, orig_w = frame.shape[:2]
+        rgb = cv2.cvtColor(
+            cv2.resize(frame, (self.INPUT_SIZE, self.INPUT_SIZE)),
+            cv2.COLOR_BGR2RGB,
+        )
+        inp = np.expand_dims(rgb.astype(np.float32) / 255.0, axis=0)
+        raw = self._pipeline.infer({self._input_vstream_info.name: inp})
+        dets = []
+        for x1, y1, x2, y2, conf in self._decode(list(raw.values()), orig_w, orig_h):
+            dets.append(Detection(category=0, conf=conf, box=(x1, y1, x2 - x1, y2 - y1)))
+        return dets
+
+    def _decode(self, outputs, orig_w: int, orig_h: int):
+        boxes_raw = scores_raw = None
+        for out in outputs:
+            out = np.squeeze(out)
+            if out.ndim == 2 and out.shape[1] == 64:
+                boxes_raw = out
+            elif out.ndim == 2 and out.shape[1] == 1:
+                scores_raw = out[:, 0]
+            elif out.ndim == 1:
+                scores_raw = out
+        if boxes_raw is None or scores_raw is None:
+            return []
+
+        self.last_max_score = float(scores_raw.max())
+        keep = np.where(scores_raw >= self._threshold)[0]
+        if len(keep) == 0:
+            return []
+
+        boxes, confs = [], []
+        for idx in keep:
+            score = float(scores_raw[idx])
+            ax, ay, stride = self._anchors[idx]
+            l, t, r, b = self._dfl(boxes_raw[idx])
+            s = self.INPUT_SIZE
+            x1 = int(max(0,      (ax - l) * stride / s * orig_w))
+            y1 = int(max(0,      (ay - t) * stride / s * orig_h))
+            x2 = int(min(orig_w, (ax + r) * stride / s * orig_w))
+            y2 = int(min(orig_h, (ay + b) * stride / s * orig_h))
+            boxes.append([x1, y1, x2, y2])
+            confs.append(score)
+
+        if not boxes:
+            return []
+        nms = cv2.dnn.NMSBoxes(boxes, confs, self._threshold, self._iou_thresh)
+        results = []
+        for i in nms:
+            idx = i[0] if isinstance(i, (list, np.ndarray)) else i
+            results.append(boxes[idx] + [confs[idx]])
+        return results
+
+    @staticmethod
+    def _dfl(box: np.ndarray):
+        edges = []
+        for i in range(4):
+            b = box[i * 16:(i + 1) * 16].astype(np.float32)
+            b -= b.max()
+            e = np.exp(b)
+            edges.append(float(np.dot(e / e.sum(), np.arange(16))))
+        return edges
+
+    def close(self) -> None:
+        self._stack.close()
 
 
 # ---------------------------------------------------------------------------
@@ -424,13 +549,17 @@ class APACameraModule(Module):
             "object_detection.model_path",
             "/usr/share/hailo-models/yolov8n.hef"
         )
-        try:
-            self.detector = HailoDetector(model_path, threshold=self.threshold)
-            self.logger.info(f"Hailo detector ready: {model_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to initialise Hailo detector: {e}")
-            self.detector = None
-            self._detector_backend = None
+
+        # "hailo" is treated as an alias for "hailo_raw" — rats_yolov8n.hef outputs
+        # raw DFL tensors, not post-processed hailo-all arrays.
+        if new_backend in ("hailo_raw", "hailo"):
+            try:
+                self.detector = HailoRawDetector(model_path, threshold=self.threshold)
+                self.logger.info(f"Hailo raw detector ready: {model_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to initialise Hailo raw detector: {e}")
+                self.detector = None
+                self._detector_backend = None
 
 
     # -----------------------------------------------------------------------
@@ -815,6 +944,16 @@ class APACameraModule(Module):
             return
         try:
             dets = self.detector.detect(frame, self._labels)[: self.max_detections]
+            self._detect_frame_count = getattr(self, '_detect_frame_count', 0) + 1
+            if self._detect_frame_count % 150 == 1:
+                score_info = (f", max_score={self.detector.last_max_score:.3f}"
+                              if hasattr(self.detector, 'last_max_score') else "")
+                thr = getattr(self.detector, '_threshold', '?')
+                self.logger.info(
+                    f"[detect] frame={self._detect_frame_count} "
+                    f"backend={self._detector_backend} "
+                    f"dets={len(dets)}{score_info} thr={thr}"
+                )
             if dets:
                 self._last_known_det = dets[0]
                 self._detection_buffer.append(dets[0])

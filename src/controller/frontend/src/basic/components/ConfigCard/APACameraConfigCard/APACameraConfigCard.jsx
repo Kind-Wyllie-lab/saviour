@@ -505,11 +505,12 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
                     onChange={e => handleChange(["object_detection", "backend"], e)}
                   >
                     <option value="blob">Blob tracker (no model required)</option>
-                    <option value="hailo">Hailo .hef model</option>
+                    <option value="hailo_raw">Hailo .hef model (YOLOv8 raw)</option>
+                    <option value="hailo">Hailo .hef model (hailo-all)</option>
                   </select>
                 </div>
 
-                {(detection.backend ?? "blob") === "hailo" ? (
+                {["hailo_raw", "hailo"].includes(detection.backend ?? "blob") ? (
                   <>
                     <div className="form-field">
                       <label>Model path:</label>

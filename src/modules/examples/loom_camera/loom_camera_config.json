@@ -1,0 +1,42 @@
+{
+  "camera": {
+    "monochrome": false,
+    "sensor_mode_index": 0,
+    "width": 1080,
+    "height": 1080,
+    "fps": 30,
+    "overlay_timestamp": true,
+    "text_size": "medium",
+    "gain": 1,
+    "manual_exposure": false,
+    "exposure_time": 10000,
+    "brightness": 0,
+    "overlay_framerate_on_preview": false,
+    "bitrate_mb": 2,
+    "autofocus_mode": "manual",
+    "lens_position": 0.0
+  },
+  "loom_tracking": {
+    "enabled": true,
+    "roi_json_path": "loom_roi_and_line.json",
+    "process_width": 256,
+    "thr_hi": 10.0,
+    "gap_h_px": 15,
+    "gap_v_px": 15,
+    "close_px": 7,
+    "open_px": 5,
+    "min_area_px": 50,
+    "patience_frames": 10,
+    "smoothing_alpha": 0.3,
+    "overlay": {
+      "enabled": true,
+      "line_bgr": [0, 255, 0],
+      "roi_bgr": [255, 0, 255],
+      "dot_bgr": [0, 0, 255],
+      "thickness": 2
+    }
+  },
+  "recording": {
+    "_recording_filetype": "ts"
+  }
+}

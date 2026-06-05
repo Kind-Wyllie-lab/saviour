@@ -150,27 +150,23 @@ export default function LoomRoiLineEditorModal({ moduleIp, moduleId, open, onClo
   }, [points, lineX, open]);
 
   useEffect(() => {
-    const onCommandResponse = (msg) => {
-      // This handler name might differ in your project; see note below.
+    if (!moduleId) return;
+
+    const onModuleStatus = (msg) => {
       if (!msg) return;
       if (msg.module_id !== moduleId) return;
 
-      // Some backends use msg.type, others msg.command.
-      const cmd = msg.type ?? msg.command ?? null;
-      if (cmd !== "set_loom_roi") return;
-
-      // Normalize result field
-      const result = msg.result ?? msg.data ?? msg;
-      const ok = result?.status === "ok" || msg.status === "success";
-
-      if (ok) setStatus("Saved. ROI will apply immediately.");
-      else setStatus(`Save failed: ${result?.error ?? msg.error ?? "unknown error"}`);
+      if (msg.type === "loom_roi_updated") {
+        setStatus("Saved. ROI will apply immediately.");
+      } else if (msg.type === "loom_roi_update_failed") {
+        setStatus(`Save failed: ${msg.error ?? "unknown error"}`);
+      }
     };
 
-    socket.on("command_response", onCommandResponse);
-    return () => socket.off("command_response", onCommandResponse);
+    socket.on("module_status", onModuleStatus);
+    return () => socket.off("module_status", onModuleStatus);
   }, [moduleId]);
-
+  
   const handleClick = (e) => {
     if (phase === "done") return;
     const p = canvasEventToImagePixel(e);

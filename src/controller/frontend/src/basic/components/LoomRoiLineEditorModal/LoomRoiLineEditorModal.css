@@ -45,3 +45,66 @@
 .loom-roi-modal__sidebar {
   overflow: auto;
 }
+
+/* =========================
+   Loom ROI editor: FULLSCREEN modal override
+   ========================= */
+
+/* Make overlay use full viewport and allow large modal */
+.modal-overlay {
+  /* do NOT change globally; we'll target only when overlay contains loom modal below */
+}
+
+/* Target the loom modal very specifically so it overrides generic .modal rules */
+.modal.loom-roi-modal {
+  width: 98vw !important;
+  max-width: 98vw !important;
+  height: 94vh !important;
+  max-height: 94vh !important;
+
+  overflow: hidden !important;
+  padding: 16px !important;
+
+  /* If your global modal uses transform/scale, neutralize it */
+  transform: none !important;
+  left: auto !important;
+  top: auto !important;
+}
+
+/* If your global CSS centers modals with flex and constrains size, this still works */
+.modal.loom-roi-modal .loom-roi-modal__content {
+  display: grid !important;
+  grid-template-columns: 1fr 360px !important;
+  gap: 14px !important;
+
+  height: calc(94vh - 120px) !important; /* header + subtext + padding */
+  min-height: 400px !important;
+}
+
+.modal.loom-roi-modal .loom-roi-modal__viewer {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: #111 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+.modal.loom-roi-modal .loom-roi-modal__viewer img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  display: block !important;
+}
+
+.modal.loom-roi-modal .loom-roi-modal__viewer canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.modal.loom-roi-modal .loom-roi-modal__sidebar {
+  overflow: auto !important;
+  max-height: 100% !important;
+}

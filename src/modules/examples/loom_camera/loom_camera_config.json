@@ -18,7 +18,7 @@
   },
   "loom_tracking": {
     "enabled": true,
-    "roi_json_path": "loom_roi_and_line.json",
+    "roi_json_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_roi_and_line.json",
     "process_width": 256,
     "thr_hi": 10.0,
     "gap_h_px": 15,

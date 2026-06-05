@@ -6,6 +6,7 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
+import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
 
 // Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
 const HQ_PRESETS = [
@@ -58,6 +59,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -548,8 +550,19 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         </div>
 
         <div className="livestream-wrapper">
+          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
+              Set ROI / Line
+            </button>
+          </div>
           <LivestreamCard module={module} />
         </div>
+
+        <LoomRoiLineEditorModal
+            moduleIp={module.ip}
+            open={showLoomRoiEditor}
+            onClose={() => setShowLoomRoiEditor(false)}
+        />
       </div>
 
       <div className="update-button-wrapper">

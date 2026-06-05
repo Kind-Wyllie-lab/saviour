@@ -15,6 +15,8 @@ from flask import Flask, Response, request
 from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import PyavOutput, SplittableOutput
+from pathlib import Path
+from flask import jsonify
 
 import subprocess
 
@@ -449,6 +451,86 @@ class LoomCameraModule(Module):
     # ---------------------------------------------------------------------
     # Config hooks
     # ---------------------------------------------------------------------
+    def _resolve_roi_json_path(self) -> Optional[Path]:
+        """
+        Resolve the ROI JSON path from config to an absolute path.
+
+        Resolution
+        ----------
+        - If config path is absolute: use it.
+        - If config path is relative: resolve relative to this module file.
+        - If unset/empty: return None.
+
+        Returns
+        -------
+        roi_path : pathlib.Path or None
+            Resolved ROI JSON file path.
+        """
+        lt = self.config.get("loom_tracking", {})
+        p = lt.get("roi_json_path", None)
+        if not p:
+            return None
+
+        roi_path = Path(str(p)).expanduser()
+        if roi_path.is_absolute():
+            return roi_path
+
+        return (Path(__file__).resolve().parent / roi_path).resolve()
+
+    def _set_default_roi(self, *, proc_w: int, proc_h: int) -> None:
+        """
+        Set default ROI masking/line state (full ROI, no line).
+
+        Parameters
+        ----------
+        proc_w, proc_h : int
+            Processed tracking frame size.
+        """
+        self.roi_mask_proc = np.ones((proc_h, proc_w), dtype=bool)
+        self.arena_poly_src = None
+        self.crossing_line_src = None
+        if self.tracker is not None:
+            self.tracker.set_roi_mask_proc(self.roi_mask_proc)
+
+    def _reload_roi_for_current_geometry(self, *, src_w: int, src_h: int, proc_w: int, proc_h: int) -> None:
+        """
+        (Re)load ROI/line JSON and update tracker ROI mask, fail-soft if missing.
+
+        Parameters
+        ----------
+        src_w, src_h : int
+            Source frame size in pixels (main stream).
+        proc_w, proc_h : int
+            Processed tracking frame size in pixels.
+        """
+        roi_path = self._resolve_roi_json_path()
+        if roi_path is None:
+            self._set_default_roi(proc_w=proc_w, proc_h=proc_h)
+            return
+
+        if not roi_path.exists():
+            # Do not error: allow running without ROI file.
+            self.logger.warning(f"ROI JSON not found, using full-frame ROI: {roi_path}")
+            self._set_default_roi(proc_w=proc_w, proc_h=proc_h)
+            return
+
+        try:
+            roi_mask_proc, arena_poly_src, crossing_line_src = loom_load_roi_and_line(
+                str(roi_path),
+                src_width=src_w,
+                src_height=src_h,
+                proc_width=proc_w,
+                proc_height=proc_h,
+            )
+            self.roi_mask_proc = roi_mask_proc
+            self.arena_poly_src = arena_poly_src
+            self.crossing_line_src = crossing_line_src
+            if self.tracker is not None:
+                self.tracker.set_roi_mask_proc(self.roi_mask_proc)
+            self.logger.info(f"Loaded ROI JSON: {roi_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to load ROI JSON ({roi_path}) -> default ROI: {e}")
+            self._set_default_roi(proc_w=proc_w, proc_h=proc_h)
 
     def _get_video_filename(self) -> str:
         """
@@ -786,16 +868,16 @@ class LoomCameraModule(Module):
 
                     # Lazy ROI init (needs proc dims + src dims)
                     if self.roi_mask_proc is None:
-                        roi_mask_proc, arena_poly_src, crossing_line_src = loom_load_roi_and_line(
-                            self.roi_json_path,
-                            src_width=frame.shape[1],
-                            src_height=frame.shape[0],
-                            proc_width=nx,
-                            proc_height=ny,
+                        self._reload_roi_for_current_geometry(
+                            src_w=frame.shape[1],
+                            src_h=frame.shape[0],
+                            proc_w=nx,
+                            proc_h=ny,
                         )
-                        self.roi_mask_proc = roi_mask_proc
-                        self.arena_poly_src = arena_poly_src
-                        self.crossing_line_src = crossing_line_src
+
+                        # self.roi_mask_proc = roi_mask_proc
+                        # self.arena_poly_src = arena_poly_src
+                        # self.crossing_line_src = crossing_line_src
                         self.tracker.set_roi_mask_proc(self.roi_mask_proc)
 
                     if center_proc is not None:
@@ -1012,6 +1094,117 @@ class LoomCameraModule(Module):
             func()
             return "Server shutting down..."
 
+        @self.streaming_app.route("/roi", methods=["GET"])
+        def roi_get():
+            """
+            Get current ROI/line JSON from disk.
+
+            Returns
+            -------
+            json
+                ROI payload if present.
+            """
+            roi_path = self._resolve_roi_json_path()
+            if roi_path is None:
+                return jsonify({"error": "loom_tracking.roi_json_path is not set"}), 400
+            if not roi_path.exists():
+                return jsonify({"error": f"ROI JSON not found: {str(roi_path)}"}), 404
+            try:
+                with open(roi_path, "r") as f:
+                    payload = json.load(f)
+                return jsonify(payload), 200
+            except Exception as e:
+                return jsonify({"error": f"Failed reading ROI JSON: {e}"}), 500
+
+        @self.streaming_app.route("/roi", methods=["POST"])
+        def roi_post():
+            """
+            Save ROI/line JSON to disk and hot-reload on next frame.
+
+            Accepts either:
+            - New schema: arena_polygon + crossing_line
+            - Legacy schema: points + vertical_line (auto-converted)
+
+            Returns
+            -------
+            json
+                Status + resolved path.
+            """
+            roi_path = self._resolve_roi_json_path()
+            if roi_path is None:
+                return jsonify({"error": "loom_tracking.roi_json_path is not set"}), 400
+
+            payload = request.get_json(silent=True)
+            if payload is None:
+                return jsonify({"error": "No JSON payload received"}), 400
+
+            # Accept legacy key names
+            if "arena_polygon" not in payload and "points" in payload:
+                payload["arena_polygon"] = payload["points"]
+            if "crossing_line" not in payload and "vertical_line" in payload:
+                payload["crossing_line"] = {
+                    "kind": "vertical",
+                    "x": payload["vertical_line"].get("x", None),
+                    "direction": "left_is_in",
+                }
+
+            # Minimal validation
+            try:
+                poly = payload.get("arena_polygon", None)
+                if poly is None or len(poly) < 3:
+                    return jsonify({"error": "arena_polygon must contain at least 3 points"}), 400
+
+                cl = payload.get("crossing_line", None)
+                if cl is not None:
+                    if str(cl.get("kind", "vertical")).lower() != "vertical":
+                        return jsonify({"error": "Only crossing_line.kind='vertical' supported"}), 400
+                    if cl.get("x", None) is None:
+                        return jsonify({"error": "crossing_line.x is required"}), 400
+                    direction = str(cl.get("direction", "left_is_in")).lower()
+                    if direction not in ("left_is_in", "right_is_in"):
+                        return jsonify({"error": "crossing_line.direction must be left_is_in or right_is_in"}), 400
+                    cl["direction"] = direction
+                    cl["kind"] = "vertical"
+                    payload["crossing_line"] = cl
+
+                if "created" not in payload:
+                    payload["created"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+            except Exception as e:
+                return jsonify({"error": f"Invalid payload: {e}"}), 400
+
+            try:
+                roi_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = roi_path.with_suffix(roi_path.suffix + ".tmp")
+                with open(tmp_path, "w") as f:
+                    json.dump(payload, f, indent=2)
+                os.replace(tmp_path, roi_path)
+            except Exception as e:
+                return jsonify({"error": f"Failed to save ROI JSON: {e}"}), 500
+
+            # Hot reload on next pre_callback
+            self.roi_mask_proc = None
+            self.arena_poly_src = None
+            self.crossing_line_src = None
+
+            self.communication.send_status({"type": "loom_roi_updated", "roi_path": str(roi_path)})
+
+            return jsonify({"status": "ok", "roi_path": str(roi_path)}), 200
+
+        @self.streaming_app.route("/roi/snapshot.jpg", methods=["GET"])
+        def roi_snapshot():
+            """
+            Return a single JPEG snapshot from the latest preview frame.
+
+            Notes
+            -----
+            Uses the same bytes as the MJPEG stream producer. Useful for ROI editor.
+            """
+            with self.frame_lock:
+                jpeg = self.latest_frame
+            if jpeg is None:
+                return ("No frame available", 503)
+            return (jpeg, 200, {"Content-Type": "image/jpeg"})
 
     # ---------------------------------------------------------------------
     # Sensor modes + health/checks + lifecycle

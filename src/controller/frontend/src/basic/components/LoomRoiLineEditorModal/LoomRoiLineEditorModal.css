@@ -108,3 +108,10 @@
   overflow: auto !important;
   max-height: 100% !important;
 }
+
+/* If the global overlay uses flex centering + fixed constraints, force the loom modal layout */
+.modal-overlay:has(.modal.loom-roi-modal) {
+  align-items: flex-start !important;
+  justify-content: center !important;
+  padding-top: 2vh !important;
+}

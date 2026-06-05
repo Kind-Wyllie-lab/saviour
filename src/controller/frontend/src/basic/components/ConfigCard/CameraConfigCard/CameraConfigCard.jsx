@@ -559,9 +559,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         </div>
 
         <LoomRoiLineEditorModal
-            moduleIp={module.ip}
-            open={showLoomRoiEditor}
-            onClose={() => setShowLoomRoiEditor(false)}
+          moduleIp={module.ip}
+          moduleId={module.id}
+          open={showLoomRoiEditor}
+          onClose={() => setShowLoomRoiEditor(false)}
         />
       </div>
 

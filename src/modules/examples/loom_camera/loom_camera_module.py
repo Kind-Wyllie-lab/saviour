@@ -5,8 +5,7 @@ import datetime
 import csv
 import threading
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, Tuple, Dict
 
 import numpy as np
 import cv2
@@ -21,8 +20,12 @@ from flask import jsonify
 import subprocess
 
 import sys
+
+from modules.examples.loom_camera.loom_stimulus import LoomStimulusController, LoomStimulusConfig
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, command, check
+
 
 @dataclass(frozen=True)
 class LoomCrossingState:
@@ -447,6 +450,8 @@ class LoomCameraModule(Module):
             "stop_streaming": self.stop_streaming,
             "get_sensor_modes": self.get_sensor_modes,
             "set_loom_roi": self.set_loom_roi,
+            "loom_stimulus_start": self.loom_stimulus_start,
+            "loom_stimulus_stop": self.loom_stimulus_stop,
         })
 
         # Configure everything
@@ -464,6 +469,28 @@ class LoomCameraModule(Module):
         self._track_valid: bool = False
 
         self._hold_forever_when_still: bool = bool(self.config.get("loom_tracking.hold_forever_when_still", False))
+
+        # --- Loom stimulus (local HDMI) ---
+        stim_cfg = self.config.get("loom_stimulus", {}) or {}
+        self._loom_stimulus = LoomStimulusController(
+            LoomStimulusConfig(
+                texture_path=str(stim_cfg.get("texture_path", "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png")),
+                initial_size_cm=float(stim_cfg.get("initial_size_cm", 2.0)),
+                final_size_cm=float(stim_cfg.get("final_size_cm", 30.0)),
+                initial_pos_ndc=tuple(stim_cfg.get("initial_pos_ndc", [0.0, 0.0])),
+                final_pos_ndc=tuple(stim_cfg.get("final_pos_ndc", [0.0, 0.0])),
+                travel_time_s=float(stim_cfg.get("travel_time_s", 0.25)),
+                loom_wait_time_s=float(stim_cfg.get("loom_wait_time_s", 0.5)),
+                round_size=int(stim_cfg.get("round_size", 5)),
+                image_angle_deg=float(stim_cfg.get("image_angle_deg", 0.0)),
+                background_rgba=tuple(stim_cfg.get("background_rgba", [0.0, 0.0, 0.0, 1.0])),
+            )
+        )
+
+        self._stimulus_enabled = bool(stim_cfg.get("enabled", True))
+        if getattr(self, "_stimulus_enabled", False):
+            # Start renderer immediately so HDMI background is up continuously
+            self._loom_stimulus.start()
 
     # ---------------------------------------------------------------------
     # Config hooks
@@ -941,6 +968,12 @@ class LoomCameraModule(Module):
                             "cy": cy,
                         })
 
+                        if self._stimulus_enabled:
+                            if event_label == "enter":
+                                self._loom_stimulus.send("start")
+                            elif event_label == "leave":
+                                self._loom_stimulus.send("stop")
+
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m)
 
@@ -959,6 +992,12 @@ class LoomCameraModule(Module):
             with MappedArray(req, "lores") as m:
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m, lores=True)
+
+            if self._stimulus_enabled:
+                for msg in self._loom_stimulus.poll_status(max_messages=3):
+                    # forward to controller for debugging/record
+                    self.communication.send_status({"type": "loom_stimulus_status", **msg})
+
 
         except Exception as e:
             self.logger.error(f"Error in _loom_frame_precallback: {e}")
@@ -1377,6 +1416,21 @@ class LoomCameraModule(Module):
             return False, "No picam2 object"
         return True, "picam2 initialised"
 
+    @command()
+    def loom_stimulus_start(self) -> dict:
+        """Manually start the looming stimulus (debug)."""
+        if not self._stimulus_enabled:
+            return {"status": "disabled"}
+        self._loom_stimulus.send("start")
+        return {"status": "ok"}
+
+    @command()
+    def loom_stimulus_stop(self) -> dict:
+        """Manually stop the looming stimulus after current round (debug)."""
+        if not self._stimulus_enabled:
+            return {"status": "disabled"}
+        self._loom_stimulus.send("stop")
+        return {"status": "ok"}
 
     def start(self) -> bool:
         try:
@@ -1395,6 +1449,9 @@ class LoomCameraModule(Module):
                 self.stop_streaming()
             if self.tracker is not None:
                 self.tracker.reset()
+            if hasattr(self, "_loom_stimulus") and self._loom_stimulus is not None:
+                self._loom_stimulus.shutdown()
+
             return super().stop()
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")

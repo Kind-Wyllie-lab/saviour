@@ -40,6 +40,20 @@
       "thickness": 2
     }
   },
+  "loom_stimulus": {
+  "enabled": true,
+  "texture_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png",
+  "initial_size_cm": 6.0,
+  "final_size_cm": 40.0,
+  "initial_pos_ndc": [0.5, 0.0],
+  "final_pos_ndc": [0.5, 0.0],
+  "travel_time_s": 5.0,
+  "loom_wait_time_s": 0.5,
+  "round_size": 5,
+  "image_angle_deg": 90.0,
+  "background_rgba": [0.5, 0.5, 0.5, 0.5]
+  },
+
   "recording": {
     "_recording_filetype": "ts"
   }

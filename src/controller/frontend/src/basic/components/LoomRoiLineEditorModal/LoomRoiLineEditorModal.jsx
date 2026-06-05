@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import socket from "/src/socket";
 import "./LoomRoiLineEditorModal.css";
 
 /**
@@ -11,7 +12,7 @@ import "./LoomRoiLineEditorModal.css";
  * 3) Click to set line.
  * 4) Save posts JSON to /roi on the module.
  */
-export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
+export default function LoomRoiLineEditorModal({ moduleIp, moduleId, open, onClose }) {
   const imgRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -148,6 +149,28 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points, lineX, open]);
 
+  useEffect(() => {
+    const onCommandResponse = (msg) => {
+      // This handler name might differ in your project; see note below.
+      if (!msg) return;
+      if (msg.module_id !== moduleId) return;
+
+      // Some backends use msg.type, others msg.command.
+      const cmd = msg.type ?? msg.command ?? null;
+      if (cmd !== "set_loom_roi") return;
+
+      // Normalize result field
+      const result = msg.result ?? msg.data ?? msg;
+      const ok = result?.status === "ok" || msg.status === "success";
+
+      if (ok) setStatus("Saved. ROI will apply immediately.");
+      else setStatus(`Save failed: ${result?.error ?? msg.error ?? "unknown error"}`);
+    };
+
+    socket.on("command_response", onCommandResponse);
+    return () => socket.off("command_response", onCommandResponse);
+  }, [moduleId]);
+
   const handleClick = (e) => {
     if (phase === "done") return;
     const p = canvasEventToImagePixel(e);
@@ -171,7 +194,7 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
   };
 
   const handleSave = async () => {
-    if (!baseUrl) return;
+    if (!moduleId) return;
     const img = imgRef.current;
     if (!img) return;
 
@@ -184,32 +207,25 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
       return;
     }
 
-    // const img = imgRef.current;
     const payload = {
       image_size: { width: img.naturalWidth, height: img.naturalHeight },
       arena_polygon: points.map(p => ({ x: p.x, y: p.y })),
       crossing_line: { kind: "vertical", x: lineX, direction: "left_is_in" },
-      created: new Date().toISOString()
+      created: new Date().toISOString(),
     };
-
 
     try {
       setStatus("Saving…");
-      const res = await fetch(`${baseUrl}/roi`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+      socket.emit("send_command", {
+        module_id: moduleId,
+        type: "set_loom_roi",
+        params: { payload },
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setStatus(`Save failed: ${data.error ?? res.statusText}`);
-        return;
-      }
-      setStatus("Saved. ROI will apply immediately.");
     } catch (err) {
       setStatus(`Save failed: ${String(err)}`);
     }
   };
+
 
   if (!open) return null;
 

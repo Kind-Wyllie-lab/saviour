@@ -450,6 +450,7 @@ class LoomCameraModule(Module):
             "start_streaming": self.start_streaming,
             "stop_streaming": self.stop_streaming,
             "get_sensor_modes": self.get_sensor_modes,
+            "set_loom_roi": self.set_loom_roi,
         })
 
         # Configure everything
@@ -461,6 +462,7 @@ class LoomCameraModule(Module):
         self.current_video_segment: Optional[str] = None
         self.last_video_segment: Optional[str] = None
         self.file_output = None
+
 
     # ---------------------------------------------------------------------
     # Config hooks
@@ -1223,6 +1225,75 @@ class LoomCameraModule(Module):
     # ---------------------------------------------------------------------
     # Sensor modes + health/checks + lifecycle
     # ---------------------------------------------------------------------
+    @command()
+    def set_loom_roi(self, payload: dict) -> dict:
+        """
+        Save ROI/line JSON payload sent by the controller UI and hot-reload.
+
+        Parameters
+        ----------
+        payload : dict
+            JSON-like dictionary containing arena_polygon/points and crossing_line/vertical_line.
+
+        Returns
+        -------
+        result : dict
+            Status and resolved path.
+        """
+        roi_path = self._resolve_roi_json_path()
+        if roi_path is None:
+            return {"status": "error", "error": "loom_tracking.roi_json_path is not set"}
+
+        if not isinstance(payload, dict):
+            return {"status": "error", "error": "payload must be a dict"}
+
+        # Accept legacy key names
+        if "arena_polygon" not in payload and "points" in payload:
+            payload["arena_polygon"] = payload["points"]
+        if "crossing_line" not in payload and "vertical_line" in payload:
+            payload["crossing_line"] = {
+                "kind": "vertical",
+                "x": payload["vertical_line"].get("x", None),
+                "direction": "left_is_in",
+            }
+
+        # Minimal validation
+        poly = payload.get("arena_polygon", None)
+        if poly is None or len(poly) < 3:
+            return {"status": "error", "error": "arena_polygon must contain at least 3 points"}
+
+        cl = payload.get("crossing_line", None)
+        if cl is not None:
+            if str(cl.get("kind", "vertical")).lower() != "vertical":
+                return {"status": "error", "error": "Only crossing_line.kind='vertical' supported"}
+            if cl.get("x", None) is None:
+                return {"status": "error", "error": "crossing_line.x is required"}
+            direction = str(cl.get("direction", "left_is_in")).lower()
+            if direction not in ("left_is_in", "right_is_in"):
+                return {"status": "error", "error": "crossing_line.direction must be left_is_in or right_is_in"}
+            cl["direction"] = direction
+            cl["kind"] = "vertical"
+            payload["crossing_line"] = cl
+
+        if "created" not in payload:
+            payload["created"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        try:
+            roi_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = roi_path.with_suffix(roi_path.suffix + ".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(payload, f, indent=2)
+            os.replace(tmp_path, roi_path)
+        except Exception as e:
+            return {"status": "error", "error": f"Failed to save ROI JSON: {e}"}
+
+        # Hot reload
+        self.roi_mask_proc = None
+        self.arena_poly_src = None
+        self.crossing_line_src = None
+
+        self.communication.send_status({"type": "loom_roi_updated", "roi_path": str(roi_path)})
+        return {"status": "ok", "roi_path": str(roi_path)}
 
     @command()
     def get_sensor_modes(self):

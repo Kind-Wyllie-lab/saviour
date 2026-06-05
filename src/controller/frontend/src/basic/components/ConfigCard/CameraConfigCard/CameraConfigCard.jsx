@@ -564,6 +564,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           open={showLoomRoiEditor}
           onClose={() => setShowLoomRoiEditor(false)}
         />
+
       </div>
 
       <div className="update-button-wrapper">

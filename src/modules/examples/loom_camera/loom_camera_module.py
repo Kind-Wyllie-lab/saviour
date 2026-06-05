@@ -271,8 +271,15 @@ def loom_load_roi_and_line(
     sx_src = src_width / ann_w
     sy_src = src_height / ann_h
 
-    poly_key = "arena_polygon" if "arena_polygon" in data else "points"
-    pts_json = np.array([[p["x"], p["y"]] for p in data.get(poly_key, [])], dtype=float) if data.get(poly_key) else None
+    poly_pts = None
+    if "arena_polygon" in data:
+        poly_pts = data["arena_polygon"]
+    elif "points" in data:
+        poly_pts = data["points"]
+
+    pts_json = None
+    if poly_pts is not None and len(poly_pts) >= 3:
+        pts_json = np.array([[p["x"], p["y"]] for p in poly_pts], dtype=float)
 
     arena_poly_src = None
     if pts_json is not None and len(pts_json) >= 3:
@@ -294,14 +301,21 @@ def loom_load_roi_and_line(
 
     # Crossing line (source coords)
     crossing_line_src = None
-    if "crossing_line" in data:
-        cl = data["crossing_line"] or {}
+
+    if "crossing_line" in data and isinstance(data["crossing_line"], dict):
+        cl = data["crossing_line"]
         if str(cl.get("kind", "vertical")).lower() == "vertical" and "x" in cl:
             crossing_line_src = {
                 "kind": "vertical",
                 "x": float(cl["x"]) * sx_src,
                 "direction": str(cl.get("direction", "left_is_in")).lower(),
             }
+    elif "vertical_line" in data and isinstance(data["vertical_line"], dict) and "x" in data["vertical_line"]:
+        crossing_line_src = {
+            "kind": "vertical",
+            "x": float(data["vertical_line"]["x"]) * sx_src,
+            "direction": "left_is_in",
+        }
 
     return roi_mask_proc, arena_poly_src, crossing_line_src
 
@@ -975,17 +989,17 @@ class LoomCameraModule(Module):
 
         # State label
         state = self.crossing_state.state
+        state_color = (0, 0, 255) if state in ("entering", "in") else (0, 255, 0)  # red=in, green=out
         cv2.putText(
             m.array,
             f"Zone: {state}",
             (10, 32),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.9,
-            (255, 255, 255),
+            state_color,
             2,
             cv2.LINE_AA,
         )
-
 
     # ---------------------------------------------------------------------
     # Streaming (identical pattern to APA)

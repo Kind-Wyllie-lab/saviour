@@ -42,40 +42,20 @@ class LoomCrossingState:
     state: str = "out"
     last_event: Optional[str] = None
 
-
 class LoomBlobDiffTracker:
     """
-    ROI-aware frame-difference blob tracker (bridge-fill + CC largest blob).
+    ROI-aware abs-diff blob tracker with bridge-fill and hold-last behavior.
 
     Notes
     -----
-    This is designed to be called from Picamera2's pre_callback on RGB/BGR frames.
-    Tracking is performed on a downsampled grayscale stream for speed.
-
-    The tracker returns a processed-space centroid (cx_proc, cy_proc) in pixels
-    and also provides mapping to source frame pixels by scale factors.
-
-    Parameters
-    ----------
-    process_width : int
-        Width of processed (downsampled) frames.
-    thr_hi : float
-        Absolute grayscale difference threshold.
-    gap_h_px : int
-        Horizontal bridge-fill close kernel width (processed pixels).
-    gap_v_px : int
-        Vertical bridge-fill close kernel height (processed pixels).
-    close_px : int
-        Elliptical morphological close kernel size.
-    open_px : int
-        Elliptical morphological open kernel size.
-    min_area_px : int
-        Minimum CC area in processed pixels.
-    patience_frames : int
-        Missed frames tolerated before resetting track.
-    smoothing_alpha : float
-        Exponential smoothing factor for centroid.
+    - Detection is based on abs(frame_t - frame_{t-1}) thresholded in processed space.
+    - If no blob is found, the last known center is *held* for `patience_frames`.
+    - Two centers are maintained:
+        - last_detection_center_proc: raw centroid of best blob (processed px)
+        - last_display_center_proc: exponentially smoothed centroid (processed px)
+    - The tracker returns the *display* center (held/smoothed) when available.
     """
+
     def __init__(
         self,
         *,
@@ -86,7 +66,7 @@ class LoomBlobDiffTracker:
         close_px: int = 7,
         open_px: int = 5,
         min_area_px: int = 50,
-        patience_frames: int = 10,
+        patience_frames: int = 1000,
         smoothing_alpha: float = 0.3,
     ) -> None:
         self.process_width = int(process_width)
@@ -106,16 +86,18 @@ class LoomBlobDiffTracker:
         self._kern_close = _ellipse(int(close_px)) if int(close_px) > 1 else None
         self._kern_open = _ellipse(int(open_px)) if int(open_px) > 1 else None
 
-        self._prev_gray: Optional[np.ndarray] = None
-        self._last_center_proc: Optional[Tuple[float, float]] = None
-        self._miss_count: int = 0
+        self._roi_mask_proc: Optional[np.ndarray] = None
 
-        self._roi_mask_proc: Optional[np.ndarray] = None  # bool mask (ny, nx)
+        self._prev_gray: Optional[np.ndarray] = None
+        self.last_detection_center_proc: Optional[Tuple[float, float]] = None
+        self.last_display_center_proc: Optional[Tuple[float, float]] = None
+        self._miss_count: int = 0
 
     def reset(self) -> None:
         """Reset temporal state between sessions."""
         self._prev_gray = None
-        self._last_center_proc = None
+        self.last_detection_center_proc = None
+        self.last_display_center_proc = None
         self._miss_count = 0
 
     @staticmethod
@@ -126,12 +108,10 @@ class LoomBlobDiffTracker:
 
     def set_roi_mask_proc(self, roi_mask_proc: Optional[np.ndarray]) -> None:
         """
-        Set the processed-space ROI boolean mask.
-
         Parameters
         ----------
         roi_mask_proc : numpy.ndarray or None
-            Boolean ROI mask of shape (ny, nx). If None, ROI is treated as full frame.
+            Boolean ROI mask of shape (ny, nx). None means full frame ROI.
         """
         self._roi_mask_proc = roi_mask_proc.astype(bool) if roi_mask_proc is not None else None
 
@@ -140,21 +120,21 @@ class LoomBlobDiffTracker:
         frame_bgr: np.ndarray,
     ) -> Tuple[Optional[Tuple[float, float]], Tuple[float, float], Tuple[int, int]]:
         """
-        Detect the tracked object centroid in processed coordinates.
+        Detect / update centroid.
 
         Parameters
         ----------
         frame_bgr : numpy.ndarray
-            Source frame, shape (H, W, 3), uint8.
+            Source BGR frame, shape (H, W, 3).
 
         Returns
         -------
-        center_proc : tuple of float or None
-            Smoothed centroid (cx, cy) in processed pixels, or None if not available.
+        center_proc_display : tuple of float or None
+            Held + smoothed centroid in processed pixels. None if track is lost.
         scale_proc_to_src : tuple of float
-            (sx, sy) mapping processed pixels -> source pixels.
+            (sx, sy) mapping processed px -> source px.
         proc_shape : tuple of int
-            (nx, ny) processed frame shape.
+            (nx, ny) processed dimensions.
         """
         h0, w0 = frame_bgr.shape[:2]
         nx, ny = self._resize_to_width(w0, h0, self.process_width)
@@ -166,13 +146,13 @@ class LoomBlobDiffTracker:
 
         if self._prev_gray is None or self._prev_gray.shape != proc.shape:
             self._prev_gray = proc
-            return None, (sx, sy), (nx, ny)
+            # No detection on first frame; return current held display center if any
+            return self.last_display_center_proc, (sx, sy), (nx, ny)
 
         diff = np.abs(proc.astype(np.float32) - self._prev_gray.astype(np.float32))
         self._prev_gray = proc
 
         mask = (diff >= self.thr_hi).astype(np.uint8)
-
         if self._roi_mask_proc is not None and self._roi_mask_proc.shape == mask.shape:
             mask = (mask.astype(bool) & self._roi_mask_proc).astype(np.uint8)
 
@@ -199,22 +179,30 @@ class LoomBlobDiffTracker:
                 best_label = lab
 
         if best_label > 0:
-            cx, cy = float(centroids[best_label][0]), float(centroids[best_label][1])
-            if self._last_center_proc is not None and self.smoothing_alpha > 0:
-                a = self.smoothing_alpha
-                cx = (1 - a) * self._last_center_proc[0] + a * cx
-                cy = (1 - a) * self._last_center_proc[1] + a * cy
-            self._last_center_proc = (cx, cy)
+            cx_raw = float(centroids[best_label][0])
+            cy_raw = float(centroids[best_label][1])
+            self.last_detection_center_proc = (cx_raw, cy_raw)
             self._miss_count = 0
-            return self._last_center_proc, (sx, sy), (nx, ny)
 
-        if self._last_center_proc is not None:
-            self._miss_count += 1
-            if self._miss_count > self.patience_frames:
-                self._last_center_proc = None
-                self._miss_count = 0
+            if self.last_display_center_proc is None or self.smoothing_alpha <= 0:
+                self.last_display_center_proc = (cx_raw, cy_raw)
+            else:
+                a = float(self.smoothing_alpha)
+                self.last_display_center_proc = (
+                    (1.0 - a) * self.last_display_center_proc[0] + a * cx_raw,
+                    (1.0 - a) * self.last_display_center_proc[1] + a * cy_raw,
+                )
+        else:
+            # HOLD-LAST behavior: keep last_display_center_proc for patience_frames
+            if self.last_display_center_proc is not None:
+                self._miss_count += 1
+                if self._miss_count > self.patience_frames:
+                    self.last_detection_center_proc = None
+                    self.last_display_center_proc = None
+                    self._miss_count = 0
 
-        return None, (sx, sy), (nx, ny)
+        return self.last_display_center_proc, (sx, sy), (nx, ny)
+
 
 
 def loom_load_roi_and_line(
@@ -325,39 +313,47 @@ def loom_update_crossing_state(
     crossing_line_src: Optional[Dict[str, float]],
     center_src: Optional[Tuple[float, float]],
     prev: LoomCrossingState,
+    track_valid: bool,
 ) -> LoomCrossingState:
     """
-    Update enter/in/leave/out state relative to a configured crossing line.
+    Update enter/in/leave/out state relative to a crossing line.
+
+    This version matches the Basler behavior:
+    - If tracking is currently invalid (lost beyond patience), state is forced to 'out'
+      and in_zone_prev becomes False.
+    - If tracking is valid but center is None (should not happen often), preserve previous state.
 
     Parameters
     ----------
     crossing_line_src : dict or None
-        Line definition in source coords; currently supports vertical line:
-        {'kind':'vertical','x':float,'direction':'left_is_in'|'right_is_in'}.
+        Line definition in source coords.
     center_src : tuple of float or None
-        Tracked centroid in source coords (cx, cy) or None if not tracked.
+        Tracked centroid in source coords.
     prev : LoomCrossingState
         Previous state.
+    track_valid : bool
+        Whether we currently consider the track valid (held or detected).
 
     Returns
     -------
     next_state : LoomCrossingState
-        Updated state, with `last_event` set to 'enter' or 'leave' on transitions.
+        Updated state with transition event labels.
     """
-    if crossing_line_src is None or center_src is None:
+    if not track_valid or crossing_line_src is None:
         return LoomCrossingState(in_zone_prev=False, state="out", last_event=None)
 
+    if center_src is None:
+        # Preserve previous state (hold) if somehow center isn't available.
+        return LoomCrossingState(in_zone_prev=prev.in_zone_prev, state=prev.state, last_event=None)
+
     if crossing_line_src.get("kind") != "vertical":
-        return LoomCrossingState(in_zone_prev=False, state="out", last_event=None)
+        return LoomCrossingState(in_zone_prev=prev.in_zone_prev, state=prev.state, last_event=None)
 
     x_line = float(crossing_line_src["x"])
     direction = str(crossing_line_src.get("direction", "left_is_in")).lower()
 
     cx, cy = center_src
-    if direction == "right_is_in":
-        in_zone = cx > x_line
-    else:
-        in_zone = cx < x_line
+    in_zone = (cx > x_line) if direction == "right_is_in" else (cx < x_line)
 
     last_event = None
     if (not prev.in_zone_prev) and in_zone:
@@ -463,6 +459,11 @@ class LoomCameraModule(Module):
         self.last_video_segment: Optional[str] = None
         self.file_output = None
 
+        self._hold_miss_count: int = 0
+        self._hold_patience_frames: int = int(self.config.get("loom_tracking.patience_frames", 10))
+        self._track_valid: bool = False
+
+        self._hold_forever_when_still: bool = bool(self.config.get("loom_tracking.hold_forever_when_still", False))
 
     # ---------------------------------------------------------------------
     # Config hooks
@@ -708,6 +709,11 @@ class LoomCameraModule(Module):
         lt = self.config.get("loom_tracking", {})
         self.roi_json_path = lt.get("roi_json_path", None)
 
+        self._hold_patience_frames = int(lt.get("patience_frames", 10))
+        self._hold_miss_count = 0
+        self._track_valid = False
+        self._hold_forever_when_still = bool(lt.get("hold_forever_when_still", False))
+
         self.tracker = LoomBlobDiffTracker(
             process_width=int(lt.get("process_width", 256)),
             thr_hi=float(lt.get("thr_hi", 10.0)),
@@ -881,8 +887,7 @@ class LoomCameraModule(Module):
                 frame = m.array
                 if tracking_enabled and self.tracker is not None:
                     center_proc, (sx, sy), (nx, ny) = self.tracker.detect_center(frame)
-
-                    # Lazy ROI init (needs proc dims + src dims)
+                    # Lazy-load ROI + line from JSON (or default full ROI) once we know frame + proc sizes
                     if self.roi_mask_proc is None:
                         self._reload_roi_for_current_geometry(
                             src_w=frame.shape[1],
@@ -891,23 +896,38 @@ class LoomCameraModule(Module):
                             proc_h=ny,
                         )
 
-                        # self.roi_mask_proc = roi_mask_proc
-                        # self.arena_poly_src = arena_poly_src
-                        # self.crossing_line_src = crossing_line_src
-                        self.tracker.set_roi_mask_proc(self.roi_mask_proc)
-
+                    # If tracker reports a center: update last_center_src and reset hold counter.
                     if center_proc is not None:
                         cx = float(center_proc[0] * sx)
                         cy = float(center_proc[1] * sy)
                         self.last_center_src = (cx, cy)
+                        self._hold_miss_count = 0
+                        self._track_valid = True
                     else:
-                        self.last_center_src = None
+                        # No new detection: HOLD last_center_src.
+                        if self.last_center_src is not None:
+                            self._hold_miss_count += 1
+
+                            if self._hold_forever_when_still:
+                                # Never declare lost due to stillness
+                                self._track_valid = True
+                            elif self._hold_miss_count <= self._hold_patience_frames:
+                                self._track_valid = True
+                            else:
+                                # Track lost beyond patience
+                                self.last_center_src = None
+                                self._hold_miss_count = 0
+                                self._track_valid = False
+                        else:
+                            self._track_valid = False
 
                     next_state = loom_update_crossing_state(
                         crossing_line_src=self.crossing_line_src,
                         center_src=self.last_center_src,
                         prev=self.crossing_state,
+                        track_valid=self._track_valid,
                     )
+
                     self.crossing_state = next_state
                     zone_state = next_state.state
                     event_label = next_state.last_event or ""
@@ -988,6 +1008,34 @@ class LoomCameraModule(Module):
             px = int(round(cx * sx))
             py = int(round(cy * sy))
             cv2.circle(m.array, (px, py), 5, dot_bgr, -1, cv2.LINE_AA)
+
+            # Track square
+            draw_square = bool(self.config.get("loom_tracking.draw_track_square", True))
+            square_size_src = int(self.config.get("loom_tracking.track_square_size_src", 150))
+
+            if draw_square and self.last_center_src is not None and square_size_src > 0:
+                cx_src, cy_src = self.last_center_src
+
+                half = square_size_src / 2.0
+                x0 = int(round(cx_src - half))
+                y0 = int(round(cy_src - half))
+                x1 = int(round(cx_src + half))
+                y1 = int(round(cy_src + half))
+
+                # Scale to current stream for drawing (main vs lores)
+                x0 = int(round(x0 * sx))
+                y0 = int(round(y0 * sy))
+                x1 = int(round(x1 * sx))
+                y1 = int(round(y1 * sy))
+
+                # Clip to frame
+                x0 = int(np.clip(x0, 0, w - 1))
+                y0 = int(np.clip(y0, 0, h - 1))
+                x1 = int(np.clip(x1, 0, w - 1))
+                y1 = int(np.clip(y1, 0, h - 1))
+
+                rect_bgr = tuple(overlay_cfg.get("rect_bgr", [0, 255, 255]))
+                cv2.rectangle(m.array, (x0, y0), (x1, y1), rect_bgr, thickness, cv2.LINE_AA)
 
         # State label
         state = self.crossing_state.state

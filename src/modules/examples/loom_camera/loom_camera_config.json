@@ -26,12 +26,16 @@
     "close_px": 7,
     "open_px": 5,
     "min_area_px": 50,
-    "patience_frames": 10,
+    "patience_frames": 1000,
+    "hold_forever_when_still": true,
     "smoothing_alpha": 0.3,
+    "track_square_size_src": 150,
+    "draw_track_square": true,
     "overlay": {
       "enabled": true,
       "line_bgr": [0, 255, 0],
       "roi_bgr": [255, 0, 255],
+      "rect_bgr": [0, 255, 255],
       "dot_bgr": [0, 0, 255],
       "thickness": 2
     }

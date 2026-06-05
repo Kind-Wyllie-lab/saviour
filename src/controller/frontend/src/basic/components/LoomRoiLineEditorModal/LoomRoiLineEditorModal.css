@@ -1,0 +1,47 @@
+/* Big modal dedicated to ROI editing */
+.loom-roi-modal {
+  width: min(96vw, 1600px) !important;
+  max-width: min(96vw, 1600px) !important;
+  height: min(92vh, 950px) !important;
+  max-height: min(92vh, 950px) !important;
+  overflow: hidden;
+  padding: 16px;
+}
+
+/* Make the content area fill the modal */
+.loom-roi-modal__content {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 14px;
+  height: calc(100% - 80px);
+}
+
+/* Image area scroll-free, canvas overlay works */
+.loom-roi-modal__viewer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #111;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Make image fit the available height (not just width) */
+.loom-roi-modal__viewer img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* critical: big view without distortion */
+  display: block;
+}
+
+.loom-roi-modal__viewer canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.loom-roi-modal__sidebar {
+  overflow: auto;
+}

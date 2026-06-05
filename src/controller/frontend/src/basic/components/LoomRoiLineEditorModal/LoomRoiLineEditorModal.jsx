@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import "./LoomRoiLineEditorModal.css";
 
 /**
  * Interactive ROI (4 points) + vertical line selection over a camera snapshot.
@@ -20,6 +21,40 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
   const [phase, setPhase] = useState("polygon"); // 'polygon' | 'line' | 'done'
   const [status, setStatus] = useState("");
 
+  const canvasEventToImagePixel = (e) => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    // Display size of canvas
+    const W = rect.width;
+    const H = rect.height;
+
+    // Natural (intrinsic) image size
+    const nW = img.naturalWidth;
+    const nH = img.naturalHeight;
+
+    // How the image is fitted into the viewer (contain)
+    const scale = Math.min(W / nW, H / nH);
+    const dispW = nW * scale;
+    const dispH = nH * scale;
+    const offX = (W - dispW) / 2;
+    const offY = (H - dispH) / 2;
+
+    // Reject clicks outside the actual image region
+    if (cx < offX || cx > offX + dispW || cy < offY || cy > offY + dispH) {
+      return null;
+    }
+
+    const ix = (cx - offX) / scale;
+    const iy = (cy - offY) / scale;
+    return { x: ix, y: iy, imageWidth: nW, imageHeight: nH };
+  };
+
   const baseUrl = useMemo(() => {
     if (!moduleIp) return null;
     return `http://${moduleIp}:8080`;
@@ -36,13 +71,27 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
     const img = imgRef.current;
     if (!canvas || !img) return;
 
-    const w = img.clientWidth;
-    const h = img.clientHeight;
-    canvas.width = w;
-    canvas.height = h;
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    canvas.width = W;
+    canvas.height = H;
+
+    const nW = img.naturalWidth || 1;
+    const nH = img.naturalHeight || 1;
+
+    const scale = Math.min(W / nW, H / nH);
+    const dispW = nW * scale;
+    const dispH = nH * scale;
+    const offX = (W - dispW) / 2;
+    const offY = (H - dispH) / 2;
+
+    const toViewer = (p) => ({
+      x: offX + p.x * scale,
+      y: offY + p.y * scale
+    });
 
     const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, W, H);
 
     // polygon
     if (points.length) {
@@ -50,34 +99,40 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
       ctx.fillStyle = "rgba(0,255,0,0.12)";
       ctx.lineWidth = 2;
 
+      const p0 = toViewer(points[0]);
       ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < points.length; i++) {
+        const pi = toViewer(points[i]);
+        ctx.lineTo(pi.x, pi.y);
+      }
       if (points.length >= 3) ctx.closePath();
       ctx.stroke();
       if (points.length >= 3) ctx.fill();
 
-      // points
       ctx.fillStyle = "red";
       for (const p of points) {
+        const pv = toViewer(p);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI);
+        ctx.arc(pv.x, pv.y, 4, 0, 2 * Math.PI);
         ctx.fill();
       }
     }
 
-    // vertical line
+    // line
     if (lineX != null) {
+      const xV = offX + lineX * scale;
       ctx.strokeStyle = "yellow";
       ctx.lineWidth = 2;
       ctx.setLineDash([8, 6]);
       ctx.beginPath();
-      ctx.moveTo(lineX, 0);
-      ctx.lineTo(lineX, h);
+      ctx.moveTo(xV, offY);
+      ctx.lineTo(xV, offY + dispH);
       ctx.stroke();
       ctx.setLineDash([]);
     }
   };
+
 
   useEffect(() => {
     if (!open) return;
@@ -95,30 +150,24 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
 
   const handleClick = (e) => {
     if (phase === "done") return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const p = canvasEventToImagePixel(e);
+    if (!p) return;
 
     if (phase === "polygon") {
-      const next = [...points, { x, y }];
+      const next = [...points, { x: p.x, y: p.y }];
       setPoints(next);
       if (next.length === 4) setPhase("line");
     } else if (phase === "line") {
-      setLineX(x);
+      setLineX(p.x);
       setPhase("done");
     }
   };
 
   const handleMove = (e) => {
     if (phase !== "line") return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    setLineX(x);
+    const p = canvasEventToImagePixel(e);
+    if (!p) return;
+    setLineX(p.x);
   };
 
   const handleSave = async () => {
@@ -135,12 +184,14 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
       return;
     }
 
+    // const img = imgRef.current;
     const payload = {
-      image_size: { width: img.clientWidth, height: img.clientHeight },
+      image_size: { width: img.naturalWidth, height: img.naturalHeight },
       arena_polygon: points.map(p => ({ x: p.x, y: p.y })),
       crossing_line: { kind: "vertical", x: lineX, direction: "left_is_in" },
       created: new Date().toISOString()
     };
+
 
     try {
       setStatus("Saving…");
@@ -164,61 +215,34 @@ export default function LoomRoiLineEditorModal({ moduleIp, open, onClose }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ width: "min(1100px, 96vw)" }} onClick={e => e.stopPropagation()}>
-        <h3>Set Loom ROI + Crossing Line</h3>
-        <p className="modal-subtext">
-          Step 1: click 4 polygon points. Step 2: move mouse + click to set vertical line.
-        </p>
+    <div className="modal loom-roi-modal" onClick={e => e.stopPropagation()}>
+      <h3>Set Loom ROI + Crossing Line</h3>
+      <p className="modal-subtext">
+        Step 1: click 4 polygon points. Step 2: move mouse + click to set vertical line.
+      </p>
 
-        <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
-          <div style={{ position: "relative", width: "100%" }}>
-            <img
-              ref={imgRef}
-              src={snapshotUrl}
-              alt="snapshot"
-              onLoad={redraw}
-              style={{ width: "100%", height: "auto", display: "block", borderRadius: "6px" }}
-            />
-            <canvas
-              ref={canvasRef}
-              onClick={handleClick}
-              onMouseMove={handleMove}
-              style={{
-                position: "absolute",
-                left: 0, top: 0,
-                width: "100%", height: "100%",
-                cursor: phase === "polygon" ? "crosshair" : "col-resize"
-              }}
-            />
-          </div>
+      <div className="loom-roi-modal__content">
+        <div className="loom-roi-modal__viewer">
+          <img
+            ref={imgRef}
+            src={snapshotUrl}
+            alt="snapshot"
+            onLoad={redraw}
+          />
+          <canvas
+            ref={canvasRef}
+            onClick={handleClick}
+            onMouseMove={handleMove}
+            style={{ cursor: phase === "polygon" ? "crosshair" : "col-resize" }}
+          />
+        </div>
 
-          <div style={{ minWidth: "260px" }}>
-            <div><strong>Phase:</strong> {phase}</div>
-            <div><strong>Points:</strong> {points.length}/4</div>
-            <div><strong>Line X:</strong> {lineX == null ? "—" : lineX.toFixed(1)}</div>
-
-            <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button className="copy-btn" type="button" onClick={() => setSnapshotKey(k => k + 1)}>
-                Refresh snapshot
-              </button>
-              <button className="copy-btn" type="button" onClick={() => { setPoints([]); setLineX(null); setPhase("polygon"); }}>
-                Reset
-              </button>
-            </div>
-
-            <div style={{ marginTop: "10px", display: "flex", gap: "8px" }}>
-              <button className="save-button" type="button" onClick={handleSave}>
-                Save ROI
-              </button>
-              <button className="reset-button" type="button" onClick={onClose}>
-                Close
-              </button>
-            </div>
-
-            {status && <div className="sensor-mode-info" style={{ marginTop: "10px" }}>{status}</div>}
-          </div>
+        <div className="loom-roi-modal__sidebar">
+          {/* keep your sidebar controls here */}
         </div>
       </div>
     </div>
+  </div>
+
   );
 }

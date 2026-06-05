@@ -193,10 +193,17 @@ export default function LoomRoiLineEditorModal({ moduleIp, moduleId, open, onClo
     setLineX(p.x);
   };
 
-  const handleSave = async () => {
-    if (!moduleId) return;
+  const handleSave = () => {
+    if (!moduleId) {
+      setStatus("No moduleId provided.");
+      return;
+    }
+
     const img = imgRef.current;
-    if (!img) return;
+    if (!img) {
+      setStatus("No snapshot loaded yet.");
+      return;
+    }
 
     if (points.length < 3) {
       setStatus("Need at least 3 polygon points.");
@@ -214,51 +221,64 @@ export default function LoomRoiLineEditorModal({ moduleIp, moduleId, open, onClo
       created: new Date().toISOString(),
     };
 
-    try {
-      setStatus("Saving…");
-      socket.emit("send_command", {
-        module_id: moduleId,
-        type: "set_loom_roi",
-        params: { payload },
-      });
-    } catch (err) {
-      setStatus(`Save failed: ${String(err)}`);
-    }
+    setStatus("Saving…");
+
+    socket.emit("send_command", {
+      module_id: moduleId,
+      type: "set_loom_roi",
+      params: { payload },   // IMPORTANT: kwargs on python side
+    });
   };
 
 
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-    <div className="modal loom-roi-modal" onClick={e => e.stopPropagation()}>
-      <h3>Set Loom ROI + Crossing Line</h3>
-      <p className="modal-subtext">
-        Step 1: click 4 polygon points. Step 2: move mouse + click to set vertical line.
-      </p>
-
-      <div className="loom-roi-modal__content">
-        <div className="loom-roi-modal__viewer">
-          <img
-            ref={imgRef}
-            src={snapshotUrl}
-            alt="snapshot"
-            onLoad={redraw}
-          />
-          <canvas
-            ref={canvasRef}
-            onClick={handleClick}
-            onMouseMove={handleMove}
-            style={{ cursor: phase === "polygon" ? "crosshair" : "col-resize" }}
-          />
-        </div>
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal loom-roi-modal" onClick={e => e.stopPropagation()}>
+          <h3>Set Loom ROI + Crossing Line</h3>
+          <p className="modal-subtext">
+            Step 1: click 4 polygon points. Step 2: move mouse + click to set vertical line.
+          </p>
+          <div className="loom-roi-modal__content">
+            <div className="loom-roi-modal__viewer">
+              <img
+                  ref={imgRef}
+                  src={snapshotUrl}
+                  alt="snapshot"
+                  onLoad={redraw}
+              />
+              <canvas
+                  ref={canvasRef}
+                  onClick={handleClick}
+                  onMouseMove={handleMove}
+                  style={{ cursor: phase === "polygon" ? "crosshair" : "col-resize" }}
+              />
+            </div>
 
         <div className="loom-roi-modal__sidebar">
-          {/* keep your sidebar controls here */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <button className="copy-btn" type="button" onClick={() => setSnapshotKey(k => k + 1)}>
+              Refresh snapshot
+            </button>
+
+            <button className="copy-btn" type="button" onClick={() => { setPoints([]); setLineX(null); setPhase("polygon"); }}>
+              Reset selection
+            </button>
+
+            <button className="save-button" type="button" onClick={handleSave}>
+              Save ROI
+            </button>
+
+            <button className="reset-button" type="button" onClick={onClose}>
+              Close
+            </button>
+
+            {status && <div className="sensor-mode-info">{status}</div>}
+          </div>
+        </div>
+          </div>
         </div>
       </div>
-    </div>
-  </div>
-
   );
-}
+};

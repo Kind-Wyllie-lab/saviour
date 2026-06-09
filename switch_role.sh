@@ -77,9 +77,10 @@ ask_module_type() {
         echo "2) MICROPHONE - Audiomoth module that can support up to 4 connected microphones"
         echo "3) TTL - TTL pulse generating and capturing module (e.g. for syncing with Open Ephys)"
         echo "4) RFID - For gathering data from RFID transponders (NOT YET IMPLEMENTED)"
-        echo "5) APA CAMERA - Top mounted camera module that tracks rat location"
+        echo "5) APA CAMERA - Top mounted camera module that tracks rat location against a radial shock zone in APA task"
         echo "6) APA RIG - Arduino module that drives rig motor and shock generator"
         echo "7) SOUND - HifiBerry sound producing module that can drive speakers"
+        echo "8) LOOM CAMERA - Top mounted tracking camera module for loom task"
         echo ""
 
         while true; do
@@ -111,6 +112,10 @@ ask_module_type() {
                     ;;
                 7)
                     DEVICE_TYPE="sound"
+                    break
+                    ;;
+                8)
+                    DEVICE_TYPE="loom_camera"
                     break
                     ;;
                 *)

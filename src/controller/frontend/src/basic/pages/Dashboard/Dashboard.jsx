@@ -43,7 +43,7 @@ function Dashboard() {
     ? moduleList
     : moduleList.filter(m => m.group === selectedGroup);
 
-  const cameraModules = visibleModules.filter(m => m.type === "camera");
+  const cameraModules = visibleModules.filter(m => m.type?.includes("camera"));
   const micModules    = visibleModules.filter(m => m.type === "microphone");
   const ttlModules    = visibleModules.filter(m => m.type === "ttl");
 

@@ -6,6 +6,7 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
+import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
 
 // Presets for HQ Camera (IMX477) — fixed-focus, max 4056×3040
 const HQ_PRESETS = [
@@ -58,6 +59,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [applyAllConfirm, setApplyAllConfirm] = useState(null); // { section, label }
   const [hasSaved, setHasSaved] = useState(false);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
+  const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -211,7 +213,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
       sensor_mode_index, width, height, fps,
       overlay_timestamp, text_size,
       monochrome, brightness, gain, manual_exposure, exposure_time, overlay_framerate_on_preview,
-      bitrate_mb, autofocus_mode, lens_position, sync_mode, livestream_quality,
+      bitrate_mb, autofocus_mode, lens_position, sync_mode, sync_lock_exposure, sync_lock_awb, livestream_quality,
       ...rest
     } = formData.camera;
     return { ...formData, camera: rest };
@@ -445,6 +447,22 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ between cameras.
             </div>
           )}
+          {currentSyncMode !== "none" && (
+            <>
+              <div className="form-field">
+                <label>Lock exposure:</label>
+                <input type="checkbox"
+                  checked={cam.sync_lock_exposure ?? false}
+                  onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
+              </div>
+              <div className="form-field">
+                <label>Lock white balance:</label>
+                <input type="checkbox"
+                  checked={cam.sync_lock_awb ?? false}
+                  onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
+              </div>
+            </>
+          )}
 
           {/* ── Overlays ── */}
           <div className="form-field">
@@ -548,8 +566,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         </div>
 
         <div className="livestream-wrapper">
+          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
+              Set ROI / Line
+            </button>
+          </div>
           <LivestreamCard module={module} />
         </div>
+
+        <LoomRoiLineEditorModal
+          moduleIp={module.ip}
+          moduleId={module.id}
+          open={showLoomRoiEditor}
+          onClose={() => setShowLoomRoiEditor(false)}
+        />
+
       </div>
 
       <div className="update-button-wrapper">

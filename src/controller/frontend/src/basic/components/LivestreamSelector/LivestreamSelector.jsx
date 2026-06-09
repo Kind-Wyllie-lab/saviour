@@ -6,7 +6,7 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 function LivestreamSelector({ modules }) {
     // Filter camera modules
     const cameraModules = (modules || []).filter(
-        (m) => m.type === "camera"
+        (m) => m.type?.includes("camera")
     );
 
     const [selectedId, setSelectedId] = useState("");

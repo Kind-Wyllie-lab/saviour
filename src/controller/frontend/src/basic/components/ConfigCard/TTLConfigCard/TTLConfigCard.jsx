@@ -9,7 +9,7 @@ import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
-const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom"]);
+const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
 
 function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);

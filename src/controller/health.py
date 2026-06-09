@@ -206,6 +206,8 @@ class Health:
                 'probe_count': 0,
                 'last_probe_time': None,
                 'last_confirmed_online': None,
+                'last_ptp_restart': now,
+                'ptp_restarts': 1,
             }
 
 

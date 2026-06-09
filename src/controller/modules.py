@@ -130,7 +130,6 @@ class Modules:
 
     def module_discovery(self, module: Module) -> None:
         """Called by Network when zeroconf reports a new or updated module."""
-        self.logger.info(f"Adding new module {module.id}")
         action = "Updating" if module.id in self._modules else "Adding new"
         self.logger.info(f"{action} module {module.id}")
         self.add_module(module)

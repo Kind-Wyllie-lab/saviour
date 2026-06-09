@@ -41,6 +41,7 @@
     "recording": {
         "_recording_filetype": "flac"
     },
+    "audiomoth_labels": {},
     "_recording_folder": "rec",
     "_auto_export": true
 }

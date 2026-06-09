@@ -198,6 +198,8 @@ class CameraModule(Module):
                 "camera.height",
                 "camera.bitrate_mb",
                 "camera.sync_mode",
+                "camera.sync_lock_exposure",
+                "camera.sync_lock_awb",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -329,6 +331,12 @@ class CameraModule(Module):
                     else lc.rpi.SyncModeEnum.Client
                 )
                 self.logger.info(f"Camera sync mode: {sync_mode_str}")
+                if self.config.get("camera.sync_lock_exposure", False):
+                    controls["AeEnable"] = False
+                    self.logger.info("AEC disabled (sync_lock_exposure)")
+                if self.config.get("camera.sync_lock_awb", False):
+                    controls["AwbEnable"] = False
+                    self.logger.info("AWB disabled (sync_lock_awb)")
 
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
@@ -378,7 +386,7 @@ class CameraModule(Module):
         self._current_csv_path = f"{stem}_timestamps.csv"
         self._timestamp_csv_file = open(self._current_csv_path, "w", newline="")
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
-        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before"])
+        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before", "sync_lag_us", "exposure_time_us", "analogue_gain", "colour_gain_r", "colour_gain_b"])
         self._frame_id = 0
         self._csv_prev_ns = None
         self.facade.add_session_file(self._current_csv_path)
@@ -626,8 +634,13 @@ class CameraModule(Module):
                 else:
                     delta_ms = ""
                     dropped_before = ""
+                meta = req.get_metadata()
+                sync_lag_us = meta.get("SyncTimer", "")
+                exposure_time_us = meta.get("ExposureTime", "")
+                analogue_gain = meta.get("AnalogueGain", "")
+                colour_gains = meta.get("ColourGains") or ("", "")
                 self._csv_prev_ns = timestamp
-                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc, delta_ms, dropped_before])
+                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc, delta_ms, dropped_before, sync_lag_us, exposure_time_us, analogue_gain, colour_gains[0], colour_gains[1]])
                 self._frame_id += 1
 
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds

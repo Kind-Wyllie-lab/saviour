@@ -7,7 +7,7 @@ import { usePrefersDarkMode } from "/src/hooks/usePrefersDarkMode";
 import Sidebar from "/src/basic/components/Sidebar/Sidebar";
 import Recording from "/src/basic/pages/Recording/Recording";
 import Settings from "/src/basic/pages/Settings/Settings";
-
+import System from "/src/basic/pages/System/System";
 
 import Dashboard from "/src/acoustic_startle/pages/AcousticStartleDashboard/AcousticStartleDashboard";
 
@@ -18,6 +18,7 @@ const pages = [
     { label: "Dashboard", path: "/" },
     { label: "Settings", path: "/settings" },
     { label: "Recording", path: "/recording" },
+    { label: "System", path: "/system" },
 ];
 
 
@@ -37,6 +38,7 @@ function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/recording" element={<Recording />} />
+                <Route path="/system" element={<System />} />
             </Routes>
             </div>
         </div>

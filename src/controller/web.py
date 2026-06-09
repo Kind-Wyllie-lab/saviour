@@ -1169,12 +1169,19 @@ class Web(ABC):
                             "sensor_model": status.get("sensor_model", ""),
                             "has_autofocus": status.get("has_autofocus", False),
                         })
+                    elif command == "list_audiomoths":
+                        self.socketio.emit("audiomoth_list_response", {
+                            "module_id": module_id,
+                            "audiomoths": status.get("audiomoths", {}),
+                        })
                     elif command == "update_saviour":
                         self.socketio.emit("module_update_result", {
                             "module_id": module_id,
                             "success": status.get("result") == "success",
                             "output": status.get("output", ""),
                         })
+                    else:
+                        self.handle_special_module_status(module_id, status)
 
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)

@@ -61,6 +61,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved]                 = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null);
+  const [discoveredSerials, setDiscoveredSerials] = useState([]);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
@@ -106,10 +107,10 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     ? "Time window must be 60 s or less"
     : null;
 
-  // Strip monitoring and audiomoth sections — rendered manually below
+  // Strip manually-rendered sections so ConfigFields doesn't duplicate them
   const configFieldsData = (() => {
     if (!formData) return formData;
-    const { monitoring: _m, audiomoth: _a, ...rest } = formData;
+    const { monitoring: _m, audiomoth: _a, audiomoth_labels: _al, ...rest } = formData;
     return rest;
   })();
 
@@ -119,6 +120,15 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
+    socket.emit("send_command", { module_id: module.id, type: "list_audiomoths", params: {} });
+
+    const onAudiomothList = (data) => {
+      if (data.module_id === module.id) {
+        setDiscoveredSerials(Object.keys(data.audiomoths ?? {}));
+      }
+    };
+    socket.on("audiomoth_list_response", onAudiomothList);
+    return () => socket.off("audiomoth_list_response", onAudiomothList);
   }, [module.id]);
 
   const handlePaste = () => {
@@ -158,6 +168,19 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       return cloned;
     });
   };
+
+  const handleLabelChange = (serial, value) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      if (!cloned.audiomoth_labels) cloned.audiomoth_labels = {};
+      cloned.audiomoth_labels[serial] = value;
+      return cloned;
+    });
+  };
+
+  // Show discovered serials plus any already-labelled serials (for disconnected devices)
+  const allLabelledSerials = Object.keys(formData?.audiomoth_labels ?? {});
+  const allSerials = [...new Set([...discoveredSerials, ...allLabelledSerials])];
 
   const sections   = Object.keys(filterPrivateKeys(formData) ?? {}).filter(
     k => formData[k] !== null && typeof formData[k] === "object"
@@ -323,6 +346,30 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               </div>
             </fieldset>
           )}
+
+          {/* ── AudioMoth labels ── */}
+          <fieldset className="nested-fieldset">
+            <legend className="nested-fieldset-legend">audiomoth labels</legend>
+            <div className="nested">
+              {allSerials.length === 0 ? (
+                <div className="sensor-mode-info sensor-mode-info--muted">
+                  No AudioMoths discovered — connect devices and refresh
+                </div>
+              ) : allSerials.map(serial => (
+                <div key={serial} className="form-field">
+                  <label title={serial}>
+                    {discoveredSerials.includes(serial) ? serial : `${serial} (disconnected)`}:
+                  </label>
+                  <input
+                    type="text"
+                    value={formData?.audiomoth_labels?.[serial] ?? ""}
+                    placeholder={serial}
+                    onChange={e => handleLabelChange(serial, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </fieldset>
 
           <div className="filesize-preview">
             ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz

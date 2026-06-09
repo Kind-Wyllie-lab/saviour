@@ -269,6 +269,22 @@ class ControllerFacade():
 
 
     def module_discovery(self, module):
+        # If a module at the same IP exists under a different ID, the device has
+        # changed role (switch_role.sh) or its IP was reassigned by DHCP. A device
+        # can only be one thing at a time, so evict the old entry — the new mDNS
+        # announcement is proof the old identity is gone. _remove_module cleans up
+        # both modules and health tracking in one call.
+        if module.ip:
+            for existing_id, existing in list(self.controller.modules._modules.items()):
+                if existing.ip == module.ip and existing_id != module.id:
+                    self.logger.info(
+                        f"New module {module.id} at {module.ip} displacing "
+                        f"{'online' if existing.online else 'offline'} "
+                        f"{existing_id} — auto-removing"
+                    )
+                    self.controller._remove_module(existing_id)
+                    break
+
         self.controller.modules.module_discovery(module)
         self.controller.health.module_discovery(module)
         # Fetch config immediately so module name is known before any card is opened

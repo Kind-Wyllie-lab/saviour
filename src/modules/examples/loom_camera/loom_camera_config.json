@@ -1,0 +1,60 @@
+{
+  "camera": {
+    "monochrome": false,
+    "sensor_mode_index": 0,
+    "width": 1080,
+    "height": 1080,
+    "fps": 30,
+    "overlay_timestamp": true,
+    "text_size": "medium",
+    "gain": 1,
+    "manual_exposure": false,
+    "exposure_time": 10000,
+    "brightness": 0,
+    "overlay_framerate_on_preview": false,
+    "bitrate_mb": 2,
+    "autofocus_mode": "manual",
+    "lens_position": 0.0
+  },
+  "loom_tracking": {
+    "enabled": true,
+    "roi_json_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_roi_and_line.json",
+    "process_width": 256,
+    "thr_hi": 10.0,
+    "gap_h_px": 15,
+    "gap_v_px": 15,
+    "close_px": 7,
+    "open_px": 5,
+    "min_area_px": 50,
+    "patience_frames": 1000,
+    "hold_forever_when_still": true,
+    "smoothing_alpha": 0.3,
+    "track_square_size_src": 150,
+    "draw_track_square": true,
+    "overlay": {
+      "enabled": true,
+      "line_bgr": [0, 255, 0],
+      "roi_bgr": [255, 0, 255],
+      "rect_bgr": [0, 255, 255],
+      "dot_bgr": [0, 0, 255],
+      "thickness": 2
+    }
+  },
+  "loom_stimulus": {
+  "enabled": true,
+  "texture_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png",
+  "initial_size_cm": 6.0,
+  "final_size_cm": 40.0,
+  "initial_pos_ndc": [0.5, 0.0],
+  "final_pos_ndc": [0.5, 0.0],
+  "travel_time_s": 5.0,
+  "loom_wait_time_s": 0.5,
+  "round_size": 5,
+  "image_angle_deg": 90.0,
+  "background_rgba": [0.5, 0.5, 0.5, 0.5]
+  },
+
+  "recording": {
+    "_recording_filetype": "ts"
+  }
+}

@@ -19,6 +19,7 @@
             "None",
             "pseudorandom",
             "experiment_clock",
+            "interval_pulse",
             "input"
         ],
         "_mode_settings_schema": {
@@ -30,6 +31,11 @@
             "_experiment_clock": {
                 "_duty_cycle": {"type": "float", "min": 0.1, "max": 1.0, "default": "0.75"},
                 "_period": {"type": "float", "default": 1}
+            },
+            "_interval_pulse": {
+                "_interval_s": {"type": "float", "min": 0.001, "default": 120.0, "description": "Onset-to-onset period in seconds (e.g. 120 = every 2 minutes)"},
+                "_pulse_duration_s": {"type": "float", "min": 0.001, "default": 0.02, "description": "Pulse width in seconds (e.g. 0.02 = 20 ms)"},
+                "_repeat_count": {"type": "int", "min": 0, "default": 15, "description": "Number of pulses to deliver; 0 = run until recording stops"}
             },
             "_input": {
                 "_debounce_ms": {"type": "int", "min": 0, "default": 50}

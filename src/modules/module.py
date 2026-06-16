@@ -343,15 +343,11 @@ class Module(ABC):
         self.logger.info(f"Network manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"Module will now initialize the necessary managers")
         
-        # Check if we're already connected to this controller
-        if (self.communication.controller_ip == controller_ip and 
-            self.communication.controller_port == controller_port):
-            self.logger.info("Already connected to this controller")
-            return
-            
-        # If we're connected to a different controller, disconnect first
+        # If already connected to any controller (same or different), tear down
+        # cleanly before re-initialising.  A same-IP update means the controller
+        # restarted; its ZMQ sockets are new and we must reconnect from scratch.
         if self.communication.controller_ip:
-            self.logger.info("Connected to different controller, disconnecting first")
+            self.logger.info("Existing controller connection found, disconnecting before reconnecting")
             self.controller_disconnected()
             
         try:

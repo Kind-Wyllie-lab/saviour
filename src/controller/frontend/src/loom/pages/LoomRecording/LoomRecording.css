@@ -28,19 +28,6 @@
 .loom-recording-sessions { grid-column: 2; grid-row: 1; }
 .loom-recording-modules  { grid-column: 2; grid-row: 2; }
 
-/* ── Header row: title + stage toggle ───────────────────────────────────── */
-
-.loom-recording-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.loom-recording-header h2 {
-  margin: 0;
-}
-
 /* ── Stage scope line ───────────────────────────────────────────────────── */
 
 .loom-recording-scope {

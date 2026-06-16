@@ -84,7 +84,7 @@ ask_module_type() {
         echo ""
 
         while true; do
-            read -p "Enter your choice (1-7): " choice
+            read -p "Enter your choice (1-8): " choice
             case $choice in
                 1)
                     DEVICE_TYPE="camera"
@@ -133,10 +133,11 @@ ask_controller_type() {
         echo "2) APA - Active Place Avoidance"
         echo "3) Habitat"
         echo "4) Acoustic Startle"
+        echo "5) Loom"
         echo ""
 
         while true; do
-            read -p "Enter your choice (1-4): " choice
+            read -p "Enter your choice (1-5): " choice
             case $choice in
                 1)
                     DEVICE_TYPE="basic"
@@ -154,8 +155,12 @@ ask_controller_type() {
                     DEVICE_TYPE="acoustic_startle"
                     break
                     ;;
+                5)
+                    DEVICE_TYPE="loom"
+                    break
+                    ;;
                 *)
-                    echo "Invalid choice. Please enter 1-4."
+                    echo "Invalid choice. Please enter 1-5."
                     ;;
             esac
         done

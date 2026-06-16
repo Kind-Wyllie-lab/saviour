@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import socket from "/src/socket";
 import "./LoomRecording.css";
 
-import { useLoomStage, StageToggle, CAMERA_TYPES, HABITUATION_GROUP } from "/src/loom/LoomStageContext";
+import { useLoomStage, CAMERA_TYPES, HABITUATION_GROUP } from "/src/loom/LoomStageContext";
 import useModules from "/src/hooks/useModules";
 import useSessions from "/src/hooks/useSessions";
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
@@ -81,10 +81,7 @@ export default function LoomRecording() {
       <div className="loom-recording-layout">
 
         <div className="loom-recording-form card">
-          <div className="loom-recording-header">
-            <h2>New Session</h2>
-            <StageToggle />
-          </div>
+          <h2>New Session</h2>
 
           <p className="loom-recording-scope">
             <span className={`loom-recording-scope-dot loom-recording-scope-dot--${stage}`} />

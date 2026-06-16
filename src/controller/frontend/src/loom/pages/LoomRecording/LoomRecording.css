@@ -1,0 +1,101 @@
+.loom-recording-page {
+  width: 100%;
+  min-height: 100%;
+  padding: 24px 32px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.loom-recording-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 24px;
+  align-items: start;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.loom-recording-form {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+}
+
+.loom-recording-sessions { grid-column: 2; grid-row: 1; }
+.loom-recording-modules  { grid-column: 2; grid-row: 2; }
+
+/* ── Header row: title + stage toggle ───────────────────────────────────── */
+
+.loom-recording-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.loom-recording-header h2 {
+  margin: 0;
+}
+
+/* ── Stage scope line ───────────────────────────────────────────────────── */
+
+.loom-recording-scope {
+  margin: 0;
+  font-size: 0.88em;
+  color: var(--secondary-text-color);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.loom-recording-scope-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.loom-recording-scope-dot--habituation { background: #4a8fd4; }
+.loom-recording-scope-dot--loom        { background: #d4950a; }
+
+/* ── Session name preview ───────────────────────────────────────────────── */
+
+.loom-recording-preview {
+  font-size: 0.84em;
+  color: var(--secondary-text-color);
+  word-break: break-all;
+}
+
+/* ── Warnings ───────────────────────────────────────────────────────────── */
+
+.loom-recording-warning {
+  margin: 0;
+  font-size: 0.85em;
+  color: #c0580a;
+}
+
+/* ── Action buttons ─────────────────────────────────────────────────────── */
+
+.loom-recording-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 860px) {
+  .loom-recording-layout {
+    grid-template-columns: 1fr;
+  }
+  .loom-recording-form,
+  .loom-recording-sessions,
+  .loom-recording-modules {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}

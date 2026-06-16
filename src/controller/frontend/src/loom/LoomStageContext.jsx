@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import socket from "/src/socket";
 import "./LoomStageContext.css";
 
@@ -34,8 +34,20 @@ function pushStageConfig(stage) {
 
 export function LoomStageProvider({ children }) {
   const [stage, setStageState] = useState("habituation");
+  const stageRef = useRef("habituation");
+
+  // Push the current stage config whenever the socket connects (covers both
+  // initial page load and controller restarts) so modules always reflect the
+  // UI state rather than their own defaults.
+  useEffect(() => {
+    const onConnect = () => pushStageConfig(stageRef.current);
+    socket.on("connect", onConnect);
+    if (socket.connected) onConnect();
+    return () => socket.off("connect", onConnect);
+  }, []);
 
   const setStage = useCallback((newStage) => {
+    stageRef.current = newStage;
     setStageState(newStage);
     pushStageConfig(newStage);
   }, []);

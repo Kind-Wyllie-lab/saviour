@@ -5,6 +5,27 @@
   overflow: hidden;
 }
 
+/* ── Top bar: stage toggle + recording status ────────────────────────────── */
+
+.loom-dashboard-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--card-bg-color);
+  min-height: 38px;
+}
+
+/* Let the RecordingStatusWidget fill the rest of the bar */
+.loom-dashboard-topbar .recording-status-widget {
+  flex: 1;
+  border-bottom: none;
+  padding-left: 0;
+  background: transparent;
+}
+
 /* ── Main body ───────────────────────────────────────────────────────────── */
 
 .loom-dashboard-main {

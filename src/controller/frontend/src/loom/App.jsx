@@ -5,11 +5,12 @@ import "./App.css";
 import Sidebar from "/src/basic/components/Sidebar/Sidebar";
 import Dashboard from "/src/loom/pages/LoomDashboard/LoomDashboard";
 import Settings from "/src/basic/pages/Settings/Settings";
-import Recording from "/src/basic/pages/Recording/Recording";
+import LoomRecording from "/src/loom/pages/LoomRecording/LoomRecording";
 import System from "/src/basic/pages/System/System";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import useSessions from "/src/hooks/useSessions";
 import { usePrefersDarkMode } from "/src/hooks/usePrefersDarkMode";
+import { LoomStageProvider } from "/src/loom/LoomStageContext";
 
 document.title = "Loom";
 
@@ -58,24 +59,26 @@ function App() {
   };
 
   return (
-    <div className="app">
-      <Sidebar navItems={pages} />
-      <div className="content">
-        <Routes>
-          <Route path="/"          element={<Dashboard />} />
-          <Route path="/settings"  element={<Settings />} />
-          <Route path="/recording" element={<Recording />} />
-          <Route path="/system"    element={<System />} />
-        </Routes>
-      </div>
+    <LoomStageProvider>
+      <div className="app">
+        <Sidebar navItems={pages} />
+        <div className="content">
+          <Routes>
+            <Route path="/"          element={<Dashboard />} />
+            <Route path="/settings"  element={<Settings />} />
+            <Route path="/recording" element={<LoomRecording />} />
+            <Route path="/system"    element={<System />} />
+          </Routes>
+        </div>
 
-      {pendingFaults.length > 0 && (
-        <FaultAlertModal
-          faultedSessions={pendingFaults}
-          onAcknowledge={handleAcknowledge}
-        />
-      )}
-    </div>
+        {pendingFaults.length > 0 && (
+          <FaultAlertModal
+            faultedSessions={pendingFaults}
+            onAcknowledge={handleAcknowledge}
+          />
+        )}
+      </div>
+    </LoomStageProvider>
   );
 }
 

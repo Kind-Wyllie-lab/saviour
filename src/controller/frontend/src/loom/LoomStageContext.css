@@ -1,0 +1,41 @@
+.stage-toggle {
+  display: flex;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.stage-toggle__btn {
+  padding: 5px 14px;
+  font-size: 0.82em;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--secondary-text-color);
+  letter-spacing: 0.02em;
+  transition: background 0.15s, color 0.15s;
+}
+
+.stage-toggle__btn + .stage-toggle__btn {
+  border-left: 1px solid var(--border-color);
+}
+
+.stage-toggle__btn:hover:not(.stage-toggle__btn--active) {
+  background: var(--hover-bg-color, rgba(128, 128, 128, 0.1));
+}
+
+.stage-toggle__btn--active {
+  cursor: default;
+}
+
+.stage-toggle__btn--hab.stage-toggle__btn--active {
+  background: color-mix(in srgb, #2d6ab4 18%, var(--card-bg-color));
+  color: #4a8fd4;
+}
+
+.stage-toggle__btn--loom.stage-toggle__btn--active {
+  background: color-mix(in srgb, #c08010 18%, var(--card-bg-color));
+  color: #d4950a;
+}

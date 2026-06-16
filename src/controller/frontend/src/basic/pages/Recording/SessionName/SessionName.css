@@ -38,3 +38,10 @@
   outline: none;
   border-color: var(--accent-color);
 }
+
+.metadata-locked-value {
+  font-size: 0.9rem;
+  opacity: 0.65;
+  font-style: italic;
+  text-transform: capitalize;
+}

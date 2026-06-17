@@ -1,51 +1,46 @@
-// src/pages/Dashboard.js
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 
-// Styling and components
 import "./AcousticStartleDashboard.css";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
-import ExperimentMetadata from "/src/basic/components/ExperimentMetadata/ExperimentMetadata";
-import CommandsPanel from "/src/basic/components/CommandsPanel/CommandsPanel";
-import LivestreamSelector from "/src/basic/components/LivestreamSelector/LivestreamSelector";
-import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
+import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
+import PlaySound from "/src/acoustic_startle/components/PlaySound/PlaySound";
 
-// Hooks
 import useModules from "/src/hooks/useModules";
-import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import socket from "/src/socket";
 
-import PlaySound from "/src/acoustic_startle/components/PlaySound/PlaySound";
-import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
-
+const STREAM_PORTS = { camera: 8080, ttl: 8082 };
 
 function Dashboard() {
-  const { modules, moduleList } = useModules();
-  const { experimentName } = useExperimentTitle();
+  const { moduleList } = useModules();
 
   useEffect(() => {
-    socket.emit("get_module_configs"); // Ask backend for module configs
+    socket.emit("get_module_configs");
   }, []);
 
-  const cameraModules = (moduleList || []).filter((m) => m.type === "camera");
-  const ttlModules = (moduleList || []).filter((m) => m.type === "ttl");
+  const cameraModules = (moduleList || []).filter((m) => m.type?.includes("camera"));
+  const ttlModules    = (moduleList || []).filter((m) => m.type === "ttl");
 
   return (
     <main className="dashboard">
       <div className="dashboard-left">
         {cameraModules.map((m) => (
-          <LivestreamCard module={ m } />
+          <MJPEGStreamCard
+            key={m.id}
+            ip={m.ip}
+            port={STREAM_PORTS.camera}
+            label={m.name}
+            isRecording={m.status === "RECORDING"}
+          />
         ))}
       </div>
       <div className="dashboard-right">
-        <ModuleList modules = {moduleList} />
-        {/* <ExperimentMetadata experimentName={experimentName} />
-        <CommandsPanel modules={moduleList} experimentName={experimentName} /> */}
+        <ModuleList modules={moduleList} />
         <PlaySound modules={moduleList} />
         {ttlModules.map((m) => (
           <MJPEGStreamCard
             key={m.id}
             ip={m.ip}
-            port={8082}
+            port={STREAM_PORTS.ttl}
             label={`${m.name} — TTL`}
             isRecording={m.status === "RECORDING"}
           />

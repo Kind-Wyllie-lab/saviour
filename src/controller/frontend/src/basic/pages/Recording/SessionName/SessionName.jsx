@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import socket from "/src/socket";
 import "./SessionName.css";
 
-function SessionName({ experimentName }) {
+function SessionName({ stageOverride }) {
   const [metadata, setMetadata] = useState({
     experimenter: "",
     experiment: "Not Set",
@@ -12,6 +12,18 @@ function SessionName({ experimentName }) {
     stage: "",
     trial: "",
   });
+
+  // When an external stage is provided (e.g. loom stage toggle), keep the
+  // metadata in sync and emit the update so the server recomputes experiment_name.
+  useEffect(() => {
+    if (stageOverride === undefined) return;
+    setMetadata((prev) => {
+      if (prev.stage === stageOverride) return prev;
+      const updated = { ...prev, stage: stageOverride };
+      socket.emit("update_experiment_metadata", updated);
+      return updated;
+    });
+  }, [stageOverride]);
 
   useEffect(() => {
     socket.emit("get_experiment_metadata");
@@ -55,14 +67,18 @@ function SessionName({ experimentName }) {
       </div>
       <div className="metadata-form-row">
         <label htmlFor="stage">Stage</label>
-        <select id="stage" value={metadata.stage} onChange={(e) => handleChange("stage", e.target.value)}>
-          <option value=""></option>
-          <option value="habituation">habituation</option>
-          <option value="training">training</option>
-          <option value="testing">testing</option>
-          <option value="probe">probe</option>
-          <option value="conflict">conflict</option>
-        </select>
+        {stageOverride !== undefined ? (
+          <span className="metadata-locked-value">{stageOverride}</span>
+        ) : (
+          <select id="stage" value={metadata.stage} onChange={(e) => handleChange("stage", e.target.value)}>
+            <option value=""></option>
+            <option value="habituation">habituation</option>
+            <option value="training">training</option>
+            <option value="testing">testing</option>
+            <option value="probe">probe</option>
+            <option value="conflict">conflict</option>
+          </select>
+        )}
       </div>
       <div className="metadata-form-row">
         <label htmlFor="trial">Trial</label>

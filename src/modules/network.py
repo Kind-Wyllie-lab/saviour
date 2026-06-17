@@ -178,11 +178,14 @@ class Network:
     def update_service(self, zeroconf, service_type, name):
         """Called when a service is updated"""
         self.logger.info(f"Service updated: {name}")
-        
-        # Treat service updates the same as new discoveries for controller services
-        # This ensures we reconnect when the controller restarts
+
         if name.endswith('._controller._tcp.local.'):
-            self.logger.info(f"Controller service updated, treating as new discovery")
+            self.logger.info("Controller service updated, forcing reconnection")
+            # Reset stored IP/port so add_service doesn't skip as "same controller".
+            # An mDNS update explicitly signals the controller changed state (e.g.
+            # restarted), even when the address is unchanged.
+            self.controller_ip = None
+            self.controller_port = None
             self.add_service(zeroconf, service_type, name)
     
 

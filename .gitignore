@@ -68,3 +68,7 @@ system_setup.log
 # Logging
 *.log
 log/
+**/var/log/
+
+# Node
+node_modules/

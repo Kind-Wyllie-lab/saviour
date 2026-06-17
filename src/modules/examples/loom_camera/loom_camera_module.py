@@ -696,8 +696,26 @@ class LoomCameraModule(Module):
     def configure_module_special(self, updated_keys: Optional[list]):
         self._configure_loom_tracking()
 
-        restart_keys = ["camera.fps", "camera.width", "camera.height", "camera.bitrate_mb"]
-        needs_restart = any(k in restart_keys for k in (updated_keys or []))
+        # Sync loom_stimulus.enabled without touching the camera pipeline.
+        new_stimulus_enabled = bool(self.config.get("loom_stimulus.enabled", True))
+        if new_stimulus_enabled != self._stimulus_enabled:
+            self._stimulus_enabled = new_stimulus_enabled
+            if not new_stimulus_enabled:
+                self._loom_stimulus.send("stop")
+
+        camera_keys = {
+            "camera.fps", "camera.width", "camera.height", "camera.bitrate_mb",
+            "camera.gain", "camera.brightness", "camera.exposure_time",
+            "camera.manual_exposure", "camera.sensor_mode_index",
+            "camera.lens_position", "camera.autofocus_mode",
+        }
+        restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb"}
+
+        # No camera keys changed — nothing more to do.
+        if updated_keys is not None and not any(k in camera_keys for k in updated_keys):
+            return
+
+        needs_restart = bool(restart_keys & set(updated_keys or []))
 
         if self.is_streaming and needs_restart:
             self.stop_streaming()
@@ -706,7 +724,10 @@ class LoomCameraModule(Module):
             time.sleep(0.2)
             self.start_streaming()
         else:
+            was_started = self.picam2.started
             self._configure_camera()
+            if was_started:
+                self.picam2.start()
 
 
     def _configure_loom_tracking(self) -> None:

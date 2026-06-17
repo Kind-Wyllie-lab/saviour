@@ -405,8 +405,11 @@ class Modules:
             state = self._config_states.get(module_id)
             if not state:
                 continue
-            true_config = state.true_config or {}
-            merged = {**true_config, section: {**true_config.get(section, {}), **section_data}}
+            # Prefer target_config over true_config so rapid back-to-back calls
+            # (e.g. loom_stimulus push followed by group push) accumulate rather
+            # than each independently overwriting the other's change.
+            base_config = state.target_config or state.true_config or {}
+            merged = {**base_config, section: {**base_config.get(section, {}), **section_data}}
             filtered = self._filter_private_keys(merged)
             self.set_target_module_config(module_id, filtered)
             targets.append((module_id, filtered))
@@ -424,13 +427,13 @@ class Modules:
         module is unknown or has no confirmed config yet.
         """
         state = self._config_states.get(module_id)
-        if not state or not state.true_config:
+        if not state or not (state.target_config or state.true_config):
             self.logger.warning(
                 f"apply_section_to_module: no confirmed config for {module_id}"
             )
             return None
-        true_config = state.true_config
-        merged = {**true_config, section: {**true_config.get(section, {}), **section_data}}
+        base_config = state.target_config or state.true_config
+        merged = {**base_config, section: {**base_config.get(section, {}), **section_data}}
         filtered = self._filter_private_keys(merged)
         self.set_target_module_config(module_id, filtered)
         return (module_id, filtered)

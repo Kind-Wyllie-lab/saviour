@@ -216,5 +216,11 @@ install_audiomoth_usb_cmd
 
 echo ""
 echo "Setup complete!"
-echo "Original repo clone in $HOME can now be removed safely."
-echo "Run: rm -rf ~/saviour"
+echo ""
+if [ -t 0 ]; then
+    echo "Launching switch_role.sh to configure this device's role..."
+    exec "$TARGET_DIR/switch_role.sh"
+else
+    echo "Next step: assign this device a role by running:"
+    echo "  $TARGET_DIR/switch_role.sh"
+fi

@@ -806,6 +806,40 @@ create_recording_folder() {
     chown -R root:root /var/lib/saviour
 }
 
+generate_ssl_cert() {
+    local ssl_dir="/etc/saviour/ssl"
+    local cert="$ssl_dir/saviour.crt"
+    local key="$ssl_dir/saviour.key"
+
+    if [ -f "$cert" ] && [ -f "$key" ]; then
+        log "SSL cert already exists at $cert — skipping generation"
+        return
+    fi
+
+    progress "Generating self-signed SSL certificate…"
+    log "Generating SSL cert for saviour.local"
+
+    mkdir -p "$ssl_dir"
+    chmod 700 "$ssl_dir"
+
+    # Detect the controller's PoE IP for the SAN (falls back to 10.0.0.1)
+    local controller_ip
+    controller_ip=$(ip -4 addr show eth0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+    controller_ip="${controller_ip:-10.0.0.1}"
+
+    openssl req -x509 -newkey rsa:2048 \
+        -keyout "$key" \
+        -out "$cert" \
+        -days 3650 -nodes \
+        -subj "/CN=saviour.local" \
+        -addext "subjectAltName=DNS:saviour.local,IP:${controller_ip}" \
+        >> "$LOG" 2>&1
+
+    chmod 600 "$key"
+    chmod 644 "$cert"
+    log "SSL cert generated (CN=saviour.local, SAN IP=${controller_ip}, expires 10 years)"
+}
+
 # ── Main configuration runner ──────────────────────────────────────────────────
 run_configuration() {
     set -e  # Any failed command inside here is a real error

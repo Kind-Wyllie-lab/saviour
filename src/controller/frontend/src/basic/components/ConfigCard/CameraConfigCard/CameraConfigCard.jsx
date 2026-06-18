@@ -566,11 +566,13 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         </div>
 
         <div className="livestream-wrapper">
-          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-            <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
-              Set ROI / Line
-            </button>
-          </div>
+          {module.type === "loom_camera" && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
+                Set ROI / Line
+              </button>
+            </div>
+          )}
           <LivestreamCard module={module} />
         </div>
 

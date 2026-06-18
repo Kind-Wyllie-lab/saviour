@@ -214,13 +214,17 @@ create_python_environment
 configure_logging
 install_audiomoth_usb_cmd
 
+# Install saviour-config as a system-wide command
+ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
+chmod +x "$TARGET_DIR/saviour-config"
+
 echo ""
 echo "Setup complete!"
 echo ""
 if [ -t 0 ]; then
-    echo "Launching switch_role.sh to configure this device's role..."
-    exec "$TARGET_DIR/switch_role.sh"
+    echo "Launching saviour-config to configure this device's role..."
+    exec "$TARGET_DIR/saviour-config"
 else
     echo "Next step: assign this device a role by running:"
-    echo "  $TARGET_DIR/switch_role.sh"
+    echo "  sudo saviour-config"
 fi

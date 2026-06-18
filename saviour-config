@@ -1,0 +1,860 @@
+#!/usr/bin/env bash
+# saviour-config — TUI for SAVIOUR device configuration
+#
+# Usage: sudo saviour-config
+#
+# Requires whiptail (pre-installed on Raspberry Pi OS).
+# Run after install.sh to assign a role, or any time to reconfigure.
+
+set -Eeuo pipefail
+
+# ── Root check ─────────────────────────────────────────────────────────────────
+if [ "$EUID" -ne 0 ]; then
+    echo "saviour-config must be run as root:  sudo saviour-config" >&2
+    exit 1
+fi
+
+if ! command -v whiptail &>/dev/null; then
+    apt-get install -y whiptail
+fi
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CONFIG_FILE="/etc/saviour/config"
+SHARENAME="controller_share"
+LOG="/var/log/saviour-config.log"
+W=72   # dialog width
+H=20   # dialog height
+
+# Globals set during configuration flow
+DEVICE_ROLE=""
+DEVICE_TYPE=""
+GATEWAY_MODE=""
+GATEWAY=""
+WAN_INTERFACE=""
+DEVICE_IP=""
+INTERFACE=""
+OCTET_A=""; OCTET_B=""; OCTET_C=""
+
+# ── Error handling ─────────────────────────────────────────────────────────────
+on_error() {
+    local rc=$? line=$1
+    whiptail --title "Error" \
+        --msgbox "\nsaviour-config failed at line $line (exit $rc).\n\nSee $LOG for details." \
+        10 $W 2>/dev/null || true
+    exit "$rc"
+}
+trap 'on_error $LINENO' ERR
+
+# ── TUI helper ─────────────────────────────────────────────────────────────────
+# Capture whiptail output: whiptail draws UI on fd2, writes selection to fd1.
+# 3>&1 1>&2 2>&3 swaps fd1 and fd2 so $() captures the selection.
+wt() { whiptail "$@" 3>&1 1>&2 2>&3; }
+
+progress() {
+    whiptail --title "Configuring…" --infobox "\n  $1" 7 $W
+}
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
+}
+
+run_logged() {
+    log "Running: $*"
+    "$@" >> "$LOG" 2>&1
+}
+
+# ── Config helpers ─────────────────────────────────────────────────────────────
+get_current_config() {
+    CURRENT_ROLE="none"
+    CURRENT_TYPE="none"
+    if [ -f "$CONFIG_FILE" ]; then
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE"
+        CURRENT_ROLE="${ROLE:-none}"
+        CURRENT_TYPE="${TYPE:-none}"
+    fi
+}
+
+write_config() {
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    tee "$CONFIG_FILE" > /dev/null <<EOF
+ROLE=${DEVICE_ROLE}
+TYPE=${DEVICE_TYPE}
+EOF
+}
+
+# ── System helpers ─────────────────────────────────────────────────────────────
+is_installed() { dpkg -s "$1" &>/dev/null; }
+
+get_mac_suffix() {
+    local mac clean
+    mac=$(cat /sys/class/net/eth0/address 2>/dev/null || echo "00:00:00:00:00:00")
+    clean="${mac//:/}"
+    echo "${clean: -4}"
+}
+
+generate_hostname() {
+    echo "${DEVICE_TYPE}-${DEVICE_ROLE}-$(get_mac_suffix)" | tr '_' '-'
+}
+
+get_python_path() {
+    local device="${DEVICE_TYPE}_${DEVICE_ROLE}"
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        PYTHON_PATH="src/controller/examples/${DEVICE_TYPE}"
+    else
+        PYTHON_PATH="src/modules/examples/${DEVICE_TYPE}"
+    fi
+    PYTHON_FILE="${device}.py"
+}
+
+detect_interface_name() {
+    INTERFACE=$(nmcli -t -f GENERAL.CONNECTION device show eth0 | cut -d: -f2-)
+}
+
+# ── Menus ──────────────────────────────────────────────────────────────────────
+main_menu() {
+    while true; do
+        get_current_config
+        local hn status
+        hn=$(hostname 2>/dev/null || echo "unknown")
+        if [ "$CURRENT_ROLE" = "none" ]; then
+            status="Not configured"
+        else
+            status="${CURRENT_TYPE} ${CURRENT_ROLE}"
+        fi
+
+        local choice
+        choice=$(wt --title " SAVIOUR Configuration " \
+            --menu "\n  Hostname : $hn\n  Role     : $status\n" \
+            $H $W 4 \
+            "configure" "Configure this device  (role / type)" \
+            "network"   "Network settings  (controller only)" \
+            "view"      "View current configuration" \
+            "exit"      "Exit") || return 0
+
+        case "$choice" in
+            configure) configure_device ;;
+            network)   network_settings ;;
+            view)      view_config ;;
+            exit)      return 0 ;;
+        esac
+    done
+}
+
+select_role() {
+    wt --title "Device Role" \
+        --menu "\nWhat role should this device play?" \
+        $H $W 2 \
+        "controller" "Central device — coordinates modules and presents the GUI" \
+        "module"     "Peripheral device — records data, reports to controller"
+}
+
+select_controller_type() {
+    wt --title "Controller Type" \
+        --menu "\nWhich experiment type does this controller run?" \
+        $H $W 5 \
+        "basic"            "Basic SAVIOUR" \
+        "apa"              "Active Place Avoidance" \
+        "habitat"          "Habitat monitoring" \
+        "acoustic_startle" "Acoustic Startle" \
+        "loom"             "Loom task"
+}
+
+select_module_type() {
+    wt --title "Module Type" \
+        --menu "\nWhat type of module is this device?" \
+        $H $W 8 \
+        "camera"       "Basic camera" \
+        "microphone"   "AudioMoth (up to 4 microphones)" \
+        "ttl"          "TTL pulse generator / capture  (Open Ephys sync)" \
+        "rfid"         "RFID transponder reader" \
+        "apa_camera"   "APA top-camera with Hailo AI tracking" \
+        "apa_arduino"  "APA Arduino rig  (motor + shock)" \
+        "sound"        "HifiBerry audio output" \
+        "loom_camera"  "Loom top-camera with tracking"
+}
+
+select_gateway_mode() {
+    local detected_gw detected_wan
+    detected_gw=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}' || true)
+    detected_wan=$(ip route show default 2>/dev/null | awk '/default/ && $5 != "eth0" {print $5; exit}' || true)
+
+    local mode
+    mode=$(wt --title "Internet Gateway" \
+        --menu "\nHow does the PoE network reach the internet?" \
+        $H $W 3 \
+        "none"       "Offline — no internet access for modules" \
+        "external"   "External router at a known IP" \
+        "controller" "This controller shares internet from wlan0 / another interface") || return 1
+
+    GATEWAY_MODE="$mode"
+    GATEWAY=""
+    WAN_INTERFACE=""
+
+    case "$mode" in
+        external)
+            GATEWAY=$(wt --title "Gateway IP" \
+                --inputbox "\nEnter the external router's IP address:" \
+                9 $W "${detected_gw:-192.168.1.1}") || return 1
+            ;;
+        controller)
+            WAN_INTERFACE=$(wt --title "WAN Interface" \
+                --inputbox "\nEnter the internet-facing interface (e.g. wlan0, eth1):" \
+                9 $W "${detected_wan:-wlan0}") || return 1
+            ;;
+    esac
+}
+
+select_controller_ip() {
+    local a b c
+    if [ "$GATEWAY_MODE" = "external" ] && [ -n "$GATEWAY" ]; then
+        IFS='.' read -r a b c _ <<< "$GATEWAY"
+    else
+        a="10"; b="0"; c="0"
+    fi
+
+    DEVICE_IP=$(wt --title "Controller IP" \
+        --inputbox "\nStatic IP for this controller's PoE interface  (format: x.x.x.x/prefix):" \
+        9 $W "$a.$b.$c.1/16") || return 1
+}
+
+configure_device() {
+    # Step 1: role
+    local role
+    role=$(select_role) || return
+
+    # Step 2: type
+    local type
+    if [ "$role" = "controller" ]; then
+        type=$(select_controller_type) || return
+    else
+        type=$(select_module_type) || return
+    fi
+
+    DEVICE_ROLE="$role"
+    DEVICE_TYPE="$type"
+
+    # Step 3: check for changes
+    get_current_config
+    if [ "$role" = "$CURRENT_ROLE" ] && [ "$type" = "$CURRENT_TYPE" ]; then
+        whiptail --title "No Changes" \
+            --msgbox "\nDevice is already configured as $type $role.\nNo changes made." \
+            9 $W
+        return
+    fi
+
+    local new_hn
+    new_hn=$(generate_hostname)
+
+    # Step 4: gather network inputs before the long work begins
+    if [ "$role" = "controller" ]; then
+        select_gateway_mode || return
+        select_controller_ip || return
+    fi
+
+    # Step 5: confirm
+    local summary="\nNew configuration:\n\n"
+    summary+="  Role     :  $role\n"
+    summary+="  Type     :  $type\n"
+    summary+="  Hostname :  $new_hn\n"
+    if [ "$role" = "controller" ]; then
+        summary+="\nWill enable  : PTP grandmaster, Samba, DHCP, mDNS, iptables"
+    else
+        summary+="\nWill enable  : PTP timeReceiver"
+        summary+="\nWill disable : Samba, DHCP, mDNS"
+    fi
+    summary+="\n\nA reboot is required after configuration."
+
+    whiptail --title "Confirm Configuration" --yesno "$summary" 17 $W || return
+
+    # Step 6: run all setup steps
+    run_configuration
+
+    # Step 7: offer reboot
+    if whiptail --title "Done" \
+        --yesno "\nConfiguration complete.\n\nReboot now to apply all changes?" \
+        9 $W; then
+        reboot
+    fi
+}
+
+network_settings() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nNetwork settings are only available on a controller." \
+            8 $W
+        return
+    fi
+
+    DEVICE_ROLE="$CURRENT_ROLE"
+    DEVICE_TYPE="$CURRENT_TYPE"
+
+    local choice
+    choice=$(wt --title "Network Settings" \
+        --menu "\nConfigure controller networking:" \
+        $H $W 2 \
+        "gateway" "Change gateway / internet sharing mode" \
+        "ip"      "Change controller IP address") || return
+
+    case "$choice" in
+        gateway)
+            select_gateway_mode || return
+            select_controller_ip || return
+            progress "Applying network configuration…"
+            detect_interface_name
+            set_own_ip
+            [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
+            whiptail --title "Done" --msgbox "\nNetwork configuration updated." 7 $W
+            ;;
+        ip)
+            detect_interface_name
+            select_controller_ip || return
+            progress "Updating IP address…"
+            set_own_ip
+            whiptail --title "Done" --msgbox "\nIP address updated." 7 $W
+            ;;
+    esac
+}
+
+view_config() {
+    get_current_config
+    local hn svc_status
+    hn=$(hostname 2>/dev/null || echo "unknown")
+    svc_status=$(systemctl is-active saviour.service 2>/dev/null || echo "unknown")
+
+    local content="\n"
+    content+="  Hostname         : $hn\n"
+    content+="  Role             : $CURRENT_ROLE\n"
+    content+="  Type             : $CURRENT_TYPE\n"
+    content+="  saviour.service  : $svc_status\n"
+    content+="\n  $CONFIG_FILE:\n"
+    if [ -f "$CONFIG_FILE" ]; then
+        while IFS= read -r line; do
+            content+="    $line\n"
+        done < "$CONFIG_FILE"
+    else
+        content+="    (file not found)\n"
+    fi
+
+    whiptail --title "Current Configuration" --msgbox "$content" 16 $W
+}
+
+# ── Setup functions ────────────────────────────────────────────────────────────
+
+set_device_hostname() {
+    local new_hn
+    new_hn=$(generate_hostname)
+    progress "Setting hostname to $new_hn…"
+    log "Setting hostname: $new_hn"
+
+    run_logged hostnamectl set-hostname "$new_hn"
+
+    tee /etc/hosts > /dev/null <<EOF
+127.0.0.1  localhost
+127.0.1.1  $new_hn
+
+::1        localhost ip6-localhost ip6-loopback
+EOF
+
+    # Prevent cloud-init from reverting the hostname on reboot
+    if [ -d /etc/cloud ]; then
+        touch /etc/cloud/cloud-init.disabled
+    fi
+}
+
+set_own_ip() {
+    # Reads:  DEVICE_IP, GATEWAY_MODE, GATEWAY, INTERFACE
+    # Sets:   OCTET_A/B/C (re-parsed from DEVICE_IP for later use in DHCP config)
+    IFS='.' read -r OCTET_A OCTET_B OCTET_C _ <<< "${DEVICE_IP%%/*}"
+    progress "Setting static IP $DEVICE_IP on $INTERFACE…"
+    log "Setting IP: $DEVICE_IP on $INTERFACE (gateway mode: $GATEWAY_MODE)"
+
+    if [ "$GATEWAY_MODE" = "external" ] && [ -n "$GATEWAY" ]; then
+        run_logged nmcli connection modify "$INTERFACE" \
+            ipv4.addresses "$DEVICE_IP" \
+            ipv4.gateway "$GATEWAY" \
+            ipv4.dns "8.8.8.8,1.1.1.1" \
+            ipv4.method manual
+    else
+        run_logged nmcli connection modify "$INTERFACE" \
+            ipv4.addresses "$DEVICE_IP" \
+            ipv4.gateway "" \
+            ipv4.dns "" \
+            ipv4.method manual
+    fi
+}
+
+configure_ip_forwarding() {
+    progress "Enabling IP forwarding and NAT masquerade on $WAN_INTERFACE…"
+    log "Configuring IP forwarding via $WAN_INTERFACE"
+
+    tee /etc/sysctl.d/99-saviour-forwarding.conf > /dev/null <<EOF
+net.ipv4.ip_forward = 1
+EOF
+    run_logged sysctl -p /etc/sysctl.d/99-saviour-forwarding.conf
+
+    iptables -t nat -D POSTROUTING -o "$WAN_INTERFACE" -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -A POSTROUTING -o "$WAN_INTERFACE" -j MASQUERADE
+    iptables -D FORWARD -i eth0 -o "$WAN_INTERFACE" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i "$WAN_INTERFACE" -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    iptables -A FORWARD -i eth0 -o "$WAN_INTERFACE" -j ACCEPT
+    iptables -A FORWARD -i "$WAN_INTERFACE" -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+    if ! is_installed "iptables-persistent"; then
+        run_logged apt-get install -y iptables-persistent \
+            -o Dpkg::Options::="--force-confdef"
+    fi
+    run_logged netfilter-persistent save
+}
+
+configure_ptp_timetransmitter() {
+    progress "Configuring PTP grandmaster (timeTransmitter)…"
+    log "Configuring PTP: timeTransmitter"
+
+    systemctl stop ptp4l 2>/dev/null || true
+    systemctl stop phc2sys 2>/dev/null || true
+
+    tee /etc/systemd/system/ptp4l.service > /dev/null <<'EOF'
+[Unit]
+Description=PTP4L (Precision Time Protocol daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/sbin/ptp4l -i eth0 -2 -m -l 6
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    tee /etc/systemd/system/phc2sys.service > /dev/null <<'EOF'
+[Unit]
+Description=PHC2SYS (PTP Hardware Clock to System Clock synchronization)
+After=ptp4l.service
+Wants=ptp4l.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/sbin/phc2sys -a -r -r -m
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    run_logged systemctl daemon-reload
+    run_logged systemctl enable ptp4l phc2sys
+}
+
+configure_ptp_timereceiver() {
+    progress "Configuring PTP timeReceiver…"
+    log "Configuring PTP: timeReceiver"
+
+    # Disable timesyncd — it conflicts with phc2sys on modules
+    run_logged timedatectl set-ntp false
+    systemctl disable --now systemd-timesyncd 2>/dev/null || true
+    systemctl stop ptp4l 2>/dev/null || true
+    systemctl stop phc2sys 2>/dev/null || true
+
+    tee /etc/systemd/system/ptp4l.service > /dev/null <<'EOF'
+[Unit]
+Description=PTP4L (Precision Time Protocol daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/sbin/ptp4l -i eth0 -m -s -2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    tee /etc/systemd/system/phc2sys.service > /dev/null <<'EOF'
+[Unit]
+Description=PHC2SYS (PTP Hardware Clock to System Clock synchronization)
+After=ptp4l.service
+Wants=ptp4l.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -w -m -R 8
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    run_logged systemctl daemon-reload
+    run_logged systemctl enable ptp4l phc2sys
+}
+
+configure_samba_share() {
+    progress "Configuring Samba share…"
+    log "Configuring Samba share"
+
+    # Groups and system users
+    if ! getent group saviour > /dev/null 2>&1; then
+        run_logged groupadd saviour
+    fi
+    usermod -aG saviour pi 2>/dev/null || true
+
+    for sysuser in saviour_module researcher sidbit; do
+        if ! id "$sysuser" > /dev/null 2>&1; then
+            run_logged useradd --system --no-create-home \
+                --shell /usr/sbin/nologin --gid saviour "$sysuser"
+        fi
+    done
+
+    # Share directory
+    chmod 711 /home/pi
+    mkdir -p "/home/pi/${SHARENAME}"
+    chown pi:saviour "/home/pi/${SHARENAME}"
+    chmod 2775 "/home/pi/${SHARENAME}"
+
+    # Random password for saviour_module
+    mkdir -p /etc/saviour
+    local module_pass
+    module_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+    tee /etc/saviour/samba_credentials > /dev/null <<CREDS
+username=saviour_module
+password=${module_pass}
+CREDS
+    chmod 600 /etc/saviour/samba_credentials
+
+    # Write credentials into modules base_config.json
+    local base_cfg="${DIR}/src/modules/config/base_config.json"
+    if [ -f "$base_cfg" ]; then
+        python3 - "$base_cfg" "$module_pass" <<'PYEOF'
+import sys, json
+path, password = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    cfg = json.load(f)
+export = cfg.setdefault("export", {})
+export["share_username"] = "saviour_module"
+export["share_password"] = password
+export.pop("_share_username", None)
+export.pop("_share_password", None)
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+    fi
+
+    # smb.conf
+    [ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
+    tee /etc/samba/smb.conf > /dev/null <<EOF
+[global]
+   workgroup = WORKGROUP
+   server string = SAVIOUR Controller
+   server role = standalone server
+   dns proxy = no
+   log level = 1
+   log file = /var/log/samba/%m.log
+   max log size = 50
+
+[${SHARENAME}]
+   comment = SAVIOUR Controller Share
+   path = /home/pi/${SHARENAME}
+   browseable = yes
+   read only = yes
+   valid users = researcher, saviour_module, sidbit
+   write list = researcher, saviour_module, sidbit
+   admin users = sidbit
+   create mask = 0664
+   directory mask = 0775
+   oplocks = no
+   level2 oplocks = no
+   notify daemon = yes
+EOF
+
+    printf '%s\n%s\n' "$module_pass" "$module_pass" | smbpasswd -s -a saviour_module > /dev/null
+    printf 'getmyfiles\ngetmyfiles\n'               | smbpasswd -s -a researcher     > /dev/null
+    printf 'espressocreme\nespressocreme\n'          | smbpasswd -s -a sidbit         > /dev/null
+
+    run_logged systemctl restart smbd nmbd
+    run_logged systemctl enable smbd nmbd
+}
+
+disable_samba_share() {
+    progress "Disabling Samba…"
+    log "Disabling Samba"
+    systemctl stop smbd nmbd 2>/dev/null || true
+    systemctl disable smbd nmbd 2>/dev/null || true
+}
+
+configure_dhcp_server() {
+    # Requires: OCTET_A/B/C (set by set_own_ip), GATEWAY_MODE, GATEWAY
+    progress "Configuring DHCP server (dnsmasq)…"
+    log "Configuring dnsmasq"
+
+    [ -f /etc/dnsmasq.conf ] && cp /etc/dnsmasq.conf /etc/dnsmasq.conf.backup
+
+    local dhcp_option
+    case "$GATEWAY_MODE" in
+        external)   dhcp_option="dhcp-option=3,${GATEWAY}" ;;
+        controller) dhcp_option="dhcp-option=3,${OCTET_A}.${OCTET_B}.${OCTET_C}.1" ;;
+        *)          dhcp_option="dhcp-option=3" ;;
+    esac
+
+    tee /etc/dnsmasq.conf > /dev/null <<EOF
+# dnsmasq configuration for SAVIOUR local network
+interface=eth0
+bind-interfaces
+
+# DHCP range — .128 to .255 in the controller's /24, /16 subnet mask
+dhcp-range=${OCTET_A}.${OCTET_B}.${OCTET_C}.128,${OCTET_A}.${OCTET_B}.${OCTET_C}.255,255.255.0.0,12h
+
+# Default gateway advertised to DHCP clients
+${dhcp_option}
+
+# saviour.local resolves to the controller — prevents Windows from flagging
+# the PoE interface as "No internet access", which blocks mDNS on public profiles
+address=/saviour.local/${OCTET_A}.${OCTET_B}.${OCTET_C}.1
+
+dhcp-leasefile=/var/lib/misc/dnsmasq.leases
+dhcp-authoritative
+log-queries
+log-dhcp
+EOF
+
+    # Ensure dnsmasq starts after interfaces are up
+    if [ -f /lib/systemd/system/dnsmasq.service ]; then
+        sed -i 's/Requires=network.target/Requires=network-online.target/g' \
+            /lib/systemd/system/dnsmasq.service
+        sed -i 's/After=network.target/After=network-online.target/g' \
+            /lib/systemd/system/dnsmasq.service
+    fi
+
+    run_logged systemctl daemon-reload
+    run_logged systemctl enable dnsmasq
+    run_logged systemctl restart dnsmasq
+}
+
+disable_dhcp_server() {
+    progress "Disabling DHCP server…"
+    log "Disabling dnsmasq"
+    nmcli connection modify "$INTERFACE" ipv4.method auto 2>/dev/null || true
+    systemctl stop dnsmasq 2>/dev/null || true
+    systemctl disable dnsmasq 2>/dev/null || true
+}
+
+configure_mdns() {
+    progress "Configuring mDNS and iptables port forwarding…"
+    log "Configuring mDNS"
+
+    tee /etc/avahi/avahi-daemon.conf > /dev/null <<'EOF'
+[server]
+host-name=saviour
+use-ipv4=yes
+use-ipv6=no
+allow-interfaces=eth0
+deny-interfaces=wlan0
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+publish-hinfo=no
+publish-workstation=yes
+EOF
+
+    run_logged systemctl daemon-reload
+    run_logged systemctl enable --now avahi-daemon
+    run_logged systemctl restart avahi-daemon
+
+    if ! is_installed "iptables-persistent"; then
+        run_logged apt-get install -y iptables-persistent \
+            -o Dpkg::Options::="--force-confdef"
+    fi
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    run_logged netfilter-persistent save
+}
+
+disable_mdns() {
+    progress "Disabling mDNS…"
+    log "Disabling mDNS"
+    systemctl disable avahi-daemon 2>/dev/null || true
+    systemctl stop avahi-daemon 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
+    if is_installed "iptables-persistent"; then
+        run_logged netfilter-persistent save
+    fi
+}
+
+configure_service() {
+    progress "Configuring systemd service…"
+    log "Configuring saviour.service for ${DEVICE_TYPE}_${DEVICE_ROLE}"
+    get_python_path
+
+    systemctl stop saviour.service 2>/dev/null || true
+
+    local env_extras=""
+    if [ "$DEVICE_TYPE" = "microphone" ]; then
+        env_extras=$'\nEnvironment=XDG_RUNTIME_DIR=/run/user/1000\nEnvironment=PULSE_SERVER=unix:/run/user/1000/pulse/native'
+    fi
+
+    tee /etc/systemd/system/saviour.service > /dev/null <<EOF
+[Unit]
+Description=Saviour Service
+After=network.target ptp4l.service phc2sys.service
+Wants=network.target ptp4l.service phc2sys.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${DIR}/${PYTHON_PATH}
+ExecStart=${DIR}/env/bin/python ${PYTHON_FILE}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONPATH=${DIR}/src${env_extras}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    run_logged systemctl daemon-reload
+    run_logged systemctl enable saviour.service
+}
+
+configure_microphone() {
+    progress "Configuring AudioMoth udev rules and PipeWire…"
+    log "Configuring microphone module"
+
+    tee /etc/udev/rules.d/99-audiomoth.rules > /dev/null <<'EOF'
+SUBSYSTEM=="usb", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="06f3", MODE="0666"
+EOF
+    run_logged udevadm control --reload-rules
+    run_logged udevadm trigger
+
+    mkdir -p /etc/pipewire/pipewire.conf.d
+    tee /etc/pipewire/pipewire.conf.d/99-sample-rates.conf > /dev/null <<'EOF'
+context.properties = {
+    default.clock.rate = 192000
+    default.clock.allowed-rates = [ 96000 192000 384000]
+}
+EOF
+
+    local actual_user="${SUDO_USER:-pi}"
+    sudo -u "$actual_user" systemctl --user enable pipewire pipewire-pulse wireplumber 2>/dev/null || true
+    sudo -u "$actual_user" systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
+}
+
+configure_apa_camera() {
+    progress "Installing APA camera (IMX500 + Hailo) dependencies…"
+    log "Configuring apa_camera module"
+    for pkg in python3-openexr imx500-all hailo-all; do
+        if ! is_installed "$pkg"; then
+            run_logged apt-get install -y "$pkg"
+        fi
+    done
+}
+
+build_frontend() {
+    progress "Building frontend for $DEVICE_TYPE  (this may take a few minutes)…"
+    log "Building frontend: $DEVICE_TYPE"
+
+    local nvm_dir="/home/${SUDO_USER:-pi}/.nvm"
+    export NVM_DIR="$nvm_dir"
+    # shellcheck source=/dev/null
+    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+
+    tee "${DIR}/src/controller/frontend/src/main.jsx" > /dev/null <<EOF
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './index.css';
+import App from './${DEVICE_TYPE}/App';
+import { BrowserRouter } from "react-router-dom";
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>
+);
+EOF
+
+    cd "${DIR}/src/controller/frontend"
+    run_logged npm install
+    run_logged npm run build
+    cd "${DIR}"
+}
+
+create_recording_folder() {
+    mkdir -p /var/lib/saviour/recordings
+    chown -R root:root /var/lib/saviour
+}
+
+# ── Main configuration runner ──────────────────────────────────────────────────
+run_configuration() {
+    log "Starting configuration: ${DEVICE_TYPE} ${DEVICE_ROLE}"
+
+    get_current_config
+    local role_changed=false type_changed=false
+    [ "$DEVICE_ROLE" != "$CURRENT_ROLE" ] && role_changed=true
+    [ "$DEVICE_TYPE" != "$CURRENT_TYPE" ] && type_changed=true
+
+    set_device_hostname
+
+    if $type_changed && [ "$DEVICE_ROLE" = "controller" ]; then
+        build_frontend
+    fi
+
+    if $role_changed; then
+        if [ "$DEVICE_ROLE" = "controller" ]; then
+            configure_ptp_timetransmitter
+            configure_samba_share
+            detect_interface_name
+            set_own_ip
+            configure_dhcp_server
+            [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
+            configure_mdns
+        else
+            configure_ptp_timereceiver
+            disable_samba_share
+            detect_interface_name
+            disable_dhcp_server
+            disable_mdns
+        fi
+    fi
+
+    [ "$DEVICE_ROLE" = "module" ] && create_recording_folder
+
+    configure_service
+
+    [ "$DEVICE_TYPE" = "microphone" ] && configure_microphone
+    [ "$DEVICE_TYPE" = "apa_camera"  ] && configure_apa_camera
+
+    progress "Writing configuration and restarting service…"
+    write_config
+    log "Configuration written: ${DEVICE_TYPE} ${DEVICE_ROLE}"
+
+    systemctl restart saviour.service >> "$LOG" 2>&1 || true
+    log "Configuration complete"
+}
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+main_menu

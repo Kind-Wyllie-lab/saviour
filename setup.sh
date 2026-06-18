@@ -214,7 +214,12 @@ create_python_environment
 configure_logging
 install_audiomoth_usb_cmd
 
+# Install saviour-config as a system-wide command
+ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
+chmod +x "$TARGET_DIR/saviour-config"
+
 echo ""
 echo "Setup complete!"
-echo "Original repo clone in $HOME can now be removed safely."
-echo "Run: rm -rf ~/saviour"
+echo ""
+echo "Next step: assign this device a role by running:"
+echo "  sudo saviour-config"

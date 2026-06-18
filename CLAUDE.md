@@ -48,8 +48,8 @@ npm run lint
 # Full system setup (run once per device)
 ./setup.sh
 
-# Assign role (controller | module) and type
-./switch_role.sh
+# Assign role (controller | module) and type — interactive TUI
+sudo saviour-config
 ```
 
 ## Architecture

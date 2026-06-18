@@ -8,7 +8,7 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
     <BrowserRouter>
-      <App /> {/*Change this to reflect which controller frontend is being used.*/}
+      <App />
     </BrowserRouter>
   </React.StrictMode>
 );

@@ -11,11 +11,13 @@ const CAMERA_PORT    = 8080;
 const STALL_MS       = 8000;
 const RECONNECT_MS   = 2500;
 
-function StreamTile({ ip, port, label, isRecording }) {
+function StreamTile({ ip, port, label, isRecording, syncStatus }) {
   const [streamKey, setStreamKey] = useState(Date.now());
   const [fullscreen, setFullscreen] = useState(false);
   const stallTimer     = useRef(null);
   const reconnectTimer = useRef(null);
+  const configTimer    = useRef(null);
+  const prevStatus     = useRef(syncStatus);
   const bump = () => setStreamKey(Date.now());
 
   useEffect(() => {
@@ -27,10 +29,18 @@ function StreamTile({ ip, port, label, isRecording }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamKey]);
 
-  const resetStall = () => {
-    clearTimeout(stallTimer.current);
-    stallTimer.current = setTimeout(bump, STALL_MS);
-  };
+  // Bump stream when a save completes (PENDING → SYNCED means camera restarted).
+  useEffect(() => {
+    const prev = prevStatus.current;
+    prevStatus.current = syncStatus;
+    if (prev !== "PENDING" || syncStatus !== "SYNCED") return;
+    clearTimeout(configTimer.current);
+    configTimer.current = setTimeout(bump, 2000);
+    return () => clearTimeout(configTimer.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStatus]);
+
+  const resetStall = () => clearTimeout(stallTimer.current);
 
   const handleError = () => {
     clearTimeout(stallTimer.current);
@@ -43,7 +53,7 @@ function StreamTile({ ip, port, label, isRecording }) {
       <div className="loom-stream-tile">
         <img
           key={streamKey}
-          src={`http://${ip}:${port}/video_feed`}
+          src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
           alt={label || "stream"}
           onLoad={resetStall}
           onError={handleError}
@@ -86,6 +96,7 @@ function LoomDashboard() {
                 port={CAMERA_PORT}
                 label={m.name}
                 isRecording={m.status === "RECORDING"}
+                syncStatus={m.config_sync_status}
               />
             ))
           )}

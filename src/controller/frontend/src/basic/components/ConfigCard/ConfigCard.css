@@ -441,3 +441,48 @@ min-width: 300px;
 }
 
 /* Modal styles live in index.css (global) */
+
+/* Settings page tabs */
+.config-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
+.config-tab-btn {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.85em;
+  opacity: 0.55;
+  margin-bottom: -1px;
+  position: relative;
+}
+
+.config-tab-btn:hover {
+  opacity: 0.85;
+}
+
+.config-tab-btn.active {
+  background: var(--card-bg-color);
+  border-color: var(--border-color);
+  border-bottom-color: var(--card-bg-color);
+  opacity: 1;
+  font-weight: 600;
+}
+
+.config-tab-content {
+  padding-top: 10px;
+}
+
+.config-section-divider {
+  height: 1px;
+  background: color-mix(in srgb, var(--border-color) 50%, transparent);
+  margin: 10px 0 8px;
+}

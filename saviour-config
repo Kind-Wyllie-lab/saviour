@@ -6,7 +6,7 @@
 # Requires whiptail (pre-installed on Raspberry Pi OS).
 # Run after install.sh to assign a role, or any time to reconfigure.
 
-set -Eeuo pipefail
+set -uo pipefail
 
 # ── Root check ─────────────────────────────────────────────────────────────────
 if [ "$EUID" -ne 0 ]; then
@@ -36,15 +36,8 @@ DEVICE_IP=""
 INTERFACE=""
 OCTET_A=""; OCTET_B=""; OCTET_C=""
 
-# ── Error handling ─────────────────────────────────────────────────────────────
-on_error() {
-    local rc=$? line=$1
-    whiptail --title "Error" \
-        --msgbox "\nsaviour-config failed at line $line (exit $rc).\n\nSee $LOG for details." \
-        10 $W 2>/dev/null || true
-    exit "$rc"
-}
-trap 'on_error $LINENO' ERR
+# No global ERR trap — whiptail Cancel/ESC returns non-zero intentionally.
+# run_configuration() handles its own failures explicitly.
 
 # ── TUI helper ─────────────────────────────────────────────────────────────────
 # Capture whiptail output: whiptail draws UI on fd2, writes selection to fd1.
@@ -269,7 +262,12 @@ configure_device() {
     whiptail --title "Confirm Configuration" --yesno "$summary" 17 $W || return
 
     # Step 6: run all setup steps
-    run_configuration
+    if ! run_configuration; then
+        whiptail --title "Configuration Failed" \
+            --msgbox "\nAn error occurred during configuration.\n\nSee $LOG for details." \
+            9 $W || true
+        return
+    fi
 
     # Step 7: offer reboot
     if whiptail --title "Done" \
@@ -810,6 +808,7 @@ create_recording_folder() {
 
 # ── Main configuration runner ──────────────────────────────────────────────────
 run_configuration() {
+    set -e  # Any failed command inside here is a real error
     log "Starting configuration: ${DEVICE_TYPE} ${DEVICE_ROLE}"
 
     get_current_config

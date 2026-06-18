@@ -221,10 +221,5 @@ chmod +x "$TARGET_DIR/saviour-config"
 echo ""
 echo "Setup complete!"
 echo ""
-if [ -t 0 ]; then
-    echo "Launching saviour-config to configure this device's role..."
-    exec "$TARGET_DIR/saviour-config"
-else
-    echo "Next step: assign this device a role by running:"
-    echo "  sudo saviour-config"
-fi
+echo "Next step: assign this device a role by running:"
+echo "  sudo saviour-config"

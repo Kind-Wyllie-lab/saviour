@@ -26,10 +26,7 @@ function MicrophoneStream({ ip, port }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamKey]);
 
-  const resetStall = () => {
-    clearTimeout(stallTimer.current);
-    stallTimer.current = setTimeout(bump, STALL_MS);
-  };
+  const resetStall = () => clearTimeout(stallTimer.current);
 
   const handleError = () => {
     clearTimeout(stallTimer.current);
@@ -55,12 +52,22 @@ function MicrophoneStream({ ip, port }) {
   );
 }
 
+const MIC_TABS = [
+  { key: "basic",     label: "Basic"     },
+  { key: "recording", label: "Recording" },
+  { key: "audiomoth", label: "AudioMoth" },
+  { key: "monitor",   label: "Monitor"   },
+  { key: "labels",    label: "Labels"    },
+  { key: "export",    label: "Export"    },
+];
+
 function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved]                 = useState(false);
-  const [applyAllConfirm, setApplyAllConfirm] = useState(null);
+  const [applyAllConfirm, setApplyAllConfirm]   = useState(null);
+  const [activeTab, setActiveTab]               = useState("basic");
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
@@ -107,10 +114,14 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     ? "Time window must be 60 s or less"
     : null;
 
-  // Strip manually-rendered sections so ConfigFields doesn't duplicate them
+  // Strip sections that are rendered in dedicated tabs
   const configFieldsData = (() => {
     if (!formData) return formData;
-    const { monitoring: _m, audiomoth: _a, audiomoth_labels: _al, ...rest } = formData;
+    const {
+      monitoring: _m, audiomoth: _a, audiomoth_labels: _al,
+      module: _mod, export: _exp, recording: _rec,
+      ...rest
+    } = formData;
     return rest;
   })();
 
@@ -182,8 +193,9 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const allLabelledSerials = Object.keys(formData?.audiomoth_labels ?? {});
   const allSerials = [...new Set([...discoveredSerials, ...allLabelledSerials])];
 
-  const sections   = Object.keys(filterPrivateKeys(formData) ?? {}).filter(
-    k => formData[k] !== null && typeof formData[k] === "object"
+  const EXCLUDED_FROM_COPY = new Set(["module", "export", "recording", "audiomoth_labels"]);
+  const sections = Object.keys(filterPrivateKeys(formData) ?? {}).filter(
+    k => !EXCLUDED_FROM_COPY.has(k) && formData[k] !== null && typeof formData[k] === "object"
   );
   const capitalize = s => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -232,149 +244,204 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             );
           })()}
 
-          <form>
-            <ConfigFields data={configFieldsData} handleChange={handleChange}
-              sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={module.id} /> }} />
-          </form>
-
-          {/* ── Monitoring display ── */}
-          <fieldset className="nested-fieldset">
-            <legend className="nested-fieldset-legend">monitoring</legend>
-            <div className="nested">
-              <div className="form-field">
-                <label>Freq low (kHz):</label>
-                <input type="number" min="0" max={nyquistKhz} step="0.5"
-                  value={freqLoKhz}
-                  onChange={e => handleKhzChange(["monitoring", "freq_lo_hz"], e.target.value)} />
-              </div>
-              <div className="form-field">
-                <label>Freq high (kHz):</label>
-                <input type="number" min="0" max={nyquistKhz} step="0.5"
-                  value={freqHiKhz}
-                  onChange={e => handleKhzChange(["monitoring", "freq_hi_hz"], e.target.value)} />
-              </div>
-              {freqError && (
-                <div className="form-field">
-                  <label></label>
-                  <span className="config-sync-badge config-sync-badge--failed">{freqError}</span>
-                </div>
-              )}
-              <div className="form-field">
-                <label>time_window_s:</label>
-                <input type="number" min="0.5" max="60" step="0.5"
-                  value={timeWindow}
-                  onChange={e => handleChange(["monitoring", "time_window_s"], e)} />
-              </div>
-              {timeWindowError && (
-                <div className="form-field">
-                  <label></label>
-                  <span className="config-sync-badge config-sync-badge--failed">{timeWindowError}</span>
-                </div>
-              )}
-            </div>
-          </fieldset>
-
-          {/* ── AudioMoth hardware config ── */}
-          {formData?.audiomoth !== undefined && (
-            <fieldset className="nested-fieldset">
-              <legend className="nested-fieldset-legend">audiomoth</legend>
-              <div className="nested">
-                <div className="form-field">
-                  <label>sample_rate:</label>
-                  <select value={amRate}
-                    onChange={handleSampleRateChange}>
-                    {AM_SAMPLE_RATES.map(r => (
-                      <option key={r} value={r}>{(r / 1000).toFixed(0)} kHz</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>gain:</label>
-                  <select value={amGain}
-                    onChange={e => handleChange(["audiomoth", "gain"], e)}>
-                    {GAIN_LABELS.map((label, i) => (
-                      <option key={i} value={i}>{i} — {label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>filter_type:</label>
-                  <select value={amFilter}
-                    onChange={e => handleChange(["audiomoth", "filter_type"], e)}>
-                    <option value="none">None</option>
-                    <option value="lpf">Low-pass (LPF)</option>
-                    <option value="hpf">High-pass (HPF)</option>
-                    <option value="bpf">Band-pass (BPF)</option>
-                  </select>
-                </div>
-                {(amFilter === "hpf" || amFilter === "bpf") && (
-                  <div className="form-field">
-                    <label>{amFilter === "bpf" ? "Filter low (kHz):" : "Cutoff (kHz):"}</label>
-                    <input type="number" min="0" max={amNyquistKhz} step="0.5"
-                      value={amLoKhz}
-                      onChange={e => handleKhzChange(["audiomoth", "filter_lo_hz"], e.target.value)} />
-                  </div>
-                )}
-                {(amFilter === "lpf" || amFilter === "bpf") && (
-                  <div className="form-field">
-                    <label>{amFilter === "bpf" ? "Filter high (kHz):" : "Cutoff (kHz):"}</label>
-                    <input type="number" min="0" max={amNyquistKhz} step="0.5"
-                      value={amHiKhz}
-                      onChange={e => handleKhzChange(["audiomoth", "filter_hi_hz"], e.target.value)} />
-                  </div>
-                )}
-                <div className="form-field">
-                  <label>low_gain_range:</label>
-                  <input type="checkbox" checked={!!am.low_gain_range}
-                    onChange={e => handleChange(["audiomoth", "low_gain_range"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>energy_saver_mode:</label>
-                  <input type="checkbox" checked={!!am.energy_saver_mode}
-                    onChange={e => handleChange(["audiomoth", "energy_saver_mode"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>disable_48hz_filter:</label>
-                  <input type="checkbox" checked={!!am.disable_48hz_filter}
-                    onChange={e => handleChange(["audiomoth", "disable_48hz_filter"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>led_enabled:</label>
-                  <input type="checkbox" checked={!!am.led_enabled}
-                    onChange={e => handleChange(["audiomoth", "led_enabled"], e)} />
-                </div>
-              </div>
-            </fieldset>
-          )}
-
-          {/* ── AudioMoth labels ── */}
-          <fieldset className="nested-fieldset">
-            <legend className="nested-fieldset-legend">audiomoth labels</legend>
-            <div className="nested">
-              {allSerials.length === 0 ? (
-                <div className="sensor-mode-info sensor-mode-info--muted">
-                  No AudioMoths discovered — connect devices and refresh
-                </div>
-              ) : allSerials.map(serial => (
-                <div key={serial} className="form-field">
-                  <label title={serial}>
-                    {discoveredSerials.includes(serial) ? serial : `${serial} (disconnected)`}:
-                  </label>
-                  <input
-                    type="text"
-                    value={formData?.audiomoth_labels?.[serial] ?? ""}
-                    placeholder={serial}
-                    onChange={e => handleLabelChange(serial, e.target.value)}
-                  />
-                </div>
-              ))}
-            </div>
-          </fieldset>
-
-          <div className="filesize-preview">
-            ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz
-            {filetype === "flac" ? " (FLAC compressed)" : ` (${filetype.toUpperCase()} raw)`}
+          {/* ── Tab nav ── */}
+          <div className="config-tabs">
+            {MIC_TABS.map(t => (
+              <button key={t.key} type="button"
+                className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
+                onClick={() => setActiveTab(t.key)}>
+                {t.label}{t.key === "monitor" && (freqError || timeWindowError) ? " ⚠" : ""}
+              </button>
+            ))}
           </div>
+
+          {/* ── Tab content ── */}
+          <div className="config-tab-content">
+
+            {/* BASIC */}
+            {activeTab === "basic" && (
+              <>
+                <div className="form-field">
+                  <label>Name:</label>
+                  <input type="text"
+                    value={formData?.module?.name ?? ""}
+                    onChange={e => handleChange(["module", "name"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Group:</label>
+                  <input type="text"
+                    value={formData?.module?.group ?? ""}
+                    onChange={e => handleChange(["module", "group"], e)} />
+                </div>
+              </>
+            )}
+
+            {/* RECORDING tab */}
+            {activeTab === "recording" && (
+              <>
+                <div className="filesize-preview">
+                  ~{estGbPerHour.toFixed(2)} GB / hr @ {(sampleRate / 1000).toFixed(0)}kHz
+                  {filetype === "flac" ? " (FLAC compressed)" : ` (${filetype.toUpperCase()} raw)`}
+                </div>
+                <div className="form-field">
+                  <label>Segment length (mins):</label>
+                  <input type="number" min="1" step="1"
+                    value={formData?.recording?.segment_length_mins ?? 60}
+                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
+                </div>
+                <div className="config-section-divider" />
+                <form>
+                  <ConfigFields data={configFieldsData} handleChange={handleChange} />
+                </form>
+              </>
+            )}
+
+            {/* AUDIOMOTH tab */}
+            {activeTab === "audiomoth" && (
+              formData?.audiomoth !== undefined ? (
+                <>
+                  <div className="form-field">
+                    <label>Sample rate:</label>
+                    <select value={amRate} onChange={handleSampleRateChange}>
+                      {AM_SAMPLE_RATES.map(r => (
+                        <option key={r} value={r}>{(r / 1000).toFixed(0)} kHz</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field">
+                    <label>Gain:</label>
+                    <select value={amGain} onChange={e => handleChange(["audiomoth", "gain"], e)}>
+                      {GAIN_LABELS.map((label, i) => (
+                        <option key={i} value={i}>{i} — {label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field">
+                    <label>Filter type:</label>
+                    <select value={amFilter} onChange={e => handleChange(["audiomoth", "filter_type"], e)}>
+                      <option value="none">None</option>
+                      <option value="lpf">Low-pass (LPF)</option>
+                      <option value="hpf">High-pass (HPF)</option>
+                      <option value="bpf">Band-pass (BPF)</option>
+                    </select>
+                  </div>
+                  {(amFilter === "hpf" || amFilter === "bpf") && (
+                    <div className="form-field">
+                      <label>{amFilter === "bpf" ? "Filter low (kHz):" : "Cutoff (kHz):"}</label>
+                      <input type="number" min="0" max={amNyquistKhz} step="0.5"
+                        value={amLoKhz}
+                        onChange={e => handleKhzChange(["audiomoth", "filter_lo_hz"], e.target.value)} />
+                    </div>
+                  )}
+                  {(amFilter === "lpf" || amFilter === "bpf") && (
+                    <div className="form-field">
+                      <label>{amFilter === "bpf" ? "Filter high (kHz):" : "Cutoff (kHz):"}</label>
+                      <input type="number" min="0" max={amNyquistKhz} step="0.5"
+                        value={amHiKhz}
+                        onChange={e => handleKhzChange(["audiomoth", "filter_hi_hz"], e.target.value)} />
+                    </div>
+                  )}
+                  <div className="config-section-divider" />
+                  <div className="form-field">
+                    <label>Low gain range:</label>
+                    <input type="checkbox" checked={!!am.low_gain_range}
+                      onChange={e => handleChange(["audiomoth", "low_gain_range"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Energy saver mode:</label>
+                    <input type="checkbox" checked={!!am.energy_saver_mode}
+                      onChange={e => handleChange(["audiomoth", "energy_saver_mode"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Disable 48 Hz filter:</label>
+                    <input type="checkbox" checked={!!am.disable_48hz_filter}
+                      onChange={e => handleChange(["audiomoth", "disable_48hz_filter"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>LED enabled:</label>
+                    <input type="checkbox" checked={!!am.led_enabled}
+                      onChange={e => handleChange(["audiomoth", "led_enabled"], e)} />
+                  </div>
+                </>
+              ) : (
+                <div className="sensor-mode-info sensor-mode-info--muted">
+                  No AudioMoth configuration found for this module.
+                </div>
+              )
+            )}
+
+            {/* MONITOR tab */}
+            {activeTab === "monitor" && (
+              <>
+                <div className="form-field">
+                  <label>Freq low (kHz):</label>
+                  <input type="number" min="0" max={nyquistKhz} step="0.5"
+                    value={freqLoKhz}
+                    onChange={e => handleKhzChange(["monitoring", "freq_lo_hz"], e.target.value)} />
+                </div>
+                <div className="form-field">
+                  <label>Freq high (kHz):</label>
+                  <input type="number" min="0" max={nyquistKhz} step="0.5"
+                    value={freqHiKhz}
+                    onChange={e => handleKhzChange(["monitoring", "freq_hi_hz"], e.target.value)} />
+                </div>
+                {freqError && (
+                  <div className="form-field">
+                    <label></label>
+                    <span className="config-sync-badge config-sync-badge--failed">{freqError}</span>
+                  </div>
+                )}
+                <div className="form-field">
+                  <label>Time window (s):</label>
+                  <input type="number" min="0.5" max="60" step="0.5"
+                    value={timeWindow}
+                    onChange={e => handleChange(["monitoring", "time_window_s"], e)} />
+                </div>
+                {timeWindowError && (
+                  <div className="form-field">
+                    <label></label>
+                    <span className="config-sync-badge config-sync-badge--failed">{timeWindowError}</span>
+                  </div>
+                )}
+                <div className="sensor-mode-info" style={{ marginTop: "8px" }}>
+                  Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
+                </div>
+              </>
+            )}
+
+            {/* LABELS tab */}
+            {activeTab === "labels" && (
+              <>
+                {allSerials.length === 0 ? (
+                  <div className="sensor-mode-info sensor-mode-info--muted">
+                    No AudioMoths discovered — connect devices and refresh
+                  </div>
+                ) : allSerials.map(serial => (
+                  <div key={serial} className="form-field">
+                    <label title={serial}>
+                      {discoveredSerials.includes(serial) ? serial : `${serial} (disconnected)`}:
+                    </label>
+                    <input type="text"
+                      value={formData?.audiomoth_labels?.[serial] ?? ""}
+                      placeholder={serial}
+                      onChange={e => handleLabelChange(serial, e.target.value)} />
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* EXPORT */}
+            {activeTab === "export" && (
+              <ExportConfigSection
+                exportConfig={formData?.export}
+                handleChange={handleChange}
+                moduleId={id}
+              />
+            )}
+          </div>
+
+          {/* ── Always-visible: copy / apply / save ── */}
+          <div className="config-section-divider" />
 
           <div className="copy-bar">
             <span className="copy-bar-label">Copy:</span>
@@ -384,6 +451,12 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 {capitalize(key)}
               </button>
             ))}
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => onCopy({ label: `Export — ${module.name}`, data: { export: formData.export } })}>
+                Export
+              </button>
+            )}
             <button type="button" className="copy-btn"
               onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
               All
@@ -398,16 +471,22 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 {capitalize(key)}
               </button>
             ))}
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
+                Export
+              </button>
+            )}
           </div>
 
           <div className="copy-bar">
             <span className="copy-bar-label">Apply to all modules:</span>
-            {sections.map(key => (
-              <button key={key} type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: null })}>
-                {capitalize(key)}
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
+                Export
               </button>
-            ))}
+            )}
           </div>
 
           <div className="config-action-buttons">

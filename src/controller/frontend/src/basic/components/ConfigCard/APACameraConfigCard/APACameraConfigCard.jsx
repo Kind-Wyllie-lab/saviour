@@ -4,6 +4,7 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import ExportConfigSection from "../ExportConfigSection";
 
 const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",        sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
@@ -21,6 +22,15 @@ const CM3_PRESETS = [
   { key: "1080p60",      label: "1080p Fast", sub: "60 fps",  width: 1920, height: 1080, fps: 60  },
   { key: "square25",     label: "Square",     sub: "25 fps",  width: 1000, height: 1000, fps: 25  },
   { key: "custom",       label: "Custom",     sub: null,      width: null, height: null, fps: null },
+];
+
+const TABS = [
+  { key: "basic",    label: "Basic"    },
+  { key: "mode",     label: "Mode"     },
+  { key: "image",    label: "Image"    },
+  { key: "record",   label: "Record"   },
+  { key: "analysis", label: "Analysis" },
+  { key: "export",   label: "Export"   },
 ];
 
 function bestSensorMode(sensorModes, width, height, fps) {
@@ -69,19 +79,20 @@ function Section({ title, open, onToggle, children }) {
 
 function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
-  const [sensorModes, setSensorModes]     = useState([]);
-  const [sensorModel, setSensorModel]     = useState("");
-  const [hasAutofocus, setHasAutofocus]   = useState(false);
-  const [activePreset, setActivePreset]   = useState("custom");
+  const [sensorModes, setSensorModes]   = useState([]);
+  const [sensorModel, setSensorModel]   = useState("");
+  const [hasAutofocus, setHasAutofocus] = useState(false);
+  const [activePreset, setActivePreset] = useState("custom");
+  const [activeTab, setActiveTab]       = useState("basic");
   const [showResetConfirm, setShowResetConfirm]   = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm]     = useState(null);
-  const [hasSaved, setHasSaved]           = useState(false);
-  const [maskOpen, setMaskOpen]           = useState(true);
+  const [hasSaved, setHasSaved]         = useState(false);
+  const [maskOpen, setMaskOpen]         = useState(true);
   const [shockZoneOpen, setShockZoneOpen] = useState(true);
   const [detectionOpen, setDetectionOpen] = useState(false);
-  const [blobOpen, setBlobOpen]           = useState(true);
-  const { updateStatus, handleUpdate }    = useModuleUpdate(module.id);
+  const [blobOpen, setBlobOpen]         = useState(true);
+  const { updateStatus, handleUpdate }  = useModuleUpdate(module.id);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -172,8 +183,6 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const handleSave = () => {
     setHasSaved(true);
     const filtered = filterPrivateKeys(formData) ?? {};
-
-    // filterPrivateKeys drops arrays — restore shock_zone_color and labels
     const rawColor = formData?.shock_zone?.shock_zone_color;
     if (rawColor) {
       filtered.shock_zone = filtered.shock_zone ?? {};
@@ -186,7 +195,6 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
       filtered.object_detection = filtered.object_detection ?? {};
       filtered.object_detection.labels = rawLabels;
     }
-
     socket.emit("save_module_config", { id, config: filtered });
   };
 
@@ -211,11 +219,11 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const blobTracker = formData?.blob_tracker ?? {};
 
   const selectedMode = sensorModes[cam.sensor_mode_index ?? 0];
-  const maxFps    = selectedMode?.fps ?? null;
+  const maxFps     = selectedMode?.fps ?? null;
   const fpsOverMax = maxFps != null && cam.fps != null && Number(cam.fps) > maxFps;
-  const maxWidth  = sensorModes.length ? Math.max(...sensorModes.map(m => m.size[0])) : 9999;
-  const maxHeight = sensorModes.length ? Math.max(...sensorModes.map(m => m.size[1])) : 9999;
-  const maxFpsAll = sensorModes.length ? Math.max(...sensorModes.map(m => m.fps)) : 999;
+  const maxWidth   = sensorModes.length ? Math.max(...sensorModes.map(m => m.size[0])) : 9999;
+  const maxHeight  = sensorModes.length ? Math.max(...sensorModes.map(m => m.size[1])) : 9999;
+  const maxFpsAll  = sensorModes.length ? Math.max(...sensorModes.map(m => m.fps)) : 999;
   const bitrateMb  = cam.bitrate_mb ?? 0;
   const gbPerHour  = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
   const colorHex   = rgbToHex(shockZone.shock_zone_color);
@@ -230,6 +238,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
         <div className="device-info">
           {typeof module.ip === "string" && module.ip && <span>IP: {module.ip}</span>}
           {typeof module.version === "string" && module.version && <span>{module.version}</span>}
+          {sensorModel && <span>{sensorModel}</span>}
         </div>
       </div>
 
@@ -249,365 +258,410 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
             );
           })()}
 
-          {/* ── Resolution / mode ── */}
-          <div className="form-field">
-            <label>Mode:</label>
-            <select
-              value={activePreset}
-              onChange={e => {
-                const preset = presets.find(p => p.key === e.target.value);
-                if (preset) handlePresetSelect(preset);
-              }}
-            >
-              {presets.map(p => (
-                <option key={p.key} value={p.key}>
-                  {p.label}{p.sub ? ` — ${p.sub}` : ""}
-                </option>
-              ))}
-            </select>
+          {/* ── Tab nav ── */}
+          <div className="config-tabs">
+            {TABS.map(t => (
+              <button key={t.key} type="button"
+                className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
+                onClick={() => setActiveTab(t.key)}>
+                {t.label}
+              </button>
+            ))}
           </div>
 
-          {activePreset === "custom" ? (
-            <>
-              <div className="form-field">
-                <label>Width (px):</label>
-                <input type="number" min="64" max={maxWidth} step="2"
-                  value={cam.width ?? ""}
-                  onChange={e => handleCustomChange("width", e.target.value)} />
-              </div>
-              <div className="form-field">
-                <label>Height (px):</label>
-                <input type="number" min="64" max={maxHeight} step="2"
-                  value={cam.height ?? ""}
-                  onChange={e => handleCustomChange("height", e.target.value)} />
-              </div>
-              <div className="form-field">
-                <label>FPS:</label>
-                <input type="number" min="1" max={maxFpsAll} step="1"
-                  value={cam.fps ?? ""}
-                  onChange={e => handleCustomChange("fps", e.target.value)} />
-              </div>
-            </>
-          ) : (
-            cam.width != null && (
-              <div className="camera-output-summary">
-                {cam.width} × {cam.height} &middot; {cam.fps} fps
-              </div>
-            )
-          )}
+          {/* ── Tab content ── */}
+          <div className="config-tab-content">
 
-          {selectedMode ? (
-            <div className="sensor-mode-info">Sensor mode: {selectedMode.label}</div>
-          ) : (
-            <div className="sensor-mode-info sensor-mode-info--muted">
-              Sensor modes not yet loaded — click Refresh
-            </div>
-          )}
-
-          {fpsOverMax && (
-            <div className="fov-label fov-cropped">
-              {cam.fps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
-            </div>
-          )}
-
-          {/* ── Image ── */}
-          <div className="form-field">
-            <label>Monochrome:</label>
-            <input type="checkbox"
-              checked={cam.monochrome ?? false}
-              onChange={e => handleChange(["camera", "monochrome"], e)} />
-          </div>
-          <div className="form-field">
-            <label>Brightness: {Number(cam.brightness ?? 0).toFixed(2)}</label>
-            <input type="range" min="-1" max="1" step="0.05"
-              value={cam.brightness ?? 0}
-              className="brightness-slider"
-              onChange={e => handleChange(["camera", "brightness"], e)} />
-          </div>
-          <div className="form-field">
-            <label>Gain:</label>
-            <input type="number" min="1" step="1"
-              value={cam.gain ?? ""}
-              onChange={e => handleChange(["camera", "gain"], e)} />
-          </div>
-          <div className="form-field">
-            <label>Exposure time (µs):</label>
-            <div className="exposure-control">
-              <input type="number" min="1" step="100"
-                disabled={!cam.manual_exposure}
-                value={cam.manual_exposure
-                  ? (cam.exposure_time ?? "")
-                  : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
-                onChange={e => handleChange(["camera", "exposure_time"], e)} />
-              <label className="exposure-manual-label">
-                <input type="checkbox"
-                  checked={cam.manual_exposure ?? false}
-                  onChange={e => handleChange(["camera", "manual_exposure"], e)} />
-                Manual
-              </label>
-            </div>
-          </div>
-
-          {/* ── Recording ── */}
-          <div className="form-field">
-            <label>Bitrate (Mbps):</label>
-            <input type="number" min="1" max="50" step="1"
-              value={bitrateMb}
-              onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
-          </div>
-          <div className="filesize-preview">
-            ~{gbPerHour} GB / hr at {bitrateMb} Mbps
-          </div>
-
-          {/* ── Autofocus (IMX708 only) ── */}
-          {hasAutofocus && (
-            <>
-              <div className="form-field">
-                <label>Autofocus mode:</label>
-                <select
-                  value={cam.autofocus_mode ?? "manual"}
-                  onChange={e => handleChange(["camera", "autofocus_mode"], e)}
-                >
-                  <option value="manual">Manual</option>
-                  <option value="auto">Auto (one-shot)</option>
-                  <option value="continuous">Continuous</option>
-                </select>
-              </div>
-              {(cam.autofocus_mode ?? "manual") === "manual" && (
-                <div className="form-field">
-                  <label>Lens position: {Number(cam.lens_position ?? 0).toFixed(1)}</label>
-                  <input type="range" min="0" max="10" step="0.1"
-                    value={cam.lens_position ?? 0}
-                    className="brightness-slider"
-                    onChange={e => handleChange(["camera", "lens_position"], e)} />
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── Overlays ── */}
-          <div className="form-field">
-            <label>Timestamp overlay:</label>
-            <input type="checkbox"
-              checked={cam.overlay_timestamp ?? true}
-              onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
-          </div>
-          {(cam.overlay_timestamp ?? true) && (
-            <div className="form-field">
-              <label>Text size:</label>
-              <select
-                value={cam.text_size ?? "medium"}
-                onChange={e => handleChange(["camera", "text_size"], e)}
-              >
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-              </select>
-            </div>
-          )}
-          <div className="form-field">
-            <label>Overlay framerate (preview):</label>
-            <input type="checkbox"
-              checked={cam.overlay_framerate_on_preview ?? false}
-              onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
-          </div>
-
-          {/* ── Mask ── */}
-          <Section title="Mask" open={maskOpen} onToggle={() => setMaskOpen(p => !p)}>
-            <div className="form-field">
-              <label>Enabled:</label>
-              <input type="checkbox"
-                checked={mask.mask_enabled ?? true}
-                onChange={e => handleChange(["mask", "mask_enabled"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Radius: {Number(mask.mask_radius ?? 0.65).toFixed(2)}</label>
-              <input type="range" min="0.1" max="1" step="0.01"
-                value={mask.mask_radius ?? 0.65}
-                className="brightness-slider"
-                onChange={e => handleChange(["mask", "mask_radius"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Center X offset (px):</label>
-              <input type="number" step="1"
-                value={mask.mask_center_x_offset ?? 0}
-                onChange={e => handleChange(["mask", "mask_center_x_offset"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Center Y offset (px):</label>
-              <input type="number" step="1"
-                value={mask.mask_center_y_offset ?? 0}
-                onChange={e => handleChange(["mask", "mask_center_y_offset"], e)} />
-            </div>
-          </Section>
-
-          {/* ── Shock Zone ── */}
-          <Section title="Shock Zone" open={shockZoneOpen} onToggle={() => setShockZoneOpen(p => !p)}>
-            <div className="form-field">
-              <label>Enabled:</label>
-              <input type="checkbox"
-                checked={shockZone.shock_zone_enabled ?? true}
-                onChange={e => handleChange(["shock_zone", "shock_zone_enabled"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Display overlay:</label>
-              <input type="checkbox"
-                checked={shockZone.shock_zone_display ?? true}
-                onChange={e => handleChange(["shock_zone", "shock_zone_display"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Start angle (°):</label>
-              <input type="number" min="0" max="360" step="1"
-                value={shockZone.shock_zone_start_angle_deg ?? 180}
-                onChange={e => handleChange(["shock_zone", "shock_zone_start_angle_deg"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Span (°):</label>
-              <input type="number" min="1" max="360" step="1"
-                value={shockZone.shock_zone_angle_span_deg ?? 60}
-                onChange={e => handleChange(["shock_zone", "shock_zone_angle_span_deg"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Inner offset: {Number(shockZone.shock_zone_inner_offset ?? 0.3).toFixed(2)}</label>
-              <input type="range" min="0" max="0.99" step="0.01"
-                value={shockZone.shock_zone_inner_offset ?? 0.3}
-                className="brightness-slider"
-                onChange={e => handleChange(["shock_zone", "shock_zone_inner_offset"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Colour:</label>
-              <input type="color"
-                value={colorHex}
-                onChange={e => handleColorChange(e.target.value)} />
-            </div>
-            <div className="form-field">
-              <label>Line thickness (px):</label>
-              <input type="number" min="1" max="20" step="1"
-                value={shockZone.shock_zone_line_thickness ?? 3}
-                onChange={e => handleChange(["shock_zone", "shock_zone_line_thickness"], e)} />
-            </div>
-          </Section>
-
-          {/* ── Object Detection ── */}
-          <Section title="Object Detection" open={detectionOpen} onToggle={() => setDetectionOpen(p => !p)}>
-            <div className="form-field">
-              <label>Enabled:</label>
-              <input type="checkbox"
-                checked={detection.enabled ?? false}
-                onChange={e => handleChange(["object_detection", "enabled"], e)} />
-            </div>
-            {(detection.enabled ?? false) && (
+            {/* BASIC */}
+            {activeTab === "basic" && (
               <>
                 <div className="form-field">
-                  <label>Backend:</label>
-                  <select
-                    value={detection.backend ?? "blob"}
-                    onChange={e => handleChange(["object_detection", "backend"], e)}
-                  >
-                    <option value="blob">Blob tracker (no model required)</option>
-                    <option value="hailo">Hailo .hef model</option>
+                  <label>Name:</label>
+                  <input type="text"
+                    value={formData?.module?.name ?? ""}
+                    onChange={e => handleChange(["module", "name"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Group:</label>
+                  <input type="text"
+                    value={formData?.module?.group ?? ""}
+                    onChange={e => handleChange(["module", "group"], e)} />
+                </div>
+              </>
+            )}
+
+            {/* MODE tab */}
+            {activeTab === "mode" && (
+              <>
+                <div className="form-field">
+                  <label>Mode:</label>
+                  <select value={activePreset}
+                    onChange={e => {
+                      const preset = presets.find(p => p.key === e.target.value);
+                      if (preset) handlePresetSelect(preset);
+                    }}>
+                    {presets.map(p => (
+                      <option key={p.key} value={p.key}>
+                        {p.label}{p.sub ? ` — ${p.sub}` : ""}
+                      </option>
+                    ))}
                   </select>
                 </div>
-
-                {(detection.backend ?? "blob") === "hailo" ? (
+                {activePreset === "custom" ? (
                   <>
                     <div className="form-field">
-                      <label>Model path:</label>
-                      <input type="text"
-                        value={detection.model_path ?? ""}
-                        onChange={e => handleChange(["object_detection", "model_path"], e)} />
+                      <label>Width (px):</label>
+                      <input type="number" min="64" max={maxWidth} step="2"
+                        value={cam.width ?? ""}
+                        onChange={e => handleCustomChange("width", e.target.value)} />
                     </div>
                     <div className="form-field">
-                      <label>Threshold: {Number(detection.threshold ?? 0.55).toFixed(2)}</label>
-                      <input type="range" min="0.05" max="1" step="0.01"
-                        value={detection.threshold ?? 0.55}
-                        className="brightness-slider"
-                        onChange={e => handleChange(["object_detection", "threshold"], e)} />
+                      <label>Height (px):</label>
+                      <input type="number" min="64" max={maxHeight} step="2"
+                        value={cam.height ?? ""}
+                        onChange={e => handleCustomChange("height", e.target.value)} />
                     </div>
                     <div className="form-field">
-                      <label>Max detections:</label>
-                      <input type="number" min="1" max="10" step="1"
-                        value={detection.max_detections ?? 2}
-                        onChange={e => handleChange(["object_detection", "max_detections"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Coordinate smoothing:</label>
-                      <input type="checkbox"
-                        checked={detection.coordinate_smoothing ?? false}
-                        onChange={e => handleChange(["object_detection", "coordinate_smoothing"], e)} />
+                      <label>FPS:</label>
+                      <input type="number" min="1" max={maxFpsAll} step="1"
+                        value={cam.fps ?? ""}
+                        onChange={e => handleCustomChange("fps", e.target.value)} />
                     </div>
                   </>
                 ) : (
-                  <Section title="Blob tracker settings" open={blobOpen} onToggle={() => setBlobOpen(p => !p)}>
-                    <div className="form-field">
-                      <label>Process width (px):</label>
-                      <input type="number" min="64" max="1920" step="16"
-                        value={blobTracker.process_width ?? 256}
-                        onChange={e => handleChange(["blob_tracker", "process_width"], e)} />
+                  cam.width != null && (
+                    <div className="camera-output-summary">
+                      {cam.width} × {cam.height} &middot; {cam.fps} fps
                     </div>
-                    <div className="form-field">
-                      <label>Diff threshold: {Number(blobTracker.thr_hi ?? 5).toFixed(1)}</label>
-                      <input type="range" min="1" max="50" step="0.5"
-                        value={blobTracker.thr_hi ?? 5}
-                        className="brightness-slider"
-                        onChange={e => handleChange(["blob_tracker", "thr_hi"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>H gap fill (px):</label>
-                      <input type="number" min="0" max="100" step="1"
-                        value={blobTracker.gap_h_px ?? 15}
-                        onChange={e => handleChange(["blob_tracker", "gap_h_px"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>V gap fill (px):</label>
-                      <input type="number" min="0" max="100" step="1"
-                        value={blobTracker.gap_v_px ?? 15}
-                        onChange={e => handleChange(["blob_tracker", "gap_v_px"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Close kernel (px):</label>
-                      <input type="number" min="0" max="50" step="1"
-                        value={blobTracker.close_px ?? 7}
-                        onChange={e => handleChange(["blob_tracker", "close_px"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Open kernel (px):</label>
-                      <input type="number" min="0" max="50" step="1"
-                        value={blobTracker.open_px ?? 5}
-                        onChange={e => handleChange(["blob_tracker", "open_px"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Min blob area (px²):</label>
-                      <input type="number" min="1" max="10000" step="10"
-                        value={blobTracker.min_area_px ?? 50}
-                        onChange={e => handleChange(["blob_tracker", "min_area_px"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Patience (frames):</label>
-                      <input type="number" min="0" max="120" step="1"
-                        value={blobTracker.patience_frames ?? 10}
-                        onChange={e => handleChange(["blob_tracker", "patience_frames"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Smoothing: {Number(blobTracker.smoothing_alpha ?? 0.3).toFixed(2)}</label>
-                      <input type="range" min="0" max="1" step="0.05"
-                        value={blobTracker.smoothing_alpha ?? 0.3}
-                        className="brightness-slider"
-                        onChange={e => handleChange(["blob_tracker", "smoothing_alpha"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Track box size (px):</label>
-                      <input type="number" min="20" max="600" step="10"
-                        value={blobTracker.track_square_size ?? 150}
-                        onChange={e => handleChange(["blob_tracker", "track_square_size"], e)} />
-                    </div>
-                  </Section>
+                  )
+                )}
+                {selectedMode ? (
+                  <div className="sensor-mode-info">Sensor mode: {selectedMode.label}</div>
+                ) : (
+                  <div className="sensor-mode-info sensor-mode-info--muted">
+                    Sensor modes not yet loaded — click Refresh
+                  </div>
+                )}
+                {fpsOverMax && (
+                  <div className="fov-label fov-cropped">
+                    {cam.fps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
+                  </div>
                 )}
               </>
             )}
-          </Section>
 
-          {/* ── Copy section buttons ── */}
+            {/* IMAGE tab */}
+            {activeTab === "image" && (
+              <>
+                <div className="form-field">
+                  <label>Monochrome:</label>
+                  <input type="checkbox"
+                    checked={cam.monochrome ?? false}
+                    onChange={e => handleChange(["camera", "monochrome"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Brightness: {Number(cam.brightness ?? 0).toFixed(2)}</label>
+                  <input type="range" min="-1" max="1" step="0.05"
+                    value={cam.brightness ?? 0} className="brightness-slider"
+                    onChange={e => handleChange(["camera", "brightness"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Gain:</label>
+                  <input type="number" min="1" step="1"
+                    value={cam.gain ?? ""}
+                    onChange={e => handleChange(["camera", "gain"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Exposure time (µs):</label>
+                  <div className="exposure-control">
+                    <input type="number" min="1" step="100"
+                      disabled={!cam.manual_exposure}
+                      value={cam.manual_exposure
+                        ? (cam.exposure_time ?? "")
+                        : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
+                      onChange={e => handleChange(["camera", "exposure_time"], e)} />
+                    <label className="exposure-manual-label">
+                      <input type="checkbox"
+                        checked={cam.manual_exposure ?? false}
+                        onChange={e => handleChange(["camera", "manual_exposure"], e)} />
+                      Manual
+                    </label>
+                  </div>
+                </div>
+
+                {hasAutofocus && (
+                  <>
+                    <div className="config-section-divider" />
+                    <div className="form-field">
+                      <label>Autofocus mode:</label>
+                      <select value={cam.autofocus_mode ?? "manual"}
+                        onChange={e => handleChange(["camera", "autofocus_mode"], e)}>
+                        <option value="manual">Manual</option>
+                        <option value="auto">Auto (one-shot)</option>
+                        <option value="continuous">Continuous</option>
+                      </select>
+                    </div>
+                    {(cam.autofocus_mode ?? "manual") === "manual" && (
+                      <div className="form-field">
+                        <label>Lens position: {Number(cam.lens_position ?? 0).toFixed(1)}</label>
+                        <input type="range" min="0" max="10" step="0.1"
+                          value={cam.lens_position ?? 0} className="brightness-slider"
+                          onChange={e => handleChange(["camera", "lens_position"], e)} />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="config-section-divider" />
+                <div className="form-field">
+                  <label>Timestamp overlay:</label>
+                  <input type="checkbox"
+                    checked={cam.overlay_timestamp ?? true}
+                    onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
+                </div>
+                {(cam.overlay_timestamp ?? true) && (
+                  <div className="form-field">
+                    <label>Text size:</label>
+                    <select value={cam.text_size ?? "medium"}
+                      onChange={e => handleChange(["camera", "text_size"], e)}>
+                      <option value="small">Small</option>
+                      <option value="medium">Medium</option>
+                      <option value="large">Large</option>
+                    </select>
+                  </div>
+                )}
+                <div className="form-field">
+                  <label>Overlay framerate (preview):</label>
+                  <input type="checkbox"
+                    checked={cam.overlay_framerate_on_preview ?? false}
+                    onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
+                </div>
+              </>
+            )}
+
+            {/* RECORD tab */}
+            {activeTab === "record" && (
+              <>
+                <div className="form-field">
+                  <label>Bitrate (Mbps):</label>
+                  <input type="number" min="1" max="50" step="1"
+                    value={bitrateMb}
+                    onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
+                </div>
+                <div className="filesize-preview">
+                  ~{gbPerHour} GB / hr at {bitrateMb} Mbps
+                </div>
+                <div className="config-section-divider" />
+                <div className="form-field">
+                  <label>Segment length (mins):</label>
+                  <input type="number" min="1" step="1"
+                    value={formData?.recording?.segment_length_mins ?? 60}
+                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
+                </div>
+              </>
+            )}
+
+            {/* ANALYSIS tab */}
+            {activeTab === "analysis" && (
+              <>
+                <Section title="Mask" open={maskOpen} onToggle={() => setMaskOpen(p => !p)}>
+                  <div className="form-field">
+                    <label>Enabled:</label>
+                    <input type="checkbox"
+                      checked={mask.mask_enabled ?? true}
+                      onChange={e => handleChange(["mask", "mask_enabled"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Radius: {Number(mask.mask_radius ?? 0.65).toFixed(2)}</label>
+                    <input type="range" min="0.1" max="1" step="0.01"
+                      value={mask.mask_radius ?? 0.65} className="brightness-slider"
+                      onChange={e => handleChange(["mask", "mask_radius"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Center X offset (px):</label>
+                    <input type="number" step="1"
+                      value={mask.mask_center_x_offset ?? 0}
+                      onChange={e => handleChange(["mask", "mask_center_x_offset"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Center Y offset (px):</label>
+                    <input type="number" step="1"
+                      value={mask.mask_center_y_offset ?? 0}
+                      onChange={e => handleChange(["mask", "mask_center_y_offset"], e)} />
+                  </div>
+                </Section>
+
+                <Section title="Shock Zone" open={shockZoneOpen} onToggle={() => setShockZoneOpen(p => !p)}>
+                  <div className="form-field">
+                    <label>Enabled:</label>
+                    <input type="checkbox"
+                      checked={shockZone.shock_zone_enabled ?? true}
+                      onChange={e => handleChange(["shock_zone", "shock_zone_enabled"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Display overlay:</label>
+                    <input type="checkbox"
+                      checked={shockZone.shock_zone_display ?? true}
+                      onChange={e => handleChange(["shock_zone", "shock_zone_display"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Start angle (°):</label>
+                    <input type="number" min="0" max="360" step="1"
+                      value={shockZone.shock_zone_start_angle_deg ?? 180}
+                      onChange={e => handleChange(["shock_zone", "shock_zone_start_angle_deg"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Span (°):</label>
+                    <input type="number" min="1" max="360" step="1"
+                      value={shockZone.shock_zone_angle_span_deg ?? 60}
+                      onChange={e => handleChange(["shock_zone", "shock_zone_angle_span_deg"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Inner offset: {Number(shockZone.shock_zone_inner_offset ?? 0.3).toFixed(2)}</label>
+                    <input type="range" min="0" max="0.99" step="0.01"
+                      value={shockZone.shock_zone_inner_offset ?? 0.3} className="brightness-slider"
+                      onChange={e => handleChange(["shock_zone", "shock_zone_inner_offset"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Colour:</label>
+                    <input type="color" value={colorHex}
+                      onChange={e => handleColorChange(e.target.value)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Line thickness (px):</label>
+                    <input type="number" min="1" max="20" step="1"
+                      value={shockZone.shock_zone_line_thickness ?? 3}
+                      onChange={e => handleChange(["shock_zone", "shock_zone_line_thickness"], e)} />
+                  </div>
+                </Section>
+
+                <Section title="Object Detection" open={detectionOpen} onToggle={() => setDetectionOpen(p => !p)}>
+                  <div className="form-field">
+                    <label>Enabled:</label>
+                    <input type="checkbox"
+                      checked={detection.enabled ?? false}
+                      onChange={e => handleChange(["object_detection", "enabled"], e)} />
+                  </div>
+                  {(detection.enabled ?? false) && (
+                    <>
+                      <div className="form-field">
+                        <label>Backend:</label>
+                        <select value={detection.backend ?? "blob"}
+                          onChange={e => handleChange(["object_detection", "backend"], e)}>
+                          <option value="blob">Blob tracker (no model required)</option>
+                          <option value="hailo">Hailo .hef model</option>
+                        </select>
+                      </div>
+                      {(detection.backend ?? "blob") === "hailo" ? (
+                        <>
+                          <div className="form-field">
+                            <label>Model path:</label>
+                            <input type="text"
+                              value={detection.model_path ?? ""}
+                              onChange={e => handleChange(["object_detection", "model_path"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Threshold: {Number(detection.threshold ?? 0.55).toFixed(2)}</label>
+                            <input type="range" min="0.05" max="1" step="0.01"
+                              value={detection.threshold ?? 0.55} className="brightness-slider"
+                              onChange={e => handleChange(["object_detection", "threshold"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Max detections:</label>
+                            <input type="number" min="1" max="10" step="1"
+                              value={detection.max_detections ?? 2}
+                              onChange={e => handleChange(["object_detection", "max_detections"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Coordinate smoothing:</label>
+                            <input type="checkbox"
+                              checked={detection.coordinate_smoothing ?? false}
+                              onChange={e => handleChange(["object_detection", "coordinate_smoothing"], e)} />
+                          </div>
+                        </>
+                      ) : (
+                        <Section title="Blob tracker settings" open={blobOpen} onToggle={() => setBlobOpen(p => !p)}>
+                          <div className="form-field">
+                            <label>Process width (px):</label>
+                            <input type="number" min="64" max="1920" step="16"
+                              value={blobTracker.process_width ?? 256}
+                              onChange={e => handleChange(["blob_tracker", "process_width"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Diff threshold: {Number(blobTracker.thr_hi ?? 5).toFixed(1)}</label>
+                            <input type="range" min="1" max="50" step="0.5"
+                              value={blobTracker.thr_hi ?? 5} className="brightness-slider"
+                              onChange={e => handleChange(["blob_tracker", "thr_hi"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>H gap fill (px):</label>
+                            <input type="number" min="0" max="100" step="1"
+                              value={blobTracker.gap_h_px ?? 15}
+                              onChange={e => handleChange(["blob_tracker", "gap_h_px"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>V gap fill (px):</label>
+                            <input type="number" min="0" max="100" step="1"
+                              value={blobTracker.gap_v_px ?? 15}
+                              onChange={e => handleChange(["blob_tracker", "gap_v_px"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Close kernel (px):</label>
+                            <input type="number" min="0" max="50" step="1"
+                              value={blobTracker.close_px ?? 7}
+                              onChange={e => handleChange(["blob_tracker", "close_px"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Open kernel (px):</label>
+                            <input type="number" min="0" max="50" step="1"
+                              value={blobTracker.open_px ?? 5}
+                              onChange={e => handleChange(["blob_tracker", "open_px"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Min blob area (px²):</label>
+                            <input type="number" min="1" max="10000" step="10"
+                              value={blobTracker.min_area_px ?? 50}
+                              onChange={e => handleChange(["blob_tracker", "min_area_px"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Patience (frames):</label>
+                            <input type="number" min="0" max="120" step="1"
+                              value={blobTracker.patience_frames ?? 10}
+                              onChange={e => handleChange(["blob_tracker", "patience_frames"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Smoothing: {Number(blobTracker.smoothing_alpha ?? 0.3).toFixed(2)}</label>
+                            <input type="range" min="0" max="1" step="0.05"
+                              value={blobTracker.smoothing_alpha ?? 0.3} className="brightness-slider"
+                              onChange={e => handleChange(["blob_tracker", "smoothing_alpha"], e)} />
+                          </div>
+                          <div className="form-field">
+                            <label>Track box size (px):</label>
+                            <input type="number" min="20" max="600" step="10"
+                              value={blobTracker.track_square_size ?? 150}
+                              onChange={e => handleChange(["blob_tracker", "track_square_size"], e)} />
+                          </div>
+                        </Section>
+                      )}
+                    </>
+                  )}
+                </Section>
+              </>
+            )}
+
+            {/* EXPORT */}
+            {activeTab === "export" && (
+              <ExportConfigSection
+                exportConfig={formData?.export}
+                handleChange={handleChange}
+                moduleId={id}
+              />
+            )}
+          </div>
+
+          {/* ── Always-visible: copy / apply / save ── */}
+          <div className="config-section-divider" />
+
           <div className="copy-bar">
             <span className="copy-bar-label">Copy:</span>
             {COPY_SECTIONS.filter(k => formData?.[k]).map(key => (
@@ -616,13 +670,18 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
                 {sectionLabel(key)}
               </button>
             ))}
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => onCopy({ label: `Export — ${module.name}`, data: { export: formData.export } })}>
+                Export
+              </button>
+            )}
             <button type="button" className="copy-btn"
               onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
               All
             </button>
           </div>
 
-          {/* ── Apply to all APA cameras ── */}
           <div className="copy-bar">
             <span className="copy-bar-label">Apply to all APA cameras:</span>
             {COPY_SECTIONS.filter(k => formData?.[k]).map(key => (
@@ -631,6 +690,22 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
                 {sectionLabel(key)}
               </button>
             ))}
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
+                Export
+              </button>
+            )}
+          </div>
+
+          <div className="copy-bar">
+            <span className="copy-bar-label">Apply to all modules:</span>
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
+                Export
+              </button>
+            )}
           </div>
 
           <div className="config-action-buttons">
@@ -646,12 +721,11 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
-
         </div>
 
         <div className="livestream-wrapper">
           <LivestreamCard module={module} />
-          <button type="button"
+          <button type="button" className="copy-btn" style={{ marginTop: "8px", width: "100%" }}
             onClick={() => socket.emit("send_command", { module_id: module.id, type: "get_sensor_modes", params: {} })}>
             Refresh Sensor Modes
           </button>

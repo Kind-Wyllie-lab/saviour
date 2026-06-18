@@ -8,10 +8,24 @@ const RECONNECT_DELAY_MS = 2500; // wait after an error before retrying (stream 
 function LivestreamCard({ module }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [streamKey, setStreamKey] = useState(Date.now());
-  const stallTimer = useRef(null);
+  const stallTimer     = useRef(null);
   const reconnectTimer = useRef(null);
+  const configTimer    = useRef(null);
+  const prevStatus     = useRef(module?.config_sync_status);
 
   const bump = () => setStreamKey(Date.now());
+
+  // Bump stream when a save completes (PENDING → SYNCED means camera restarted).
+  const syncStatus = module?.config_sync_status;
+  useEffect(() => {
+    const prev = prevStatus.current;
+    prevStatus.current = syncStatus;
+    if (prev !== "PENDING" || syncStatus !== "SYNCED") return;
+    clearTimeout(configTimer.current);
+    configTimer.current = setTimeout(bump, 2000);
+    return () => clearTimeout(configTimer.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStatus]);
 
   const resetStallTimer = () => {
     clearTimeout(stallTimer.current);
@@ -28,7 +42,9 @@ function LivestreamCard({ module }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamKey]);
 
-  const handleLoad = () => resetStallTimer();
+  // Stream is live — cancel the connect watchdog so a healthy stream isn't
+  // interrupted. Recovery from future errors is handled by onError.
+  const handleLoad = () => clearTimeout(stallTimer.current);
 
   const handleError = () => {
     clearTimeout(stallTimer.current);
@@ -43,7 +59,7 @@ function LivestreamCard({ module }) {
           <div className="stream-video">
             <img
               key={streamKey}
-              src={`http://${module.ip}:8080/video_feed`}
+              src={`http://${module.ip}:8080/video_feed?t=${streamKey}`}
               alt={`Stream for ${module.id}`}
               onLoad={handleLoad}
               onError={handleError}

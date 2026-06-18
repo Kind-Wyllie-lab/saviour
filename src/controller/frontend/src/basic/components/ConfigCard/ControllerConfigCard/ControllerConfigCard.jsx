@@ -6,13 +6,20 @@ import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "./ExportConfigSection";
 
+const TABS = [
+  { key: "basic",    label: "Basic"    },
+  { key: "settings", label: "Settings" },
+  { key: "export",   label: "Export"   },
+];
+
 function ControllerConfigCard() {
   const { formData, setFormData, handleChange } = useConfigForm();
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState(null); // null | "updating" | { success, output }
+  const [updateStatus, setUpdateStatus] = useState(null);
   const [controllerInfo, setControllerInfo] = useState({ ip: null, version: null });
-  const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved"
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [activeTab, setActiveTab] = useState("basic");
   const saveTimerRef = useRef(null);
 
   useEffect(() => {
@@ -49,8 +56,7 @@ function ControllerConfigCard() {
 
   const handleSave = () => {
     setSaveStatus("saving");
-    const editableData = filterPrivateKeys(formData);
-    socket.emit("save_controller_config", { config: editableData });
+    socket.emit("save_controller_config", { config: filterPrivateKeys(formData) });
   };
 
   const handleRebootSaviour = () => {
@@ -64,6 +70,17 @@ function ControllerConfigCard() {
     socket.emit("update_saviour_controller");
   };
 
+  // Settings tab: everything except controller.name and export
+  const settingsData = (() => {
+    if (!formData) return formData;
+    const { export: _e, controller: ctrl, ...rest } = filterPrivateKeys(formData) ?? {};
+    // Keep controller section only if it has fields beyond `name` (name goes in Basic)
+    const { name: _n, ...ctrlRest } = ctrl ?? {};
+    const result = { ...rest };
+    if (Object.keys(ctrlRest).length > 0) result.controller = ctrlRest;
+    return result;
+  })();
+
   return (
     <div className="config-card controller-config-card">
       <div className="card-header">
@@ -75,20 +92,47 @@ function ControllerConfigCard() {
       </div>
       <div className="config-card-body">
         <div className="config-form">
-          <form>
-            {(() => {
-              const { export: exportConfig, ...rest } = formData;
-              return (
-                <>
-                  <ConfigFields data={rest} handleChange={handleChange} />
-                  <ExportConfigSection
-                    exportConfig={exportConfig}
-                    handleChange={handleChange}
-                  />
-                </>
-              );
-            })()}
-          </form>
+
+          <div className="config-tabs">
+            {TABS.map(t => (
+              <button key={t.key} type="button"
+                className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
+                onClick={() => setActiveTab(t.key)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="config-tab-content">
+
+            {/* BASIC */}
+            {activeTab === "basic" && (
+              <div className="form-field">
+                <label>Name:</label>
+                <input type="text"
+                  value={formData?.controller?.name ?? ""}
+                  onChange={e => handleChange(["controller", "name"], e)} />
+              </div>
+            )}
+
+            {/* SETTINGS */}
+            {activeTab === "settings" && (
+              <form>
+                <ConfigFields data={settingsData} handleChange={handleChange} />
+              </form>
+            )}
+
+            {/* EXPORT */}
+            {activeTab === "export" && (
+              <ExportConfigSection
+                exportConfig={formData?.export}
+                handleChange={handleChange}
+              />
+            )}
+          </div>
+
+          <div className="config-section-divider" />
+
           <button className="save-button" type="button" onClick={handleSave}>
             Save Config
           </button>
@@ -124,12 +168,8 @@ function ControllerConfigCard() {
             <p>Update SAVIOUR on the controller?</p>
             <p className="modal-subtext">This will run <code>git pull</code> on the controller. Restart the service afterwards to apply changes.</p>
             <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={handleUpdateSaviour}>
-                Update
-              </button>
-              <button className="reset-button" type="button" onClick={() => setShowUpdateConfirm(false)}>
-                Cancel
-              </button>
+              <button className="save-button" type="button" onClick={handleUpdateSaviour}>Update</button>
+              <button className="reset-button" type="button" onClick={() => setShowUpdateConfirm(false)}>Cancel</button>
             </div>
           </div>
         </div>
@@ -141,12 +181,8 @@ function ControllerConfigCard() {
             <p>Reboot all modules and the controller?</p>
             <p className="modal-subtext">All active recordings will be stopped. The system will be unavailable for a short time.</p>
             <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleRebootSaviour}>
-                Reboot
-              </button>
-              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>
-                Cancel
-              </button>
+              <button className="reset-button" type="button" onClick={handleRebootSaviour}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
             </div>
           </div>
         </div>

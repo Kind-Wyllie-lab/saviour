@@ -1,14 +1,27 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import "./Settings.css";
 import useModules from "/src/hooks/useModules";
 
 import ConfigCard from "/src/basic/components/ConfigCard/ConfigCard";
 
+const getHashId = () => window.location.hash.slice(1) || "controller";
 
 function Settings() {
   const { modules } = useModules();
-  const [selectedId, setSelectedId] = useState("controller");
+  const [selectedId, setSelectedId] = useState(getHashId);
   const [clipboard, setClipboard] = useState(null); // { label, data }
+
+  // Write hash whenever selection changes
+  useEffect(() => {
+    window.location.hash = selectedId;
+  }, [selectedId]);
+
+  // Sync from hash on browser back/forward
+  useEffect(() => {
+    const onHashChange = () => setSelectedId(getHashId());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const moduleOptions = [
     { id: "controller", name: "Controller" },

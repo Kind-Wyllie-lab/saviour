@@ -262,6 +262,11 @@ class CameraModule(Module):
             if self.picam2.started:
                 self.picam2.stop()
 
+            # Clear stale frame so reconnecting clients wait for fresh data
+            # rather than receiving the last frame from the old configuration.
+            with self.frame_lock:
+                self.latest_frame = None
+
             # Get camera settings from config
             self.fps = self.config.get("camera.fps", 25)  # Default to 25fps
             self.width = self.config.get("camera.width", 1280)

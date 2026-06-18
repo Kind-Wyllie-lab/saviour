@@ -7,15 +7,21 @@ import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
 
+const TABS = [
+  { key: "basic",    label: "Basic"    },
+  { key: "settings", label: "Settings" },
+  { key: "export",   label: "Export"   },
+];
+
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null);
+  const [activeTab, setActiveTab] = useState("basic");
   const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
 
-  // Request fresh config from the module on mount.
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
   }, [module.id]);
@@ -31,16 +37,22 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
     });
   };
 
-  const sections = Object.keys(filterPrivateKeys(formData) ?? {}).filter(
-    k => formData[k] !== null && typeof formData[k] === "object"
+  // Settings tab: all sections except module, export, recording (rendered in their own tabs)
+  const settingsData = (() => {
+    if (!formData) return formData;
+    const { module: _m, export: _e, recording: _r, ...rest } = filterPrivateKeys(formData) ?? {};
+    return rest;
+  })();
+
+  const settingsSections = Object.keys(settingsData ?? {}).filter(
+    k => settingsData[k] !== null && typeof settingsData[k] === "object"
   );
 
   const capitalize = s => s.charAt(0).toUpperCase() + s.slice(1);
 
   const handleSave = () => {
     setHasSaved(true);
-    const editableData = filterPrivateKeys(formData);
-    socket.emit("save_module_config", { id, config: editableData });
+    socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
   };
 
   const handleReset = () => {
@@ -62,10 +74,6 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const handleReboot = () => {
     socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
     setShowRebootConfirm(false);
-  };
-
-  const handleGetModes = () => {
-    socket.emit("send_command", { module_id: module.id, type: "get_sensor_modes", params: {} });
   };
 
   return (
@@ -91,43 +99,108 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
               </div>
             );
           })()}
-          <form>
-            <ConfigFields data={formData} handleChange={handleChange}
-              sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={module.id} /> }} />
-          </form>
+
+          <div className="config-tabs">
+            {TABS.map(t => (
+              <button key={t.key} type="button"
+                className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
+                onClick={() => setActiveTab(t.key)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="config-tab-content">
+
+            {/* BASIC */}
+            {activeTab === "basic" && (
+              <>
+                <div className="form-field">
+                  <label>Name:</label>
+                  <input type="text"
+                    value={formData?.module?.name ?? ""}
+                    onChange={e => handleChange(["module", "name"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Group:</label>
+                  <input type="text"
+                    value={formData?.module?.group ?? ""}
+                    onChange={e => handleChange(["module", "group"], e)} />
+                </div>
+                <div className="config-section-divider" />
+                <div className="form-field">
+                  <label>Segment length (mins):</label>
+                  <input type="number" min="1" step="1"
+                    value={formData?.recording?.segment_length_mins ?? 60}
+                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
+                </div>
+              </>
+            )}
+
+            {/* SETTINGS */}
+            {activeTab === "settings" && (
+              <form>
+                <ConfigFields data={settingsData} handleChange={handleChange} />
+              </form>
+            )}
+
+            {/* EXPORT */}
+            {activeTab === "export" && (
+              <ExportConfigSection
+                exportConfig={formData?.export}
+                handleChange={handleChange}
+                moduleId={module.id}
+              />
+            )}
+          </div>
+
+          <div className="config-section-divider" />
+
           <div className="copy-bar">
             <span className="copy-bar-label">Copy:</span>
-            {sections.map(key => (
+            {settingsSections.map(key => (
               <button key={key} type="button" className="copy-btn"
                 onClick={() => onCopy({ label: `${capitalize(key)} — ${module.name}`, data: { [key]: formData[key] } })}>
                 {capitalize(key)}
               </button>
             ))}
+            {formData?.export && (
+              <button type="button" className="copy-btn"
+                onClick={() => onCopy({ label: `Export — ${module.name}`, data: { export: formData.export } })}>
+                Export
+              </button>
+            )}
             <button type="button" className="copy-btn"
               onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
               All
             </button>
           </div>
 
-          {sections.length > 0 && (
+          {settingsSections.length > 0 && (
             <>
               <div className="copy-bar">
                 <span className="copy-bar-label">Apply to all {module.type}s:</span>
-                {sections.map(key => (
+                {settingsSections.map(key => (
                   <button key={key} type="button" className="copy-btn"
                     onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
                     {capitalize(key)}
                   </button>
                 ))}
+                {formData?.export && (
+                  <button type="button" className="copy-btn"
+                    onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
+                    Export
+                  </button>
+                )}
               </div>
               <div className="copy-bar">
                 <span className="copy-bar-label">Apply to all modules:</span>
-                {sections.map(key => (
-                  <button key={key} type="button" className="copy-btn"
-                    onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: null })}>
-                    {capitalize(key)}
+                {formData?.export && (
+                  <button type="button" className="copy-btn"
+                    onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
+                    Export
                   </button>
-                ))}
+                )}
               </div>
             </>
           )}
@@ -149,13 +222,11 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
-
         </div>
 
         {module.type.includes("camera") && (
           <div className="livestream-wrapper">
             <LivestreamCard module={module} />
-            <button type="button" onClick={handleGetModes}>Get Sensor Modes</button>
           </div>
         )}
       </div>
@@ -195,12 +266,8 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
             <p>Reset <strong>{module.name}</strong> to default settings?</p>
             <p className="modal-subtext">All unsaved changes and any custom configuration will be lost.</p>
             <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleReset}>
-                Reset
-              </button>
-              <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>
-                Cancel
-              </button>
+              <button className="reset-button" type="button" onClick={handleReset}>Reset</button>
+              <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>Cancel</button>
             </div>
           </div>
         </div>

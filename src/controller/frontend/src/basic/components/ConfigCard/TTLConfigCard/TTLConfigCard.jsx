@@ -4,22 +4,27 @@ import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
-import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
-import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
+
+const TABS = [
+  { key: "basic",  label: "Basic"  },
+  { key: "pins",   label: "Pins"   },
+  { key: "record", label: "Record" },
+  { key: "export", label: "Export" },
+];
 
 function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState("basic");
   const [newPin, setNewPin] = useState("");
   const [newMode, setNewMode] = useState("");
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showRebootConfirm, setShowRebootConfirm] = useState(false);
-  // {pin: "idle" | "testing" | "done"}
   const [pinTestState, setPinTestState] = useState({});
   const { updateStatus, handleUpdate } = useModuleUpdate(id);
 
@@ -146,158 +151,216 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           {hasSaved && module.config_sync_status === "FAILED" && (
             <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
           )}
-
         </div>
       </div>
 
       {!collapsed && (
         <div className="ttl-body">
           {/* ── Left column: config ── */}
-          <div className="ttl-config-col">
-            {/* Active logic */}
-            <div className="form-field">
-              <label>Active Logic</label>
-              <select
-                value={ttlCfg.active_logic ?? "active_low"}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, active_logic: e.target.value } }))
-                }
-              >
-                {activeLogicOptions.map((opt) => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
+          <div className="ttl-config-col config-form">
+
+            <div className="config-tabs">
+              {TABS.map(t => (
+                <button key={t.key} type="button"
+                  className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
+                  onClick={() => setActiveTab(t.key)}>
+                  {t.label}
+                </button>
+              ))}
             </div>
 
-            {/* Pin list */}
-            <div className="pin-list">
-              {sortedPins.length === 0 && (
-                <p className="no-pins-hint">No pins configured. Add one below.</p>
+            <div className="config-tab-content">
+
+              {/* BASIC */}
+              {activeTab === "basic" && (
+                <>
+                  <div className="form-field">
+                    <label>Name:</label>
+                    <input type="text"
+                      value={formData?.module?.name ?? ""}
+                      onChange={e => handleChange(["module", "name"], e)} />
+                  </div>
+                  <div className="form-field">
+                    <label>Group:</label>
+                    <input type="text"
+                      value={formData?.module?.group ?? ""}
+                      onChange={e => handleChange(["module", "group"], e)} />
+                  </div>
+                </>
               )}
-              {sortedPins.map((pin) => {
-                const settings = ttlCfg.pins[pin];
-                const mode = settings.mode ?? "None";
-                const isOutput = OUTPUT_MODES.has(mode);
-                const modeFields = schema[`_${mode}`] ?? {};
 
-                return (
-                  <div key={pin} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
-                    <div className="pin-card-header">
-                      <span className="pin-label">GPIO {pin}</span>
-                      <span className={`pin-type-badge ${isOutput ? "badge--output" : "badge--input"}`}>
-                        {isOutput ? "OUTPUT" : "INPUT"}
-                      </span>
-                      {isOutput && (
-                        <button
-                          className={`btn-test-pin${pinTestState[pin] === "testing" ? " btn-test-pin--active" : pinTestState[pin] === "done" ? " btn-test-pin--done" : ""}`}
-                          type="button"
-                          disabled={pinTestState[pin] === "testing"}
-                          onClick={() => testPin(pin)}
-                          title="Run a 5-second test pulse to validate the signal"
-                        >
-                          {pinTestState[pin] === "testing" ? "Testing…" : pinTestState[pin] === "done" ? "Done" : "Test"}
-                        </button>
-                      )}
-                      <button className="btn-remove" onClick={() => removePin(pin)}>✕</button>
-                    </div>
+              {/* PINS */}
+              {activeTab === "pins" && (
+                <>
+                  <div className="form-field">
+                    <label>Active logic:</label>
+                    <select
+                      value={ttlCfg.active_logic ?? "active_low"}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, ttl: { ...prev.ttl, active_logic: e.target.value } }))
+                      }
+                    >
+                      {activeLogicOptions.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
 
-                    <div className="field">
-                      <label>Mode</label>
-                      <select value={mode} onChange={(e) => changeMode(pin, e.target.value)}>
-                        {availableModes.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-                    </div>
+                  <div className="pin-list">
+                    {sortedPins.length === 0 && (
+                      <p className="no-pins-hint">No pins configured. Add one below.</p>
+                    )}
+                    {sortedPins.map((pin) => {
+                      const settings = ttlCfg.pins[pin];
+                      const mode = settings.mode ?? "None";
+                      const isOutput = OUTPUT_MODES.has(mode);
+                      const modeFields = schema[`_${mode}`] ?? {};
 
-                    {Object.entries(modeFields).map(([k, meta]) => {
-                      const fieldName = k.replace(/^_/, "");
                       return (
-                        <div key={k} className="field">
-                          <label>{fieldName}</label>
-                          <input
-                            type={meta.type === "float" || meta.type === "int" ? "number" : "text"}
-                            min={meta.min}
-                            max={meta.max}
-                            step={meta.type === "float" ? "any" : undefined}
-                            value={settings[fieldName] ?? ""}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              let val = raw;
-                              if (meta.type === "float") val = raw === "" ? "" : parseFloat(raw);
-                              else if (meta.type === "int") val = raw === "" ? "" : parseInt(raw, 10);
-                              changeField(pin, fieldName, Number.isNaN(val) ? raw : val);
-                            }}
-                          />
+                        <div key={pin} className={`pin-card pin-card--${isOutput ? "output" : "input"}`}>
+                          <div className="pin-card-header">
+                            <span className="pin-label">GPIO {pin}</span>
+                            <span className={`pin-type-badge ${isOutput ? "badge--output" : "badge--input"}`}>
+                              {isOutput ? "OUTPUT" : "INPUT"}
+                            </span>
+                            {isOutput && (
+                              <button
+                                className={`btn-test-pin${pinTestState[pin] === "testing" ? " btn-test-pin--active" : pinTestState[pin] === "done" ? " btn-test-pin--done" : ""}`}
+                                type="button"
+                                disabled={pinTestState[pin] === "testing"}
+                                onClick={() => testPin(pin)}
+                                title="Run a 5-second test pulse to validate the signal"
+                              >
+                                {pinTestState[pin] === "testing" ? "Testing…" : pinTestState[pin] === "done" ? "Done" : "Test"}
+                              </button>
+                            )}
+                            <button className="btn-remove" onClick={() => removePin(pin)}>✕</button>
+                          </div>
+
+                          <div className="field">
+                            <label>Mode</label>
+                            <select value={mode} onChange={(e) => changeMode(pin, e.target.value)}>
+                              {availableModes.map((m) => (
+                                <option key={m} value={m}>{m}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {Object.entries(modeFields).map(([k, meta]) => {
+                            const fieldName = k.replace(/^_/, "");
+                            return (
+                              <div key={k} className="field">
+                                <label>{fieldName}</label>
+                                <input
+                                  type={meta.type === "float" || meta.type === "int" ? "number" : "text"}
+                                  min={meta.min}
+                                  max={meta.max}
+                                  step={meta.type === "float" ? "any" : undefined}
+                                  value={settings[fieldName] ?? ""}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    let val = raw;
+                                    if (meta.type === "float") val = raw === "" ? "" : parseFloat(raw);
+                                    else if (meta.type === "int") val = raw === "" ? "" : parseInt(raw, 10);
+                                    changeField(pin, fieldName, Number.isNaN(val) ? raw : val);
+                                  }}
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
                       );
                     })}
                   </div>
-                );
-              })}
+
+                  <div className="add-pin-row">
+                    <select value={newPin} onChange={(e) => setNewPin(e.target.value)}>
+                      <option value="">Pin…</option>
+                      {unassignedPins.map((p) => (
+                        <option key={p} value={p}>GPIO {p}</option>
+                      ))}
+                    </select>
+                    <select value={newMode} onChange={(e) => setNewMode(e.target.value)}>
+                      <option value="">Mode…</option>
+                      {availableModes.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <button type="button" onClick={addPin} disabled={!newPin || !newMode}>
+                      Add Pin
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* RECORD */}
+              {activeTab === "record" && (
+                <div className="form-field">
+                  <label>Segment length (mins):</label>
+                  <input type="number" min="1" step="1"
+                    value={formData?.recording?.segment_length_mins ?? 60}
+                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
+                </div>
+              )}
+
+              {/* EXPORT */}
+              {activeTab === "export" && (
+                <ExportConfigSection
+                  exportConfig={formData?.export}
+                  handleChange={handleChange}
+                  moduleId={id}
+                />
+              )}
             </div>
 
-            {/* Add pin row */}
-            <div className="add-pin-row">
-              <select value={newPin} onChange={(e) => setNewPin(e.target.value)}>
-                <option value="">Pin…</option>
-                {unassignedPins.map((p) => (
-                  <option key={p} value={p}>GPIO {p}</option>
-                ))}
-              </select>
-              <select value={newMode} onChange={(e) => setNewMode(e.target.value)}>
-                <option value="">Mode…</option>
-                {availableModes.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-              <button type="button" onClick={addPin} disabled={!newPin || !newMode}>
-                Add Pin
+            <div className="config-section-divider" />
+
+            <div className="copy-bar">
+              <span className="copy-bar-label">Copy:</span>
+              {formData?.ttl && (
+                <button type="button" className="copy-btn"
+                  onClick={() => onCopy?.({ label: `TTL — ${module.name || id}`, data: { ttl: formData.ttl } })}>
+                  TTL
+                </button>
+              )}
+              {formData?.export && (
+                <button type="button" className="copy-btn"
+                  onClick={() => onCopy?.({ label: `Export — ${module.name || id}`, data: { export: formData.export } })}>
+                  Export
+                </button>
+              )}
+              <button type="button" className="copy-btn"
+                onClick={() => onCopy?.({ label: `All — ${module.name || id}`, data: filterPrivateKeys(formData) })}>
+                All
               </button>
             </div>
 
-            {/* ── Non-TTL config sections (export, recording, module name, etc.) ── */}
-            {(() => {
-              const { ttl, ...rest } = filterPrivateKeys(formData) ?? {};
-              return Object.keys(rest).length > 0
-                ? <form><ConfigFields data={rest} handleChange={handleChange}
-                    sectionOverrides={{ export: <ExportConfigSection exportConfig={formData?.export} handleChange={handleChange} moduleId={id} /> }} /></form>
-                : null;
-            })()}
+            <div className="copy-bar">
+              <span className="copy-bar-label">Apply to all {module.type}s:</span>
+              {formData?.ttl && (
+                <button type="button" className="copy-btn"
+                  onClick={() => setApplyAllConfirm({ section: "ttl", label: "TTL", moduleType: module.type })}>
+                  TTL
+                </button>
+              )}
+              {formData?.export && (
+                <button type="button" className="copy-btn"
+                  onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
+                  Export
+                </button>
+              )}
+            </div>
 
-            {/* ── Apply to all TTL / all modules ── */}
-            {(() => {
-              const filtered = filterPrivateKeys(formData) ?? {};
-              const allSections = Object.keys(filtered).filter(
-                k => filtered[k] !== null && typeof filtered[k] === "object"
-              );
-              if (allSections.length === 0) return null;
-              const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
-              return (
-                <>
-                  <div className="copy-bar">
-                    <span className="copy-bar-label">Apply to all {module.type}s:</span>
-                    {allSections.map(key => (
-                      <button key={key} type="button" className="copy-btn"
-                        onClick={() => setApplyAllConfirm({ section: key, label: cap(key), moduleType: module.type })}>
-                        {cap(key)}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="copy-bar">
-                    <span className="copy-bar-label">Apply to all modules:</span>
-                    {allSections.map(key => (
-                      <button key={key} type="button" className="copy-btn"
-                        onClick={() => setApplyAllConfirm({ section: key, label: cap(key), moduleType: null })}>
-                        {cap(key)}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              );
-            })()}
+            <div className="copy-bar">
+              <span className="copy-bar-label">Apply to all modules:</span>
+              {formData?.export && (
+                <button type="button" className="copy-btn"
+                  onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
+                  Export
+                </button>
+              )}
+            </div>
 
-            {/* Action buttons */}
             <div className="ttl-action-row">
               <button className="save-button" type="button" onClick={saveConfig}>
                 Save Config

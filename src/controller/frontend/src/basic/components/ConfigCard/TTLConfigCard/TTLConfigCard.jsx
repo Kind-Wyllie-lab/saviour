@@ -154,13 +154,29 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   return (
     <div className={`config-card ttl-config-card ${collapsed ? "collapsed" : ""}`}>
       <div className="card-header">
-        <div className="card-header-left">
+        <div className="card-header-top">
           <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
             {module.name || id} {collapsed ? "(+)" : "(-)"}
           </h3>
-          <span className="module-meta">{module.ip} · {module.version}</span>
+          <div className="card-header-actions">
+            <button className="header-action-btn" type="button"
+              onClick={handleUpdate} disabled={updateStatus === "updating"}>
+              {updateStatus === "updating" ? "Updating…" : "Update"}
+            </button>
+            {updateStatus && updateStatus !== "updating" && (
+              <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                {updateStatus.success ? `Updated: ${updateStatus.output}` : `Failed: ${updateStatus.output}`}
+              </span>
+            )}
+            <button className="header-action-btn header-action-btn--danger" type="button"
+              onClick={() => setShowRebootConfirm(true)}>
+              Reboot
+            </button>
+          </div>
         </div>
-        <div className="card-header-right">
+        <div className="device-info">
+          <span>{module.ip}</span>
+          <span>{module.version}</span>
           {hasSaved && module.config_sync_status === "PENDING" && (
             <span className="config-sync-badge config-sync-badge--pending">Saving…</span>
           )}
@@ -362,17 +378,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               </button>
               <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
                 Reset to Default
-              </button>
-              <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
-                {updateStatus === "updating" ? "Updating…" : "Update Saviour"}
-              </button>
-              {updateStatus && updateStatus !== "updating" && (
-                <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                  {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
-                </span>
-              )}
-              <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
-                Reboot
               </button>
             </div>
           </div>

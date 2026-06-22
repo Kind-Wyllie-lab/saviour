@@ -2,12 +2,10 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
-import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
-import ExportConfigSection from "../ExportConfigSection";
 import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
-import CopyActionsBar from "../CopyActionsBar";
+import ExportConfigSection from "../ExportConfigSection";
 import ConfigFields from "../ConfigFields";
+import ConfigCardShell from "../ConfigCardShell";
 
 const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",       sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
@@ -71,11 +69,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
   const [activeTab, setActiveTab] = useState("basic");
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
-  const [applyAllConfirm, setApplyAllConfirm] = useState(null);
-  const [hasSaved, setHasSaved] = useState(false);
-  const { updateStatus, handleUpdate } = useModuleUpdate(module.id);
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
@@ -162,25 +155,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
     });
   };
 
-  const handleSave = () => {
-    setHasSaved(true);
-    socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
-  };
-
-  const handleReset = () => {
-    socket.emit("reset_module_config", { module_id: module.id });
-    setShowResetConfirm(false);
-  };
-
-  const confirmApplyToAll = () => {
-    if (!applyAllConfirm) return;
-    const { section, moduleType } = applyAllConfirm;
-    const filtered = filterPrivateKeys(formData);
-    const data = filtered?.[section];
-    if (data) socket.emit("apply_section_to_type", { module_type: moduleType ?? null, section, data });
-    setApplyAllConfirm(null);
-  };
-
   const cam              = formData?.camera ?? {};
   const currentWidth     = cam.width;
   const currentHeight    = cam.height;
@@ -211,464 +185,350 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const exposureMismatch = currentSyncMode === "client" && syncServerModule && serverExposureUs != null && clientExposureUs != null && clientExposureUs !== serverExposureUs;
   const hasSyncWarning   = fpsMismatch || exposureMismatch || (currentSyncMode === "client" && !syncServerModule);
 
+  const tabs = [...BASE_TABS, ...(module.type === "loom_camera" ? LOOM_TABS : []), EXPORT_TAB];
+
   return (
-    <div className="config-card">
-      <div className="card-header">
-        <h3>{module.name} ({module.id})</h3>
-        <div className="device-info">
-          {typeof module.ip === "string" && module.ip && <span>IP: {module.ip}</span>}
-          {typeof module.version === "string" && module.version && <span>{module.version}</span>}
-          {sensorModel && <span>{sensorModel}</span>}
-        </div>
-      </div>
-
-      <div className="config-card-body">
-        <div className="config-form">
-
-          <div className="config-tabs">
-            {[...BASE_TABS, ...(module.type === "loom_camera" ? LOOM_TABS : []), EXPORT_TAB].map(t => (
-              <button key={t.key} type="button"
-                className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
-                onClick={() => setActiveTab(t.key)}>
-                {t.label}{t.key === "record" && hasSyncWarning ? " ⚠" : ""}
-              </button>
-            ))}
-          </div>
-
-          <div className="config-tab-content">
-
-            {/* BASIC */}
-            {activeTab === "basic" && (
-              <>
-                <div className="form-field">
-                  <label>Name:</label>
-                  <input type="text"
-                    value={formData?.module?.name ?? ""}
-                    onChange={e => handleChange(["module", "name"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Group:</label>
-                  <input type="text"
-                    value={formData?.module?.group ?? ""}
-                    onChange={e => handleChange(["module", "group"], e)} />
-                </div>
-              </>
-            )}
-
-            {/* IMAGE */}
-            {activeTab === "image" && (
-              <>
-                {currentSyncMode !== "client" && (
-                  <div className="form-field">
-                    <label>Mode:</label>
-                    <select value={activePreset}
-                      onChange={e => {
-                        const preset = presets.find(p => p.key === e.target.value);
-                        if (preset) handlePresetSelect(preset);
-                      }}>
-                      {presets.map(p => (
-                        <option key={p.key} value={p.key}>
-                          {p.label}{p.sub ? ` — ${p.sub}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {(activePreset === "custom" || currentSyncMode === "client") ? (
-                  <>
-                    <div className="form-field">
-                      <label>Width (px):</label>
-                      <input type="number" min="64" max={maxWidth} step="2"
-                        value={currentWidth ?? ""}
-                        onChange={e => handleCustomChange("width", e.target.value)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Height (px):</label>
-                      <input type="number" min="64" max={maxHeight} step="2"
-                        value={currentHeight ?? ""}
-                        onChange={e => handleCustomChange("height", e.target.value)} />
-                    </div>
-                    <div className="form-field">
-                      <label>FPS:</label>
-                      <input type="number" min="1" max={maxFpsAll} step="1"
-                        value={currentFps ?? ""}
-                        disabled={currentSyncMode === "client"}
-                        onChange={e => handleCustomChange("fps", e.target.value)} />
-                    </div>
-                  </>
-                ) : (
-                  currentWidth != null && (
-                    <div className="camera-output-summary">
-                      {currentWidth} × {currentHeight} &middot; {currentFps} fps
-                    </div>
-                  )
-                )}
-                {currentSyncMode === "client" && serverFps != null && (
-                  <div className="sensor-mode-info">
-                    FPS locked to {serverFps} fps via frame sync — resolution can be changed freely.
-                  </div>
-                )}
-                {selectedMode && currentSyncMode !== "client" && (
-                  <div className="sensor-mode-info">Sensor mode: {selectedMode.label}</div>
-                )}
-                {!selectedMode && currentSyncMode !== "client" && (
-                  <div className="sensor-mode-info sensor-mode-info--muted">
-                    Sensor modes not yet loaded
-                  </div>
-                )}
-                {fpsOverMax && (
-                  <div className="fov-label fov-cropped">
-                    {currentFps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
-                  </div>
-                )}
-
-                <div className="config-section-divider" />
-                <div className="form-field">
-                  <label>Monochrome:</label>
-                  <input type="checkbox"
-                    checked={cam.monochrome ?? false}
-                    onChange={e => handleChange(["camera", "monochrome"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Flip horizontal:</label>
-                  <input type="checkbox"
-                    checked={cam.hflip ?? false}
-                    onChange={e => handleChange(["camera", "hflip"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Flip vertical:</label>
-                  <input type="checkbox"
-                    checked={cam.vflip ?? false}
-                    onChange={e => handleChange(["camera", "vflip"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Brightness: {Number(brightness).toFixed(2)}</label>
-                  <input type="range" min="-1" max="1" step="0.05"
-                    value={brightness} className="brightness-slider"
-                    onChange={e => handleChange(["camera", "brightness"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Gain:</label>
-                  <input type="number" min="1" step="1"
-                    value={cam.gain ?? ""}
-                    onChange={e => handleChange(["camera", "gain"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Exposure time (µs):</label>
-                  <div className="exposure-control">
-                    <input type="number" min="1" step="100"
-                      disabled={!cam.manual_exposure || (currentSyncMode === "client" && cam.sync_lock_exposure)}
-                      value={
-                        currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null
-                          ? serverExposureUs
-                          : cam.manual_exposure
-                            ? (cam.exposure_time ?? "")
-                            : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")
-                      }
-                      onChange={e => handleChange(["camera", "exposure_time"], e)} />
-                    <label className="exposure-manual-label">
-                      <input type="checkbox"
-                        checked={cam.manual_exposure ?? false}
-                        disabled={currentSyncMode === "client" && cam.sync_lock_exposure}
-                        onChange={e => handleChange(["camera", "manual_exposure"], e)} />
-                      Manual
-                    </label>
-                  </div>
-                </div>
-                {currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null && (
-                  <div className="sensor-mode-info">
-                    Exposure locked to server ({serverExposureUs} µs).
-                  </div>
-                )}
-
-                {hasAutofocus && (
-                  <>
-                    <div className="config-section-divider" />
-                    <div className="form-field">
-                      <label>Autofocus mode:</label>
-                      <select value={cam.autofocus_mode ?? "manual"}
-                        onChange={e => handleChange(["camera", "autofocus_mode"], e)}>
-                        <option value="manual">Manual</option>
-                        <option value="auto">Auto (one-shot)</option>
-                        <option value="continuous">Continuous</option>
-                      </select>
-                    </div>
-                    {(cam.autofocus_mode ?? "manual") === "manual" && (
-                      <div className="form-field">
-                        <label>Lens position: {Number(cam.lens_position ?? 0).toFixed(1)}</label>
-                        <input type="range" min="0" max="10" step="0.1"
-                          value={cam.lens_position ?? 0} className="brightness-slider"
-                          onChange={e => handleChange(["camera", "lens_position"], e)} />
-                      </div>
-                    )}
-                    {(cam.autofocus_mode ?? "manual") === "auto" && (
-                      <div className="form-field">
-                        <label></label>
-                        <button type="button" className="copy-btn" onClick={handleTriggerAutofocus}>
-                          Trigger Autofocus
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-
-            {/* RECORD */}
-            {activeTab === "record" && (
-              <>
-                <div className="form-field">
-                  <label>Frame sync:</label>
-                  <select value={currentSyncMode}
-                    onChange={e => handleChange(["camera", "sync_mode"], e)}>
-                    <option value="none">None</option>
-                    <option value="server" disabled={otherIsServer}>
-                      Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
-                    </option>
-                    <option value="client" disabled={!otherIsServer}>
-                      Client (follows server){!otherIsServer ? " — set another camera to Server first" : ""}
-                    </option>
-                  </select>
-                </div>
-                {currentSyncMode === "server" && (
-                  <div className="sensor-mode-info">
-                    This camera broadcasts sync timing. Start client cameras first, then this one.
-                  </div>
-                )}
-                {currentSyncMode === "client" && !syncServerModule && (
-                  <div className="fov-label fov-cropped">
-                    No server camera configured — set another camera to Server first.
-                  </div>
-                )}
-                {currentSyncMode === "client" && syncServerModule && (
-                  <div className="sensor-mode-info">
-                    Syncing to {syncServerModule.name} ({syncServerModule.id}).
-                    {serverFps != null && <> FPS locked to {serverFps} fps.</>}
-                  </div>
-                )}
-                {fpsMismatch && (
-                  <div className="fov-label fov-cropped">
-                    FPS mismatch: this camera is {cam.fps} fps but server {syncServerModule.name} is {serverFps} fps — frame sync will not be 1:1.
-                  </div>
-                )}
-                {exposureMismatch && !fpsMismatch && (
-                  <div className="fov-label fov-cropped" style={{ opacity: 0.8 }}>
-                    Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ.
-                  </div>
-                )}
-                <div className="form-field">
-                  <label>Lock exposure:</label>
-                  <input type="checkbox"
-                    checked={cam.sync_lock_exposure ?? false}
-                    onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Lock white balance:</label>
-                  <input type="checkbox"
-                    checked={cam.sync_lock_awb ?? false}
-                    onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
-                </div>
-
-                <div className="config-section-divider" />
-                <div className="form-field">
-                  <label>Bitrate (Mbps):</label>
-                  <input type="number" min="1" max="50" step="1"
-                    value={bitrateMb}
-                    onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
-                </div>
-                <div className="filesize-preview">~{gbPerHour} GB / hr at {bitrateMb} Mbps</div>
-                <div className="form-field">
-                  <label>Timestamp overlay:</label>
-                  <input type="checkbox"
-                    checked={overlayTimestamp}
-                    onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
-                </div>
-                {overlayTimestamp && (
-                  <div className="form-field">
-                    <label>Text size:</label>
-                    <select value={cam.text_size ?? "medium"}
-                      onChange={e => handleChange(["camera", "text_size"], e)}>
-                      <option value="small">Small</option>
-                      <option value="medium">Medium</option>
-                      <option value="large">Large</option>
-                    </select>
-                  </div>
-                )}
-                <div className="form-field">
-                  <label>Overlay framerate (preview):</label>
-                  <input type="checkbox"
-                    checked={cam.overlay_framerate_on_preview ?? false}
-                    onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
-                </div>
-                <div className="form-field">
-                  <label>Livestream quality:</label>
-                  <select value={cam.livestream_quality ?? "normal"}
-                    onChange={e => handleChange(["camera", "livestream_quality"], e)}>
-                    <option value="normal">Normal (low-res)</option>
-                    <option value="high">High (recording resolution)</option>
-                  </select>
-                </div>
-                <div className="config-section-divider" />
-                <div className="form-field">
-                  <label>Segment length (mins):</label>
-                  <input type="number" min="1" step="1"
-                    value={formData?.recording?.segment_length_mins ?? 60}
-                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
-                </div>
-              </>
-            )}
-
-            {/* LOOM TRACKING */}
-            {activeTab === "tracking" && (
-              <ConfigFields
-                data={formData?.loom_tracking}
-                handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
-              />
-            )}
-
-            {/* LOOM STIMULUS */}
-            {activeTab === "stimulus" && (
-              <ConfigFields
-                data={formData?.loom_stimulus}
-                handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
-              />
-            )}
-
-            {/* EXPORT */}
-            {activeTab === "export" && (
-              <ExportConfigSection
-                exportConfig={formData?.export}
-                handleChange={handleChange}
-                moduleId={id}
-              />
-            )}
-          </div>
-
-          <div className="config-section-divider" />
-
-          <CopyActionsBar
-            activeTab={activeTab}
-            tabSectionMap={TAB_COPY_SECTION}
-            formData={formData}
-            moduleType={module.type}
-            moduleName={module.name}
-            onCopy={onCopy}
-            onApplyAll={setApplyAllConfirm}
-          />
-
-          {clipboard && (() => {
-            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
-            return (
-              <div className="clipboard-bar">
-                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
-                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+    <>
+      <ConfigCardShell
+        id={id}
+        module={module}
+        formData={formData}
+        clipboard={clipboard}
+        onCopy={onCopy}
+        onPaste={handlePaste}
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        tabSectionMap={TAB_COPY_SECTION}
+        deviceInfoExtras={[sensorModel]}
+        tabBadges={hasSyncWarning ? { record: "⚠" } : {}}
+        sidebar={
+          <>
+            {module.type === "loom_camera" && (
+              <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
+                  Set ROI / Line
+                </button>
               </div>
-            );
-          })()}
-
-          <div className="config-action-buttons">
-            <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
-            <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
-              Reset to Default
-            </button>
-          </div>
-          {hasSaved && module.config_sync_status === "PENDING" && (
-            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
-          )}
-          {hasSaved && module.config_sync_status === "SYNCED" && (
-            <span className="config-sync-badge config-sync-badge--synced">Saved</span>
-          )}
-          {hasSaved && module.config_sync_status === "FAILED" && (
-            <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
-          )}
-        </div>
-
-        <div className="livestream-wrapper">
-          {module.type === "loom_camera" && (
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-              <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
-                Set ROI / Line
-              </button>
+            )}
+            <LivestreamCard module={module} />
+          </>
+        }
+      >
+        {/* BASIC */}
+        {activeTab === "basic" && (
+          <>
+            <div className="form-field">
+              <label>Name:</label>
+              <input type="text"
+                value={formData?.module?.name ?? ""}
+                onChange={e => handleChange(["module", "name"], e)} />
             </div>
-          )}
-          <LivestreamCard module={module} />
-        </div>
-
-        <LoomRoiLineEditorModal
-          moduleIp={module.ip}
-          moduleId={module.id}
-          open={showLoomRoiEditor}
-          onClose={() => setShowLoomRoiEditor(false)}
-        />
-      </div>
-
-      <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
-          {updateStatus === "updating" ? "Updating…" : "Update Saviour Version"}
-        </button>
-        {updateStatus && updateStatus !== "updating" && (
-          <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-            {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
-          </span>
+            <div className="form-field">
+              <label>Group:</label>
+              <input type="text"
+                value={formData?.module?.group ?? ""}
+                onChange={e => handleChange(["module", "group"], e)} />
+            </div>
+          </>
         )}
-      </div>
-      <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
-          Reboot Module
-        </button>
-      </div>
 
-      {showRebootConfirm && (
-        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Reboot <strong>{module.name}</strong>?</p>
-            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={() => {
-                socket.emit("send_command", { module_id: module.id, type: "reboot", params: {} });
-                setShowRebootConfirm(false);
-              }}>Reboot</button>
-              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+        {/* IMAGE */}
+        {activeTab === "image" && (
+          <>
+            {currentSyncMode !== "client" && (
+              <div className="form-field">
+                <label>Mode:</label>
+                <select value={activePreset}
+                  onChange={e => {
+                    const preset = presets.find(p => p.key === e.target.value);
+                    if (preset) handlePresetSelect(preset);
+                  }}>
+                  {presets.map(p => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}{p.sub ? ` — ${p.sub}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {(activePreset === "custom" || currentSyncMode === "client") ? (
+              <>
+                <div className="form-field">
+                  <label>Width (px):</label>
+                  <input type="number" min="64" max={maxWidth} step="2"
+                    value={currentWidth ?? ""}
+                    onChange={e => handleCustomChange("width", e.target.value)} />
+                </div>
+                <div className="form-field">
+                  <label>Height (px):</label>
+                  <input type="number" min="64" max={maxHeight} step="2"
+                    value={currentHeight ?? ""}
+                    onChange={e => handleCustomChange("height", e.target.value)} />
+                </div>
+                <div className="form-field">
+                  <label>FPS:</label>
+                  <input type="number" min="1" max={maxFpsAll} step="1"
+                    value={currentFps ?? ""}
+                    disabled={currentSyncMode === "client"}
+                    onChange={e => handleCustomChange("fps", e.target.value)} />
+                </div>
+              </>
+            ) : (
+              currentWidth != null && (
+                <div className="camera-output-summary">
+                  {currentWidth} × {currentHeight} &middot; {currentFps} fps
+                </div>
+              )
+            )}
+            {currentSyncMode === "client" && serverFps != null && (
+              <div className="sensor-mode-info">
+                FPS locked to {serverFps} fps via frame sync — resolution can be changed freely.
+              </div>
+            )}
+            {selectedMode && currentSyncMode !== "client" && (
+              <div className="sensor-mode-info">Sensor mode: {selectedMode.label}</div>
+            )}
+            {!selectedMode && currentSyncMode !== "client" && (
+              <div className="sensor-mode-info sensor-mode-info--muted">
+                Sensor modes not yet loaded
+              </div>
+            )}
+            {fpsOverMax && (
+              <div className="fov-label fov-cropped">
+                {currentFps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
+              </div>
+            )}
 
-      {applyAllConfirm && (
-        <div className="modal-overlay" onClick={() => setApplyAllConfirm(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>
-              Apply <strong>{applyAllConfirm.label}</strong> settings from{" "}
-              <strong>{module.name}</strong> to all connected{" "}
-              {applyAllConfirm.moduleType ? `${applyAllConfirm.moduleType} ` : ""}modules?
-            </p>
-            <p className="modal-subtext">
-              This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
-              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
-            </p>
-            <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={confirmApplyToAll}>Apply to All</button>
-              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Monochrome:</label>
+              <input type="checkbox"
+                checked={cam.monochrome ?? false}
+                onChange={e => handleChange(["camera", "monochrome"], e)} />
             </div>
-          </div>
-        </div>
-      )}
+            <div className="form-field">
+              <label>Flip horizontal:</label>
+              <input type="checkbox"
+                checked={cam.hflip ?? false}
+                onChange={e => handleChange(["camera", "hflip"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Flip vertical:</label>
+              <input type="checkbox"
+                checked={cam.vflip ?? false}
+                onChange={e => handleChange(["camera", "vflip"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Brightness: {Number(brightness).toFixed(2)}</label>
+              <input type="range" min="-1" max="1" step="0.05"
+                value={brightness} className="brightness-slider"
+                onChange={e => handleChange(["camera", "brightness"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Gain:</label>
+              <input type="number" min="1" step="1"
+                value={cam.gain ?? ""}
+                onChange={e => handleChange(["camera", "gain"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Exposure time (µs):</label>
+              <div className="exposure-control">
+                <input type="number" min="1" step="100"
+                  disabled={!cam.manual_exposure || (currentSyncMode === "client" && cam.sync_lock_exposure)}
+                  value={
+                    currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null
+                      ? serverExposureUs
+                      : cam.manual_exposure
+                        ? (cam.exposure_time ?? "")
+                        : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")
+                  }
+                  onChange={e => handleChange(["camera", "exposure_time"], e)} />
+                <label className="exposure-manual-label">
+                  <input type="checkbox"
+                    checked={cam.manual_exposure ?? false}
+                    disabled={currentSyncMode === "client" && cam.sync_lock_exposure}
+                    onChange={e => handleChange(["camera", "manual_exposure"], e)} />
+                  Manual
+                </label>
+              </div>
+            </div>
+            {currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null && (
+              <div className="sensor-mode-info">
+                Exposure locked to server ({serverExposureUs} µs).
+              </div>
+            )}
 
-      {showResetConfirm && (
-        <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Reset <strong>{module.name}</strong> to default settings?</p>
-            <p className="modal-subtext">All unsaved changes and any custom configuration will be lost.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleReset}>Reset</button>
-              <button className="save-button" type="button" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+            {hasAutofocus && (
+              <>
+                <div className="config-section-divider" />
+                <div className="form-field">
+                  <label>Autofocus mode:</label>
+                  <select value={cam.autofocus_mode ?? "manual"}
+                    onChange={e => handleChange(["camera", "autofocus_mode"], e)}>
+                    <option value="manual">Manual</option>
+                    <option value="auto">Auto (one-shot)</option>
+                    <option value="continuous">Continuous</option>
+                  </select>
+                </div>
+                {(cam.autofocus_mode ?? "manual") === "manual" && (
+                  <div className="form-field">
+                    <label>Lens position: {Number(cam.lens_position ?? 0).toFixed(1)}</label>
+                    <input type="range" min="0" max="10" step="0.1"
+                      value={cam.lens_position ?? 0} className="brightness-slider"
+                      onChange={e => handleChange(["camera", "lens_position"], e)} />
+                  </div>
+                )}
+                {(cam.autofocus_mode ?? "manual") === "auto" && (
+                  <div className="form-field">
+                    <label></label>
+                    <button type="button" className="copy-btn" onClick={handleTriggerAutofocus}>
+                      Trigger Autofocus
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* RECORD */}
+        {activeTab === "record" && (
+          <>
+            <div className="form-field">
+              <label>Frame sync:</label>
+              <select value={currentSyncMode}
+                onChange={e => handleChange(["camera", "sync_mode"], e)}>
+                <option value="none">None</option>
+                <option value="server" disabled={otherIsServer}>
+                  Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
+                </option>
+                <option value="client" disabled={!otherIsServer}>
+                  Client (follows server){!otherIsServer ? " — set another camera to Server first" : ""}
+                </option>
+              </select>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
+            {currentSyncMode === "server" && (
+              <div className="sensor-mode-info">
+                This camera broadcasts sync timing. Start client cameras first, then this one.
+              </div>
+            )}
+            {currentSyncMode === "client" && !syncServerModule && (
+              <div className="fov-label fov-cropped">
+                No server camera configured — set another camera to Server first.
+              </div>
+            )}
+            {currentSyncMode === "client" && syncServerModule && (
+              <div className="sensor-mode-info">
+                Syncing to {syncServerModule.name} ({syncServerModule.id}).
+                {serverFps != null && <> FPS locked to {serverFps} fps.</>}
+              </div>
+            )}
+            {fpsMismatch && (
+              <div className="fov-label fov-cropped">
+                FPS mismatch: this camera is {cam.fps} fps but server {syncServerModule.name} is {serverFps} fps — frame sync will not be 1:1.
+              </div>
+            )}
+            {exposureMismatch && !fpsMismatch && (
+              <div className="fov-label fov-cropped" style={{ opacity: 0.8 }}>
+                Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ.
+              </div>
+            )}
+            <div className="form-field">
+              <label>Lock exposure:</label>
+              <input type="checkbox"
+                checked={cam.sync_lock_exposure ?? false}
+                onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Lock white balance:</label>
+              <input type="checkbox"
+                checked={cam.sync_lock_awb ?? false}
+                onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
+            </div>
+
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Bitrate (Mbps):</label>
+              <input type="number" min="1" max="50" step="1"
+                value={bitrateMb}
+                onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
+            </div>
+            <div className="filesize-preview">~{gbPerHour} GB / hr at {bitrateMb} Mbps</div>
+            <div className="form-field">
+              <label>Timestamp overlay:</label>
+              <input type="checkbox"
+                checked={overlayTimestamp}
+                onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
+            </div>
+            {overlayTimestamp && (
+              <div className="form-field">
+                <label>Text size:</label>
+                <select value={cam.text_size ?? "medium"}
+                  onChange={e => handleChange(["camera", "text_size"], e)}>
+                  <option value="small">Small</option>
+                  <option value="medium">Medium</option>
+                  <option value="large">Large</option>
+                </select>
+              </div>
+            )}
+            <div className="form-field">
+              <label>Overlay framerate (preview):</label>
+              <input type="checkbox"
+                checked={cam.overlay_framerate_on_preview ?? false}
+                onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Livestream quality:</label>
+              <select value={cam.livestream_quality ?? "normal"}
+                onChange={e => handleChange(["camera", "livestream_quality"], e)}>
+                <option value="normal">Normal (low-res)</option>
+                <option value="high">High (recording resolution)</option>
+              </select>
+            </div>
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Segment length (mins):</label>
+              <input type="number" min="1" step="1"
+                value={formData?.recording?.segment_length_mins ?? 60}
+                onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
+            </div>
+          </>
+        )}
+
+        {/* LOOM TRACKING */}
+        {activeTab === "tracking" && (
+          <ConfigFields
+            data={formData?.loom_tracking}
+            handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
+          />
+        )}
+
+        {/* LOOM STIMULUS */}
+        {activeTab === "stimulus" && (
+          <ConfigFields
+            data={formData?.loom_stimulus}
+            handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
+          />
+        )}
+
+        {/* EXPORT */}
+        {activeTab === "export" && (
+          <ExportConfigSection
+            exportConfig={formData?.export}
+            handleChange={handleChange}
+            moduleId={id}
+          />
+        )}
+      </ConfigCardShell>
+
+      <LoomRoiLineEditorModal
+        moduleIp={module.ip}
+        moduleId={module.id}
+        open={showLoomRoiEditor}
+        onClose={() => setShowLoomRoiEditor(false)}
+      />
+    </>
   );
 }
 

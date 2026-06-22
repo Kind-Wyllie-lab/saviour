@@ -273,6 +273,8 @@ configure_device() {
     if whiptail --title "Done" \
         --yesno "\nConfiguration complete.\n\nReboot now to apply all changes?" \
         9 $W; then
+        clear
+        echo "Rebooting…"
         reboot
     fi
 }
@@ -849,6 +851,18 @@ run_configuration() {
     local role_changed=false type_changed=false
     [ "$DEVICE_ROLE" != "$CURRENT_ROLE" ] && role_changed=true
     [ "$DEVICE_TYPE" != "$CURRENT_TYPE" ] && type_changed=true
+
+    if $role_changed || $type_changed; then
+        for cfg in \
+            "${DIR}/src/modules/config/active_config.json" \
+            "${DIR}/src/controller/config/active_config.json"
+        do
+            if [ -f "$cfg" ]; then
+                rm -f "$cfg"
+                log "Removed stale active config: $cfg"
+            fi
+        done
+    fi
 
     set_device_hostname
 

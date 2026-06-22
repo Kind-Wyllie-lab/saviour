@@ -235,15 +235,18 @@ class Module(ABC):
                 return {"result": "error", "output": err}
             https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
                                r'https://\1/\2.git', remote_url)
-            branch_result = subprocess.run(
+            checkout_result = subprocess.run(
                 ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "rev-parse", "--abbrev-ref", "HEAD"],
+                 "checkout", "main"],
                 capture_output=True, text=True
             )
-            branch = branch_result.stdout.strip() or "main"
+            if checkout_result.returncode != 0:
+                err = checkout_result.stderr.strip() or "Could not switch to main branch"
+                self.logger.error(f"SAVIOUR update: git checkout main failed: {err}")
+                return {"result": "error", "output": err}
             result = subprocess.run(
                 ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "pull", https_url, branch],
+                 "pull", https_url, "main"],
                 capture_output=True, text=True, timeout=60
             )
             subprocess.run(

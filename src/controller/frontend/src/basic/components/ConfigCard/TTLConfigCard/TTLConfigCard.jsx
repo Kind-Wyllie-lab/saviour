@@ -3,11 +3,19 @@ import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
+import CopyActionsBar from "../CopyActionsBar";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
+
+const TAB_COPY_SECTION = {
+  basic:  { key: "module",    label: "Basic"  },
+  pins:   { key: "ttl",       label: "TTL"    },
+  record: { key: "recording", label: "Record" },
+  export: { key: "export",    label: "Export" },
+};
 
 const TABS = [
   { key: "basic",  label: "Basic"  },
@@ -110,6 +118,17 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
     }, 5000);
   };
 
+  const handlePaste = () => {
+    if (!clipboard) return;
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      for (const [key, value] of Object.entries(clipboard.data)) {
+        cloned[key] = structuredClone(value);
+      }
+      return cloned;
+    });
+  };
+
   const saveConfig = () => {
     socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
     setHasSaved(true);
@@ -135,13 +154,29 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   return (
     <div className={`config-card ttl-config-card ${collapsed ? "collapsed" : ""}`}>
       <div className="card-header">
-        <div className="card-header-left">
+        <div className="card-header-top">
           <h3 onClick={() => setCollapsed(!collapsed)} style={{ cursor: "pointer" }}>
             {module.name || id} {collapsed ? "(+)" : "(-)"}
           </h3>
-          <span className="module-meta">{module.ip} · {module.version}</span>
+          <div className="card-header-actions">
+            <button className="header-action-btn" type="button"
+              onClick={handleUpdate} disabled={updateStatus === "updating"}>
+              {updateStatus === "updating" ? "Updating…" : "Update"}
+            </button>
+            {updateStatus && updateStatus !== "updating" && (
+              <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+                {updateStatus.success ? `Updated: ${updateStatus.output}` : `Failed: ${updateStatus.output}`}
+              </span>
+            )}
+            <button className="header-action-btn header-action-btn--danger" type="button"
+              onClick={() => setShowRebootConfirm(true)}>
+              Reboot
+            </button>
+          </div>
         </div>
-        <div className="card-header-right">
+        <div className="device-info">
+          <span>{module.ip}</span>
+          <span>{module.version}</span>
           {hasSaved && module.config_sync_status === "PENDING" && (
             <span className="config-sync-badge config-sync-badge--pending">Saving…</span>
           )}
@@ -315,51 +350,27 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
             <div className="config-section-divider" />
 
-            <div className="copy-bar">
-              <span className="copy-bar-label">Copy:</span>
-              {formData?.ttl && (
-                <button type="button" className="copy-btn"
-                  onClick={() => onCopy?.({ label: `TTL — ${module.name || id}`, data: { ttl: formData.ttl } })}>
-                  TTL
-                </button>
-              )}
-              {formData?.export && (
-                <button type="button" className="copy-btn"
-                  onClick={() => onCopy?.({ label: `Export — ${module.name || id}`, data: { export: formData.export } })}>
-                  Export
-                </button>
-              )}
-              <button type="button" className="copy-btn"
-                onClick={() => onCopy?.({ label: `All — ${module.name || id}`, data: filterPrivateKeys(formData) })}>
-                All
-              </button>
-            </div>
+            <CopyActionsBar
+              activeTab={activeTab}
+              tabSectionMap={TAB_COPY_SECTION}
+              formData={formData}
+              moduleType={module.type}
+              moduleName={module.name || id}
+              onCopy={onCopy}
+              onApplyAll={setApplyAllConfirm}
+            />
 
-            <div className="copy-bar">
-              <span className="copy-bar-label">Apply to all {module.type}s:</span>
-              {formData?.ttl && (
-                <button type="button" className="copy-btn"
-                  onClick={() => setApplyAllConfirm({ section: "ttl", label: "TTL", moduleType: module.type })}>
-                  TTL
-                </button>
-              )}
-              {formData?.export && (
-                <button type="button" className="copy-btn"
-                  onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
-                  Export
-                </button>
-              )}
-            </div>
-
-            <div className="copy-bar">
-              <span className="copy-bar-label">Apply to all modules:</span>
-              {formData?.export && (
-                <button type="button" className="copy-btn"
-                  onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
-                  Export
-                </button>
-              )}
-            </div>
+            {clipboard && (() => {
+              const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+              return (
+                <div className="clipboard-bar">
+                  <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                  <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                  <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                  {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+                </div>
+              );
+            })()}
 
             <div className="ttl-action-row">
               <button className="save-button" type="button" onClick={saveConfig}>
@@ -367,17 +378,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               </button>
               <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
                 Reset to Default
-              </button>
-              <button className="update-button" type="button" onClick={handleUpdate} disabled={updateStatus === "updating"}>
-                {updateStatus === "updating" ? "Updating…" : "Update Saviour"}
-              </button>
-              {updateStatus && updateStatus !== "updating" && (
-                <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                  {updateStatus.success ? `Updated: ${updateStatus.output}` : `Update failed: ${updateStatus.output}`}
-                </span>
-              )}
-              <button className="update-button" type="button" onClick={() => setShowRebootConfirm(true)}>
-                Reboot
               </button>
             </div>
           </div>

@@ -1159,6 +1159,7 @@ class Web(ABC):
                     version = status.get("version")
                     if version:
                         self.facade.update_module_version(module_id, version)
+                    self.facade.send_command(module_id, "heartbeat_ack", {})
 
                 case "cmd_ack":
                     command = status.get("command")

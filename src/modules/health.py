@@ -83,6 +83,7 @@ class Health:
                     status = self.get_health()
                     status['type'] = 'heartbeat' # Add type field to identify heartbeat status
                     self.facade.send_status(status)
+                    self.facade.notify_heartbeat_sent()
                     last_heartbeat_time = current_time
                 except Exception as e:
                     self.logger.error(f"Error sending heartbeat: {e}")

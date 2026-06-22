@@ -180,10 +180,24 @@ class Network:
         self.logger.info(f"Service updated: {name}")
 
         if name.endswith('._controller._tcp.local.'):
-            self.logger.info("Controller service updated, forcing reconnection")
-            # Reset stored IP/port so add_service doesn't skip as "same controller".
-            # An mDNS update explicitly signals the controller changed state (e.g.
-            # restarted), even when the address is unchanged.
+            info = zeroconf.get_service_info(service_type, name)
+            if not info or not info.addresses:
+                self.logger.warning("Controller service update had no address info, ignoring")
+                return
+
+            new_ip   = socket.inet_ntoa(info.addresses[0])
+            new_port = info.port
+
+            if new_ip == self.controller_ip and new_port == self.controller_port:
+                self.logger.info(
+                    f"Controller service updated but endpoint unchanged ({new_ip}:{new_port}), skipping reconnect"
+                )
+                return
+
+            self.logger.info(
+                f"Controller endpoint changed "
+                f"({self.controller_ip}:{self.controller_port} → {new_ip}:{new_port}), reconnecting"
+            )
             self.controller_ip = None
             self.controller_port = None
             self.add_service(zeroconf, service_type, name)

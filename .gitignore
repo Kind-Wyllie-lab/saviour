@@ -72,3 +72,4 @@ log/
 
 # Node
 node_modules/
+.claude/worktrees/

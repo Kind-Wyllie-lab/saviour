@@ -215,7 +215,7 @@ configure_logging
 install_audiomoth_usb_cmd
 
 # Install saviour-config as a system-wide command
-ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
+sudo ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
 chmod +x "$TARGET_DIR/saviour-config"
 
 echo ""

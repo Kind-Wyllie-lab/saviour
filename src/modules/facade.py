@@ -133,6 +133,10 @@ class ModuleFacade():
         """Handle an incoming command from the controller"""
         self.module.command.handle_command(raw_command)
 
+    def notify_heartbeat_sent(self) -> None:
+        """Notify the ack watchdog that a heartbeat was just sent."""
+        self.module.communication.notify_heartbeat_sent()
+
 
     """Module Specific Recording Methods"""
     def start_new_recording(self) -> bool:

@@ -50,9 +50,16 @@ class Communication:
         self.context = zmq.Context()
         self.command_socket = self.context.socket(zmq.SUB)
         self.status_socket = self.context.socket(zmq.PUB)
-        
+
         # Command listener thread
         self.command_thread = None
+
+        # Heartbeat ack watchdog
+        self._ack_lock = threading.Lock()
+        self.last_ack_time = None
+        self.consecutive_missed_acks = 0
+        self.has_received_ack = False
+        self._MISSED_ACK_THRESHOLD = 2
         
 
     def connect(self, controller_ip: str, controller_port: int) -> bool:
@@ -184,11 +191,17 @@ class Communication:
                 # self.logger.info(f"Raw message received: {message} at {time.time()}")
                 topic, command = message.split(' ', 1)
                 # self.logger.info(f"Parsed topic: {topic}, command: {command}")
-                
+
+                # Intercept heartbeat_ack at the transport layer — no facade dispatch needed
+                cmd_type = command.split(' ', 1)[0]
+                if cmd_type == "heartbeat_ack":
+                    self._on_heartbeat_ack()
+                    continue
+
                 # Store the command immediately after parsing
                 self.last_command = command
                 self.logger.info(f"Stored command: {self.last_command}")
-                
+
                 # Call the command handler
                 try:
                     self.facade.handle_command(command)
@@ -245,6 +258,60 @@ class Communication:
                 self.logger.warning("No controller information available for reconnection")
         except Exception as e:
             self.logger.error(f"Error during reconnection attempt: {e}")
+
+
+    def _on_heartbeat_ack(self):
+        """Record a received heartbeat_ack and reset the missed-ack counter."""
+        with self._ack_lock:
+            self.last_ack_time = time.time()
+            self.consecutive_missed_acks = 0
+            if not self.has_received_ack:
+                self.logger.info("First heartbeat_ack received — ack watchdog is now active")
+                self.has_received_ack = True
+
+
+    def notify_heartbeat_sent(self):
+        """Called by health.py after each heartbeat is sent.
+        Increments the missed-ack counter; triggers a force-reconnect after
+        _MISSED_ACK_THRESHOLD consecutive misses (only once acks have been seen)."""
+        with self._ack_lock:
+            if not self.has_received_ack:
+                return  # Don't count misses before the channel has ever worked
+            self.consecutive_missed_acks += 1
+            should_reconnect = self.consecutive_missed_acks >= self._MISSED_ACK_THRESHOLD
+            missed = self.consecutive_missed_acks
+
+        if should_reconnect:
+            self.logger.warning(
+                f"{missed} consecutive heartbeat acks missed — "
+                "command channel appears dead, forcing ZMQ reconnect"
+            )
+            threading.Thread(target=self._force_reconnect, daemon=True).start()
+
+
+    def _force_reconnect(self):
+        """Tear down and recreate ZMQ sockets. Used by the ack watchdog.
+        Recording, heartbeats, PTP, and Flask are unaffected."""
+        with self._ack_lock:
+            self.consecutive_missed_acks = 0
+
+        controller_ip = self.controller_ip
+        controller_port = self.controller_port
+
+        if not controller_ip:
+            self.logger.warning("Force reconnect requested but no controller IP stored — skipping")
+            return
+
+        self.logger.info(f"Forcing ZMQ reconnect to {controller_ip}:{controller_port}")
+        self.cleanup()
+
+        if self.connect(controller_ip, controller_port):
+            if self.start_command_listener():
+                self.logger.info("Force reconnect successful — command channel restored")
+            else:
+                self.logger.error("Force reconnect: connected but failed to restart command listener")
+        else:
+            self.logger.error("Force reconnect: connect() failed")
 
 
     def send_status(self, status_data: Dict[str, Any]) -> None:
@@ -314,10 +381,14 @@ class Communication:
             # Step 3: Wait a bit for ZMQ to clean up internal resources
             time.sleep(0.1)
             
-            # Step 4: Skip context termination to avoid hanging
-            # Just close the context reference - ZeroMQ will clean up automatically
+            # Step 4: Terminate the context. Sockets were closed with LINGER=0
+            # above, so term() returns immediately rather than hanging.
             if hasattr(self, 'context') and self.context:
-                self.logger.info("Closing ZMQ context")
+                self.logger.info("Terminating ZMQ context")
+                try:
+                    self.context.term()
+                except Exception as e:
+                    self.logger.warning(f"ZMQ context term error (non-fatal): {e}")
                 self.context = None
             
             # Reset connection state

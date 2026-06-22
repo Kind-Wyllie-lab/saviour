@@ -5,6 +5,7 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
+import CopyActionsBar from "../CopyActionsBar";
 
 const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",        sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
@@ -32,6 +33,15 @@ const TABS = [
   { key: "analysis", label: "Analysis" },
   { key: "export",   label: "Export"   },
 ];
+
+const TAB_COPY_SECTION = {
+  basic:  { key: "module", label: "Basic"  },
+  mode:   { key: "camera", label: "Mode"   },
+  image:  { key: "camera", label: "Image"  },
+  record: { key: "camera", label: "Record" },
+  export: { key: "export", label: "Export" },
+  // analysis: omitted — multiple sub-sections, only "Copy all" shown
+};
 
 function bestSensorMode(sensorModes, width, height, fps) {
   if (!sensorModes.length || !width || !height || !fps) return null;
@@ -662,51 +672,15 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
           {/* ── Always-visible: copy / apply / save ── */}
           <div className="config-section-divider" />
 
-          <div className="copy-bar">
-            <span className="copy-bar-label">Copy:</span>
-            {COPY_SECTIONS.filter(k => formData?.[k]).map(key => (
-              <button key={key} type="button" className="copy-btn"
-                onClick={() => onCopy({ label: `${sectionLabel(key)} — ${module.name}`, data: { [key]: formData[key] } })}>
-                {sectionLabel(key)}
-              </button>
-            ))}
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => onCopy({ label: `Export — ${module.name}`, data: { export: formData.export } })}>
-                Export
-              </button>
-            )}
-            <button type="button" className="copy-btn"
-              onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
-              All
-            </button>
-          </div>
-
-          <div className="copy-bar">
-            <span className="copy-bar-label">Apply to all APA cameras:</span>
-            {COPY_SECTIONS.filter(k => formData?.[k]).map(key => (
-              <button key={key} type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: key, label: sectionLabel(key), moduleType: module.type })}>
-                {sectionLabel(key)}
-              </button>
-            ))}
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
-                Export
-              </button>
-            )}
-          </div>
-
-          <div className="copy-bar">
-            <span className="copy-bar-label">Apply to all modules:</span>
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
-                Export
-              </button>
-            )}
-          </div>
+          <CopyActionsBar
+            activeTab={activeTab}
+            tabSectionMap={TAB_COPY_SECTION}
+            formData={formData}
+            moduleType={module.type}
+            moduleName={module.name}
+            onCopy={onCopy}
+            onApplyAll={setApplyAllConfirm}
+          />
 
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>Save Config</button>

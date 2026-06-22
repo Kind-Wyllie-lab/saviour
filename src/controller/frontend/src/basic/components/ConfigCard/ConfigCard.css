@@ -486,3 +486,37 @@ min-width: 300px;
   background: color-mix(in srgb, var(--border-color) 50%, transparent);
   margin: 10px 0 8px;
 }
+
+/* Contextual copy / apply action bar */
+.config-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.config-action-pill {
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.82em;
+  white-space: nowrap;
+}
+
+.config-action-pill:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.config-action-pill--push {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.config-action-pill--push:hover {
+  opacity: 1;
+}

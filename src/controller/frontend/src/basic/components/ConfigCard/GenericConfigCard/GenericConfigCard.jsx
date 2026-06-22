@@ -6,6 +6,13 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
+import CopyActionsBar from "../CopyActionsBar";
+
+const TAB_COPY_SECTION = {
+  basic:  { key: "module", label: "Basic"  },
+  export: { key: "export", label: "Export" },
+  // settings: omitted — dynamic sections, only "Copy all" shown
+};
 
 const TABS = [
   { key: "basic",    label: "Basic"    },
@@ -156,54 +163,15 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
 
           <div className="config-section-divider" />
 
-          <div className="copy-bar">
-            <span className="copy-bar-label">Copy:</span>
-            {settingsSections.map(key => (
-              <button key={key} type="button" className="copy-btn"
-                onClick={() => onCopy({ label: `${capitalize(key)} — ${module.name}`, data: { [key]: formData[key] } })}>
-                {capitalize(key)}
-              </button>
-            ))}
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => onCopy({ label: `Export — ${module.name}`, data: { export: formData.export } })}>
-                Export
-              </button>
-            )}
-            <button type="button" className="copy-btn"
-              onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
-              All
-            </button>
-          </div>
-
-          {settingsSections.length > 0 && (
-            <>
-              <div className="copy-bar">
-                <span className="copy-bar-label">Apply to all {module.type}s:</span>
-                {settingsSections.map(key => (
-                  <button key={key} type="button" className="copy-btn"
-                    onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
-                    {capitalize(key)}
-                  </button>
-                ))}
-                {formData?.export && (
-                  <button type="button" className="copy-btn"
-                    onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
-                    Export
-                  </button>
-                )}
-              </div>
-              <div className="copy-bar">
-                <span className="copy-bar-label">Apply to all modules:</span>
-                {formData?.export && (
-                  <button type="button" className="copy-btn"
-                    onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
-                    Export
-                  </button>
-                )}
-              </div>
-            </>
-          )}
+          <CopyActionsBar
+            activeTab={activeTab}
+            tabSectionMap={TAB_COPY_SECTION}
+            formData={formData}
+            moduleType={module.type}
+            moduleName={module.name}
+            onCopy={onCopy}
+            onApplyAll={setApplyAllConfirm}
+          />
 
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>

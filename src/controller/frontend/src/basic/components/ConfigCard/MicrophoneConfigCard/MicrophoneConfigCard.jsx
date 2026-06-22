@@ -6,6 +6,7 @@ import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
+import CopyActionsBar from "../CopyActionsBar";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -51,6 +52,15 @@ function MicrophoneStream({ ip, port }) {
     </>
   );
 }
+
+const TAB_COPY_SECTION = {
+  basic:     { key: "module",     label: "Basic"     },
+  recording: { key: "recording",  label: "Recording" },
+  audiomoth: { key: "audiomoth",  label: "AudioMoth" },
+  monitor:   { key: "monitoring", label: "Monitor"   },
+  export:    { key: "export",     label: "Export"    },
+  // labels: omitted — serial-specific, not meaningful to copy to other modules
+};
 
 const MIC_TABS = [
   { key: "basic",     label: "Basic"     },
@@ -443,51 +453,15 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           {/* ── Always-visible: copy / apply / save ── */}
           <div className="config-section-divider" />
 
-          <div className="copy-bar">
-            <span className="copy-bar-label">Copy:</span>
-            {sections.map(key => (
-              <button key={key} type="button" className="copy-btn"
-                onClick={() => onCopy({ label: `${capitalize(key)} — ${module.name}`, data: { [key]: formData[key] } })}>
-                {capitalize(key)}
-              </button>
-            ))}
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => onCopy({ label: `Export — ${module.name}`, data: { export: formData.export } })}>
-                Export
-              </button>
-            )}
-            <button type="button" className="copy-btn"
-              onClick={() => onCopy({ label: `All — ${module.name}`, data: filterPrivateKeys(formData) })}>
-              All
-            </button>
-          </div>
-
-          <div className="copy-bar">
-            <span className="copy-bar-label">Apply to all {module.type}s:</span>
-            {sections.map(key => (
-              <button key={key} type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: key, label: capitalize(key), moduleType: module.type })}>
-                {capitalize(key)}
-              </button>
-            ))}
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
-                Export
-              </button>
-            )}
-          </div>
-
-          <div className="copy-bar">
-            <span className="copy-bar-label">Apply to all modules:</span>
-            {formData?.export && (
-              <button type="button" className="copy-btn"
-                onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
-                Export
-              </button>
-            )}
-          </div>
+          <CopyActionsBar
+            activeTab={activeTab}
+            tabSectionMap={TAB_COPY_SECTION}
+            formData={formData}
+            moduleType={module.type}
+            moduleName={module.name}
+            onCopy={onCopy}
+            onApplyAll={setApplyAllConfirm}
+          />
 
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave} disabled={!!freqError || !!timeWindowError}>

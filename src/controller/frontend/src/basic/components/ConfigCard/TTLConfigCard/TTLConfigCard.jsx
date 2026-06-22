@@ -6,8 +6,16 @@ import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
+import CopyActionsBar from "../CopyActionsBar";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
+
+const TAB_COPY_SECTION = {
+  basic:  { key: "module",    label: "Basic"  },
+  pins:   { key: "ttl",       label: "TTL"    },
+  record: { key: "recording", label: "Record" },
+  export: { key: "export",    label: "Export" },
+};
 
 const TABS = [
   { key: "basic",  label: "Basic"  },
@@ -315,51 +323,15 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
 
             <div className="config-section-divider" />
 
-            <div className="copy-bar">
-              <span className="copy-bar-label">Copy:</span>
-              {formData?.ttl && (
-                <button type="button" className="copy-btn"
-                  onClick={() => onCopy?.({ label: `TTL — ${module.name || id}`, data: { ttl: formData.ttl } })}>
-                  TTL
-                </button>
-              )}
-              {formData?.export && (
-                <button type="button" className="copy-btn"
-                  onClick={() => onCopy?.({ label: `Export — ${module.name || id}`, data: { export: formData.export } })}>
-                  Export
-                </button>
-              )}
-              <button type="button" className="copy-btn"
-                onClick={() => onCopy?.({ label: `All — ${module.name || id}`, data: filterPrivateKeys(formData) })}>
-                All
-              </button>
-            </div>
-
-            <div className="copy-bar">
-              <span className="copy-bar-label">Apply to all {module.type}s:</span>
-              {formData?.ttl && (
-                <button type="button" className="copy-btn"
-                  onClick={() => setApplyAllConfirm({ section: "ttl", label: "TTL", moduleType: module.type })}>
-                  TTL
-                </button>
-              )}
-              {formData?.export && (
-                <button type="button" className="copy-btn"
-                  onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: module.type })}>
-                  Export
-                </button>
-              )}
-            </div>
-
-            <div className="copy-bar">
-              <span className="copy-bar-label">Apply to all modules:</span>
-              {formData?.export && (
-                <button type="button" className="copy-btn"
-                  onClick={() => setApplyAllConfirm({ section: "export", label: "Export", moduleType: null })}>
-                  Export
-                </button>
-              )}
-            </div>
+            <CopyActionsBar
+              activeTab={activeTab}
+              tabSectionMap={TAB_COPY_SECTION}
+              formData={formData}
+              moduleType={module.type}
+              moduleName={module.name || id}
+              onCopy={onCopy}
+              onApplyAll={setApplyAllConfirm}
+            />
 
             <div className="ttl-action-row">
               <button className="save-button" type="button" onClick={saveConfig}>

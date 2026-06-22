@@ -255,18 +255,6 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
       <div className="config-card-body">
         <div className="config-form">
 
-          {/* ── Clipboard paste bar ── */}
-          {clipboard && (() => {
-            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
-            return (
-              <div className="clipboard-bar">
-                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
-                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
-              </div>
-            );
-          })()}
 
           {/* ── Tab nav ── */}
           <div className="config-tabs">
@@ -681,6 +669,18 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
             onCopy={onCopy}
             onApplyAll={setApplyAllConfirm}
           />
+
+          {clipboard && (() => {
+            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+            return (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            );
+          })()}
 
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>Save Config</button>

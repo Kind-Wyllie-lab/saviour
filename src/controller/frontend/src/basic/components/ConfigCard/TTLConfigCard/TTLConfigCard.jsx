@@ -3,7 +3,7 @@ import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import socket from "../../../../socket";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import CopyActionsBar from "../CopyActionsBar";
@@ -116,6 +116,17 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
       setPinTestState((prev) => ({ ...prev, [pin]: "done" }));
       setTimeout(() => setPinTestState((prev) => { const n = { ...prev }; delete n[pin]; return n; }), 2000);
     }, 5000);
+  };
+
+  const handlePaste = () => {
+    if (!clipboard) return;
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      for (const [key, value] of Object.entries(clipboard.data)) {
+        cloned[key] = structuredClone(value);
+      }
+      return cloned;
+    });
   };
 
   const saveConfig = () => {
@@ -332,6 +343,18 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               onCopy={onCopy}
               onApplyAll={setApplyAllConfirm}
             />
+
+            {clipboard && (() => {
+              const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+              return (
+                <div className="clipboard-bar">
+                  <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                  <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                  <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                  {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+                </div>
+              );
+            })()}
 
             <div className="ttl-action-row">
               <button className="save-button" type="button" onClick={saveConfig}>

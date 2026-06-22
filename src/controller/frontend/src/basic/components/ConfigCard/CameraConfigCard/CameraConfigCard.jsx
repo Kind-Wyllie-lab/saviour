@@ -7,6 +7,7 @@ import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import ExportConfigSection from "../ExportConfigSection";
 import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
 import CopyActionsBar from "../CopyActionsBar";
+import ConfigFields from "../ConfigFields";
 
 const HQ_PRESETS = [
   { key: "1080p30",  label: "1080p",       sub: "30 fps",  width: 1920, height: 1080, fps: 30  },
@@ -26,22 +27,26 @@ const CM3_PRESETS = [
   { key: "custom",       label: "Custom",     sub: null,      width: null, height: null, fps: null },
 ];
 
-const TABS = [
+const BASE_TABS = [
   { key: "basic",  label: "Basic"  },
-  { key: "mode",   label: "Mode"   },
   { key: "image",  label: "Image"  },
   { key: "record", label: "Record" },
-  { key: "sync",   label: "Sync"   },
-  { key: "export", label: "Export" },
 ];
 
+const LOOM_TABS = [
+  { key: "tracking", label: "Tracking" },
+  { key: "stimulus", label: "Stimulus" },
+];
+
+const EXPORT_TAB = { key: "export", label: "Export" };
+
 const TAB_COPY_SECTION = {
-  basic:  { key: "module", label: "Basic"  },
-  mode:   { key: "camera", label: "Mode"   },
-  image:  { key: "camera", label: "Image"  },
-  record: { key: "camera", label: "Record" },
-  sync:   { key: "camera", label: "Sync"   },
-  export: { key: "export", label: "Export" },
+  basic:    { key: "module",        label: "Basic"    },
+  image:    { key: "camera",        label: "Image"    },
+  record:   { key: "camera",        label: "Record"   },
+  tracking: { key: "loom_tracking", label: "Tracking" },
+  stimulus: { key: "loom_stimulus", label: "Stimulus" },
+  export:   { key: "export",        label: "Export"   },
 };
 
 function bestSensorMode(sensorModes, width, height, fps) {
@@ -220,24 +225,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
       <div className="config-card-body">
         <div className="config-form">
 
-          {clipboard && (() => {
-            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
-            return (
-              <div className="clipboard-bar">
-                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
-                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
-              </div>
-            );
-          })()}
-
           <div className="config-tabs">
-            {TABS.map(t => (
+            {[...BASE_TABS, ...(module.type === "loom_camera" ? LOOM_TABS : []), EXPORT_TAB].map(t => (
               <button key={t.key} type="button"
                 className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
                 onClick={() => setActiveTab(t.key)}>
-                {t.label}{t.key === "sync" && hasSyncWarning ? " ⚠" : ""}
+                {t.label}{t.key === "record" && hasSyncWarning ? " ⚠" : ""}
               </button>
             ))}
           </div>
@@ -262,24 +255,26 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </>
             )}
 
-            {/* MODE */}
-            {activeTab === "mode" && (
+            {/* IMAGE */}
+            {activeTab === "image" && (
               <>
-                <div className="form-field">
-                  <label>Mode:</label>
-                  <select value={activePreset} disabled={currentSyncMode === "client"}
-                    onChange={e => {
-                      const preset = presets.find(p => p.key === e.target.value);
-                      if (preset) handlePresetSelect(preset);
-                    }}>
-                    {presets.map(p => (
-                      <option key={p.key} value={p.key}>
-                        {p.label}{p.sub ? ` — ${p.sub}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {activePreset === "custom" ? (
+                {currentSyncMode !== "client" && (
+                  <div className="form-field">
+                    <label>Mode:</label>
+                    <select value={activePreset}
+                      onChange={e => {
+                        const preset = presets.find(p => p.key === e.target.value);
+                        if (preset) handlePresetSelect(preset);
+                      }}>
+                      {presets.map(p => (
+                        <option key={p.key} value={p.key}>
+                          {p.label}{p.sub ? ` — ${p.sub}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {(activePreset === "custom" || currentSyncMode === "client") ? (
                   <>
                     <div className="form-field">
                       <label>Width (px):</label>
@@ -308,11 +303,17 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     </div>
                   )
                 )}
-                {selectedMode ? (
+                {currentSyncMode === "client" && serverFps != null && (
+                  <div className="sensor-mode-info">
+                    FPS locked to {serverFps} fps via frame sync — resolution can be changed freely.
+                  </div>
+                )}
+                {selectedMode && currentSyncMode !== "client" && (
                   <div className="sensor-mode-info">Sensor mode: {selectedMode.label}</div>
-                ) : (
+                )}
+                {!selectedMode && currentSyncMode !== "client" && (
                   <div className="sensor-mode-info sensor-mode-info--muted">
-                    Sensor modes not yet loaded — click Refresh
+                    Sensor modes not yet loaded
                   </div>
                 )}
                 {fpsOverMax && (
@@ -320,17 +321,25 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     {currentFps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
                   </div>
                 )}
-              </>
-            )}
 
-            {/* IMAGE */}
-            {activeTab === "image" && (
-              <>
+                <div className="config-section-divider" />
                 <div className="form-field">
                   <label>Monochrome:</label>
                   <input type="checkbox"
                     checked={cam.monochrome ?? false}
                     onChange={e => handleChange(["camera", "monochrome"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Flip horizontal:</label>
+                  <input type="checkbox"
+                    checked={cam.hflip ?? false}
+                    onChange={e => handleChange(["camera", "hflip"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Flip vertical:</label>
+                  <input type="checkbox"
+                    checked={cam.vflip ?? false}
+                    onChange={e => handleChange(["camera", "vflip"], e)} />
                 </div>
                 <div className="form-field">
                   <label>Brightness: {Number(brightness).toFixed(2)}</label>
@@ -348,19 +357,29 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                   <label>Exposure time (µs):</label>
                   <div className="exposure-control">
                     <input type="number" min="1" step="100"
-                      disabled={!cam.manual_exposure}
-                      value={cam.manual_exposure
-                        ? (cam.exposure_time ?? "")
-                        : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
+                      disabled={!cam.manual_exposure || (currentSyncMode === "client" && cam.sync_lock_exposure)}
+                      value={
+                        currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null
+                          ? serverExposureUs
+                          : cam.manual_exposure
+                            ? (cam.exposure_time ?? "")
+                            : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")
+                      }
                       onChange={e => handleChange(["camera", "exposure_time"], e)} />
                     <label className="exposure-manual-label">
                       <input type="checkbox"
                         checked={cam.manual_exposure ?? false}
+                        disabled={currentSyncMode === "client" && cam.sync_lock_exposure}
                         onChange={e => handleChange(["camera", "manual_exposure"], e)} />
                       Manual
                     </label>
                   </div>
                 </div>
+                {currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null && (
+                  <div className="sensor-mode-info">
+                    Exposure locked to server ({serverExposureUs} µs).
+                  </div>
+                )}
 
                 {hasAutofocus && (
                   <>
@@ -392,64 +411,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     )}
                   </>
                 )}
-
-                <div className="config-section-divider" />
-                <div className="form-field">
-                  <label>Timestamp overlay:</label>
-                  <input type="checkbox"
-                    checked={overlayTimestamp}
-                    onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
-                </div>
-                {overlayTimestamp && (
-                  <div className="form-field">
-                    <label>Text size:</label>
-                    <select value={cam.text_size ?? "medium"}
-                      onChange={e => handleChange(["camera", "text_size"], e)}>
-                      <option value="small">Small</option>
-                      <option value="medium">Medium</option>
-                      <option value="large">Large</option>
-                    </select>
-                  </div>
-                )}
-                <div className="form-field">
-                  <label>Overlay framerate (preview):</label>
-                  <input type="checkbox"
-                    checked={cam.overlay_framerate_on_preview ?? false}
-                    onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
-                </div>
               </>
             )}
 
             {/* RECORD */}
             {activeTab === "record" && (
-              <>
-                <div className="form-field">
-                  <label>Bitrate (Mbps):</label>
-                  <input type="number" min="1" max="50" step="1"
-                    value={bitrateMb}
-                    onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
-                </div>
-                <div className="filesize-preview">~{gbPerHour} GB / hr at {bitrateMb} Mbps</div>
-                <div className="form-field">
-                  <label>Livestream quality:</label>
-                  <select value={cam.livestream_quality ?? "normal"}
-                    onChange={e => handleChange(["camera", "livestream_quality"], e)}>
-                    <option value="normal">Normal (low-res)</option>
-                    <option value="high">High (recording resolution)</option>
-                  </select>
-                </div>
-                <div className="config-section-divider" />
-                <div className="form-field">
-                  <label>Segment length (mins):</label>
-                  <input type="number" min="1" step="1"
-                    value={formData?.recording?.segment_length_mins ?? 60}
-                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
-                </div>
-              </>
-            )}
-
-            {/* SYNC */}
-            {activeTab === "sync" && (
               <>
                 <div className="form-field">
                   <label>Frame sync:</label>
@@ -490,24 +456,82 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                     Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ.
                   </div>
                 )}
-                {currentSyncMode !== "none" && (
-                  <>
-                    <div className="config-section-divider" />
-                    <div className="form-field">
-                      <label>Lock exposure:</label>
-                      <input type="checkbox"
-                        checked={cam.sync_lock_exposure ?? false}
-                        onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
-                    </div>
-                    <div className="form-field">
-                      <label>Lock white balance:</label>
-                      <input type="checkbox"
-                        checked={cam.sync_lock_awb ?? false}
-                        onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
-                    </div>
-                  </>
+                <div className="form-field">
+                  <label>Lock exposure:</label>
+                  <input type="checkbox"
+                    checked={cam.sync_lock_exposure ?? false}
+                    onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Lock white balance:</label>
+                  <input type="checkbox"
+                    checked={cam.sync_lock_awb ?? false}
+                    onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
+                </div>
+
+                <div className="config-section-divider" />
+                <div className="form-field">
+                  <label>Bitrate (Mbps):</label>
+                  <input type="number" min="1" max="50" step="1"
+                    value={bitrateMb}
+                    onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
+                </div>
+                <div className="filesize-preview">~{gbPerHour} GB / hr at {bitrateMb} Mbps</div>
+                <div className="form-field">
+                  <label>Timestamp overlay:</label>
+                  <input type="checkbox"
+                    checked={overlayTimestamp}
+                    onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
+                </div>
+                {overlayTimestamp && (
+                  <div className="form-field">
+                    <label>Text size:</label>
+                    <select value={cam.text_size ?? "medium"}
+                      onChange={e => handleChange(["camera", "text_size"], e)}>
+                      <option value="small">Small</option>
+                      <option value="medium">Medium</option>
+                      <option value="large">Large</option>
+                    </select>
+                  </div>
                 )}
+                <div className="form-field">
+                  <label>Overlay framerate (preview):</label>
+                  <input type="checkbox"
+                    checked={cam.overlay_framerate_on_preview ?? false}
+                    onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Livestream quality:</label>
+                  <select value={cam.livestream_quality ?? "normal"}
+                    onChange={e => handleChange(["camera", "livestream_quality"], e)}>
+                    <option value="normal">Normal (low-res)</option>
+                    <option value="high">High (recording resolution)</option>
+                  </select>
+                </div>
+                <div className="config-section-divider" />
+                <div className="form-field">
+                  <label>Segment length (mins):</label>
+                  <input type="number" min="1" step="1"
+                    value={formData?.recording?.segment_length_mins ?? 60}
+                    onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
+                </div>
               </>
+            )}
+
+            {/* LOOM TRACKING */}
+            {activeTab === "tracking" && (
+              <ConfigFields
+                data={formData?.loom_tracking}
+                handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
+              />
+            )}
+
+            {/* LOOM STIMULUS */}
+            {activeTab === "stimulus" && (
+              <ConfigFields
+                data={formData?.loom_stimulus}
+                handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
+              />
             )}
 
             {/* EXPORT */}
@@ -531,6 +555,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             onCopy={onCopy}
             onApplyAll={setApplyAllConfirm}
           />
+
+          {clipboard && (() => {
+            const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+            return (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            );
+          })()}
 
           <div className="config-action-buttons">
             <button className="save-button" type="button" onClick={handleSave}>Save Config</button>
@@ -558,10 +594,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             </div>
           )}
           <LivestreamCard module={module} />
-          <button type="button" className="copy-btn" style={{ marginTop: "8px", width: "100%" }}
-            onClick={() => socket.emit("send_command", { module_id: module.id, type: "get_sensor_modes", params: {} })}>
-            Refresh Sensor Modes
-          </button>
         </div>
 
         <LoomRoiLineEditorModal

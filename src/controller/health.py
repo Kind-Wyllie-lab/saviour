@@ -40,6 +40,11 @@ class Health:
         self.max_probe_attempts = self.config.get("health.max_probe_attempts", 3)
         self.monitor_interval = 30
 
+        # Consecutive heartbeats required from an offline/suspected module before marking
+        # it online via the periodic heartbeat path. Probe and ZMQ proof-of-life paths
+        # remain immediate since those are deliberate confirmations.
+        self._online_heartbeat_threshold = self.config.get("health.online_heartbeat_threshold", 2)
+
         # Ensure the suspicion window is meaningful — if suspicion_timeout >= heartbeat_timeout
         # (e.g. the active config has heartbeat_timeout=60 from before this feature existed)
         # the two-phase logic collapses: every module skips probing and goes straight to
@@ -131,6 +136,7 @@ class Health:
                     'probe_count': 0,
                     'last_probe_time': None,
                     'last_confirmed_online': now,
+                    'pending_online_count': 0,
                 }
             else:
                 # Existing module - heartbeat received
@@ -138,13 +144,18 @@ class Health:
                 self.module_health[module_id]['last_heartbeat'] = now
                 prev_status = self.module_health[module_id]['status']
                 if prev_status in ('offline', 'suspected'):
-                    self.module_health[module_id]['status'] = 'online'
-                    self.module_health[module_id]['offline_since'] = None
-                    self.module_health[module_id]['suspected_since'] = None
-                    self.module_health[module_id]['probe_count'] = 0
-                    self.module_health[module_id]['last_probe_time'] = None
-                    self.module_health[module_id]['last_confirmed_online'] = now
-                    self.facade.on_status_change(module_id, "online")
+                    count = self.module_health[module_id].get('pending_online_count', 0) + 1
+                    self.module_health[module_id]['pending_online_count'] = count
+                    if count >= self._online_heartbeat_threshold:
+                        self._mark_module_online(
+                            module_id,
+                            trigger=f"heartbeat received ({count} consecutive)"
+                        )
+                    else:
+                        self.logger.info(
+                            f"Heartbeat {count}/{self._online_heartbeat_threshold} from "
+                            f"{prev_status} module {module_id} — waiting for more before marking online"
+                        )
 
                 # Update other metrics if provided
                 if 'cpu_temp' in status_data:
@@ -475,6 +486,7 @@ class Health:
 
         health['status'] = 'offline'
         health['offline_since'] = now
+        health['pending_online_count'] = 0
 
         suspected_since = health.get('suspected_since')
         suspected_ago = (now - suspected_since) if suspected_since else None
@@ -525,6 +537,7 @@ class Health:
         health['probe_count'] = 0
         health['last_probe_time'] = None
         health['last_confirmed_online'] = now
+        health['pending_online_count'] = 0
 
         self.logger.info(
             f"Module {module_id} is back online (was {prev_status} for {duration_str})\n"
@@ -609,6 +622,7 @@ class Health:
                 self.logger.warning(f"Module {module_id} marked offline: {reason}")
                 self.module_health[module_id]['status'] = 'offline'
                 self.module_health[module_id]['offline_since'] = time.time()
+                self.module_health[module_id]['pending_online_count'] = 0
 
                 try:
                     self.facade.on_status_change(module_id, 'offline')

@@ -71,6 +71,10 @@ class Modules:
     # Heartbeats are sent every 30 s by default; declare offline after 3 missed heartbeats
     HEARTBEAT_TIMEOUT_SECS = 90
 
+    # Consecutive heartbeats required from an offline module before marking it online.
+    # Prevents a single delayed/stale heartbeat from triggering spurious recovery actions.
+    _ONLINE_HEARTBEAT_THRESHOLD = 2
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
@@ -86,6 +90,11 @@ class Modules:
 
         # IDs explicitly removed this session — suppress re-discovery until restart
         self._removed_ids: set = set()
+
+        # Tracks consecutive heartbeats received from currently-offline modules.
+        # Reset to 0 when the module goes offline; incremented on each heartbeat
+        # while still offline; module marked online once threshold is reached.
+        self._pending_online_counts: Dict[str, int] = {}
 
         # Background thread: revert READY/NOT_READY modules that have timed out
         self._ready_timeout_thread = threading.Thread(
@@ -193,11 +202,26 @@ class Modules:
 
         module.last_heartbeat_time = time.time()
 
-        # If the module was marked offline (heartbeat timeout) and is now heard from, bring it back.
+        # Require _ONLINE_HEARTBEAT_THRESHOLD consecutive heartbeats before marking
+        # an offline module back online, preventing a single stale heartbeat from
+        # triggering spurious session-recovery actions.
         if not module.online:
-            self.logger.info(f"Heartbeat received from offline module {module_id} — marking online")
-            module.online = True
-            self.broadcast_updated_modules()
+            count = self._pending_online_counts.get(module_id, 0) + 1
+            self._pending_online_counts[module_id] = count
+            if count >= self._ONLINE_HEARTBEAT_THRESHOLD:
+                self.logger.info(
+                    f"Heartbeat {count}/{self._ONLINE_HEARTBEAT_THRESHOLD} from offline "
+                    f"{module_id} — marking online"
+                )
+                self._pending_online_counts.pop(module_id, None)
+                module.online = True
+                self.broadcast_updated_modules()
+            else:
+                self.logger.info(
+                    f"Heartbeat {count}/{self._ONLINE_HEARTBEAT_THRESHOLD} from offline "
+                    f"{module_id} — waiting for more before marking online"
+                )
+            return
 
         is_recording = status_data.get("recording")
         if is_recording is True and module.status != ModuleStatus.RECORDING:
@@ -570,6 +594,7 @@ class Modules:
                     )
                     module.online = False
                     module.status = ModuleStatus.OFFLINE
+                    self._pending_online_counts.pop(module_id, None)
                     self.broadcast_updated_modules()
             time.sleep(5)
 

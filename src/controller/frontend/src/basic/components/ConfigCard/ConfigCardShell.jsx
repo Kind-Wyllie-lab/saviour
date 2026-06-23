@@ -82,15 +82,6 @@ function ConfigCardShell({
         <div className="card-header-top">
           <h3>{module.name} ({module.id})</h3>
           <div className="card-header-actions">
-            {typeof module.ip === "string" && module.ip && (
-              <span className="device-info-chip">IP: {module.ip}</span>
-            )}
-            {typeof module.version === "string" && module.version && (
-              <span className="device-info-chip">{module.version}</span>
-            )}
-            {deviceInfoExtras.map((extra, i) =>
-              extra ? <span key={i} className="device-info-chip">{extra}</span> : null
-            )}
             <button className="header-action-btn" type="button"
               onClick={handleUpdate} disabled={updateStatus === "updating"}>
               {updateStatus === "updating" ? "Updating…" : "Update"}
@@ -105,6 +96,13 @@ function ConfigCardShell({
               Reboot
             </button>
           </div>
+        </div>
+        <div className="device-info">
+          {typeof module.ip === "string" && module.ip && <span>IP: {module.ip}</span>}
+          {typeof module.version === "string" && module.version && <span>{module.version}</span>}
+          {deviceInfoExtras.map((extra, i) =>
+            extra ? <span key={i}>{extra}</span> : null
+          )}
         </div>
       </div>
 

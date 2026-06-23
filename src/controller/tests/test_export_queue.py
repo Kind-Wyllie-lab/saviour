@@ -1,11 +1,15 @@
 """
 Tests for src/controller/export_queue.py
 
-Covers retry-on-failure, give-up after MAX_RETRIES, and concurrency cap.
+Covers retry-on-failure, give-up after MAX_RETRIES, concurrency cap, and
+queue persistence across restarts.
 """
 
-from unittest.mock import MagicMock, call
-from src.controller.export_queue import ExportQueue
+import json
+import os
+import tempfile
+from unittest.mock import MagicMock, patch
+from src.controller.export_queue import ExportQueue, QUEUE_FILE
 
 
 def _make_queue(max_concurrent: int = 2) -> tuple:
@@ -123,3 +127,90 @@ class TestConcurrencyCap:
         q.on_export_complete("mod_1")
         # All 4 should have been dispatched by now
         assert facade.send_command.call_count == 4
+
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+
+class TestPersistence:
+    def _make_queue_with_tmp_file(self, max_concurrent: int = 2):
+        """Return (queue, facade, tmp_path) using a temp file for persistence."""
+        cfg = MagicMock()
+        cfg.get.return_value = max_concurrent
+        q = ExportQueue(cfg)
+        facade = MagicMock()
+        q.facade = facade
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.close()
+        return q, facade, tmp.name
+
+    def test_pending_entries_survive_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_path = os.path.join(tmpdir, "export_queue.json")
+            with patch("src.controller.export_queue.QUEUE_FILE", queue_path):
+                # First run: enqueue 3, only 2 dispatch (max_concurrent=2)
+                q1, facade1 = _make_queue(max_concurrent=2)
+                q1.enqueue("mod_a", "path_a")
+                q1.enqueue("mod_b", "path_b")
+                q1.enqueue("mod_c", "path_c")   # held in queue
+                assert facade1.send_command.call_count == 2
+
+                # Simulate restart: new queue loads from file
+                q2, facade2 = _make_queue(max_concurrent=2)
+                q2.start()
+
+            # mod_a and mod_b were active → re-queued; mod_c was pending → re-queued
+            # All 3 should now be dispatched (max_concurrent=2 means 2 fire immediately,
+            # 1 held until a slot opens — but we just want all 3 present)
+            dispatched = {c[0][0] for c in facade2.send_command.call_args_list}
+            assert "mod_c" in dispatched
+
+    def test_active_entries_requeued_on_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_path = os.path.join(tmpdir, "export_queue.json")
+            with patch("src.controller.export_queue.QUEUE_FILE", queue_path):
+                q1, facade1 = _make_queue(max_concurrent=2)
+                q1.enqueue("mod_a", "path_a")
+                q1.enqueue("mod_b", "path_b")
+                # Both are active (dispatched) but no acks received before restart
+
+                q2, facade2 = _make_queue(max_concurrent=2)
+                q2.start()
+
+            dispatched = {c[0][0] for c in facade2.send_command.call_args_list}
+            assert "mod_a" in dispatched
+            assert "mod_b" in dispatched
+
+    def test_completed_entries_not_requeued(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_path = os.path.join(tmpdir, "export_queue.json")
+            with patch("src.controller.export_queue.QUEUE_FILE", queue_path):
+                q1, facade1 = _make_queue(max_concurrent=2)
+                q1.enqueue("mod_a", "path_a")
+                q1.on_export_complete("mod_a")   # completes cleanly
+
+                q2, facade2 = _make_queue(max_concurrent=2)
+                q2.start()
+
+            # Nothing should be re-dispatched after restart
+            assert facade2.send_command.call_count == 0
+
+    def test_empty_queue_file_handled_gracefully(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_path = os.path.join(tmpdir, "export_queue.json")
+            # Write corrupt JSON
+            with open(queue_path, "w") as f:
+                f.write("not json {{{")
+            with patch("src.controller.export_queue.QUEUE_FILE", queue_path):
+                q, facade = _make_queue()
+                q.start()   # should not raise
+            assert facade.send_command.call_count == 0
+
+    def test_missing_queue_file_handled_gracefully(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_path = os.path.join(tmpdir, "nonexistent.json")
+            with patch("src.controller.export_queue.QUEUE_FILE", queue_path):
+                q, facade = _make_queue()
+                q.start()   # should not raise
+            assert facade.send_command.call_count == 0

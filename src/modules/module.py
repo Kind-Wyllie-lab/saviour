@@ -205,75 +205,83 @@ class Module(ABC):
 
 
     def update_saviour(self) -> dict:
-        """Update saviour to the latest version from git"""
-        try:
-            # Check internet connectivity before attempting git pull
-            self.logger.info("Checking internet connectivity before updating SAVIOUR")
-            try:
-                subprocess.run(
-                    ["ping", "-c", "1", "-W", "5", "github.com"],
-                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-                self.logger.info("Internet connectivity confirmed")
-            except subprocess.CalledProcessError:
-                self.logger.warning("No internet connectivity, cannot update SAVIOUR")
-                return {"result": "error", "output": "No internet connectivity — could not reach github.com"}
+        """Update saviour to the latest version from git.
 
-            self.logger.info("Updating SAVIOUR to the latest version from git")
-            # Convert SSH remote URL to HTTPS so the service user (no SSH key)
-            # can pull without auth. The on-disk remote is unchanged.
-            import re
-            import threading
-            url_result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "remote", "get-url", "origin"],
-                capture_output=True, text=True
-            )
-            remote_url = url_result.stdout.strip()
-            if url_result.returncode != 0 or not remote_url:
-                err = url_result.stderr.strip() or "No git remote 'origin' configured"
-                return {"result": "error", "output": err}
-            https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
-                               r'https://\1/\2.git', remote_url)
-            checkout_result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "checkout", "main"],
-                capture_output=True, text=True
-            )
-            if checkout_result.returncode != 0:
-                err = checkout_result.stderr.strip() or "Could not switch to main branch"
-                self.logger.error(f"SAVIOUR update: git checkout main failed: {err}")
-                return {"result": "error", "output": err}
-            result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "pull", https_url, "main"],
-                capture_output=True, text=True, timeout=60
-            )
-            subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "fetch", https_url, "--tags"],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode == 0:
-                output = result.stdout.strip() or "Already up to date."
-                self.logger.info(f"SAVIOUR update: {output}")
-                if "Already up to date." in output:
-                    return {"result": "success", "output": "Already up to date."}
-                # Restart the service after a short delay so this response is delivered first
-                def _restart_service():
-                    import time as _time
-                    _time.sleep(3)
-                    subprocess.run(["sudo", "systemctl", "restart", "saviour.service"],
-                                   capture_output=True)
-                threading.Thread(target=_restart_service, daemon=True).start()
-                return {"result": "success", "output": f"{output} (restarting…)"}
-            else:
-                output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-                self.logger.error(f"SAVIOUR update failed: {output}")
-                return {"result": "error", "output": output}
-        except Exception as e:
-            self.logger.error(f"Error updating SAVIOUR: {e}")
-            return {"result": "error", "output": str(e)}
+        Returns immediately; the actual update runs in a background thread so
+        the ZMQ command thread is not blocked by network I/O.
+        """
+        import re
+        import threading
+
+        def _do_update():
+            try:
+                self.logger.info("Checking internet connectivity before updating SAVIOUR")
+                try:
+                    subprocess.run(
+                        ["ping", "-c", "1", "-W", "5", "github.com"],
+                        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+                    self.logger.info("Internet connectivity confirmed")
+                except subprocess.CalledProcessError:
+                    self.logger.warning("No internet connectivity, cannot update SAVIOUR")
+                    return
+
+                self.logger.info("Updating SAVIOUR to the latest version from git")
+                url_result = subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "remote", "get-url", "origin"],
+                    capture_output=True, text=True
+                )
+                remote_url = url_result.stdout.strip()
+                if url_result.returncode != 0 or not remote_url:
+                    self.logger.error(
+                        f"SAVIOUR update: could not get remote URL — "
+                        f"{url_result.stderr.strip() or 'No git remote origin configured'}"
+                    )
+                    return
+                https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
+                                   r'https://\1/\2.git', remote_url)
+                checkout_result = subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "checkout", "main"],
+                    capture_output=True, text=True
+                )
+                if checkout_result.returncode != 0:
+                    self.logger.error(
+                        f"SAVIOUR update: git checkout main failed: "
+                        f"{checkout_result.stderr.strip() or 'Could not switch to main branch'}"
+                    )
+                    return
+                result = subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "pull", https_url, "main"],
+                    capture_output=True, text=True, timeout=60
+                )
+                subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "fetch", https_url, "--tags"],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0:
+                    output = result.stdout.strip() or "Already up to date."
+                    self.logger.info(f"SAVIOUR update: {output}")
+                    if "Already up to date." not in output:
+                        import time as _time
+                        _time.sleep(3)
+                        subprocess.run(
+                            ["sudo", "systemctl", "restart", "saviour.service"],
+                            capture_output=True
+                        )
+                else:
+                    self.logger.error(
+                        f"SAVIOUR update failed: "
+                        f"{result.stderr.strip() or result.stdout.strip() or 'Unknown error'}"
+                    )
+            except Exception as e:
+                self.logger.error(f"Error updating SAVIOUR: {e}")
+
+        threading.Thread(target=_do_update, daemon=True, name="saviour-update").start()
+        return {"result": "started", "output": "Update check started — module will restart if an update is available."}
 
 
     def _handle_set_config(self, **kwargs) -> dict:

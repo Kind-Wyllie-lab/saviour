@@ -16,16 +16,16 @@ function LivestreamCard({ module }) {
 
   const bump = () => setStreamKey(Date.now());
 
-  // Show overlay when save lands (PENDING → SYNCED), clear it when first frame arrives.
+  // Show overlay on save (→ PENDING); bump stream on SYNCED so onLoad fires on the fresh connection.
   const syncStatus = module?.config_sync_status;
   useEffect(() => {
     const prev = prevStatus.current;
     prevStatus.current = syncStatus;
-    if (prev !== "PENDING" || syncStatus !== "SYNCED") return;
-    setRestarting(true);
-    clearTimeout(configTimer.current);
-    configTimer.current = setTimeout(() => { setRestarting(false); bump(); }, 2000);
-    return () => clearTimeout(configTimer.current);
+    if (syncStatus === "PENDING") {
+      setRestarting(true);
+    } else if (prev === "PENDING" && syncStatus === "SYNCED") {
+      bump();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus]);
 

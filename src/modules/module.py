@@ -256,7 +256,9 @@ class Module(ABC):
             )
             if result.returncode == 0:
                 output = result.stdout.strip() or "Already up to date."
-                self.logger.info(f"SAVIOUR update successful: {output}")
+                self.logger.info(f"SAVIOUR update: {output}")
+                if "Already up to date." in output:
+                    return {"result": "success", "output": "Already up to date."}
                 # Restart the service after a short delay so this response is delivered first
                 def _restart_service():
                     import time as _time

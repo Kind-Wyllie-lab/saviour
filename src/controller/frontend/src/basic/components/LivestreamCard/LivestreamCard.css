@@ -37,6 +37,20 @@
       display: flex;
       justify-content: center;
       align-items: center;
+      position: relative;
+    }
+
+    .stream-restarting-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      color: white;
+      font-size: 0.9em;
+      pointer-events: none;
     }
 
     .stream-video img {

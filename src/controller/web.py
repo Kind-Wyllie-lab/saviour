@@ -30,6 +30,20 @@ from dataclasses import asdict
 from src.controller.config import Config
 
 
+def _filter_private_keys(d: dict) -> dict:
+    """Return a deep copy of *d* with all keys starting with '_' removed.
+
+    Prevents the frontend from overwriting internal config keys such as
+    _communication.*, _codec, etc. that are managed server-side only.
+    """
+    result = {}
+    for k, v in d.items():
+        if k.startswith("_"):
+            continue
+        result[k] = _filter_private_keys(v) if isinstance(v, dict) else v
+    return result
+
+
 class Web(ABC):
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
@@ -525,7 +539,7 @@ class Web(ABC):
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
             module_id = data['id']
-            config = data.get("config", {})
+            config = _filter_private_keys(data.get("config", {}))
             self.logger.info(f"Received request to save config to module {module_id} with data {config}")
 
             camera_section = config.get("camera", {})
@@ -679,7 +693,7 @@ class Web(ABC):
         @self.socketio.on('save_controller_config')
         def handle_save_controller_config(data):
             self.logger.info("Saving controller config")
-            self.facade.set_config(data.get("config", {}))
+            self.facade.set_config(_filter_private_keys(data.get("config", {})))
             self.socketio.emit("controller_config_response", {
                 "config": self.facade.get_config()
             })

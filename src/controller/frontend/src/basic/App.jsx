@@ -45,12 +45,12 @@ function App() {
   const location = useLocation();
   const prevPathname = useRef(location.pathname);
 
-  // useEffect(() => {
-  //   const unacked = sessionList.filter(
-  //     (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
-  //   );
-  //   setPendingFaults(unacked);
-  // }, [sessionList]);
+  useEffect(() => {
+    const unacked = sessionList.filter(
+      (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
+    );
+    setPendingFaults(unacked);
+  }, [sessionList]);
 
   // Dismiss fault modal (and mark acknowledged) when the user navigates to another page
   useEffect(() => {

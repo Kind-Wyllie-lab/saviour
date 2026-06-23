@@ -801,22 +801,6 @@ class Web(ABC):
             threading.Thread(target=_reboot, daemon=True).start()
 
 
-        @self.socketio.on('shutdown_saviour')
-        def handle_shutdown_saviour(data=None):
-            import subprocess
-            self.logger.info("Shutdown SAVIOUR requested — sending shutdown to all modules then shutting down controller")
-            for mid in list(self.facade.get_modules().keys()):
-                try:
-                    self.facade.send_command(mid, "shutdown", {})
-                except Exception as e:
-                    self.logger.error(f"Failed to send shutdown to module {mid}: {e}")
-            self.socketio.emit("shutdown_saviour_initiated", {})
-            def _shutdown():
-                time.sleep(3)
-                subprocess.Popen(['sudo', 'shutdown', 'now'])
-            threading.Thread(target=_shutdown, daemon=True).start()
-
-
         @self.socketio.on("set_controller_time")
         def handle_set_controller_time(data=None):
             from datetime import datetime, timezone as _tz

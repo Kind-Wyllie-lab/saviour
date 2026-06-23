@@ -99,7 +99,7 @@ class Recording:
         self.logger = logging.getLogger(__name__)
         self.sessions: Dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
-        self._health_probed: set = set()  # modules already probed for black-start recovery
+        self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
 
         self._load_sessions()
 
@@ -480,6 +480,23 @@ class Recording:
         session = self.sessions[session_name]
 
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
+            already_tracking = (
+                session.module_stop_states.get(module_id) == "recording"
+                and session.state == SessionState.ACTIVE
+            )
+            if already_tracking:
+                # Module is already tracked as recording in an active session
+                # (e.g. an mDNS service-update triggered a spurious online transition).
+                # No recovery needed — avoid sending a duplicate start_recording.
+                self.logger.info(
+                    f"Module {module_id} online event — already recording in '{session_name}', no action needed"
+                )
+                return
+
+            # Mark as RECORDING immediately so the session monitor doesn't see a
+            # discrepancy between stop_state and module.status in the window between
+            # sending start_recording and receiving the ack (or "Already recording").
+            self.facade.notify_module_recording(module_id)
             params = {"duration": 0, "session_name": session_name}
             self.facade.send_command(module_id, "start_recording", params)
             with self._lock:
@@ -507,9 +524,16 @@ class Recording:
         if session.module_stop_states.get(module_id) != "unknown":
             return
 
-        if is_recording:
+        crash_recovery = session.error_message == "Controller restarted during active session"
+
+        if is_recording or crash_recovery:
+            # Re-issue start_recording in two cases:
+            # 1. Module is still recording (e.g. survived a partial outage).
+            # 2. Controller restarted — module stopped because we crashed, not because
+            #    the session ended, so command it to resume.
+            action = "still recording" if is_recording else "controller restart recovery"
             self.logger.info(
-                f"Health probe: {module_id} is still recording — recovering session '{session_name}'"
+                f"Health probe: {module_id} — {action} — resuming in '{session_name}'"
             )
             self.module_back_online(module_id)
         else:
@@ -665,11 +689,16 @@ class Recording:
                             continue
 
                         # Probe any modules whose state is unknown (e.g. after black start).
-                        # Send get_health once per module so the response can resolve their state.
+                        # Re-probe on a cooldown so slow-booting modules are not abandoned
+                        # after a single unanswered attempt.
+                        _REPROBE_INTERVAL_S = 60
+                        now_ts = time.time()
                         for m in session.modules:
-                            if (session.module_stop_states.get(m) == "unknown"
-                                    and m not in self._health_probed):
-                                self._health_probed.add(m)
+                            if session.module_stop_states.get(m) != "unknown":
+                                continue
+                            last_probe = self._health_probe_times.get(m, 0)
+                            if now_ts - last_probe >= _REPROBE_INTERVAL_S:
+                                self._health_probe_times[m] = now_ts
                                 try:
                                     self.facade.send_command(m, "get_health", {})
                                     self.logger.info(

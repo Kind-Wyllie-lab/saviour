@@ -108,6 +108,14 @@ class Config:
             self.logger.info("Active config present — filling missing keys; re-applying internal defaults")
             self._merge_defaults(self.config, module_config)
             self._merge_internal_defaults(self.config, module_config)
+            # Build the reference structure (base ∪ module) and remove any key
+            # from the live config that no longer appears in either source.
+            # This ensures keys removed from config files don't persist forever
+            # in active_config.json across restarts.
+            reference: Dict[str, Any] = {}
+            self._merge_dicts(reference, self._load_json(self.base_config_path))
+            self._merge_dicts(reference, module_config)
+            self._prune_stale_keys(self.config, reference)
         else:
             # First-time run: perform full merge and create active config
             self.logger.info("No active config — performing full merge with module defaults")
@@ -171,6 +179,23 @@ class Config:
                     self._merge_defaults(target[key], val)
                 # Otherwise target has a value, do not overwrite
 
+
+    def _prune_stale_keys(self, target: Dict[str, Any], reference: Dict[str, Any]) -> None:
+        """Remove from *target* any non-private key absent from *reference*.
+
+        Called after merging so that keys removed from base_config.json or the
+        module config file don't accumulate in active_config.json across
+        restarts.  _-prefixed (internal) keys are never pruned — they are
+        managed by _merge_internal_defaults.
+        """
+        for key in list(target.keys()):
+            if key.startswith("_"):
+                continue
+            if key not in reference:
+                self.logger.info(f"Pruning stale config key: {key}")
+                del target[key]
+            elif isinstance(target[key], dict) and isinstance(reference.get(key), dict):
+                self._prune_stale_keys(target[key], reference[key])
 
     def _merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
         """Recursive merge - override values in base with override."""
@@ -279,12 +304,16 @@ class Config:
             self.logger.warning(f"Attempt to modify read-only config key: {key_path}")
             return False
 
-        if self._check_if_module_config_updated(key_path):
-            self.on_module_config_change([key_path]) # Put the key in a list to match what the function expects
+        if current.get(last) == value:
+            return True
 
         current[last] = value
         if persist:
             self.save_active()
+
+        if self._check_if_module_config_updated(key_path):
+            self.on_module_config_change([key_path])
+
         return True
         
 

@@ -65,6 +65,10 @@ class Web(ABC):
         if self.rest_facade == True:
             self._register_rest_facade_routes()
 
+        # NAS health state
+        self._nas_health = {"status": "unknown", "error": None, "checked_at": None}
+        self._nas_monitor_stop = threading.Event()
+
         # Running flag
         self._running = False
 
@@ -91,6 +95,50 @@ class Web(ABC):
             name = "NO-NAME"
 
         return name
+
+
+    def _check_nas_writable(self) -> "str | None":
+        """Mount the NAS, write a probe file, delete it, then unmount.
+
+        Returns None if the share is reachable and writable, or an error string
+        suitable for surfacing to the user if anything fails.  If no NAS is
+        configured (export.share_ip is empty) returns None immediately.
+        """
+        import subprocess, uuid as _uuid
+        nas_ip = self.config.get("export.share_ip", "")
+        if not nas_ip:
+            return None
+        share_path = self.config.get("export.share_path", "controller_share")
+        username   = self.config.get("export.share_username", "")
+        password   = self.config.get("export.share_password", "")
+        mount_point = Path("/mnt/nas_probe")
+        try:
+            mount_point.mkdir(parents=True, exist_ok=True)
+            if mount_point.is_mount():
+                subprocess.run(["sudo", "umount", str(mount_point)],
+                               check=False, timeout=10)
+            auth_opts = f"username={username},password={password}" if username else "guest"
+            result = subprocess.run(
+                ["sudo", "mount", "-t", "cifs",
+                 f"//{nas_ip}/{share_path}", str(mount_point),
+                 "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                return f"Cannot reach NAS at {nas_ip}: {result.stderr.strip() or 'mount failed'}"
+            probe = mount_point / f".saviour_probe_{_uuid.uuid4().hex}"
+            try:
+                probe.write_text("probe")
+                probe.unlink()
+            except Exception as e:
+                return f"NAS at {nas_ip} is mounted but not writable: {e}"
+            return None
+        except subprocess.TimeoutExpired:
+            return f"Timed out connecting to NAS at {nas_ip}"
+        except Exception as e:
+            return f"NAS check failed: {e}"
+        finally:
+            subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
 
 
     def _write_session_metadata(self, session_name: str, target: str) -> None:
@@ -124,7 +172,7 @@ class Web(ABC):
                     "sudo", "mount", "-t", "cifs",
                     f"//{nas_ip}/{share_path}",
                     str(mount_point),
-                    "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775",
+                    "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
                 ]
                 result = subprocess.run(mount_cmd, capture_output=True, text=True)
                 if result.returncode != 0:
@@ -301,6 +349,11 @@ class Web(ABC):
             duration_minutes = data.get("duration_minutes")  # None = infinite
             researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
+            nas_error = self._check_nas_writable()
+            if nas_error:
+                self.logger.error(f"NAS pre-check failed: {nas_error}")
+                self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
+                return
             result = self.facade.create_session(session_name, target, duration_minutes, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
@@ -317,6 +370,11 @@ class Web(ABC):
             days = data.get("days")  # list of ints (0=Mon…6=Sun), None/[] = every day
             researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
+            nas_error = self._check_nas_writable()
+            if nas_error:
+                self.logger.error(f"NAS pre-check failed: {nas_error}")
+                self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
+                return
             result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
@@ -739,6 +797,10 @@ class Web(ABC):
             summary = self.facade.get_health_summary()
             self.socketio.emit("health_summary_response", summary)
 
+        @self.socketio.on("get_nas_health")
+        def handle_get_nas_health(data=None):
+            self.socketio.emit("nas_health_update", self._nas_health)
+
 
         @self.socketio.on("update_saviour_controller")
         def handle_update_saviour_controller(data=None):
@@ -958,6 +1020,32 @@ class Web(ABC):
         })
 
 
+    def _nas_monitor_loop(self):
+        NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)
+        # Brief initial delay so the server is fully up before the first probe.
+        self._nas_monitor_stop.wait(30)
+        while not self._nas_monitor_stop.is_set():
+            self._run_nas_health_check()
+            self._nas_monitor_stop.wait(NAS_CHECK_INTERVAL_S)
+
+    def _run_nas_health_check(self):
+        nas_ip = self.config.get("export.share_ip", "")
+        if not nas_ip:
+            new = {"status": "unconfigured", "error": None, "checked_at": time.time()}
+        else:
+            error = self._check_nas_writable()
+            new = {
+                "status": "ok" if error is None else "error",
+                "error": error,
+                "checked_at": time.time(),
+            }
+        prev_status = self._nas_health.get("status")
+        self._nas_health = new
+        if new["status"] != prev_status:
+            self.logger.warning(f"NAS health: {prev_status} → {new['status']}"
+                                + (f" ({new['error']})" if new.get("error") else ""))
+        self.socketio.emit("nas_health_update", new)
+
     def start(self):
         """Start the web interface in a separate thread"""
         if not self._running:
@@ -968,6 +1056,8 @@ class Web(ABC):
                 daemon=True
             )
             self.web_thread.start()
+            self._nas_monitor_stop.clear()
+            threading.Thread(target=self._nas_monitor_loop, daemon=True).start()
             return self.web_thread
 
 
@@ -1109,7 +1199,7 @@ class Web(ABC):
                 "sudo", "mount", "-t", "cifs",
                 f"//{nas_ip}/{share_path}",
                 str(mount_point),
-                "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775",
+                "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
             ]
 
             result = subprocess.run(mount_cmd, capture_output=True, text=True)

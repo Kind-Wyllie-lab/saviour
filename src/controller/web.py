@@ -765,6 +765,7 @@ class Web(ABC):
                 import psutil
                 mem = psutil.virtual_memory()
                 health['memory_usage'] = round(mem.percent, 1)
+                health['memory_total_gb'] = round(mem.total / (1024 ** 3), 1)
             except ImportError:
                 try:
                     with open('/proc/meminfo') as f:
@@ -773,21 +774,29 @@ class Web(ABC):
                     total = info.get('MemTotal', 0)
                     available = info.get('MemAvailable', 0)
                     health['memory_usage'] = round((total - available) / total * 100, 1) if total else None
+                    health['memory_total_gb'] = round(total / (1024 ** 2), 1) if total else None  # kB → GB
                 except Exception:
                     health['memory_usage'] = None
+                    health['memory_total_gb'] = None
             # Disk
             try:
                 usage = shutil.disk_usage('/var/lib/saviour')
                 health['disk_used_pct'] = round(usage.used / usage.total * 100, 1)
                 health['disk_free_gb'] = round(usage.free / (1024 ** 3), 1)
+                health['disk_used_gb'] = round(usage.used / (1024 ** 3), 1)
+                health['disk_total_gb'] = round(usage.total / (1024 ** 3), 1)
             except Exception:
                 try:
                     usage = shutil.disk_usage('/')
                     health['disk_used_pct'] = round(usage.used / usage.total * 100, 1)
                     health['disk_free_gb'] = round(usage.free / (1024 ** 3), 1)
+                    health['disk_used_gb'] = round(usage.used / (1024 ** 3), 1)
+                    health['disk_total_gb'] = round(usage.total / (1024 ** 3), 1)
                 except Exception:
                     health['disk_used_pct'] = None
                     health['disk_free_gb'] = None
+                    health['disk_used_gb'] = None
+                    health['disk_total_gb'] = None
             # Version
             try:
                 result = subprocess.run(

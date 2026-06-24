@@ -71,6 +71,10 @@ class Modules:
     # Heartbeats are sent every 30 s by default; declare offline after 3 missed heartbeats
     HEARTBEAT_TIMEOUT_SECS = 90
 
+    # A PENDING config sync that receives no ack within this window is marked FAILED
+    # so the frontend doesn't show a permanent "pending" spinner.
+    CONFIG_ACK_TIMEOUT_SECS = 30
+
     # Consecutive heartbeats required from an offline module before marking it online.
     # Prevents a single delayed/stale heartbeat from triggering spurious recovery actions.
     _ONLINE_HEARTBEAT_THRESHOLD = 2
@@ -571,7 +575,8 @@ class Modules:
 
     def _ready_timeout_checker(self) -> None:
         """Background thread: revert READY/NOT_READY modules that have timed out,
-        and mark online modules offline when their heartbeat goes stale."""
+        mark online modules offline when their heartbeat goes stale, and expire
+        PENDING config syncs that have received no ack within the timeout window."""
         while True:
             now = time.time()
             for module_id, module in list(self._modules.items()):
@@ -596,6 +601,22 @@ class Modules:
                     module.status = ModuleStatus.OFFLINE
                     self._pending_online_counts.pop(module_id, None)
                     self.broadcast_updated_modules()
+
+            # Expire PENDING config syncs that have gone unacknowledged too long.
+            timed_out = []
+            with self._config_lock:
+                for module_id, state in self._config_states.items():
+                    if (state.status == ConfigSyncStatus.PENDING
+                            and state.pending_since > 0
+                            and now - state.pending_since > self.CONFIG_ACK_TIMEOUT_SECS):
+                        self.logger.warning(
+                            f"Config sync for {module_id} timed out after "
+                            f"{now - state.pending_since:.0f}s with no ack — marking FAILED"
+                        )
+                        state.status = ConfigSyncStatus.FAILED
+                        timed_out.append(module_id)
+            if timed_out:
+                self.broadcast_updated_modules()
             time.sleep(5)
 
 

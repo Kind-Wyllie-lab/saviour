@@ -127,14 +127,14 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 ### Medium priority — reliability / UX
 
-- [ ] **`export.py` / `module.py`: blocking subprocess calls on network thread** — `_mount_share()` has no timeout and `update_saviour()` blocks ZMQ command processing; move to background threads.
-- [ ] **`config.py`: `set()` fires `on_module_config_change()` even when value is unchanged** — guard with an equality check before calling `configure_module()`.
-- [ ] **`config.py`: `reset_to_defaults()` doesn't purge stale keys** — keys removed from the module config file persist in `active_config.json` after a reset; rebuild from scratch rather than merging.
-- [ ] **`web.py`: `_`-prefixed (internal) config keys not filtered on inbound socket events** — the frontend can overwrite `_communication.*`, `_codec`, etc.; apply `filterPrivateKeys` equivalent server-side before merging.
-- [ ] **`modules.py`: online/offline status can oscillate without hysteresis** — a single delayed heartbeat immediately brings a module back online; add a short debounce (e.g. require 2 consecutive heartbeats before marking online again).
-- [ ] **`controller/network.py`: infinite loop waiting for `nmcli`** — if NetworkManager is not running the controller hangs at startup; add a timeout and a clear error message.
+- [x] **`export.py` / `module.py`: blocking subprocess calls on network thread** — `_mount_share()` has no timeout and `update_saviour()` blocks ZMQ command processing; move to background threads.
+- [x] **`config.py`: `set()` fires `on_module_config_change()` even when value is unchanged** — guard with an equality check before calling `configure_module()`.
+- [x] **`config.py`: `reset_to_defaults()` doesn't purge stale keys** — keys removed from the module config file persist in `active_config.json` after a reset; rebuild from scratch rather than merging.
+- [x] **`web.py`: `_`-prefixed (internal) config keys not filtered on inbound socket events** — the frontend can overwrite `_communication.*`, `_codec`, etc.; apply `filterPrivateKeys` equivalent server-side before merging.
+- [x] **`modules.py`: online/offline status can oscillate without hysteresis** — a single delayed heartbeat immediately brings a module back online; add a short debounce (e.g. require 2 consecutive heartbeats before marking online again).
+- [x] **`controller/network.py`: infinite loop waiting for `nmcli`** — if NetworkManager is not running the controller hangs at startup; add a timeout and a clear error message.
 - [ ] **Session metadata not retried if NAS unavailable at session start** — `_write_session_metadata()` in `web.py` runs once; add retry on NAS recovery.
-- [ ] **`facade.py`: `apply_section_to_type` has no ack timeout** — bulk config pushes that are never acknowledged leave the frontend in a permanent "pending" state.
+- [x] **`facade.py`: `apply_section_to_type` has no ack timeout** — bulk config pushes that are never acknowledged leave the frontend in a permanent "pending" state.
 
 ### Low priority — observability / maintenance
 
@@ -147,7 +147,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 ### Tests
 
-- [ ] **Config merge has no unit tests** — `_merge_defaults`, `_merge_dicts`, `_merge_internal_defaults`, and `reset_to_defaults` are all untested; add `pytest` cases covering each merge path and edge cases (stale keys, `_`-prefix re-application).
+- [x] **Config merge has no unit tests** — `_merge_defaults`, `_merge_dicts`, `_merge_internal_defaults`, and `reset_to_defaults` are all untested; add `pytest` cases covering each merge path and edge cases (stale keys, `_`-prefix re-application).
 - [ ] **Export pipeline has no unit tests** — mock the Samba mount and verify PENDING rename, copy, cleanup, and failure rollback paths.
 - [ ] **No integration test for multi-module recording** — add a test that simulates controller + 2 modules, a full record/stop/export cycle, and a mid-session module dropout.
 - [ ] **No config schema regression test** — a renamed or removed config key silently breaks modules loading old `active_config.json`; add a test that loads each `*_config.json` against the current base and asserts all required keys are present.

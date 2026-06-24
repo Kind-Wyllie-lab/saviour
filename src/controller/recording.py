@@ -99,7 +99,7 @@ class Recording:
         self.logger = logging.getLogger(__name__)
         self.sessions: Dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
-        self._health_probed: set = set()  # modules already probed for black-start recovery
+        self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
 
         self._load_sessions()
 
@@ -123,6 +123,81 @@ class Recording:
             if s.state == SessionState.ACTIVE
             for m in s.modules
         }
+
+    def _check_ptp_sync(self, modules: list) -> dict:
+        """Gate-check PTP synchronisation for all target modules before starting a session.
+
+        Uses the most recent heartbeat data — no blocking network request.  Data
+        older than three heartbeat intervals (90 s) is treated as a failure because
+        a stale offset is not a synchronisation guarantee.
+
+        Offline modules are skipped: they will not participate in the recording and
+        the session fault monitor will handle their absence independently.
+
+        Returns {"ok": True} on pass, or:
+          {"ok": False, "error": str, "failures": [{"module_id": str, "reason": str, ...}]}
+        """
+        config = self.facade.get_config()
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        max_age_secs: float = 90.0
+        now = time.time()
+        failures = []
+        synced = []  # {"module_id": str, "offset_us": float}
+
+        for module_id in modules:
+            health = self.facade.get_module_health(module_id)
+            if not health:
+                failures.append({"module_id": module_id, "reason": "no health data received yet"})
+                continue
+
+            if health.get("status") == "offline":
+                continue  # offline modules are handled separately by the session monitor
+
+            age = now - health.get("last_heartbeat", 0)
+            if age > max_age_secs:
+                failures.append({
+                    "module_id": module_id,
+                    "reason": f"health data is {age:.0f}s old — module may have disconnected",
+                })
+                continue
+
+            offset_ns = health.get("ptp4l_offset")
+            if offset_ns is None:
+                failures.append({
+                    "module_id": module_id,
+                    "reason": "PTP offset not yet reported — ptp4l may still be settling",
+                })
+                continue
+
+            offset_us = offset_ns / 1000
+            if abs(offset_us) > threshold_us:
+                failures.append({
+                    "module_id": module_id,
+                    "offset_us": round(offset_us, 1),
+                    "reason": (
+                        f"offset {offset_us:.1f}µs exceeds "
+                        f"{threshold_us:.0f}µs threshold"
+                    ),
+                })
+            else:
+                synced.append({"module_id": module_id, "offset_us": round(offset_us, 1)})
+
+        if not failures:
+            max_offset = max((abs(m["offset_us"]) for m in synced), default=0.0)
+            return {
+                "ok": True,
+                "synced": synced,
+                "max_offset_us": round(max_offset, 1),
+                "threshold_us": threshold_us,
+            }
+
+        detail = "; ".join(f"{f['module_id']}: {f['reason']}" for f in failures)
+        return {
+            "ok": False,
+            "failures": failures,
+            "error": f"PTP not synchronised on {len(failures)} module(s) — {detail}",
+        }
+
 
     def _check_share_writable(self) -> Optional[str]:
         """Return an error string if the controller share is not writable, else None."""
@@ -161,6 +236,11 @@ class Recording:
         if overlap:
             self.logger.warning(f"create_session: modules already recording: {overlap}")
             return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
+
+        ptp = self._check_ptp_sync(modules)
+        if not ptp["ok"]:
+            self.logger.warning(f"create_session blocked by PTP check: {ptp['error']}")
+            return {"success": False, "error": ptp["error"]}
 
         session_name = self._format_session_name(session_name, target)
 
@@ -480,6 +560,23 @@ class Recording:
         session = self.sessions[session_name]
 
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
+            already_tracking = (
+                session.module_stop_states.get(module_id) == "recording"
+                and session.state == SessionState.ACTIVE
+            )
+            if already_tracking:
+                # Module is already tracked as recording in an active session
+                # (e.g. an mDNS service-update triggered a spurious online transition).
+                # No recovery needed — avoid sending a duplicate start_recording.
+                self.logger.info(
+                    f"Module {module_id} online event — already recording in '{session_name}', no action needed"
+                )
+                return
+
+            # Mark as RECORDING immediately so the session monitor doesn't see a
+            # discrepancy between stop_state and module.status in the window between
+            # sending start_recording and receiving the ack (or "Already recording").
+            self.facade.notify_module_recording(module_id)
             params = {"duration": 0, "session_name": session_name}
             self.facade.send_command(module_id, "start_recording", params)
             with self._lock:
@@ -507,9 +604,16 @@ class Recording:
         if session.module_stop_states.get(module_id) != "unknown":
             return
 
-        if is_recording:
+        crash_recovery = session.error_message == "Controller restarted during active session"
+
+        if is_recording or crash_recovery:
+            # Re-issue start_recording in two cases:
+            # 1. Module is still recording (e.g. survived a partial outage).
+            # 2. Controller restarted — module stopped because we crashed, not because
+            #    the session ended, so command it to resume.
+            action = "still recording" if is_recording else "controller restart recovery"
             self.logger.info(
-                f"Health probe: {module_id} is still recording — recovering session '{session_name}'"
+                f"Health probe: {module_id} — {action} — resuming in '{session_name}'"
             )
             self.module_back_online(module_id)
         else:
@@ -568,6 +672,30 @@ class Recording:
 
     def _start_scheduled_session(self, session_name: str, today: str) -> None:
         session = self.sessions[session_name]
+
+        ptp = self._check_ptp_sync(session.modules)
+        if not ptp["ok"]:
+            self.logger.error(
+                f"Scheduled session '{session_name}' blocked by PTP check: {ptp['error']}"
+            )
+            with self._lock:
+                session.state = SessionState.ERROR
+                session.error_message = ptp["error"]
+                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.scheduled_last_start_date = today  # prevent same-day retry
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            self.facade.send_alert(
+                key=f"ptp_fail_{session_name}_{today}",
+                title=f"Scheduled recording blocked — PTP not synchronised",
+                message=(
+                    f"Session **{session_name}** could not start its {today} run.\n\n"
+                    f"{ptp['error']}"
+                ),
+                severity="error",
+            )
+            return
+
         start_at = time.time() + LEAD_SECS
         with self._lock:
             session.state = SessionState.ACTIVE
@@ -665,11 +793,16 @@ class Recording:
                             continue
 
                         # Probe any modules whose state is unknown (e.g. after black start).
-                        # Send get_health once per module so the response can resolve their state.
+                        # Re-probe on a cooldown so slow-booting modules are not abandoned
+                        # after a single unanswered attempt.
+                        _REPROBE_INTERVAL_S = 60
+                        now_ts = time.time()
                         for m in session.modules:
-                            if (session.module_stop_states.get(m) == "unknown"
-                                    and m not in self._health_probed):
-                                self._health_probed.add(m)
+                            if session.module_stop_states.get(m) != "unknown":
+                                continue
+                            last_probe = self._health_probe_times.get(m, 0)
+                            if now_ts - last_probe >= _REPROBE_INTERVAL_S:
+                                self._health_probe_times[m] = now_ts
                                 try:
                                     self.facade.send_command(m, "get_health", {})
                                     self.logger.info(

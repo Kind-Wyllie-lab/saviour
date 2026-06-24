@@ -422,6 +422,9 @@ class Controller(ABC):
 
         # Start the modules manager
         self.modules.start()
+
+        # Resume any exports that were queued or in-flight when the controller last stopped
+        self.export_queue.start()
         
         # Keep the main thread alive
         try: 

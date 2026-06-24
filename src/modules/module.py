@@ -162,7 +162,15 @@ class Module(ABC):
         self.is_streaming = False # Flag to indicate if the module is streaming on a network port e.g. video, TTL, audio, etc.
         self.is_connected_to_controller = False
         self.is_ready = False  # Flag to indicate if module is ready for recording
-        self.last_readiness_check = None  # Timestamp of last readiness check 
+        self.last_readiness_check = None  # Timestamp of last readiness check
+
+        # Grace-period timer: when the controller disconnects we don't stop
+        # recording immediately.  If the controller reconnects within
+        # DISCONNECT_RECORDING_GRACE_SECS, the timer is cancelled and recording
+        # continues uninterrupted.  This protects against brief network blips
+        # and controller restarts that would otherwise cut a segment short.
+        self._disconnect_recording_timer: threading.Timer | None = None
+        self._disconnect_recording_timer_lock = threading.Lock()
 
         # Ready checks
         self.checks = [
@@ -205,73 +213,114 @@ class Module(ABC):
 
 
     def update_saviour(self) -> dict:
-        """Update saviour to the latest version from git"""
-        try:
-            # Check internet connectivity before attempting git pull
-            self.logger.info("Checking internet connectivity before updating SAVIOUR")
-            try:
-                subprocess.run(
-                    ["ping", "-c", "1", "-W", "5", "github.com"],
-                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-                self.logger.info("Internet connectivity confirmed")
-            except subprocess.CalledProcessError:
-                self.logger.warning("No internet connectivity, cannot update SAVIOUR")
-                return {"result": "error", "output": "No internet connectivity — could not reach github.com"}
+        """Update saviour to the latest version from git.
 
-            self.logger.info("Updating SAVIOUR to the latest version from git")
-            # Convert SSH remote URL to HTTPS so the service user (no SSH key)
-            # can pull without auth. The on-disk remote is unchanged.
-            import re
-            import threading
-            url_result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "remote", "get-url", "origin"],
-                capture_output=True, text=True
-            )
-            remote_url = url_result.stdout.strip()
-            if url_result.returncode != 0 or not remote_url:
-                err = url_result.stderr.strip() or "No git remote 'origin' configured"
-                return {"result": "error", "output": err}
-            https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
-                               r'https://\1/\2.git', remote_url)
-            checkout_result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "checkout", "main"],
-                capture_output=True, text=True
-            )
-            if checkout_result.returncode != 0:
-                err = checkout_result.stderr.strip() or "Could not switch to main branch"
-                self.logger.error(f"SAVIOUR update: git checkout main failed: {err}")
-                return {"result": "error", "output": err}
-            result = subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "pull", https_url, "main"],
-                capture_output=True, text=True, timeout=60
-            )
-            subprocess.run(
-                ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                 "fetch", https_url, "--tags"],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode == 0:
-                output = result.stdout.strip() or "Already up to date."
-                self.logger.info(f"SAVIOUR update successful: {output}")
-                # Restart the service after a short delay so this response is delivered first
-                def _restart_service():
-                    import time as _time
-                    _time.sleep(3)
-                    subprocess.run(["sudo", "systemctl", "restart", "saviour.service"],
-                                   capture_output=True)
-                threading.Thread(target=_restart_service, daemon=True).start()
-                return {"result": "success", "output": f"{output} (restarting…)"}
-            else:
-                output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-                self.logger.error(f"SAVIOUR update failed: {output}")
-                return {"result": "error", "output": output}
-        except Exception as e:
-            self.logger.error(f"Error updating SAVIOUR: {e}")
-            return {"result": "error", "output": str(e)}
+        Returns immediately; the actual update runs in a background thread so
+        the ZMQ command thread is not blocked by network I/O.
+        """
+        import re
+        import threading
+
+        def _do_update():
+            try:
+                self.logger.info("Checking internet connectivity before updating SAVIOUR")
+                try:
+                    subprocess.run(
+                        ["ping", "-c", "1", "-W", "5", "github.com"],
+                        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+                    self.logger.info("Internet connectivity confirmed")
+                except subprocess.CalledProcessError:
+                    self.logger.warning("No internet connectivity, cannot update SAVIOUR")
+                    self.communication.send_status({
+                        "type": "cmd_ack",
+                        "command": "update_saviour",
+                        "result": "error",
+                        "output": "No internet connectivity — update skipped.",
+                    })
+                    return
+
+                self.logger.info("Updating SAVIOUR to the latest version from git")
+                url_result = subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "remote", "get-url", "origin"],
+                    capture_output=True, text=True
+                )
+                remote_url = url_result.stdout.strip()
+                if url_result.returncode != 0 or not remote_url:
+                    err = url_result.stderr.strip() or "No git remote origin configured"
+                    self.logger.error(f"SAVIOUR update: could not get remote URL — {err}")
+                    self.communication.send_status({
+                        "type": "cmd_ack",
+                        "command": "update_saviour",
+                        "result": "error",
+                        "output": f"Could not get remote URL: {err}",
+                    })
+                    return
+                https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
+                                   r'https://\1/\2.git', remote_url)
+                checkout_result = subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "checkout", "main"],
+                    capture_output=True, text=True
+                )
+                if checkout_result.returncode != 0:
+                    err = checkout_result.stderr.strip() or "Could not switch to main branch"
+                    self.logger.error(f"SAVIOUR update: git checkout main failed: {err}")
+                    self.communication.send_status({
+                        "type": "cmd_ack",
+                        "command": "update_saviour",
+                        "result": "error",
+                        "output": f"git checkout main failed: {err}",
+                    })
+                    return
+                result = subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "pull", https_url, "main"],
+                    capture_output=True, text=True, timeout=60
+                )
+                subprocess.run(
+                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
+                     "fetch", https_url, "--tags"],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0:
+                    output = result.stdout.strip() or "Already up to date."
+                    self.logger.info(f"SAVIOUR update: {output}")
+                    if "Already up to date." not in output:
+                        self.communication.send_status({
+                            "type": "cmd_ack",
+                            "command": "update_saviour",
+                            "result": "success",
+                            "output": "Update found — module is restarting...",
+                        })
+                        import time as _time
+                        _time.sleep(3)
+                        subprocess.run(
+                            ["sudo", "systemctl", "restart", "saviour.service"],
+                            capture_output=True
+                        )
+                    else:
+                        self.communication.send_status({
+                            "type": "cmd_ack",
+                            "command": "update_saviour",
+                            "result": "success",
+                            "output": "Already up to date.",
+                        })
+                else:
+                    err = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                    self.logger.error(f"SAVIOUR update failed: {err}")
+                    self.communication.send_status({
+                        "type": "cmd_ack",
+                        "command": "update_saviour",
+                        "result": "error",
+                        "output": err,
+                    })
+            except Exception as e:
+                self.logger.error(f"Error updating SAVIOUR: {e}")
+
+        threading.Thread(target=_do_update, daemon=True, name="saviour-update").start()
+        return {"result": "started", "output": "Update check started — module will restart if an update is available."}
 
 
     def _handle_set_config(self, **kwargs) -> dict:
@@ -345,13 +394,28 @@ class Module(ABC):
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"Network manager informs that controller was discovered at {controller_ip}:{controller_port}")
         self.logger.info(f"Module will now initialize the necessary managers")
-        
+
+        # Cancel any pending stop-recording grace timer.  Must happen both
+        # before and after controller_disconnected() because that call may start
+        # a fresh timer if the module is still recording.
+        def _cancel_grace_timer():
+            with self._disconnect_recording_timer_lock:
+                if self._disconnect_recording_timer is not None:
+                    self._disconnect_recording_timer.cancel()
+                    self._disconnect_recording_timer = None
+
+        _cancel_grace_timer()
+
         # If already connected to any controller (same or different), tear down
         # cleanly before re-initialising.  A same-IP update means the controller
         # restarted; its ZMQ sockets are new and we must reconnect from scratch.
         if self.communication.controller_ip:
             self.logger.info("Existing controller connection found, disconnecting before reconnecting")
             self.controller_disconnected()
+            # controller_disconnected() starts a grace timer if recording — cancel it
+            # immediately since we are about to reconnect.
+            _cancel_grace_timer()
+            self.logger.info("Controller rediscovered — cancelled disconnect recording timer")
             
         try:
             
@@ -395,13 +459,25 @@ class Module(ABC):
         """Callback when controller is disconnected"""
         # What should happen here - we don't want to stop the module altogether, we want to stop recording, deregister controller, and wait for new controller connection.
         self.logger.info("Controller disconnected")
-        
+
         self.is_connected_to_controller = False
 
-        # Stop recording if active
+        # Stop recording after a grace period rather than immediately, so a
+        # brief controller restart or network blip doesn't cut the segment.
         if self.is_recording:
-            self.logger.info("Stopping recording due to controller disconnect")
-            self._stop_recording()
+            grace = self.config.get("module.disconnect_recording_grace_secs", 120)
+            self.logger.info(
+                f"Controller disconnected while recording — will stop in {grace}s "
+                f"unless controller reconnects first"
+            )
+            with self._disconnect_recording_timer_lock:
+                if self._disconnect_recording_timer is not None:
+                    self._disconnect_recording_timer.cancel()
+                self._disconnect_recording_timer = threading.Timer(
+                    grace, self._on_disconnect_grace_expired
+                )
+                self._disconnect_recording_timer.daemon = True
+                self._disconnect_recording_timer.start()
         
         # Stop PTP services
         self.ptp.stop()
@@ -418,6 +494,13 @@ class Module(ABC):
         
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
+    def _on_disconnect_grace_expired(self):
+        """Called when the disconnect grace period elapses with no reconnection."""
+        with self._disconnect_recording_timer_lock:
+            self._disconnect_recording_timer = None
+        if self.is_recording:
+            self.logger.info("Disconnect grace period expired — stopping recording")
+            self._stop_recording()
 
     """Recording methods"""
     @abstractmethod

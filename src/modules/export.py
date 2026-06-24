@@ -519,7 +519,7 @@ class Export:
                 'sudo', 'mount', '-t', 'cifs',
                 f'//{self.samba_share_ip}/{self.samba_share_path}',
                 self.mount_point,
-                '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775',
+                '-o', f'{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none',
             ]
 
             for attempt in range(1, self._MOUNT_MAX_ATTEMPTS + 1):

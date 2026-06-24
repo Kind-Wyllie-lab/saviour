@@ -128,6 +128,12 @@ class ControllerFacade():
             # No managed session — send command directly as a fallback
             self.controller.communication.send_command(target, "stop_recording", {})
 
+    def check_ptp_sync(self, target: str) -> dict:
+        modules = list(self.get_modules_by_target(target).keys())
+        if not modules:
+            return {"ok": True}
+        return self.controller.recording._check_ptp_sync(modules)
+
     def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None) -> dict:
         return self.controller.recording.create_session(session_name, target, duration_minutes, researcher)
 
@@ -259,6 +265,12 @@ class ControllerFacade():
     def module_back_online(self, module_id: str) -> None:
         # What to do when a module comes back online
         self.controller.recording.module_back_online(module_id)
+
+    def notify_module_recording(self, module_id: str) -> None:
+        """Mark a module as RECORDING in the modules tracker immediately,
+        before the start_recording ack arrives, so the session monitor does
+        not see a brief discrepancy and raise a spurious error."""
+        self.controller.modules.notify_recording_started(module_id, {"recording": True})
 
     def handle_module_health_for_recovery(self, module_id: str, is_recording: bool) -> None:
         self.controller.recording.handle_module_health_response(module_id, is_recording)

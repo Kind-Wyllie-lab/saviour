@@ -23,7 +23,7 @@ import soundfile
 import soundcard
 import re
 import cv2
-from flask import Flask, Response
+from flask import Flask, Response, request
 
 AUDIOMOTH_CMD = "/usr/local/bin/AudioMoth-USB-Microphone"
 
@@ -441,147 +441,207 @@ class AudiomothModule(Module):
         self.logger.info(f"Monitor thread finished for audiomoth {serial}")
 
 
-    def _render_monitor_frame(self) -> bytes | None:
-        """
-        Render a combined monitoring image for all audiomoths.
+    # -----------------------------------------------------------------------
+    # Cell renderer (shared between stacked and grid layouts)
+    # -----------------------------------------------------------------------
 
-        Layout per audiomoth (stacked vertically):
-          - Header: serial number + current dBFS reading
-          - Spectrogram: time scrolling left→right on X, frequency on Y (0 Hz
-            at bottom, Nyquist at top), power encoded as colour (INFERNO map)
-          - Peak meter: colour-coded RMS dBFS bar with 2-second peak hold marker
-        Returns JPEG bytes, or None on error.
+    def _render_cell(self, cell_w: int, cell_h: int, serial: str, data: dict,
+                     mode: str, freq_range: str, sample_rate: int) -> np.ndarray:
+        """Render one AudioMoth panel onto a (cell_h, cell_w, 3) uint8 array.
+
+        mode:       'spectrogram' | 'spectrum'
+        freq_range: 'band' (configured lo–hi) | 'full' (0–Nyquist)
+        """
+        PLOT_H   = cell_h - 115  # header 30 + gap 25 + meter 30 + labels 20 + breathing room
+        PADDING  = 12
+        LABEL_W  = 28
+        DB_MIN, DB_MAX = -80, 0
+        PEAK_HOLD_DURATION = 2.0
+
+        px0 = PADDING + LABEL_W
+        px1 = cell_w - PADDING
+        pw  = px1 - px0
+        py0 = 30
+        py1 = py0 + PLOT_H
+
+        nyquist     = sample_rate / 2
+        level_db    = data.get('level_db', DB_MIN)
+        peak_db     = data.get('peak_db',  DB_MIN)
+        spec_buf    = data.get('spec_buffer', [])
+        freqs       = data.get('freqs')
+        timestamp   = data.get('timestamp', 0)
+        is_stale    = (time.time() - timestamp) > 0.5
+
+        cell = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+
+        # ── Header ──────────────────────────────────────────────────────────
+        display_name  = self._label_for(serial)
+        header_colour = (80, 80, 80) if is_stale else (200, 200, 200)
+        hdr = f"{display_name}  RMS {level_db:.1f} dBFS  Peak {peak_db:.1f} dBFS"
+        cv2.putText(cell, hdr, (PADDING, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, header_colour, 1)
+
+        # ── Frequency bounds for this render ────────────────────────────────
+        freq_lo_hz, freq_hi_hz, _ = self._monitoring_params()
+        plot_lo_hz = 0          if freq_range == 'full' else freq_lo_hz
+        plot_hi_hz = int(nyquist) if freq_range == 'full' else freq_hi_hz
+
+        # ── Plot area ───────────────────────────────────────────────────────
+        if mode == 'spectrum':
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (30, 30, 30), -1)
+            if spec_buf and freqs is not None and not is_stale:
+                frame_db = spec_buf[-1]
+                n_bins   = len(frame_db)
+                bin_lo   = max(0, int(plot_lo_hz / nyquist * n_bins))
+                bin_hi   = min(n_bins, max(bin_lo + 1, int(plot_hi_hz / nyquist * n_bins)))
+                sl_db    = frame_db[bin_lo:bin_hi]
+                sl_freqs = freqs[bin_lo:bin_hi]
+
+                # Horizontal dB grid lines
+                for db_g in [-60, -40, -20]:
+                    gy = int(py1 - (db_g - DB_MIN) / (DB_MAX - DB_MIN) * PLOT_H)
+                    cv2.line(cell, (px0, gy), (px1, gy), (45, 45, 45), 1)
+
+                # Spectrum polyline
+                freq_span = plot_hi_hz - plot_lo_hz
+                if freq_span > 0 and len(sl_freqs):
+                    pts = np.empty((len(sl_freqs), 2), dtype=np.int32)
+                    pts[:, 0] = np.clip(
+                        px0 + ((sl_freqs - plot_lo_hz) / freq_span * pw).astype(int),
+                        px0, px1
+                    )
+                    pts[:, 1] = np.clip(
+                        py1 - ((sl_db - DB_MIN) / (DB_MAX - DB_MIN) * PLOT_H).astype(int),
+                        py0, py1
+                    )
+                    cv2.polylines(cell, [pts.reshape(-1, 1, 2)], False, (0, 210, 80), 1)
+
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (60, 60, 60), 1)
+
+        else:  # spectrogram
+            if spec_buf and not is_stale:
+                spec_mat = np.array(spec_buf, dtype=np.float32).T
+                n_bins   = spec_mat.shape[0]
+                bin_lo   = int(plot_lo_hz / nyquist * n_bins)
+                bin_hi   = max(bin_lo + 1, int(plot_hi_hz / nyquist * n_bins))
+                spec_mat = spec_mat[bin_lo:bin_hi, :]
+                spec_img = cv2.resize(spec_mat, (pw, PLOT_H), interpolation=cv2.INTER_LINEAR)
+                spec_img = np.flipud(spec_img)
+                spec_norm    = np.clip((spec_img - DB_MIN) / (DB_MAX - DB_MIN) * 255,
+                                       0, 255).astype(np.uint8)
+                spec_colored = cv2.applyColorMap(spec_norm, cv2.COLORMAP_INFERNO)
+                cell[py0:py1, px0:px1] = spec_colored
+
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (60, 60, 60), 1)
+
+        if is_stale:
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (30, 30, 30), -1)
+            msg = "NO SIGNAL"
+            (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            cv2.putText(cell, msg,
+                        (px0 + (pw - tw) // 2, py0 + (PLOT_H + th) // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (60, 60, 60), 2)
+
+        # ── Y-axis frequency labels ──────────────────────────────────────────
+        plot_lo_khz   = plot_lo_hz / 1000
+        plot_hi_khz   = plot_hi_hz / 1000
+        freq_span_khz = plot_hi_khz - plot_lo_khz
+        if freq_span_khz > 0:
+            for fk in [round(v, 1) for v in np.linspace(plot_lo_khz, plot_hi_khz, 5)]:
+                fy = int(py1 - ((fk - plot_lo_khz) / freq_span_khz) * PLOT_H)
+                cv2.line(cell, (px0 - 3, fy), (px0, fy), (110, 110, 110), 1)
+                txt = f"{fk:.0f}k" if fk == int(fk) else f"{fk:.1f}k"
+                cv2.putText(cell, txt, (2, fy + 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.28, (110, 110, 110), 1)
+
+        # ── Peak meter with peak hold ────────────────────────────────────────
+        bx0, bx1 = PADDING, cell_w - PADDING
+        by0, by1 = py1 + 25, py1 + 53
+        bw = bx1 - bx0
+
+        now  = time.time()
+        hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
+        if peak_db >= hold['value_db'] or (now - hold['time']) > PEAK_HOLD_DURATION:
+            self.peak_hold_data[serial] = {'value_db': peak_db, 'time': now}
+            hold_db = peak_db
+        else:
+            hold_db = hold['value_db']
+
+        level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
+        bar_w = int(level_norm * bw)
+        bar_colour = (0, 50, 220) if level_norm > 0.85 else (0, 140, 230) if level_norm > 0.65 else (0, 200, 80)
+        cv2.rectangle(cell, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
+        cv2.rectangle(cell, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
+
+        hold_x = bx0 + int(max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN))) * bw)
+        cv2.line(cell, (hold_x, by0), (hold_x, by1), (255, 255, 255), 2)
+
+        cv2.putText(cell, "Level (dBFS)", (bx0, by0 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.30, (100, 100, 100), 1)
+        for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
+            tx = bx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * bw)
+            cv2.line(cell, (tx, by1), (tx, by1 + 4), (100, 100, 100), 1)
+            cv2.putText(cell, str(db_tick), (tx - 6, by1 + 13),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.26, (100, 100, 100), 1)
+
+        return cell
+
+
+    # -----------------------------------------------------------------------
+    # Frame composer
+    # -----------------------------------------------------------------------
+
+    def _render_monitor_frame(self, mode: str = 'spectrogram',
+                              freq_range: str = 'band',
+                              layout: str = 'stacked') -> bytes | None:
+        """Compose a JPEG frame for all connected audiomoths.
+
+        mode:       'spectrogram' | 'spectrum'
+        freq_range: 'band' | 'full'
+        layout:     'stacked' | 'grid'  (grid = 2-column when n > 1)
         """
         try:
             with self.monitor_data_lock:
                 data_snapshot = dict(self.monitor_data)
 
             sample_rate = self.config.get("audiomoth.sample_rate", 192000)
-            nyquist = sample_rate / 2
-
-            WIDTH    = 800
-            ROW_H    = 315   # pixels per audiomoth row
-            PLOT_H   = 200   # spectrogram height
-            PADDING  = 15
-            LABEL_W  = 30    # space reserved left of plots for freq labels
-            DB_MIN, DB_MAX = -80, 0
-            PEAK_HOLD_DURATION = 2.0  # seconds
-
-            px0 = PADDING + LABEL_W   # left edge of plot area
-            px1 = WIDTH - PADDING     # right edge
-            pw  = px1 - px0           # plot width in pixels
+            WIDTH = 800
+            ROW_H = 315
 
             if not data_snapshot:
                 frame = np.zeros((200, WIDTH, 3), dtype=np.uint8)
                 cv2.putText(frame, "Waiting for audiomoth data...",
-                            (PADDING, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (140, 140, 140), 1)
+                            (15, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (140, 140, 140), 1)
                 _, jpeg = cv2.imencode('.jpg', frame)
                 return jpeg.tobytes()
 
-            frame = np.zeros((ROW_H * len(data_snapshot), WIDTH, 3), dtype=np.uint8)
+            serials = list(data_snapshot.keys())
+            n = len(serials)
 
-            for row, (serial, data) in enumerate(data_snapshot.items()):
-                y0       = row * ROW_H
-                level_db  = data.get('level_db', DB_MIN)
-                peak_db   = data.get('peak_db',  DB_MIN)
-                spec_buf  = data.get('spec_buffer', [])
-                timestamp = data.get('timestamp', 0)
-                is_stale  = (time.time() - timestamp) > 0.5
+            use_grid = layout == 'grid' and n > 1
+            cols = 2 if use_grid else 1
+            rows = (n + cols - 1) // cols
+            cell_w = WIDTH // cols
+            cell_h = ROW_H
 
-                py0 = y0 + 30
-                py1 = py0 + PLOT_H
+            frame = np.zeros((rows * cell_h, WIDTH, 3), dtype=np.uint8)
 
-                # ── Header ──────────────────────────────────────────────────
-                display_name = self._label_for(serial)
-                header_colour = (80, 80, 80) if is_stale else (200, 200, 200)
-                label = f"{display_name}    RMS {level_db:.1f} dBFS    Peak {peak_db:.1f} dBFS"
-                cv2.putText(frame, label, (PADDING, y0 + 22),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, header_colour, 1)
+            for i, serial in enumerate(serials):
+                col = i % cols
+                row = i // cols
+                x0  = col * cell_w
+                y0  = row * cell_h
+                cell = self._render_cell(cell_w, cell_h, serial, data_snapshot[serial],
+                                         mode, freq_range, sample_rate)
+                frame[y0:y0 + cell_h, x0:x0 + cell_w] = cell
 
-                # ── Spectrogram ───────────────────────────────────────────────
-                freq_lo_hz, freq_hi_hz, _ = self._monitoring_params()
-                if spec_buf:
-                    spec_mat = np.array(spec_buf, dtype=np.float32).T  # (n_bins, n_cols)
-                    n_bins = spec_mat.shape[0]
-                    bin_lo = int(freq_lo_hz / nyquist * n_bins)
-                    bin_hi = int(freq_hi_hz / nyquist * n_bins)
-                    spec_mat = spec_mat[bin_lo:bin_hi, :]
-                    spec_img = cv2.resize(spec_mat, (pw, PLOT_H),
-                                          interpolation=cv2.INTER_LINEAR)
-                    spec_img = np.flipud(spec_img)
-                    spec_norm    = np.clip((spec_img - DB_MIN) /
-                                           (DB_MAX - DB_MIN) * 255, 0, 255).astype(np.uint8)
-                    spec_colored = cv2.applyColorMap(spec_norm, cv2.COLORMAP_INFERNO)
-                    frame[py0:py1, px0:px1] = spec_colored
-
-                cv2.rectangle(frame, (px0, py0), (px1, py1), (60, 60, 60), 1)
-
-                if is_stale:
-                    cv2.rectangle(frame, (px0, py0), (px1, py1), (30, 30, 30), -1)
-                    msg = "NO SIGNAL"
-                    (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-                    cv2.putText(frame, msg,
-                                (px0 + (pw - tw) // 2, py0 + (PLOT_H + th) // 2),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (60, 60, 60), 2)
-
-                # ── Y-axis: frequency labels ──────────────────────────────────
-                freq_lo_khz = freq_lo_hz / 1000
-                freq_hi_khz = freq_hi_hz / 1000
-                freq_range_khz = freq_hi_khz - freq_lo_khz
-                freq_ticks_khz = [round(v, 1) for v in np.linspace(freq_lo_khz, freq_hi_khz, 5)]
-                for fk in freq_ticks_khz:
-                    fy = int(py1 - ((fk - freq_lo_khz) / freq_range_khz) * PLOT_H)
-                    cv2.line(frame, (px0 - 3, fy), (px0, fy), (110, 110, 110), 1)
-                    cv2.putText(frame, f"{fk:.0f}k" if fk == int(fk) else f"{fk:.1f}k", (3, fy + 4),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (110, 110, 110), 1)
-
-                # ── Peak meter with peak hold ─────────────────────────────────
-                bx0, bx1 = PADDING, WIDTH - PADDING
-                by0, by1 = py1 + 32, py1 + 62
-                bw = bx1 - bx0
-
-                # Update peak hold: reset when a new peak exceeds the held value
-                # or when the hold duration has elapsed
-                now = time.time()
-                hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
-                if peak_db >= hold['value_db'] or (now - hold['time']) > PEAK_HOLD_DURATION:
-                    self.peak_hold_data[serial] = {'value_db': peak_db, 'time': now}
-                    hold_db = peak_db
-                else:
-                    hold_db = hold['value_db']
-
-                level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
-                bar_w = int(level_norm * bw)
-
-                if level_norm > 0.85:
-                    bar_colour = (0, 50, 220)    # red (BGR)
-                elif level_norm > 0.65:
-                    bar_colour = (0, 140, 230)   # orange
-                else:
-                    bar_colour = (0, 200, 80)    # green
-
-                cv2.rectangle(frame, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
-                cv2.rectangle(frame, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
-
-                # Peak hold marker: white vertical line at the held peak position
-                hold_norm = max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN)))
-                hold_x = bx0 + int(hold_norm * bw)
-                cv2.line(frame, (hold_x, by0), (hold_x, by1), (255, 255, 255), 2)
-
-                cv2.putText(frame, "Level (dBFS)", (bx0, by0 - 4),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.32, (100, 100, 100), 1)
-
-                # dB tick marks and labels below the bar
-                for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
-                    tx = bx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * bw)
-                    cv2.line(frame, (tx, by1), (tx, by1 + 4), (100, 100, 100), 1)
-                    label = f"{db_tick}"
-                    cv2.putText(frame, label, (tx - 6, by1 + 13),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.28, (100, 100, 100), 1)
-
-                # Row separator
-                if row < len(data_snapshot) - 1:
-                    cv2.line(frame, (0, y0 + ROW_H - 1), (WIDTH, y0 + ROW_H - 1), (55, 55, 55), 1)
+                # Separator lines
+                if use_grid:
+                    cv2.rectangle(frame, (x0, y0), (x0 + cell_w - 1, y0 + cell_h - 1),
+                                  (55, 55, 55), 1)
+                elif i < n - 1:
+                    cv2.line(frame, (0, y0 + cell_h - 1), (WIDTH, y0 + cell_h - 1),
+                             (55, 55, 55), 1)
 
             _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             return jpeg.tobytes()
@@ -591,10 +651,12 @@ class AudiomothModule(Module):
             return None
 
 
-    def _generate_monitor_frames(self):
+    def _generate_monitor_frames(self, mode: str = 'spectrogram',
+                                  freq_range: str = 'band',
+                                  layout: str = 'stacked'):
         """MJPEG generator — yields frames at ~10 fps."""
         while not self.should_stop_monitoring_stream:
-            frame = self._render_monitor_frame()
+            frame = self._render_monitor_frame(mode, freq_range, layout)
             if frame is not None:
                 yield (
                     b"--frame\r\n"
@@ -612,8 +674,11 @@ class AudiomothModule(Module):
 
         @self.monitoring_app.route('/video_feed')
         def video_feed():
+            mode       = request.args.get('mode',   'spectrogram')
+            freq_range = request.args.get('range',  'band')
+            layout     = request.args.get('layout', 'stacked')
             return Response(
-                self._generate_monitor_frames(),
+                self._generate_monitor_frames(mode, freq_range, layout),
                 mimetype='multipart/x-mixed-replace; boundary=frame'
             )
 

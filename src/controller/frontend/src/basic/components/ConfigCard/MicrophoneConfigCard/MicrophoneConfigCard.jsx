@@ -9,12 +9,15 @@ import ConfigCardShell from "../ConfigCardShell";
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
 
-function MicrophoneStream({ ip, port }) {
-  const [streamKey, setStreamKey] = useState(Date.now());
-  const [fullscreen, setFullscreen] = useState(false);
+function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
+  const [bumpKey, setBumpKey] = useState(Date.now());
+  const [fullscreen, setFullscreen]   = useState(false);
   const stallTimer     = useRef(null);
   const reconnectTimer = useRef(null);
-  const bump = () => setStreamKey(Date.now());
+  const bump = () => setBumpKey(Date.now());
+
+  // Reconnect whenever display options change
+  const imgKey = `${bumpKey}-${plotMode}-${freqRange}-${layout}`;
 
   useEffect(() => {
     stallTimer.current = setTimeout(bump, STALL_MS);
@@ -22,7 +25,7 @@ function MicrophoneStream({ ip, port }) {
       clearTimeout(stallTimer.current);
       clearTimeout(reconnectTimer.current);
     };
-  }, [streamKey]);
+  }, [imgKey]);
 
   const resetStall = () => clearTimeout(stallTimer.current);
 
@@ -32,11 +35,13 @@ function MicrophoneStream({ ip, port }) {
     reconnectTimer.current = setTimeout(bump, RECONNECT_MS);
   };
 
+  const src = `http://${ip}:${port}/video_feed?mode=${plotMode}&range=${freqRange}&layout=${layout}&t=${bumpKey}`;
+
   return (
     <>
       <img
-        key={streamKey}
-        src={`http://${ip}:${port}/video_feed`}
+        key={imgKey}
+        src={src}
         alt="Microphone monitor stream"
         style={{ width: "100%", display: "block", borderRadius: "4px", cursor: "pointer" }}
         onLoad={resetStall}
@@ -72,6 +77,9 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [activeTab, setActiveTab]               = useState("basic");
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
+  const [plotMode,  setPlotMode]  = useState("spectrogram");
+  const [freqRange, setFreqRange] = useState("band");
+  const [streamLayout, setStreamLayout] = useState("stacked");
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
 
@@ -362,7 +370,45 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
           </div>
           <div className="config-section-divider" />
-          <MicrophoneStream ip={module.ip} port={streamPort} />
+
+          {/* Stream display controls */}
+          <div className="monitor-controls">
+            <div className="monitor-controls__row">
+              <span className="monitor-controls__label">Plot</span>
+              {["spectrogram", "spectrum"].map(m => (
+                <button key={m} type="button"
+                  className={`monitor-toggle-btn${plotMode === m ? " monitor-toggle-btn--active" : ""}`}
+                  onClick={() => setPlotMode(m)}>
+                  {m === "spectrogram" ? "Spectrogram" : "Spectrum"}
+                </button>
+              ))}
+            </div>
+            <div className="monitor-controls__row">
+              <span className="monitor-controls__label">Range</span>
+              {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
+                <button key={val} type="button"
+                  className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
+                  onClick={() => setFreqRange(val)}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+            {discoveredSerials.length > 1 && (
+              <div className="monitor-controls__row">
+                <span className="monitor-controls__label">Layout</span>
+                {[["stacked", "Stacked"], ["grid", "Grid"]].map(([val, lbl]) => (
+                  <button key={val} type="button"
+                    className={`monitor-toggle-btn${streamLayout === val ? " monitor-toggle-btn--active" : ""}`}
+                    onClick={() => setStreamLayout(val)}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <MicrophoneStream ip={module.ip} port={streamPort}
+            plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
         </>
       )}
 

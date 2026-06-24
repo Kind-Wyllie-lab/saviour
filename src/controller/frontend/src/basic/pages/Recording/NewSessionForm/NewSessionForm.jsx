@@ -27,6 +27,19 @@ function NewSessionForm({ modules, sessionList = {} }) {
   }, [experimentName, target, now]);
 
   const [recordingMode, setRecordingMode] = useState("immediate");
+  const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
+
+  useEffect(() => { setPtpSyncStatus(null); }, [target]);
+  useEffect(() => {
+    socket.on("ptp_sync_status", setPtpSyncStatus);
+    return () => socket.off("ptp_sync_status", setPtpSyncStatus);
+  }, []);
+
+  // Request a fresh health snapshot on mount so PTP offset data is available
+  // before the user presses Check Ready.
+  useEffect(() => {
+    socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
+  }, []);
 
   // Timed mode
   const [durationHours, setDurationHours]     = useState("0");
@@ -64,7 +77,8 @@ function NewSessionForm({ modules, sessionList = {} }) {
   const totalDurationMins = parseInt(durationHours || 0) * 60 + parseInt(durationMinutes || 0);
   const timedDurationValid = recordingMode !== "timed" || totalDurationMins > 0;
 
-  const canStart = experimentName && allTargetReady && !anyTargetRecording && timedDurationValid;
+  const ptpOk = ptpSyncStatus === null || ptpSyncStatus.ok;
+  const canStart = experimentName && allTargetReady && !anyTargetRecording && timedDurationValid && ptpOk;
 
   const nameAlreadyUsed = experimentName
     ? Object.values(sessionList).some(s => s.session_name.startsWith(experimentName + "-"))
@@ -255,6 +269,17 @@ function NewSessionForm({ modules, sessionList = {} }) {
         )}
         {!timedDurationValid && (
           <p className="form-warning">Enter a duration greater than 0.</p>
+        )}
+        {ptpSyncStatus !== null && !ptpSyncStatus.ok && (
+          <p className="form-warning">
+            PTP not synchronised —{" "}
+            {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
+          </p>
+        )}
+        {ptpSyncStatus?.ok && (
+          <p className="form-ok">
+            PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
+          </p>
         )}
 
         <div className="button-row">

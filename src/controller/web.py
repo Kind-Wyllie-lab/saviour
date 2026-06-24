@@ -155,13 +155,79 @@ class Web(ABC):
             subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
 
 
-    def _write_session_metadata(self, session_name: str, target: str) -> None:
-        """Write a session_metadata.json to the export target for the session.
-
-        If export.share_ip is configured (separate NAS), mounts the share, writes
-        there, then unmounts.  Otherwise falls back to the local controller_share dir.
-        """
+    def _try_write_metadata(self, session_name: str, metadata: dict) -> bool:
+        """Attempt one write of session_metadata.json.  Returns True on success."""
         import subprocess
+
+        nas_ip = self.config.get("export.share_ip", "")
+        if nas_ip:
+            share_path = self.config.get("export.share_path", "controller_share")
+            username   = self.config.get("export.share_username", "")
+            password   = self.config.get("export.share_password", "")
+            mount_point = Path("/mnt/controller_export")
+            try:
+                mount_point.mkdir(parents=True, exist_ok=True)
+                if mount_point.is_mount():
+                    subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+                auth_opts = f"username={username},password={password}" if username else "guest"
+                result = subprocess.run(
+                    ["sudo", "mount", "-t", "cifs",
+                     f"//{nas_ip}/{share_path}", str(mount_point),
+                     "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode != 0:
+                    self.logger.warning(
+                        f"Metadata write: cannot mount NAS {nas_ip}: "
+                        f"{result.stderr.strip() or 'mount failed'}"
+                    )
+                    return False
+                share_dir = mount_point / session_name
+                share_dir.mkdir(parents=True, exist_ok=True)
+                with open(share_dir / "session_metadata.json", "w") as f:
+                    json.dump(metadata, f, indent=2)
+                self.logger.info(f"Wrote session_metadata.json for '{session_name}' to NAS {nas_ip}")
+                return True
+            except Exception as e:
+                self.logger.warning(f"Metadata write failed for '{session_name}': {e}")
+                return False
+            finally:
+                subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+        else:
+            share_dir = self.habitat_share_dir / session_name
+            try:
+                share_dir.mkdir(parents=True, exist_ok=True)
+                share_dir.chmod(0o777)
+                with open(share_dir / "session_metadata.json", "w") as f:
+                    json.dump(metadata, f, indent=2)
+                self.logger.info(f"Wrote session_metadata.json for '{session_name}'")
+                return True
+            except Exception as e:
+                self.logger.warning(f"Metadata write failed for '{session_name}': {e}")
+                return False
+
+    def _retry_write_metadata(self, session_name: str, metadata: dict) -> None:
+        """Background thread: retry session_metadata.json with exponential backoff.
+
+        Attempts at 30 s, 1 min, 2 min, 5 min, then 10 min intervals.  Gives up
+        after the final attempt and logs an error so the operator is aware.
+        """
+        for delay in (30, 60, 120, 300, 600):
+            time.sleep(delay)
+            self.logger.info(f"Retrying session_metadata.json write for '{session_name}'…")
+            if self._try_write_metadata(session_name, metadata):
+                return
+        self.logger.error(
+            f"Gave up writing session_metadata.json for '{session_name}' after all retries — "
+            f"NAS may be permanently unavailable"
+        )
+
+    def _write_session_metadata(self, session_name: str, target: str) -> None:
+        """Write session_metadata.json to the NAS or local share.
+
+        If the initial attempt fails (NAS temporarily unavailable), a background
+        thread retries with exponential backoff.
+        """
         from datetime import datetime, timezone
 
         metadata = {
@@ -171,46 +237,17 @@ class Web(ABC):
             **self.experiment_metadata,
         }
 
-        nas_ip = self.config.get("export.share_ip", "")
-        if nas_ip:
-            share_path = self.config.get("export.share_path", "controller_share")
-            username = self.config.get("export.share_username", "")
-            password = self.config.get("export.share_password", "")
-            mount_point = Path("/mnt/controller_export")
-            try:
-                mount_point.mkdir(parents=True, exist_ok=True)
-                if mount_point.is_mount():
-                    subprocess.run(["sudo", "umount", str(mount_point)], check=False)
-                auth_opts = f"username={username},password={password}" if username else "guest"
-                mount_cmd = [
-                    "sudo", "mount", "-t", "cifs",
-                    f"//{nas_ip}/{share_path}",
-                    str(mount_point),
-                    "-o", f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
-                ]
-                result = subprocess.run(mount_cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    self.logger.error(f"Failed to mount NAS for metadata write: {result.stderr}")
-                    return
-                share_dir = mount_point / session_name
-                share_dir.mkdir(parents=True, exist_ok=True)
-                with open(share_dir / "session_metadata.json", "w") as f:
-                    json.dump(metadata, f, indent=2)
-                self.logger.info(f"Wrote session_metadata.json for '{session_name}' to NAS {nas_ip}")
-            except Exception as e:
-                self.logger.error(f"Failed to write session_metadata.json to NAS: {e}")
-            finally:
-                subprocess.run(["sudo", "umount", str(mount_point)], check=False)
-        else:
-            share_dir = self.habitat_share_dir / session_name
-            try:
-                share_dir.mkdir(parents=True, exist_ok=True)
-                share_dir.chmod(0o777)
-                with open(share_dir / "session_metadata.json", "w") as f:
-                    json.dump(metadata, f, indent=2)
-                self.logger.info(f"Wrote session_metadata.json for '{session_name}'")
-            except Exception as e:
-                self.logger.error(f"Failed to write session_metadata.json for '{session_name}': {e}")
+        if not self._try_write_metadata(session_name, metadata):
+            self.logger.warning(
+                f"Initial metadata write failed for '{session_name}' — scheduling retries"
+            )
+            threading.Thread(
+                target=self._retry_write_metadata,
+                args=(session_name, metadata),
+                daemon=True,
+                name=f"metadata-retry-{session_name}",
+            ).start()
+
 
 
     def register_additional_socketio_events(self, handler_func):

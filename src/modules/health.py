@@ -16,6 +16,8 @@ from typing import Callable, Dict, Any, Optional
 import threading
 import os
 
+from src.shared.health import ModuleHealthSnapshot
+
 class Health:
     """
     This class is responsible for monitoring module system resources and reporting status to the controller.
@@ -99,23 +101,24 @@ class Health:
         ptp_status = self.facade.get_ptp_status()
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
-        return {
-            "timestamp": time.time(),
-            'cpu_temp': self.get_cpu_temp(),
-            'cpu_usage': psutil.cpu_percent(),
-            'memory_usage': mem.percent,
-            'memory_total_gb': round(mem.total / (1024 ** 3), 1),
-            'uptime': time.time() - self.start_time if self.start_time else 0,
-            'disk_space': disk.percent,
-            'disk_used_gb': round(disk.used / (1024 ** 3), 1),
-            'disk_total_gb': round(disk.total / (1024 ** 3), 1),
-            'ptp4l_offset': ptp_status.get('ptp4l_offset'),
-            'ptp4l_freq': ptp_status.get('ptp4l_freq'),
-            'phc2sys_offset': ptp_status.get('phc2sys_offset'),
-            'phc2sys_freq': ptp_status.get('phc2sys_freq'),
-            'recording': self.facade.get_recording_status(),
-            'version': self.facade.get_saviour_version(),
-        }
+        snapshot = ModuleHealthSnapshot(
+            timestamp=time.time(),
+            cpu_temp=self.get_cpu_temp(),
+            cpu_usage=psutil.cpu_percent(),
+            memory_usage=mem.percent,
+            memory_total_gb=round(mem.total / (1024 ** 3), 1),
+            uptime=time.time() - self.start_time if self.start_time else 0,
+            disk_space=disk.percent,
+            disk_used_gb=round(disk.used / (1024 ** 3), 1),
+            disk_total_gb=round(disk.total / (1024 ** 3), 1),
+            ptp4l_offset=ptp_status.get('ptp4l_offset'),
+            ptp4l_freq=ptp_status.get('ptp4l_freq'),
+            phc2sys_offset=ptp_status.get('phc2sys_offset'),
+            phc2sys_freq=ptp_status.get('phc2sys_freq'),
+            recording=self.facade.get_recording_status(),
+            version=self.facade.get_saviour_version(),
+        )
+        return snapshot.to_dict()
 
     def get_cpu_temp(self):
         """Get CPU temperature"""

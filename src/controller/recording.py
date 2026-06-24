@@ -124,6 +124,81 @@ class Recording:
             for m in s.modules
         }
 
+    def _check_ptp_sync(self, modules: list) -> dict:
+        """Gate-check PTP synchronisation for all target modules before starting a session.
+
+        Uses the most recent heartbeat data — no blocking network request.  Data
+        older than three heartbeat intervals (90 s) is treated as a failure because
+        a stale offset is not a synchronisation guarantee.
+
+        Offline modules are skipped: they will not participate in the recording and
+        the session fault monitor will handle their absence independently.
+
+        Returns {"ok": True} on pass, or:
+          {"ok": False, "error": str, "failures": [{"module_id": str, "reason": str, ...}]}
+        """
+        config = self.facade.get_config()
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        max_age_secs: float = 90.0
+        now = time.time()
+        failures = []
+        synced = []  # {"module_id": str, "offset_us": float}
+
+        for module_id in modules:
+            health = self.facade.get_module_health(module_id)
+            if not health:
+                failures.append({"module_id": module_id, "reason": "no health data received yet"})
+                continue
+
+            if health.get("status") == "offline":
+                continue  # offline modules are handled separately by the session monitor
+
+            age = now - health.get("last_heartbeat", 0)
+            if age > max_age_secs:
+                failures.append({
+                    "module_id": module_id,
+                    "reason": f"health data is {age:.0f}s old — module may have disconnected",
+                })
+                continue
+
+            offset_ns = health.get("ptp4l_offset")
+            if offset_ns is None:
+                failures.append({
+                    "module_id": module_id,
+                    "reason": "PTP offset not yet reported — ptp4l may still be settling",
+                })
+                continue
+
+            offset_us = offset_ns / 1000
+            if abs(offset_us) > threshold_us:
+                failures.append({
+                    "module_id": module_id,
+                    "offset_us": round(offset_us, 1),
+                    "reason": (
+                        f"offset {offset_us:.1f}µs exceeds "
+                        f"{threshold_us:.0f}µs threshold"
+                    ),
+                })
+            else:
+                synced.append({"module_id": module_id, "offset_us": round(offset_us, 1)})
+
+        if not failures:
+            max_offset = max((abs(m["offset_us"]) for m in synced), default=0.0)
+            return {
+                "ok": True,
+                "synced": synced,
+                "max_offset_us": round(max_offset, 1),
+                "threshold_us": threshold_us,
+            }
+
+        detail = "; ".join(f"{f['module_id']}: {f['reason']}" for f in failures)
+        return {
+            "ok": False,
+            "failures": failures,
+            "error": f"PTP not synchronised on {len(failures)} module(s) — {detail}",
+        }
+
+
     def _check_share_writable(self) -> Optional[str]:
         """Return an error string if the controller share is not writable, else None."""
         share = "/home/pi/controller_share"
@@ -161,6 +236,11 @@ class Recording:
         if overlap:
             self.logger.warning(f"create_session: modules already recording: {overlap}")
             return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
+
+        ptp = self._check_ptp_sync(modules)
+        if not ptp["ok"]:
+            self.logger.warning(f"create_session blocked by PTP check: {ptp['error']}")
+            return {"success": False, "error": ptp["error"]}
 
         session_name = self._format_session_name(session_name, target)
 
@@ -592,6 +672,30 @@ class Recording:
 
     def _start_scheduled_session(self, session_name: str, today: str) -> None:
         session = self.sessions[session_name]
+
+        ptp = self._check_ptp_sync(session.modules)
+        if not ptp["ok"]:
+            self.logger.error(
+                f"Scheduled session '{session_name}' blocked by PTP check: {ptp['error']}"
+            )
+            with self._lock:
+                session.state = SessionState.ERROR
+                session.error_message = ptp["error"]
+                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.scheduled_last_start_date = today  # prevent same-day retry
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            self.facade.send_alert(
+                key=f"ptp_fail_{session_name}_{today}",
+                title=f"Scheduled recording blocked — PTP not synchronised",
+                message=(
+                    f"Session **{session_name}** could not start its {today} run.\n\n"
+                    f"{ptp['error']}"
+                ),
+                severity="error",
+            )
+            return
+
         start_at = time.time() + LEAD_SECS
         with self._lock:
             session.state = SessionState.ACTIVE

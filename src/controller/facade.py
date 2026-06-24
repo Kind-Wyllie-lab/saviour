@@ -128,6 +128,12 @@ class ControllerFacade():
             # No managed session — send command directly as a fallback
             self.controller.communication.send_command(target, "stop_recording", {})
 
+    def check_ptp_sync(self, target: str) -> dict:
+        modules = list(self.get_modules_by_target(target).keys())
+        if not modules:
+            return {"ok": True}
+        return self.controller.recording._check_ptp_sync(modules)
+
     def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None) -> dict:
         return self.controller.recording.create_session(session_name, target, duration_minutes, researcher)
 

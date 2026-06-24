@@ -48,25 +48,32 @@ class Network():
 
         self.logger.info(f"Controller service manager initialized (service not yet registered)")
 
-    def _wait_for_proper_ip(self):
-        """Wait for the proper network IP (192.168.1.1) to be available"""
+    def _wait_for_proper_ip(self, max_wait_secs: int = 60, retry_interval: int = 5):
+        """Wait for the proper network IP on eth0 to be available.
+
+        Retries every *retry_interval* seconds for up to *max_wait_secs* total,
+        then raises RuntimeError so the caller gets a clear error rather than
+        hanging indefinitely (e.g. when NetworkManager is not running).
+        """
         self.logger.info("Waiting for proper network IP on eth0...")
-        
-        attempt = 0
-        
-        while True:
-            # Try multiple methods to get the actual network IP address
-            ip = None
-            
-            # Method 1: Try ifconfig eth0 (most reliable for eth0 IP)
+        deadline = time.monotonic() + max_wait_secs
+
+        while time.monotonic() < deadline:
             try:
                 ip = self._get_eth0_ip_nm()
                 if not self._validate_ip(ip):
-                    self.logger.warning(f"{ip} could not be validated")
-                    return False
-                return ip
+                    self.logger.warning(f"IP '{ip}' failed validation — retrying in {retry_interval}s")
+                else:
+                    return ip
             except Exception as e:
-                self.logger.warning(f"Failed to get IP from ifconfig eth0: {e}")
+                self.logger.warning(f"Failed to get IP via nmcli: {e} — retrying in {retry_interval}s")
+
+            time.sleep(retry_interval)
+
+        raise RuntimeError(
+            f"Could not obtain a valid IP on eth0 after {max_wait_secs}s. "
+            "Check that NetworkManager is running and eth0 has a static IP configured."
+        )
 
 
     def _get_eth0_ip_nm(self) -> str:

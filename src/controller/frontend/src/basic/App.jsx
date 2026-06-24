@@ -14,6 +14,7 @@ import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
 import useClockOnce from "/src/hooks/useClockOnce";
 import useSessions from "/src/hooks/useSessions";
+import socket from "/src/socket";
 
 
 document.title="SAVIOUR";
@@ -40,15 +41,16 @@ function App() {
   const { sessionList } = useSessions();
   const [pendingFaults, setPendingFaults] = useState([]);
   const [showClockModal, setShowClockModal] = useState(false);
+  const [nasHealth, setNasHealth] = useState(null);
   const location = useLocation();
   const prevPathname = useRef(location.pathname);
 
-  // useEffect(() => {
-  //   const unacked = sessionList.filter(
-  //     (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
-  //   );
-  //   setPendingFaults(unacked);
-  // }, [sessionList]);
+  useEffect(() => {
+    const unacked = sessionList.filter(
+      (s) => s.error_time && !sessionStorage.getItem(faultKey(s))
+    );
+    setPendingFaults(unacked);
+  }, [sessionList]);
 
   // Dismiss fault modal (and mark acknowledged) when the user navigates to another page
   useEffect(() => {
@@ -77,6 +79,12 @@ function App() {
   }, [clockInfo]);
 
   useEffect(() => {
+    socket.emit("get_nas_health");
+    socket.on("nas_health_update", setNasHealth);
+    return () => socket.off("nas_health_update", setNasHealth);
+  }, []);
+
+  useEffect(() => {
     // Check if user prefers dark mode
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     setDarkMode(prefersDark);
@@ -100,6 +108,12 @@ function App() {
     <div className="app">
       <Sidebar navItems={pages} />
       <div className="content">
+        {nasHealth?.status === "error" && (
+          <div className="nas-warning-banner">
+            NAS unreachable — exports will queue locally until the share is restored.
+            {nasHealth.error && <span className="nas-warning-detail"> ({nasHealth.error})</span>}
+          </div>
+        )}
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/settings" element={<Settings />} />

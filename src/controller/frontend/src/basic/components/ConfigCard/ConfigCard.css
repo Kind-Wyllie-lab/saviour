@@ -191,16 +191,10 @@ min-width: 300px;
 }
 
 .card-header-top {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.card-header-top h3 {
-  flex: 1;
-  margin: 0;
 }
 
 .card-header-actions {
@@ -244,12 +238,6 @@ min-width: 300px;
   font-size: 0.78em;
   opacity: 0.55;
   margin-top: 2px;
-}
-
-.device-info-chip {
-  font-size: 0.78em;
-  opacity: 0.55;
-  white-space: nowrap;
 }
 
 .update-button-wrapper {

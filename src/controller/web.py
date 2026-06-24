@@ -342,7 +342,14 @@ class Web(ABC):
         @self.socketio.on("check_ready")
         def handle_check_ready(data):
             target = data.get("target")
+            self.facade.send_command(target, "get_health", {})
             self.facade.send_command(target, "validate_readiness", {})
+            # Yield to let get_health responses arrive and update the health cache
+            # before running the PTP check.  get_health is an in-memory read on the
+            # module side; ZMQ round-trip on a PoE LAN is < 5 ms, so 750 ms is ample.
+            self.socketio.sleep(0.75)
+            ptp = self.facade.check_ptp_sync(target)
+            self.socketio.emit("ptp_sync_status", ptp)
         
 
         @self.socketio.on('get_sessions')

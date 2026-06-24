@@ -123,8 +123,11 @@ class Health:
                     'cpu_temp': status_data.get('cpu_temp', 0),
                     'cpu_usage': status_data.get('cpu_usage', 0),
                     'memory_usage': status_data.get('memory_usage', 0),
+                    'memory_total_gb': status_data.get('memory_total_gb'),
                     'uptime': status_data.get('uptime', 0),
                     'disk_space': status_data.get('disk_space', 0),
+                    'disk_used_gb': status_data.get('disk_used_gb'),
+                    'disk_total_gb': status_data.get('disk_total_gb'),
                     'ptp4l_offset': status_data.get('ptp4l_offset'),
                     'ptp4l_freq': status_data.get('ptp4l_freq'),
                     'phc2sys_offset': status_data.get('phc2sys_offset'),
@@ -164,10 +167,16 @@ class Health:
                     self.module_health[module_id]['cpu_usage'] = status_data['cpu_usage']
                 if 'memory_usage' in status_data:
                     self.module_health[module_id]['memory_usage'] = status_data['memory_usage']
+                if 'memory_total_gb' in status_data:
+                    self.module_health[module_id]['memory_total_gb'] = status_data['memory_total_gb']
                 if 'uptime' in status_data:
                     self.module_health[module_id]['uptime'] = status_data['uptime']
                 if 'disk_space' in status_data:
                     self.module_health[module_id]['disk_space'] = status_data['disk_space']
+                if 'disk_used_gb' in status_data:
+                    self.module_health[module_id]['disk_used_gb'] = status_data['disk_used_gb']
+                if 'disk_total_gb' in status_data:
+                    self.module_health[module_id]['disk_total_gb'] = status_data['disk_total_gb']
                 if 'ptp4l_offset' in status_data:
                     self.module_health[module_id]['ptp4l_offset'] = status_data['ptp4l_offset']
                 if 'ptp4l_freq' in status_data:
@@ -206,8 +215,11 @@ class Health:
                 'cpu_temp': None,
                 'cpu_usage': None,
                 'memory_usage': None,
+                'memory_total_gb': None,
                 'uptime': None,
                 'disk_space': None,
+                'disk_used_gb': None,
+                'disk_total_gb': None,
                 'ptp4l_offset': None,
                 'ptp4l_freq': None,
                 'phc2sys_offset': None,

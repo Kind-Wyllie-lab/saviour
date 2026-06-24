@@ -134,7 +134,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 - [x] **`modules.py`: online/offline status can oscillate without hysteresis** — a single delayed heartbeat immediately brings a module back online; add a short debounce (e.g. require 2 consecutive heartbeats before marking online again).
 - [x] **`controller/network.py`: infinite loop waiting for `nmcli`** — if NetworkManager is not running the controller hangs at startup; add a timeout and a clear error message.
 - [ ] **Session metadata not retried if NAS unavailable at session start** — `_write_session_metadata()` in `web.py` runs once; add retry on NAS recovery.
-- [ ] **`facade.py`: `apply_section_to_type` has no ack timeout** — bulk config pushes that are never acknowledged leave the frontend in a permanent "pending" state.
+- [x] **`facade.py`: `apply_section_to_type` has no ack timeout** — bulk config pushes that are never acknowledged leave the frontend in a permanent "pending" state.
 
 ### Low priority — observability / maintenance
 

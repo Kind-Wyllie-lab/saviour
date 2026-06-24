@@ -29,6 +29,9 @@
     "export": {
         "max_concurrent_exports": 2
     },
+    "recording": {
+        "ptp_threshold_us": 1000.0
+    },
     "database": {
         "url": "",
         "key": ""

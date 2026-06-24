@@ -253,13 +253,17 @@ configure_device() {
     summary+="  Hostname :  $new_hn\n"
     if [ "$role" = "controller" ]; then
         summary+="\nWill enable  : PTP grandmaster, Samba, DHCP, mDNS, iptables"
+        summary+="\n\n  New IP address : ${DEVICE_IP%%/*}"
+        summary+="\n  !! Your SSH/network connection will drop during setup."
+        summary+="\n  Reconnect to ${DEVICE_IP%%/*} after the device reboots."
     else
         summary+="\nWill enable  : PTP timeReceiver"
         summary+="\nWill disable : Samba, DHCP, mDNS"
     fi
-    summary+="\n\nA reboot is required after configuration."
+    summary+="\n\nThe device will reboot automatically when done."
+    summary+="\nProceed?"
 
-    whiptail --title "Confirm Configuration" --yesno "$summary" 17 $W || return
+    whiptail --title "Confirm Configuration" --yesno "$summary" 20 $W || return
 
     # Step 6: run all setup steps
     if ! run_configuration; then
@@ -269,14 +273,23 @@ configure_device() {
         return
     fi
 
-    # Step 7: offer reboot
-    if whiptail --title "Done" \
-        --yesno "\nConfiguration complete.\n\nReboot now to apply all changes?" \
-        9 $W; then
-        clear
-        echo "Rebooting…"
-        reboot
-    fi
+    # Step 7: reboot automatically — the user already confirmed above.
+    # We do not ask again here because controller setup changes the IP address
+    # mid-run (nmcli), which drops any SSH session.  The second dialog would
+    # appear on a screen the user can no longer see.
+    #
+    # tput rmcup restores the terminal's normal screen buffer so the whiptail
+    # overlay is fully gone before the countdown appears.
+    tput rmcup 2>/dev/null || clear
+    echo ""
+    echo "  ✓ Configuration complete."
+    echo ""
+    for i in 5 4 3 2 1; do
+        echo "  Rebooting in ${i}…"
+        sleep 1
+    done
+    echo ""
+    reboot
 }
 
 network_settings() {

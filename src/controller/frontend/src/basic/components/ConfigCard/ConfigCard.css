@@ -191,10 +191,16 @@ min-width: 300px;
 }
 
 .card-header-top {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.card-header-top h3 {
+  flex: 1;
+  margin: 0;
 }
 
 .card-header-actions {
@@ -238,6 +244,12 @@ min-width: 300px;
   font-size: 0.78em;
   opacity: 0.55;
   margin-top: 2px;
+}
+
+.device-info-chip {
+  font-size: 0.78em;
+  opacity: 0.55;
+  white-space: nowrap;
 }
 
 .update-button-wrapper {
@@ -384,6 +396,48 @@ min-width: 300px;
   color: var(--text-muted, #888);
   padding: 3px 0 6px;
   margin-bottom: 4px;
+}
+
+/* Monitor stream display controls */
+.monitor-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.monitor-controls__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monitor-controls__label {
+  font-size: 0.78em;
+  color: var(--text-muted, #888);
+  min-width: 44px;
+}
+
+.monitor-toggle-btn {
+  font-size: 0.78em;
+  padding: 3px 10px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.monitor-toggle-btn:hover {
+  background: var(--hover-bg, rgba(255,255,255,0.06));
+  color: var(--text-color, #ccc);
+}
+
+.monitor-toggle-btn--active {
+  background: var(--accent-color, #4a9eff);
+  border-color: var(--accent-color, #4a9eff);
+  color: #fff;
 }
 
 /* Save + Reset button row */

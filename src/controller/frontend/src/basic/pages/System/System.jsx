@@ -39,14 +39,23 @@ function cpuCell(pct) {
   return <span className={cls}>{pct.toFixed(1)}%</span>;
 }
 
-function diskCell(usedPct, freeGb) {
-  if (usedPct == null) return <span className="cell--muted">—</span>;
-  return (
-    <span>
-      {pctCell(usedPct, 75, 90)}
-      {freeGb != null && <span className="cell--muted"> ({freeGb} GB free)</span>}
-    </span>
-  );
+function memoryCell(usagePct, totalGb) {
+  if (usagePct == null) return <span className="cell--muted">—</span>;
+  const cls = usagePct >= 85 ? "val--danger" : usagePct >= 70 ? "val--warn" : "";
+  if (totalGb != null) {
+    const usedGb = (totalGb * usagePct / 100).toFixed(1);
+    return <span className={cls || undefined}>{`${usedGb} / ${totalGb.toFixed(1)} GB`}</span>;
+  }
+  return <span className={cls || undefined}>{`${usagePct.toFixed(1)}%`}</span>;
+}
+
+function diskCell(usedPct, usedGb, totalGb) {
+  if (usedPct == null && usedGb == null) return <span className="cell--muted">—</span>;
+  const cls = (usedPct ?? 0) >= 90 ? "val--danger" : (usedPct ?? 0) >= 75 ? "val--warn" : "";
+  if (usedGb != null && totalGb != null) {
+    return <span className={cls || undefined}>{`${usedGb.toFixed(1)} / ${totalGb.toFixed(1)} GB`}</span>;
+  }
+  return <span className={cls || undefined}>{`${(usedPct ?? 0).toFixed(1)}%`}</span>;
 }
 
 function ptpCell(ns) {
@@ -200,8 +209,8 @@ export default function System() {
               <td className="cell--muted">{controllerHealth?.version ?? "—"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
               <td>{tempCell(controllerHealth?.cpu_temp)}</td>
-              <td>{pctCell(controllerHealth?.memory_usage, 70, 85)}</td>
-              <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_free_gb)}</td>
+              <td>{memoryCell(controllerHealth?.memory_usage, controllerHealth?.memory_total_gb)}</td>
+              <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_used_gb, controllerHealth?.disk_total_gb)}</td>
               <td className="cell--muted">—</td>
               <td className="cell--muted">—</td>
               <td></td>
@@ -221,8 +230,8 @@ export default function System() {
                   <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
                   <td>{cpuCell(row.cpu_usage)}</td>
                   <td>{tempCell(row.cpu_temp)}</td>
-                  <td>{pctCell(row.memory_usage, 70, 85)}</td>
-                  <td>{pctCell(row.disk_space, 75, 90)}</td>
+                  <td>{memoryCell(row.memory_usage, row.memory_total_gb)}</td>
+                  <td>{diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb)}</td>
                   <td>{ptpCell(row.ptp4l_offset)}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>

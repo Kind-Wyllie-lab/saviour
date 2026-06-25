@@ -107,6 +107,10 @@ detect_interface_name() {
 
 # ── Menus ──────────────────────────────────────────────────────────────────────
 main_menu() {
+    if detect_clone; then
+        clone_fix_menu
+    fi
+
     while true; do
         get_current_config
         local hn status
@@ -120,15 +124,17 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 4 \
+            $H $W 5 \
             "configure" "Configure this device  (role / type)" \
             "network"   "Network settings  (controller only)" \
+            "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
             "view"      "View current configuration" \
             "exit"      "Exit") || return 0
 
         case "$choice" in
             configure) configure_device ;;
             network)   network_settings ;;
+            refresh)   clone_fix_menu ;;
             view)      view_config ;;
             exit)      return 0 ;;
         esac
@@ -352,6 +358,51 @@ view_config() {
     fi
 
     whiptail --title "Current Configuration" --msgbox "$content" 16 $W
+}
+
+clone_fix_menu() {
+    get_current_config
+    DEVICE_ROLE="$CURRENT_ROLE"
+    DEVICE_TYPE="$CURRENT_TYPE"
+    local expected current
+    expected=$(generate_hostname)
+    current=$(hostname)
+
+    local msg="\n  Current hostname : $current\n"
+    msg+="  Expected         : $expected\n\n"
+    if [ "$current" != "$expected" ]; then
+        msg+="  This device appears to be a clone of another.\n\n"
+    fi
+    msg+="  Fixing will:\n"
+    msg+="    • Set hostname to $expected\n"
+    msg+="    • Regenerate SSH host keys\n"
+    msg+="    • Regenerate machine ID\n"
+    msg+="    • Clear saved active config\n"
+    if [ "$CURRENT_ROLE" = "controller" ]; then
+        msg+="    • Regenerate SSL certificate\n"
+        msg+="    • Regenerate Samba password (modules must re-save config)\n"
+    fi
+    msg+="\n  The device will reboot automatically."
+
+    whiptail --title "Refresh Identity" --yesno "$msg" 22 $W \
+        --yes-button "Refresh & Reboot" --no-button "Cancel" || return 0
+
+    if ! run_clone_fix; then
+        whiptail --title "Fix Failed" \
+            --msgbox "\nAn error occurred.\nSee $LOG for details." 9 $W || true
+        return
+    fi
+
+    tput rmcup 2>/dev/null || clear
+    echo ""
+    echo "  ✓ Identity refresh complete."
+    echo ""
+    for i in 5 4 3 2 1; do
+        echo "  Rebooting in ${i}…"
+        sleep 1
+    done
+    echo ""
+    reboot
 }
 
 # ── Setup functions ────────────────────────────────────────────────────────────
@@ -853,6 +904,62 @@ generate_ssl_cert() {
     chmod 600 "$key"
     chmod 644 "$cert"
     log "SSL cert generated (CN=saviour.local, SAN IP=${controller_ip}, expires 10 years)"
+}
+
+# ── Clone detection and identity refresh ──────────────────────────────────────
+
+detect_clone() {
+    # Returns 0 (true) if this device looks like a cloned SD card.
+    # A device is considered cloned when its current hostname doesn't match
+    # what generate_hostname() would produce for this MAC address.
+    [ -f "$CONFIG_FILE" ] || return 1
+    get_current_config
+    [ "$CURRENT_ROLE" = "none" ] && return 1
+    DEVICE_ROLE="$CURRENT_ROLE"
+    DEVICE_TYPE="$CURRENT_TYPE"
+    local expected current
+    expected=$(generate_hostname)
+    current=$(hostname)
+    [ "$expected" != "$current" ]
+}
+
+run_clone_fix() {
+    set -e
+    get_current_config
+    DEVICE_ROLE="$CURRENT_ROLE"
+    DEVICE_TYPE="$CURRENT_TYPE"
+    log "Identity refresh: was $(hostname), expected $(generate_hostname)"
+
+    set_device_hostname
+
+    progress "Regenerating SSH host keys…"
+    log "Regenerating SSH host keys"
+    rm -f /etc/ssh/ssh_host_*
+    run_logged ssh-keygen -A
+
+    progress "Regenerating machine ID…"
+    log "Regenerating machine ID"
+    rm -f /etc/machine-id /var/lib/dbus/machine-id
+    run_logged systemd-machine-id-setup --commit
+
+    progress "Clearing saved config…"
+    for cfg in \
+        "${DIR}/src/modules/config/active_config.json" \
+        "${DIR}/src/controller/config/active_config.json"
+    do
+        if [ -f "$cfg" ]; then
+            rm -f "$cfg"
+            log "Removed active config: $cfg"
+        fi
+    done
+
+    if [ "$CURRENT_ROLE" = "controller" ]; then
+        rm -f /etc/saviour/ssl/saviour.crt /etc/saviour/ssl/saviour.key
+        generate_ssl_cert
+        configure_samba_share
+    fi
+
+    set +e
 }
 
 # ── Main configuration runner ──────────────────────────────────────────────────

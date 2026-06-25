@@ -23,7 +23,7 @@ class ModuleHealthSnapshot:
     disk_space:      Optional[float] = None
     disk_used_gb:    Optional[float] = None
     disk_total_gb:   Optional[float] = None
-    ptp4l_offset:    Optional[float] = None
+    ptp4l_offset_ns: Optional[float] = None
     ptp4l_freq:      Optional[float] = None
     phc2sys_offset:  Optional[float] = None
     phc2sys_freq:    Optional[float] = None

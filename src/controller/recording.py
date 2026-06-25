@@ -164,7 +164,7 @@ class Recording:
                 })
                 continue
 
-            offset_ns = health.get("ptp4l_offset")
+            offset_ns = health.get("ptp4l_offset_ns")
             if offset_ns is None:
                 failures.append({
                     "module_id": module_id,
@@ -767,7 +767,7 @@ class Recording:
                 continue
             if now - health.get("last_heartbeat", 0) > 90.0:
                 continue
-            offset_ns = health.get("ptp4l_offset")
+            offset_ns = health.get("ptp4l_offset_ns")
             if offset_ns is None:
                 continue
 

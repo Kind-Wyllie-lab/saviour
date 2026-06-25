@@ -289,7 +289,7 @@ class PTP:
         entry = {
             'timestamp': timestamp,
             'ptp4l_freq': self.latest_ptp4l_freq,
-            'ptp4l_offset': self.latest_ptp4l_offset,
+            'ptp4l_offset_ns': self.latest_ptp4l_offset,
             'phc2sys_freq': self.latest_phc2sys_freq,
             'phc2sys_offset': self.latest_phc2sys_offset
         }
@@ -468,7 +468,7 @@ class PTP:
             'interface': self.interface,
             'ptp_buffer_size': len(self.ptp_buffer),
             # Add individual service values for health manager
-            'ptp4l_offset': self.latest_ptp4l_offset,
+            'ptp4l_offset_ns': self.latest_ptp4l_offset,
             'ptp4l_freq': self.latest_ptp4l_freq,
             'phc2sys_offset': self.latest_phc2sys_offset,
             'phc2sys_freq': self.latest_phc2sys_freq,
@@ -524,13 +524,13 @@ class PTP:
             }
         
         # Extract values for each field
-        ptp4l_offsets = [entry['ptp4l_offset'] for entry in self.ptp_buffer]
+        ptp4l_offsets = [entry['ptp4l_offset_ns'] for entry in self.ptp_buffer]
         ptp4l_freqs = [entry['ptp4l_freq'] for entry in self.ptp_buffer]
         phc2sys_offsets = [entry['phc2sys_offset'] for entry in self.ptp_buffer]
         phc2sys_freqs = [entry['phc2sys_freq'] for entry in self.ptp_buffer]
         
         return {
-            'ptp4l_offset': calculate_stats(ptp4l_offsets),
+            'ptp4l_offset_ns': calculate_stats(ptp4l_offsets),
             'ptp4l_freq': calculate_stats(ptp4l_freqs),
             'phc2sys_offset': calculate_stats(phc2sys_offsets),
             'phc2sys_freq': calculate_stats(phc2sys_freqs)

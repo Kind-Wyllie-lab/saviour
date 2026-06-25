@@ -273,7 +273,7 @@ class Health:
         # Calculate average health metrics across all online modules
         avg_metrics = {}
         if online_modules:
-            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset', 'ptp4l_freq']
+            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset_ns', 'ptp4l_freq']
             for metric in metrics:
                 values = []
                 for module_id in online_modules:
@@ -295,7 +295,7 @@ class Health:
     def get_ptp_sync(self) -> int:
         max_ptp_sync = 0
         for module_id in self.module_health:
-            ptp_sync = self.module_health[module_id]["ptp4l_offset"]
+            ptp_sync = self.module_health[module_id]["ptp4l_offset_ns"]
             if not ptp_sync:
                 return None
             if abs(ptp_sync) > max_ptp_sync:
@@ -364,7 +364,7 @@ class Health:
         temp = health.get('cpu_temp')
         mem  = health.get('memory_usage')
         disk = health.get('disk_space')
-        ptp  = health.get('ptp4l_offset')
+        ptp  = health.get('ptp4l_offset_ns')
 
         cpu_str  = f"{cpu}%"   if cpu  is not None else "N/A"
         temp_str = f"{temp}°C" if temp is not None else "N/A"
@@ -469,7 +469,7 @@ class Health:
         temp = health.get('cpu_temp')
         mem  = health.get('memory_usage')
         disk = health.get('disk_space')
-        ptp  = health.get('ptp4l_offset')
+        ptp  = health.get('ptp4l_offset_ns')
 
         cpu_str  = f"{cpu}%"   if cpu  is not None else "N/A"
         temp_str = f"{temp}°C" if temp is not None else "N/A"
@@ -535,9 +535,9 @@ class Health:
                 if abs(self.module_health[module]["phc2sys_freq"]) > 100000:
                     self.logger.warning(f"phc2sys_freq offset too high for module {module}: {self.module_health[module]['phc2sys_freq']}")
                     reset_flag = True
-            if self.module_health[module]["ptp4l_offset"] is not None:
-                if abs(self.module_health[module]["ptp4l_offset"]) > 10000:
-                    self.logger.warning(f"ptp4l_offset too high for module {module}: {self.module_health[module]['ptp4l_offset']}")
+            if self.module_health[module]["ptp4l_offset_ns"] is not None:
+                if abs(self.module_health[module]["ptp4l_offset_ns"]) > 10000:
+                    self.logger.warning(f"ptp4l_offset_ns too high for module {module}: {self.module_health[module]['ptp4l_offset_ns']}")
                     reset_flag = True
             if self.module_health[module]["phc2sys_offset"] is not None:
                 if abs(self.module_health[module]["phc2sys_offset"]) > 10000:

@@ -232,7 +232,7 @@ export default function System() {
                   <td>{tempCell(row.cpu_temp)}</td>
                   <td>{memoryCell(row.memory_usage, row.memory_total_gb)}</td>
                   <td>{diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb)}</td>
-                  <td>{ptpCell(row.ptp4l_offset)}</td>
+                  <td>{ptpCell(row.ptp4l_offset_ns)}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
                     <button

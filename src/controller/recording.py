@@ -87,6 +87,8 @@ class RecordingSession:
     # Empty list means every day.
     scheduled_days:            list = field(default_factory=list)
     researcher:                Optional[str] = None
+    # Set while PTP offset exceeds threshold on any recording module; cleared on recovery.
+    ptp_warning:               Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +102,7 @@ class Recording:
         self.sessions: Dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
+        self._ptp_degraded: Dict[str, set] = {}  # session_name → set of currently-degraded module IDs
 
         self._load_sessions()
 
@@ -161,7 +164,7 @@ class Recording:
                 })
                 continue
 
-            offset_ns = health.get("ptp4l_offset")
+            offset_ns = health.get("ptp4l_offset_ns")
             if offset_ns is None:
                 failures.append({
                     "module_id": module_id,
@@ -743,6 +746,65 @@ class Recording:
         self.logger.info(f"Scheduled session '{session_name}' stop commands sent")
 
 
+    def _check_ptp_mid_recording(self, session_name: str, session: RecordingSession) -> None:
+        """Warn when PTP offset exceeds threshold on any actively-recording module.
+
+        Only fires on transitions (newly degraded / newly recovered) — not every cycle.
+        None offsets are skipped: ptp4l may be restarting; we want confirmed violations only.
+        """
+        config = self.facade.get_config()
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        now = time.time()
+        currently_degraded = self._ptp_degraded.setdefault(session_name, set())
+        newly_degraded: list = []
+        newly_recovered: list = []
+
+        for module_id in session.modules:
+            if session.module_stop_states.get(module_id) != "recording":
+                continue
+            health = self.facade.get_module_health(module_id)
+            if not health or health.get("status") == "offline":
+                continue
+            if now - health.get("last_heartbeat", 0) > 90.0:
+                continue
+            offset_ns = health.get("ptp4l_offset_ns")
+            if offset_ns is None:
+                continue
+
+            offset_us = offset_ns / 1000
+            was_degraded = module_id in currently_degraded
+            is_degraded = abs(offset_us) > threshold_us
+
+            if is_degraded and not was_degraded:
+                currently_degraded.add(module_id)
+                newly_degraded.append((module_id, round(offset_us, 1)))
+            elif not is_degraded and was_degraded:
+                currently_degraded.discard(module_id)
+                newly_recovered.append(module_id)
+
+        if newly_degraded:
+            detail = "; ".join(f"{mid}: {us:+.1f}µs" for mid, us in newly_degraded)
+            warning = f"PTP sync degraded — {detail} (threshold {threshold_us:.0f}µs)"
+            self.logger.warning(f"Session '{session_name}': {warning}")
+            with self._lock:
+                session.ptp_warning = warning
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            self.facade.send_alert(
+                key=f"ptp_degraded_{session_name}",
+                title=f"PTP sync degraded — {session_name}",
+                message=warning,
+                severity="warning",
+            )
+
+        if newly_recovered and not currently_degraded:
+            self.logger.info(f"Session '{session_name}': PTP recovered on all modules")
+            with self._lock:
+                session.ptp_warning = None
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+
+
     def _monitor_sessions(self) -> None:
         """Background thread: drive scheduled timers and health-check active sessions."""
         while True:
@@ -843,6 +905,9 @@ class Recording:
                             session.error_message = ""
                             session.state = SessionState.ACTIVE
                             self.facade.update_sessions(self.sessions)
+
+                        if session.state == SessionState.ACTIVE:
+                            self._check_ptp_mid_recording(session_name, session)
 
                 except Exception as e:
                     self.logger.error(f"Error monitoring session '{session_name}': {e}")

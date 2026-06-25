@@ -133,7 +133,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 - [x] **`web.py`: `_`-prefixed (internal) config keys not filtered on inbound socket events** — the frontend can overwrite `_communication.*`, `_codec`, etc.; apply `filterPrivateKeys` equivalent server-side before merging.
 - [x] **`modules.py`: online/offline status can oscillate without hysteresis** — a single delayed heartbeat immediately brings a module back online; add a short debounce (e.g. require 2 consecutive heartbeats before marking online again).
 - [x] **`controller/network.py`: infinite loop waiting for `nmcli`** — if NetworkManager is not running the controller hangs at startup; add a timeout and a clear error message.
-- [ ] **Session metadata not retried if NAS unavailable at session start** — `_write_session_metadata()` in `web.py` runs once; add retry on NAS recovery.
+- [x] **Session metadata not retried if NAS unavailable at session start** — refactored into `_try_write_metadata()` (returns bool) and `_retry_write_metadata()` (background thread, backoff 30 s → 1 min → 2 min → 5 min → 10 min); `_write_session_metadata()` spawns the retry thread on first failure.
 - [x] **`facade.py`: `apply_section_to_type` has no ack timeout** — bulk config pushes that are never acknowledged leave the frontend in a permanent "pending" state.
 
 ### Low priority — observability / maintenance
@@ -142,8 +142,21 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 - [ ] **PTP offset stored as raw nanoseconds with no unit annotation** — annotate the field name (`ptp4l_offset_ns`) or normalise to µs so the frontend doesn't have to guess units.
 - [ ] **Hardcoded IP ranges in three files** — `192.168.1.` and `10.0.0.` appear in `src/modules/network.py`, `src/controller/network.py`, and `src/modules/export.py`; centralise in `base_config.json`.
 - [ ] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — a typo or injection can embed shell syntax in `/etc/saviour/config`; validate against an allowlist.
-- [ ] **`setup.sh`: package install exit codes not checked** — a failed `apt-get install` mid-script lets execution continue with misleading downstream errors; add `set -e` or per-step checks.
+- [x] **`setup.sh`: `imx500-all` blocks install on devices without Pi AI camera repo** — moved to `OPTIONAL_PACKAGES`; failures warn but do not abort. Removed `apt-get upgrade -y`.
 - [ ] **Module version stays stale after restart** — zeroconf properties are not re-read on rediscovery; force a property refresh on `module_discovery()`.
+
+### Architectural concerns
+
+These are larger structural issues that require significant refactoring. Recorded here so they are not lost.
+
+- [x] **PTP sync unvalidated before recording** — added `_check_ptp_sync()` gate in `create_session()` and `_start_scheduled_session()`; "Check Ready" now runs a controller-side PTP check and surfaces results to the frontend (240626).
+- [x] **Mid-recording PTP degradation undetected** — `_check_ptp_mid_recording()` runs each monitor cycle for ACTIVE sessions; fires on transitions only (newly degraded / newly recovered); surfaces amber `ptp_warning` field on the session card and sends a Teams alert (240626).
+- [x] **Session state has no durability** — already implemented: `_save_sessions()` is called at every state transition; `_load_sessions()` on startup marks interrupted ACTIVE sessions as ERROR; `module_back_online()` re-issues `start_recording` and recovers ERROR → ACTIVE when modules reconnect; `handle_module_health_response()` handles the controller-restart case by probing module state and resuming or marking stopped accordingly.
+- [ ] **ZMQ PUB/SUB is the wrong transport for commands** — PUB/SUB drops messages to subscribers that haven't connected yet (slow-joiner problem). `start_recording` can silently drop and a session starts on some modules but not others, with no timeout or error surfaced. Commands requiring reliable delivery should use DEALER/ROUTER or REQ/REP. High effort — transport-layer change across every module.
+- [ ] **Module base class is a god object** — `module.py` (~1100 lines) owns config, export, PTP, recording, health, network, commands, and lifecycle. No concern can be tested in isolation; contributors must understand the entire base before writing a single sensor. High effort — requires composition refactor across all module types.
+- [ ] **Samba is the wrong export transport** — designed for Windows interoperability; adds credential management, mount failure modes, and an unreliable driver stack on a homogenous Linux PoE network. `rsync` over SSH or a simple HTTP PUT endpoint would be simpler and easier to debug. The complexity of `export.py` (PENDING rename, staged lists, thread locks) partly compensates for Samba fragility. High effort — requires rewriting all export logic.
+- [ ] **Health schema is duplicated** — `src/modules/health.py` and `src/controller/health.py` maintain separate schemas that can silently diverge. Define one canonical dataclass and import from both sides.
+- [ ] **No authentication on the command bus** — any device on the PoE network can publish ZMQ commands. Acceptable for a closed lab network; becomes a concern if the network is ever bridged.
 
 ### Tests
 

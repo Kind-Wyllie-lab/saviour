@@ -77,9 +77,10 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [activeTab, setActiveTab]               = useState("basic");
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
-  const [plotMode,  setPlotMode]  = useState("spectrogram");
-  const [freqRange, setFreqRange] = useState("band");
-  const [streamLayout, setStreamLayout] = useState("stacked");
+  const [plotMode,      setPlotMode]      = useState("spectrogram");
+  const [freqRange,     setFreqRange]     = useState("band");
+  const [streamLayout,  setStreamLayout]  = useState("stacked");
+  const [streamEnabled, setStreamEnabled] = useState(true);
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
 
@@ -374,25 +375,42 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           {/* Stream display controls */}
           <div className="monitor-controls">
             <div className="monitor-controls__row">
-              <span className="monitor-controls__label">Plot</span>
-              {["spectrogram", "spectrum"].map(m => (
-                <button key={m} type="button"
-                  className={`monitor-toggle-btn${plotMode === m ? " monitor-toggle-btn--active" : ""}`}
-                  onClick={() => setPlotMode(m)}>
-                  {m === "spectrogram" ? "Spectrogram" : "Spectrum"}
-                </button>
-              ))}
+              <span className="monitor-controls__label">Stream</span>
+              <button type="button"
+                className={`monitor-toggle-btn${streamEnabled ? " monitor-toggle-btn--active" : ""}`}
+                onClick={() => setStreamEnabled(v => !v)}>
+                {streamEnabled ? "On" : "Off"}
+              </button>
             </div>
             <div className="monitor-controls__row">
-              <span className="monitor-controls__label">Range</span>
-              {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
+              <span className="monitor-controls__label">Plot</span>
+              {[
+                ["spectrogram", "Spectrogram"],
+                ["spectrum",    "Spectrum"],
+                ["peaks",       "Peaks"],
+                ["waveform",    "Waveform"],
+                ["history",     "History"],
+                ["band_power",  "Band Power"],
+              ].map(([val, lbl]) => (
                 <button key={val} type="button"
-                  className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
-                  onClick={() => setFreqRange(val)}>
+                  className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
+                  onClick={() => setPlotMode(val)}>
                   {lbl}
                 </button>
               ))}
             </div>
+            {(plotMode === "spectrogram" || plotMode === "spectrum") && (
+              <div className="monitor-controls__row">
+                <span className="monitor-controls__label">Range</span>
+                {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
+                  <button key={val} type="button"
+                    className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
+                    onClick={() => setFreqRange(val)}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            )}
             {discoveredSerials.length > 1 && (
               <div className="monitor-controls__row">
                 <span className="monitor-controls__label">Layout</span>
@@ -407,8 +425,12 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             )}
           </div>
 
-          <MicrophoneStream ip={module.ip} port={streamPort}
-            plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
+          {streamEnabled ? (
+            <MicrophoneStream ip={module.ip} port={streamPort}
+              plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
+          ) : (
+            <div className="monitor-stream-paused">Stream paused</div>
+          )}
         </>
       )}
 

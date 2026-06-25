@@ -473,7 +473,7 @@ class AudiomothModule(Module):
         PADDING  = 12
         LABEL_W  = 28
         DB_MIN, DB_MAX = -80, 0
-        PEAK_HOLD_DURATION = 2.0
+        PEAK_HOLD_DURATION = float(self.config.get("monitoring.peak_hold_s", 2.0))
 
         px0 = PADDING + LABEL_W
         px1 = cell_w - PADDING

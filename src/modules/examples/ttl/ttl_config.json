@@ -45,6 +45,9 @@
             "_recording_filetype": "mp4"
         },
         "_available_pins": [4,5,6,12,13,16,17,22,23,24,25,26,27]
+    },
+    "recording": {
+        "segment_length_mins": 120
     }
 
 }

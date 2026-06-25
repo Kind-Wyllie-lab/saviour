@@ -22,5 +22,8 @@
             "outside_latency": 0.1,
             "_max_shocks": 50
         }
+    },
+    "recording": {
+        "segment_length_mins": 120
     }
 }

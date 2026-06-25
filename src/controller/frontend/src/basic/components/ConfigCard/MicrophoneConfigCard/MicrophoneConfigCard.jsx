@@ -77,9 +77,6 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange } = useConfigForm(module.config);
   const [activeTab, setActiveTab]               = useState("basic");
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
-  const [plotMode,      setPlotMode]      = useState("spectrogram");
-  const [freqRange,     setFreqRange]     = useState("band");
-  const [streamLayout,  setStreamLayout]  = useState("stacked");
   const [streamEnabled, setStreamEnabled] = useState(true);
 
   const streamPort = module.config?.monitoring?._port ?? 8081;
@@ -112,6 +109,20 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const freqLoKhz     = freqLo / 1000;
   const freqHiKhz     = freqHi / 1000;
   const timeWindow    = Number(mon.time_window_s ?? 3.0);
+
+  // Stream display prefs — persisted in monitoring config, not local state
+  const plotMode     = mon.plot_mode  ?? "spectrogram";
+  const freqRange    = mon.freq_range ?? "band";
+  const streamLayout = mon.layout     ?? "stacked";
+
+  const setMonitorPref = (key, value) => {
+    setFormData(prev => {
+      const cloned = structuredClone(prev);
+      if (!cloned.monitoring) cloned.monitoring = {};
+      cloned.monitoring[key] = value;
+      return cloned;
+    });
+  };
 
   const freqError = freqLo >= freqHi
     ? `Low (${freqLoKhz} kHz) must be less than high (${freqHiKhz} kHz)`
@@ -207,6 +218,68 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   // Compute tabBadges: warn on monitor tab if there are validation errors
   const tabBadges = (freqError || timeWindowError) ? { monitor: "⚠" } : {};
 
+  const sidebar = (
+    <>
+      <div className="monitor-controls">
+        <div className="monitor-controls__row">
+          <span className="monitor-controls__label">Stream</span>
+          <button type="button"
+            className={`monitor-toggle-btn${streamEnabled ? " monitor-toggle-btn--active" : ""}`}
+            onClick={() => setStreamEnabled(v => !v)}>
+            {streamEnabled ? "On" : "Off"}
+          </button>
+        </div>
+        <div className="monitor-controls__row">
+          <span className="monitor-controls__label">Plot</span>
+          {[
+            ["spectrogram", "Spectrogram"],
+            ["spectrum",    "Spectrum"],
+            ["peaks",       "Peaks"],
+            ["waveform",    "Waveform"],
+            ["history",     "History"],
+            ["band_power",  "Band Power"],
+          ].map(([val, lbl]) => (
+            <button key={val} type="button"
+              className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
+              onClick={() => setMonitorPref("plot_mode", val)}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+        {(plotMode === "spectrogram" || plotMode === "spectrum") && (
+          <div className="monitor-controls__row">
+            <span className="monitor-controls__label">Range</span>
+            {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
+              <button key={val} type="button"
+                className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
+                onClick={() => setMonitorPref("freq_range", val)}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+        )}
+        {discoveredSerials.length > 1 && (
+          <div className="monitor-controls__row">
+            <span className="monitor-controls__label">Layout</span>
+            {[["stacked", "Stacked"], ["grid", "Grid"]].map(([val, lbl]) => (
+              <button key={val} type="button"
+                className={`monitor-toggle-btn${streamLayout === val ? " monitor-toggle-btn--active" : ""}`}
+                onClick={() => setMonitorPref("layout", val)}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {streamEnabled ? (
+        <MicrophoneStream ip={module.ip} port={streamPort}
+          plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
+      ) : (
+        <div className="monitor-stream-paused">Stream paused</div>
+      )}
+    </>
+  );
+
   return (
     <ConfigCardShell
       id={id}
@@ -221,6 +294,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       tabSectionMap={TAB_COPY_SECTION}
       saveDisabled={!!freqError || !!timeWindowError}
       tabBadges={tabBadges}
+      sidebar={sidebar}
     >
       {/* BASIC */}
       {activeTab === "basic" && (
@@ -367,6 +441,12 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               <span className="config-sync-badge config-sync-badge--failed">{timeWindowError}</span>
             </div>
           )}
+          <div className="form-field">
+            <label>Peak hold (s):</label>
+            <input type="number" min="0.1" max="30" step="0.1"
+              value={mon.peak_hold_s ?? 2.0}
+              onChange={e => handleChange(["monitoring", "peak_hold_s"], e)} />
+          </div>
           <div className="sensor-mode-info" style={{ marginTop: "8px" }}>
             Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
           </div>
@@ -394,7 +474,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               ].map(([val, lbl]) => (
                 <button key={val} type="button"
                   className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
-                  onClick={() => setPlotMode(val)}>
+                  onClick={() => setMonitorPref("plot_mode", val)}>
                   {lbl}
                 </button>
               ))}
@@ -405,7 +485,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
                   <button key={val} type="button"
                     className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
-                    onClick={() => setFreqRange(val)}>
+                    onClick={() => setMonitorPref("freq_range", val)}>
                     {lbl}
                   </button>
                 ))}
@@ -417,7 +497,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 {[["stacked", "Stacked"], ["grid", "Grid"]].map(([val, lbl]) => (
                   <button key={val} type="button"
                     className={`monitor-toggle-btn${streamLayout === val ? " monitor-toggle-btn--active" : ""}`}
-                    onClick={() => setStreamLayout(val)}>
+                    onClick={() => setMonitorPref("layout", val)}>
                     {lbl}
                   </button>
                 ))}

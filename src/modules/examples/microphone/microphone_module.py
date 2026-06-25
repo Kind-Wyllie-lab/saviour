@@ -406,10 +406,17 @@ class AudiomothModule(Module):
             window = np.hanning(fft_size)
             window_sum = np.sum(window) / 2
             freqs = np.fft.rfftfreq(fft_size, d=1.0 / sample_rate)
+            # Downsample factor for waveform display (512 pts per ~21ms block)
+            waveform_ds_factor = max(1, fft_size // 512)
+            # RMS history: one entry every RMS_DECIMATE blocks (~10 Hz at 192kHz/4096)
+            RMS_DECIMATE = max(1, int(sample_rate / fft_size / 10))
+            _block_count = 0
+
             with microphone.recorder(samplerate=sample_rate, blocksize=fft_size) as recorder:
                 while not self.should_stop_monitoring_stream:
                     data = recorder.record(numframes=fft_size)
                     mono = data[:, 0] if data.ndim > 1 else data
+                    _block_count += 1
 
                     # RMS level in dBFS
                     rms = np.sqrt(np.mean(mono ** 2))
@@ -423,16 +430,26 @@ class AudiomothModule(Module):
                     fft_vals = np.abs(np.fft.rfft(mono * window))
                     spectrum_db = 20 * np.log10(fft_vals / window_sum + 1e-10)
 
+                    # Downsampled waveform for oscilloscope view
+                    waveform_ds = mono[::waveform_ds_factor].astype(np.float32)
+
                     _, _, time_window_s = self._monitoring_params()
                     spec_cols = max(10, int(time_window_s * sample_rate / fft_size))
                     with self.monitor_data_lock:
-                        prev_buf = self.monitor_data.get(serial, {}).get('spec_buffer', [])
-                        new_buf  = (prev_buf + [spectrum_db])[-spec_cols:]
+                        prev      = self.monitor_data.get(serial, {})
+                        prev_buf  = prev.get('spec_buffer', [])
+                        prev_rms  = prev.get('rms_history', [])
+                        new_buf   = (prev_buf + [spectrum_db])[-spec_cols:]
+                        # ~600 entries at RMS_DECIMATE cadence ≈ 60 s of history
+                        new_rms   = (prev_rms + [level_db])[-600:] \
+                                    if _block_count % RMS_DECIMATE == 0 else prev_rms
                         self.monitor_data[serial] = {
                             'level_db':    level_db,
                             'peak_db':     peak_db,
                             'spec_buffer': new_buf,
                             'freqs':       freqs,
+                            'waveform':    waveform_ds,
+                            'rms_history': new_rms,
                             'timestamp':   time.time(),
                         }
         except Exception as e:
@@ -449,8 +466,8 @@ class AudiomothModule(Module):
                      mode: str, freq_range: str, sample_rate: int) -> np.ndarray:
         """Render one AudioMoth panel onto a (cell_h, cell_w, 3) uint8 array.
 
-        mode:       'spectrogram' | 'spectrum'
-        freq_range: 'band' (configured lo–hi) | 'full' (0–Nyquist)
+        mode:       'spectrogram' | 'spectrum' | 'peaks'
+        freq_range: 'band' (configured lo–hi) | 'full' (0–Nyquist)  (ignored for peaks)
         """
         PLOT_H   = cell_h - 115  # header 30 + gap 25 + meter 30 + labels 20 + breathing room
         PADDING  = 12
@@ -480,6 +497,182 @@ class AudiomothModule(Module):
         hdr = f"{display_name}  RMS {level_db:.1f} dBFS  Peak {peak_db:.1f} dBFS"
         cv2.putText(cell, hdr, (PADDING, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, header_colour, 1)
+
+        # ── Peaks-only view — large level meter, no spectrum ─────────────────
+        if mode == 'peaks':
+            mx0 = PADDING + LABEL_W
+            mx1 = cell_w - PADDING
+            mw  = mx1 - mx0
+            my0 = 32
+            my1 = cell_h - 24
+
+            now  = time.time()
+            hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
+            if peak_db >= hold['value_db'] or (now - hold['time']) > PEAK_HOLD_DURATION:
+                self.peak_hold_data[serial] = {'value_db': peak_db, 'time': now}
+                hold_db = peak_db
+            else:
+                hold_db = hold['value_db']
+
+            if not is_stale:
+                level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
+                bar_colour = (
+                    (0, 50, 220) if level_norm > 0.85 else
+                    (0, 140, 230) if level_norm > 0.65 else
+                    (0, 200, 80)
+                )
+                cv2.rectangle(cell, (mx0, my0), (mx0 + int(level_norm * mw), my1),
+                              bar_colour, -1)
+                hold_x = mx0 + int(
+                    max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN))) * mw
+                )
+                cv2.line(cell, (hold_x, my0), (hold_x, my1), (255, 255, 255), 2)
+            else:
+                cv2.rectangle(cell, (mx0, my0), (mx1, my1), (30, 30, 30), -1)
+                msg = "NO SIGNAL"
+                (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                cv2.putText(cell, msg,
+                            (mx0 + (mw - tw) // 2, my0 + (my1 - my0 + th) // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 60, 60), 1)
+
+            cv2.rectangle(cell, (mx0, my0), (mx1, my1), (80, 80, 80), 1)
+            for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
+                tx = mx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * mw)
+                cv2.line(cell, (tx, my1), (tx, my1 + 4), (100, 100, 100), 1)
+                cv2.putText(cell, str(db_tick), (tx - 6, my1 + 13),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.26, (100, 100, 100), 1)
+            return cell
+
+        # ── Waveform / oscilloscope view ─────────────────────────────────────
+        if mode == 'waveform':
+            px0 = PADDING + LABEL_W
+            px1 = cell_w - PADDING
+            pw  = px1 - px0
+            py0 = 32
+            py1 = cell_h - 20
+            ph  = py1 - py0
+            mid_y = (py0 + py1) // 2
+
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (20, 20, 20), -1)
+            cv2.line(cell, (px0, mid_y), (px1, mid_y), (40, 40, 40), 1)
+
+            waveform = data.get('waveform')
+            if waveform is not None and len(waveform) > 1 and not is_stale:
+                n = len(waveform)
+                xs = np.linspace(px0, px1, n).astype(np.int32)
+                ys = np.clip(
+                    (mid_y - waveform * (ph / 2)).astype(np.int32),
+                    py0, py1
+                )
+                pts = np.stack([xs, ys], axis=1).reshape(-1, 1, 2)
+                cv2.polylines(cell, [pts], False, (0, 200, 80), 1)
+                if float(np.max(np.abs(waveform))) > 0.98:
+                    cv2.putText(cell, "CLIP", (px1 - 38, py0 + 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 60, 240), 1)
+            else:
+                cv2.rectangle(cell, (px0, py0), (px1, py1), (30, 30, 30), -1)
+                msg = "NO SIGNAL"
+                (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                cv2.putText(cell, msg,
+                            (px0 + (pw - tw) // 2, py0 + (ph + th) // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 60, 60), 1)
+
+            cv2.putText(cell, "+1", (2, py0 + 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (80, 80, 80), 1)
+            cv2.putText(cell, " 0", (2, mid_y + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (80, 80, 80), 1)
+            cv2.putText(cell, "-1", (2, py1),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (80, 80, 80), 1)
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (80, 80, 80), 1)
+            return cell
+
+        # ── RMS history view ─────────────────────────────────────────────────
+        if mode == 'history':
+            px0 = PADDING + LABEL_W
+            px1 = cell_w - PADDING
+            pw  = px1 - px0
+            py0 = 32
+            py1 = cell_h - 20
+            ph  = py1 - py0
+
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (20, 20, 20), -1)
+
+            rms_history = data.get('rms_history', [])
+            if rms_history and not is_stale:
+                for db_g in [-60, -40, -20]:
+                    gy = int(py1 - (db_g - DB_MIN) / (DB_MAX - DB_MIN) * ph)
+                    cv2.line(cell, (px0, gy), (px1, gy), (35, 35, 35), 1)
+                    cv2.putText(cell, str(db_g), (2, gy + 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.26, (80, 80, 80), 1)
+                hist = np.array(rms_history, dtype=np.float32)
+                n = len(hist)
+                xs = np.linspace(px0, px1, n).astype(np.int32)
+                ys = np.clip(
+                    py1 - ((hist - DB_MIN) / (DB_MAX - DB_MIN) * ph).astype(np.int32),
+                    py0, py1
+                )
+                pts = np.stack([xs, ys], axis=1).reshape(-1, 1, 2)
+                cv2.polylines(cell, [pts], False, (0, 200, 80), 1)
+            else:
+                cv2.rectangle(cell, (px0, py0), (px1, py1), (30, 30, 30), -1)
+                msg = "NO SIGNAL"
+                (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                cv2.putText(cell, msg,
+                            (px0 + (pw - tw) // 2, py0 + (ph + th) // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 60, 60), 1)
+
+            cv2.rectangle(cell, (px0, py0), (px1, py1), (80, 80, 80), 1)
+            n_hist = len(rms_history) if rms_history else 0
+            dur_s = round(n_hist * 5 * 4096 / max(sample_rate, 1))
+            cv2.putText(cell, f"← ~{dur_s}s", (px0, py1 + 13),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (80, 80, 80), 1)
+            return cell
+
+        # ── Band-power bars ──────────────────────────────────────────────────
+        if mode == 'band_power':
+            freq_lo_hz, freq_hi_hz, _ = self._monitoring_params()
+            bx0 = PADDING
+            bx1 = cell_w - PADDING
+            bw  = bx1 - bx0
+            py0 = 32
+
+            spec_buf  = data.get('spec_buffer', [])
+            freqs_arr = data.get('freqs')
+            n_bins    = len(freqs_arr) if freqs_arr is not None else 0
+
+            bands = [
+                (0,           freq_lo_hz,    "Noise",  (0, 130, 60)),
+                (freq_lo_hz,  freq_hi_hz,    "Target", (0, 180, 255)),
+                (freq_hi_hz,  int(nyquist),  "High",   (0, 130, 60)),
+            ]
+
+            bar_h, gap = 22, 8
+            for i, (lo, hi, label, bar_colour) in enumerate(bands):
+                by0 = py0 + i * (bar_h + gap)
+                by1 = by0 + bar_h
+
+                if spec_buf and n_bins and not is_stale:
+                    bin_lo   = int(lo / nyquist * n_bins)
+                    bin_hi   = max(bin_lo + 1, int(hi / nyquist * n_bins))
+                    band_db  = float(np.mean(spec_buf[-1][bin_lo:bin_hi]))
+                else:
+                    band_db = DB_MIN
+
+                cv2.rectangle(cell, (bx0, by0), (bx1, by1), (20, 20, 20), -1)
+                norm = max(0.0, min(1.0, (band_db - DB_MIN) / (DB_MAX - DB_MIN)))
+                cv2.rectangle(cell, (bx0, by0),
+                              (bx0 + int(norm * bw), by1), bar_colour, -1)
+                cv2.rectangle(cell, (bx0, by0), (bx1, by1), (60, 60, 60), 1)
+
+                lo_k = lo / 1000
+                hi_k = hi / 1000
+                lo_str = f"{lo_k:.0f}k" if lo_k == int(lo_k) else f"{lo_k:.1f}k"
+                hi_str = f"{hi_k:.0f}k" if hi_k == int(hi_k) else f"{hi_k:.1f}k"
+                lbl = f"{label} {lo_str}–{hi_str}:  {band_db:.0f} dBFS"
+                cv2.putText(cell, lbl, (bx0 + 6, by0 + 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+
+            return cell
 
         # ── Frequency bounds for this render ────────────────────────────────
         freq_lo_hz, freq_hi_hz, _ = self._monitoring_params()
@@ -596,8 +789,8 @@ class AudiomothModule(Module):
                               layout: str = 'stacked') -> bytes | None:
         """Compose a JPEG frame for all connected audiomoths.
 
-        mode:       'spectrogram' | 'spectrum'
-        freq_range: 'band' | 'full'
+        mode:       'spectrogram' | 'spectrum' | 'peaks' | 'waveform' | 'history' | 'band_power'
+        freq_range: 'band' | 'full'  (only used by spectrogram/spectrum)
         layout:     'stacked' | 'grid'  (grid = 2-column when n > 1)
         """
         try:
@@ -606,7 +799,8 @@ class AudiomothModule(Module):
 
             sample_rate = self.config.get("audiomoth.sample_rate", 192000)
             WIDTH = 800
-            ROW_H = 315
+            ROW_H = {'peaks': 90, 'waveform': 120, 'history': 120,
+                     'band_power': 130}.get(mode, 315)
 
             if not data_snapshot:
                 frame = np.zeros((200, WIDTH, 3), dtype=np.uint8)

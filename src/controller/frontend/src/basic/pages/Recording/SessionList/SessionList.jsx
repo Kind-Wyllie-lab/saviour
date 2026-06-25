@@ -334,6 +334,10 @@ function SessionList({ sessionList, modules = [] }) {
                     </p>
                   )}
 
+                  {isActive && session.ptp_warning && (
+                    <p className="session-ptp-warning">{session.ptp_warning}</p>
+                  )}
+
                   {stillStopping > 0 && (
                     <p className="session-info-text">
                       Waiting for {stillStopping} module{stillStopping !== 1 ? "s" : ""} to stop…

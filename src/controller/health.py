@@ -22,6 +22,8 @@ import socket as _socket
 from collections import deque
 from typing import Dict, Any, Optional, List
 
+from src.shared.health import ModuleHealthSnapshot
+
 class Health:
     def __init__(self, config):
         """Initialize the health monitor
@@ -117,21 +119,9 @@ class Health:
                 # New module - create full health record
                 now = time.time()
                 self.module_health[module_id] = {
-                    'timestamp': now,
+                    **ModuleHealthSnapshot.from_dict(status_data).to_dict(),
                     'last_heartbeat': now,
                     'status': 'online',
-                    'cpu_temp': status_data.get('cpu_temp', 0),
-                    'cpu_usage': status_data.get('cpu_usage', 0),
-                    'memory_usage': status_data.get('memory_usage', 0),
-                    'memory_total_gb': status_data.get('memory_total_gb'),
-                    'uptime': status_data.get('uptime', 0),
-                    'disk_space': status_data.get('disk_space', 0),
-                    'disk_used_gb': status_data.get('disk_used_gb'),
-                    'disk_total_gb': status_data.get('disk_total_gb'),
-                    'ptp4l_offset': status_data.get('ptp4l_offset'),
-                    'ptp4l_freq': status_data.get('ptp4l_freq'),
-                    'phc2sys_offset': status_data.get('phc2sys_offset'),
-                    'phc2sys_freq': status_data.get('phc2sys_freq'),
                     'last_ptp_restart': now,
                     'ptp_restarts': 1,
                     'offline_since': None,
@@ -160,31 +150,10 @@ class Health:
                             f"{prev_status} module {module_id} — waiting for more before marking online"
                         )
 
-                # Update other metrics if provided
-                if 'cpu_temp' in status_data:
-                    self.module_health[module_id]['cpu_temp'] = status_data['cpu_temp']
-                if 'cpu_usage' in status_data:
-                    self.module_health[module_id]['cpu_usage'] = status_data['cpu_usage']
-                if 'memory_usage' in status_data:
-                    self.module_health[module_id]['memory_usage'] = status_data['memory_usage']
-                if 'memory_total_gb' in status_data:
-                    self.module_health[module_id]['memory_total_gb'] = status_data['memory_total_gb']
-                if 'uptime' in status_data:
-                    self.module_health[module_id]['uptime'] = status_data['uptime']
-                if 'disk_space' in status_data:
-                    self.module_health[module_id]['disk_space'] = status_data['disk_space']
-                if 'disk_used_gb' in status_data:
-                    self.module_health[module_id]['disk_used_gb'] = status_data['disk_used_gb']
-                if 'disk_total_gb' in status_data:
-                    self.module_health[module_id]['disk_total_gb'] = status_data['disk_total_gb']
-                if 'ptp4l_offset' in status_data:
-                    self.module_health[module_id]['ptp4l_offset'] = status_data['ptp4l_offset']
-                if 'ptp4l_freq' in status_data:
-                    self.module_health[module_id]['ptp4l_freq'] = status_data['ptp4l_freq']
-                if 'phc2sys_offset' in status_data:
-                    self.module_health[module_id]['phc2sys_offset'] = status_data['phc2sys_offset']
-                if 'phc2sys_freq' in status_data:
-                    self.module_health[module_id]['phc2sys_freq'] = status_data['phc2sys_freq']
+                # Update snapshot fields — only keys present in status_data are touched
+                for key in ModuleHealthSnapshot.field_names():
+                    if key in status_data:
+                        self.module_health[module_id][key] = status_data[key]
                 if "last_ptp_restart" not in self.module_health[module_id]:
                     self.module_health[module_id]["last_ptp_restart"] = now
                 if "ptp_restarts" not in self.module_health[module_id]:
@@ -209,21 +178,10 @@ class Health:
             self.logger.info(f"Discovered new module {module.id}, adding to health tracking")
             now = time.time()
             self.module_health[module.id] = {
+                **ModuleHealthSnapshot().to_dict(),
                 'timestamp': now,
                 'last_heartbeat': 0,  # No heartbeat yet
                 'status': 'offline',  # Start as offline until first heartbeat
-                'cpu_temp': None,
-                'cpu_usage': None,
-                'memory_usage': None,
-                'memory_total_gb': None,
-                'uptime': None,
-                'disk_space': None,
-                'disk_used_gb': None,
-                'disk_total_gb': None,
-                'ptp4l_offset': None,
-                'ptp4l_freq': None,
-                'phc2sys_offset': None,
-                'phc2sys_freq': None,
                 'offline_since': now,
                 'suspected_since': None,
                 'probe_count': 0,
@@ -315,7 +273,7 @@ class Health:
         # Calculate average health metrics across all online modules
         avg_metrics = {}
         if online_modules:
-            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset', 'ptp4l_freq']
+            metrics = ['cpu_usage', 'memory_usage', 'cpu_temp', 'ptp4l_offset_ns', 'ptp4l_freq']
             for metric in metrics:
                 values = []
                 for module_id in online_modules:
@@ -337,7 +295,7 @@ class Health:
     def get_ptp_sync(self) -> int:
         max_ptp_sync = 0
         for module_id in self.module_health:
-            ptp_sync = self.module_health[module_id]["ptp4l_offset"]
+            ptp_sync = self.module_health[module_id]["ptp4l_offset_ns"]
             if not ptp_sync:
                 return None
             if abs(ptp_sync) > max_ptp_sync:
@@ -406,7 +364,7 @@ class Health:
         temp = health.get('cpu_temp')
         mem  = health.get('memory_usage')
         disk = health.get('disk_space')
-        ptp  = health.get('ptp4l_offset')
+        ptp  = health.get('ptp4l_offset_ns')
 
         cpu_str  = f"{cpu}%"   if cpu  is not None else "N/A"
         temp_str = f"{temp}°C" if temp is not None else "N/A"
@@ -511,7 +469,7 @@ class Health:
         temp = health.get('cpu_temp')
         mem  = health.get('memory_usage')
         disk = health.get('disk_space')
-        ptp  = health.get('ptp4l_offset')
+        ptp  = health.get('ptp4l_offset_ns')
 
         cpu_str  = f"{cpu}%"   if cpu  is not None else "N/A"
         temp_str = f"{temp}°C" if temp is not None else "N/A"
@@ -577,9 +535,9 @@ class Health:
                 if abs(self.module_health[module]["phc2sys_freq"]) > 100000:
                     self.logger.warning(f"phc2sys_freq offset too high for module {module}: {self.module_health[module]['phc2sys_freq']}")
                     reset_flag = True
-            if self.module_health[module]["ptp4l_offset"] is not None:
-                if abs(self.module_health[module]["ptp4l_offset"]) > 10000:
-                    self.logger.warning(f"ptp4l_offset too high for module {module}: {self.module_health[module]['ptp4l_offset']}")
+            if self.module_health[module]["ptp4l_offset_ns"] is not None:
+                if abs(self.module_health[module]["ptp4l_offset_ns"]) > 10000:
+                    self.logger.warning(f"ptp4l_offset_ns too high for module {module}: {self.module_health[module]['ptp4l_offset_ns']}")
                     reset_flag = True
             if self.module_health[module]["phc2sys_offset"] is not None:
                 if abs(self.module_health[module]["phc2sys_offset"]) > 10000:

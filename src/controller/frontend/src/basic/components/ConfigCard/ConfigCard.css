@@ -428,6 +428,15 @@ min-width: 300px;
   color: #fff;
 }
 
+.monitor-stream-paused {
+  text-align: center;
+  padding: 18px 0;
+  font-size: 0.82em;
+  color: var(--text-muted, #888);
+  border: 1px dashed var(--border-color, #444);
+  border-radius: 4px;
+}
+
 /* Save + Reset button row */
 .config-action-buttons {
   display: flex;

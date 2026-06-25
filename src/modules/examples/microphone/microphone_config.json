@@ -36,7 +36,11 @@
         "_fft_size": 4096,
         "freq_lo_hz": 20000,
         "freq_hi_hz": 70000,
-        "time_window_s": 3.0
+        "time_window_s": 3.0,
+        "peak_hold_s": 2.0,
+        "plot_mode": "spectrogram",
+        "freq_range": "band",
+        "layout": "stacked"
     },
     "recording": {
         "_recording_filetype": "flac"

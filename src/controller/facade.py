@@ -92,7 +92,7 @@ class ControllerFacade():
             "example": "This is an example system state object",
             "recording": self.get_recording_status(),
             "uptime": self.get_uptime(), # Uptime in minutes
-            "ptp_sync": self.get_ptp_sync() # Largest ptp4l_offset across modules, in nanoseconds
+            "ptp_sync": self.get_ptp_sync() # Largest ptp4l_offset_ns across modules, in nanoseconds
         }
 
 

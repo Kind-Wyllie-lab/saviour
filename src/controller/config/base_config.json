@@ -30,7 +30,12 @@
         "max_concurrent_exports": 2
     },
     "recording": {
-        "ptp_threshold_us": 1000.0
+        "ptp_threshold_us": 1000.0,
+        "nas_min_free_pct": 5,
+        "nas_warn_free_pct": 15,
+        "local_min_free_pct": 10,
+        "export_stale_mins": 150,
+        "expected_module_counts": {}
     },
     "database": {
         "url": "",

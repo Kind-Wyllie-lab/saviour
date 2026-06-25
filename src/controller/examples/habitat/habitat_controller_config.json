@@ -7,5 +7,32 @@
         "share_path": "habitat_recording",
         "share_username": "",
         "share_password": ""
-    }
+    },
+    "recording": {
+        "ptp_threshold_us": 1000.0,
+        "nas_min_free_pct": 5,
+        "nas_warn_free_pct": 15,
+        "local_min_free_pct": 10,
+        "export_stale_mins": 150,
+        "expected_module_counts": {
+            "camera": 0,
+            "microphone": 0
+        }
+    },
+    "scheduled_sessions": [
+        {
+            "name": "habitat-cameras",
+            "target": "camera",
+            "start_time": "00:00",
+            "end_time": "23:59",
+            "days": []
+        },
+        {
+            "name": "habitat-audio",
+            "target": "microphone",
+            "start_time": "20:00",
+            "end_time": "02:00",
+            "days": []
+        }
+    ]
 }

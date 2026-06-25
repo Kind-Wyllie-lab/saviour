@@ -103,6 +103,12 @@ class Recording:
         self._lock = threading.Lock()
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
         self._ptp_degraded: Dict[str, set] = {}  # session_name → set of currently-degraded module IDs
+        self._last_export_success: Dict[str, float] = {}   # module_id → epoch of last successful export
+        self._export_failure_streak: Dict[str, int] = {}   # module_id → consecutive export failures
+        self._daily_run_export_start: Dict[str, tuple] = {} # session_name → (complete, failed) at day-start
+        self._daily_summary_sent: set = set()               # "session:date" already summarized
+        self._gap_check_date: Optional[str] = None          # last date gap-check ran
+        self._monitor_cycle: int = 0                        # loop counter for periodic tasks
 
         self._load_sessions()
 
@@ -214,6 +220,60 @@ class Recording:
         except Exception as e:
             return f"Controller share not writable ({share}): {e}"
 
+    def _check_nas_space(self) -> dict:
+        """Return NAS free-space stats.
+
+        Returns {"ok": True, "free_pct": float, "free_gb": float} on success, or
+        {"ok": False, "error": str} if the share is unreachable or the call fails.
+        """
+        share = "/home/pi/controller_share"
+        try:
+            usage = shutil.disk_usage(share)
+            free_pct = usage.free / usage.total * 100
+            free_gb  = usage.free / 1_073_741_824  # bytes → GiB
+            return {"ok": True, "free_pct": round(free_pct, 1), "free_gb": round(free_gb, 1)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+
+    def _send_daily_summary(self, session_name: str, session: "RecordingSession") -> None:
+        """Send a Teams alert summarising a scheduled session's completed daily run."""
+        run_date = session.scheduled_last_start_date or date.today().isoformat()
+        summary_key = f"{session_name}:{run_date}"
+        if summary_key in self._daily_summary_sent:
+            return
+        self._daily_summary_sent.add(summary_key)
+
+        start_snap, failed_snap = self._daily_run_export_start.get(session_name, (0, 0))
+        exports_today  = session.total_exports_complete - start_snap
+        failures_today = session.total_exports_failed   - failed_snap
+
+        nas = self._check_nas_space()
+        nas_str = (
+            f"{nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB)"
+            if nas.get("ok")
+            else f"check failed: {nas.get('error', 'unknown')}"
+        )
+
+        lines = [
+            f"Session **{session_name}** completed its {run_date} run.",
+            f"",
+            f"- Modules: {len(session.modules)}",
+            f"- Start: {session.start_time or '—'}  |  End: {session.end_time or '—'}",
+            f"- Exports this run: {exports_today} completed, {failures_today} failed",
+            f"- NAS free space: {nas_str}",
+        ]
+        if session.ptp_warning:
+            lines.append(f"- PTP warning at stop: {session.ptp_warning}")
+
+        self.facade.send_alert(
+            key=f"daily_summary_{session_name}_{run_date}",
+            title=f"Daily summary — {session_name} — {run_date}",
+            message="\n".join(lines),
+            severity="info",
+        )
+
+
     def create_session(self, session_name: str, target: str,
                        duration_minutes: Optional[int] = None,
                        researcher: Optional[str] = None) -> dict:
@@ -300,7 +360,12 @@ class Recording:
 
         modules = list(self.facade.get_modules_by_target(target).keys())
         if not modules:
-            return {"success": False, "error": f"No online modules found for target '{target}'"}
+            # No modules online at creation time — permitted for scheduled sessions.
+            # _start_scheduled_session will refresh the list from target at run time.
+            self.logger.info(
+                f"create_scheduled_session: no '{target}' modules online yet — "
+                f"session will pick them up when it starts"
+            )
 
         session_name = self._format_session_name(session_name, target)
 
@@ -442,8 +507,13 @@ class Recording:
             self.sessions[session_name].module_export_states[module_id] = state
             if state == "complete":
                 self.sessions[session_name].total_exports_complete += 1
+                self._last_export_success[module_id] = time.time()
+                self._export_failure_streak[module_id] = 0
             elif state == "failed":
                 self.sessions[session_name].total_exports_failed += 1
+                self._export_failure_streak[module_id] = (
+                    self._export_failure_streak.get(module_id, 0) + 1
+                )
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -672,10 +742,135 @@ class Recording:
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
+        if new_state == SessionState.SCHEDULED:
+            self._send_daily_summary(session_name, session)
+
 
     def _start_scheduled_session(self, session_name: str, today: str) -> None:
         session = self.sessions[session_name]
+        config = self.facade.get_config()
+        rec_cfg = config.get("recording", {})
 
+        # ── Refresh module list from target ───────────────────────────────────
+        # Modules online at session-creation time may differ from today's set.
+        current_modules = list(self.facade.get_modules_by_target(session.target).keys())
+        if not current_modules:
+            self.logger.warning(
+                f"Scheduled session '{session_name}': no '{session.target}' modules online "
+                f"— skipping {today} run"
+            )
+            with self._lock:
+                session.scheduled_last_start_date = today  # prevent same-day retry
+            self._save_sessions()
+            self.facade.send_alert(
+                key=f"no_modules_{session_name}_{today}",
+                title=f"Scheduled recording skipped — no modules",
+                message=(
+                    f"Session **{session_name}** could not start its {today} run: "
+                    f"no online modules for target '{session.target}'."
+                ),
+                severity="error",
+            )
+            return
+
+        # Skip any module already occupied by another active session
+        busy = self._busy_modules()
+        available = [m for m in current_modules if m not in busy]
+        if not available:
+            self.logger.warning(
+                f"Scheduled session '{session_name}': all target modules are busy — skipping {today}"
+            )
+            with self._lock:
+                session.scheduled_last_start_date = today
+            self._save_sessions()
+            return
+
+        if set(available) != set(session.modules):
+            self.logger.info(
+                f"Module list for '{session_name}' refreshed: "
+                f"{sorted(session.modules)} → {sorted(available)}"
+            )
+        with self._lock:
+            session.modules = available
+
+        # ── Expected module count ─────────────────────────────────────────────
+        expected_counts: dict = rec_cfg.get("expected_module_counts", {})
+        expected = expected_counts.get(session.target, 0)
+        if expected > 0 and len(available) < expected:
+            self.facade.send_alert(
+                key=f"module_count_{session_name}_{today}",
+                title=f"Low module count — {session_name}",
+                message=(
+                    f"Session **{session_name}** ({today}): expected {expected} "
+                    f"'{session.target}' module(s) but only {len(available)} are online.\n\n"
+                    f"Online: {', '.join(available)}"
+                ),
+                severity="warning",
+            )
+
+        # ── Local disk space (warning only — does not block) ──────────────────
+        local_min_free = rec_cfg.get("local_min_free_pct", 10)
+        low_disk = []
+        for module_id in available:
+            h = self.facade.get_module_health(module_id)
+            if h:
+                disk_used = h.get("disk_space")
+                if disk_used is not None and disk_used > (100 - local_min_free):
+                    free_pct = 100 - disk_used
+                    low_disk.append(f"{module_id} ({free_pct:.0f}% free)")
+        if low_disk:
+            self.facade.send_alert(
+                key=f"local_disk_{session_name}_{today}",
+                title=f"Low local disk — {session_name}",
+                message=(
+                    f"Session **{session_name}** ({today}): these modules have less than "
+                    f"{local_min_free}% local disk free — recording may fail mid-session:\n\n"
+                    + "\n".join(f"- {m}" for m in low_disk)
+                ),
+                severity="warning",
+            )
+
+        # ── NAS free space ────────────────────────────────────────────────────
+        nas_min  = rec_cfg.get("nas_min_free_pct",  5)
+        nas_warn = rec_cfg.get("nas_warn_free_pct", 15)
+        nas = self._check_nas_space()
+        if not nas["ok"]:
+            self.logger.error(
+                f"Scheduled session '{session_name}': NAS space check failed: {nas['error']}"
+            )
+        else:
+            if nas["free_pct"] < nas_min:
+                err = (
+                    f"NAS only {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB) — "
+                    f"minimum threshold is {nas_min}%"
+                )
+                self.logger.error(f"Scheduled session '{session_name}' blocked: {err}")
+                with self._lock:
+                    session.state = SessionState.ERROR
+                    session.error_message = err
+                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    session.scheduled_last_start_date = today
+                self.facade.update_sessions(self.sessions)
+                self._save_sessions()
+                self.facade.send_alert(
+                    key=f"nas_full_{session_name}_{today}",
+                    title=f"Scheduled recording blocked — NAS nearly full",
+                    message=f"Session **{session_name}** could not start its {today} run.\n\n{err}",
+                    severity="error",
+                )
+                return
+            elif nas["free_pct"] < nas_warn:
+                self.facade.send_alert(
+                    key=f"nas_warn_{today}",
+                    title="NAS space low",
+                    message=(
+                        f"NAS is {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB). "
+                        f"At current write rates this may fill before the campaign ends."
+                    ),
+                    severity="warning",
+                )
+
+        # ── PTP sync ──────────────────────────────────────────────────────────
         ptp = self._check_ptp_sync(session.modules)
         if not ptp["ok"]:
             self.logger.error(
@@ -685,7 +880,7 @@ class Recording:
                 session.state = SessionState.ERROR
                 session.error_message = ptp["error"]
                 session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-                session.scheduled_last_start_date = today  # prevent same-day retry
+                session.scheduled_last_start_date = today
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
             self.facade.send_alert(
@@ -699,6 +894,13 @@ class Recording:
             )
             return
 
+        # ── Snapshot export counts for daily summary ──────────────────────────
+        self._daily_run_export_start[session_name] = (
+            session.total_exports_complete,
+            session.total_exports_failed,
+        )
+
+        # ── Start recording ───────────────────────────────────────────────────
         start_at = time.time() + LEAD_SECS
         with self._lock:
             session.state = SessionState.ACTIVE
@@ -717,7 +919,10 @@ class Recording:
         self.facade.send_alert(
             key=f"session_started_{session_name}_{today}",
             title=f"Scheduled recording started — {session_name}",
-            message=f"Session **{session_name}** started its daily run for {today} with {len(session.modules)} module(s).",
+            message=(
+                f"Session **{session_name}** started its {today} run "
+                f"with {len(session.modules)} module(s)."
+            ),
             severity="info",
         )
 
@@ -805,12 +1010,130 @@ class Recording:
             self._save_sessions()
 
 
+    def _check_nas_space_periodic(self) -> None:
+        """Periodically alert when NAS free space crosses the warning threshold."""
+        config = self.facade.get_config()
+        rec_cfg = config.get("recording", {})
+        nas_warn = rec_cfg.get("nas_warn_free_pct", 15)
+        nas_min  = rec_cfg.get("nas_min_free_pct",  5)
+        nas = self._check_nas_space()
+        if not nas.get("ok"):
+            return  # mount error handled elsewhere
+        free = nas["free_pct"]
+        if free < nas_min:
+            self.facade.send_alert(
+                key="nas_critical",
+                title="NAS critically low — recording at risk",
+                message=(
+                    f"NAS is only **{free:.1f}%** free ({nas['free_gb']:.0f} GiB). "
+                    f"New sessions will be blocked below {nas_min}%. "
+                    f"Free up space immediately."
+                ),
+                severity="error",
+            )
+        elif free < nas_warn:
+            self.facade.send_alert(
+                key="nas_low",
+                title="NAS space low",
+                message=(
+                    f"NAS is {free:.1f}% free ({nas['free_gb']:.0f} GiB). "
+                    f"At current write rates this may fill before the campaign ends."
+                ),
+                severity="warning",
+            )
+
+
+    def _check_export_staleness(self) -> None:
+        """Alert when a recording module has not produced a successful export for too long."""
+        config = self.facade.get_config()
+        stale_mins = config.get("recording", {}).get("export_stale_mins", 150)
+        stale_secs = stale_mins * 60
+        now = time.time()
+
+        for session_name, session in list(self.sessions.items()):
+            if session.state != SessionState.ACTIVE:
+                continue
+            start_at = session.recording_start_at or 0
+            if now - start_at < stale_secs:
+                continue  # session too young to have produced an export yet
+
+            for module_id in session.modules:
+                if session.module_stop_states.get(module_id) != "recording":
+                    continue
+                last_ok = self._last_export_success.get(module_id, 0)
+                if last_ok < start_at and (now - start_at) >= stale_secs:
+                    self.facade.send_alert(
+                        key=f"export_stale_{module_id}",
+                        title=f"Export stale — {module_id}",
+                        message=(
+                            f"Module **{module_id}** in session **{session_name}** "
+                            f"has been recording for {int((now - start_at) / 60)} min "
+                            f"without a successful export. "
+                            f"Check local disk, Samba mount, and export queue."
+                        ),
+                        severity="warning",
+                    )
+
+
+    def _check_session_gaps(self, today: str) -> None:
+        """Alert if a scheduled session missed its previous run.
+
+        Runs once per calendar day, immediately after midnight.  A 'gap' is
+        detected when the session should have run yesterday but its
+        scheduled_last_start_date is not yesterday.
+        """
+        from datetime import timedelta
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday_weekday = (date.today() - timedelta(days=1)).weekday()
+
+        for session_name, session in list(self.sessions.items()):
+            if not session.scheduled:
+                continue
+            if session.state == SessionState.STOPPED:
+                continue
+            # Was yesterday in scope for this session?
+            days_match = (
+                not session.scheduled_days
+                or yesterday_weekday in session.scheduled_days
+            )
+            if not days_match:
+                continue
+            if session.scheduled_last_start_date != yesterday:
+                self.facade.send_alert(
+                    key=f"gap_{session_name}_{today}",
+                    title=f"Scheduled session missed a run — {session_name}",
+                    message=(
+                        f"Session **{session_name}** was expected to run on {yesterday} "
+                        f"but its last recorded run was "
+                        f"**{session.scheduled_last_start_date or 'never'}**. "
+                        f"Check the controller logs for that date."
+                    ),
+                    severity="error",
+                )
+                self.logger.warning(
+                    f"Gap detected: session '{session_name}' last ran "
+                    f"{session.scheduled_last_start_date or 'never'}, "
+                    f"expected {yesterday}"
+                )
+
+
     def _monitor_sessions(self) -> None:
         """Background thread: drive scheduled timers and health-check active sessions."""
         while True:
             time.sleep(_MONITOR_INTERVAL_SECS)
+            self._monitor_cycle += 1
             current_time = datetime.now().strftime("%H:%M")
             today = date.today().isoformat()
+
+            # ── Periodic checks (every ~5 min = 60 × 5 s cycles) ─────────────
+            if self._monitor_cycle % 60 == 0:
+                self._check_nas_space_periodic()
+                self._check_export_staleness()
+
+            # ── Daily gap detection (once per calendar day) ───────────────────
+            if self._gap_check_date != today:
+                self._gap_check_date = today
+                self._check_session_gaps(today)
 
             for session_name, session in list(self.sessions.items()):
                 try:

@@ -94,8 +94,8 @@ export default function System() {
 
   // Build sorted rows: modules sorted by name
   const moduleRows = useMemo(() => {
-    return Object.entries(moduleHealth)
-      .map(([id, h]) => ({ id, name: modules[id]?.name ?? id, ...h }))
+    return Object.entries(modules)
+      .map(([id, m]) => ({ id, name: m.name ?? id, ...moduleHealth[id] }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [moduleHealth, modules]);
 

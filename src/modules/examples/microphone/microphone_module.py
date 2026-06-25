@@ -845,11 +845,14 @@ class AudiomothModule(Module):
             return None
 
 
-    def _generate_monitor_frames(self, mode: str = 'spectrogram',
-                                  freq_range: str = 'band',
-                                  layout: str = 'stacked'):
-        """MJPEG generator — yields frames at ~10 fps."""
+    def _generate_monitor_frames(self):
+        """MJPEG generator — yields frames at ~10 fps.
+        Mode, range, and layout are read from config each frame so changes
+        take effect immediately after a config save without reconnecting."""
         while not self.should_stop_monitoring_stream:
+            mode       = self.config.get("monitoring.plot_mode",  "spectrogram")
+            freq_range = self.config.get("monitoring.freq_range", "band")
+            layout     = self.config.get("monitoring.layout",     "stacked")
             frame = self._render_monitor_frame(mode, freq_range, layout)
             if frame is not None:
                 yield (
@@ -868,11 +871,8 @@ class AudiomothModule(Module):
 
         @self.monitoring_app.route('/video_feed')
         def video_feed():
-            mode       = request.args.get('mode',   'spectrogram')
-            freq_range = request.args.get('range',  'band')
-            layout     = request.args.get('layout', 'stacked')
             return Response(
-                self._generate_monitor_frames(mode, freq_range, layout),
+                self._generate_monitor_frames(),
                 mimetype='multipart/x-mixed-replace; boundary=frame'
             )
 

@@ -111,7 +111,7 @@ class Health:
             disk_space=disk.percent,
             disk_used_gb=round(disk.used / (1024 ** 3), 1),
             disk_total_gb=round(disk.total / (1024 ** 3), 1),
-            ptp4l_offset=ptp_status.get('ptp4l_offset'),
+            ptp4l_offset_ns=ptp_status.get('ptp4l_offset_ns'),
             ptp4l_freq=ptp_status.get('ptp4l_freq'),
             phc2sys_offset=ptp_status.get('phc2sys_offset'),
             phc2sys_freq=ptp_status.get('phc2sys_freq'),

@@ -10,9 +10,8 @@ echo "======================================="
 set -Eeuo pipefail # If any function throws an error (doesn't return 0), exit immediately.
 trap 'rc=$?; echo "switch_role.sh failed with exit code $rc at line $LINENO"' ERR
 
-echo "Updating package lists and upgrading installed packages..."
+echo "Updating package lists..."
 sudo apt-get update -y
-sudo apt-get upgrade -y
 
 TARGET_DIR="/usr/local/src/saviour"
 
@@ -70,13 +69,17 @@ SYSTEM_PACKAGES=(
     cifs-utils
     # DHCP server dependency
     dnsmasq
-    # APA Camera
-    imx500-all
     # mDNS
     avahi-daemon
     iptables-persistent
     # AudioMoth USB HID support (required to build AudioMoth-USB-Microphone-Cmd)
     libusb-1.0-0-dev
+)
+
+# Optional packages that may not be available on all Pi OS versions or hardware
+# configurations.  Failures are warned but do not abort the install.
+OPTIONAL_PACKAGES=(
+    imx500-all   # APA camera (Sony IMX500) — requires Pi OS Bookworm + Pi repo
 )
 
 # Function to check if a package is installed
@@ -92,6 +95,18 @@ install_system_packages() {
         else
             echo "[INSTALLING] $pkg"
             sudo apt-get install -y "$pkg"
+        fi
+    done
+
+    echo "Installing optional system packages..."
+    for pkg in "${OPTIONAL_PACKAGES[@]}"; do
+        if is_installed "$pkg"; then
+            echo "[OK] $pkg is already installed."
+        else
+            echo "[INSTALLING] $pkg"
+            if ! sudo apt-get install -y "$pkg" 2>&1; then
+                echo "[WARN] $pkg could not be installed — skipping. This is only needed for APA camera modules."
+            fi
         fi
     done
 }
@@ -168,7 +183,6 @@ EOF
     echo ""
     echo "NTP Configuration:"
     echo "  - Poll interval: 5 minutes to 1 hour (reduced frequency)"
-    echo "  - Max adjustment: 100ms per sync (reduced from 500ms)"
     echo "  - Multiple time servers for redundancy"
     echo ""
     echo "NTP control commands:"
@@ -216,7 +230,7 @@ install_audiomoth_usb_cmd
 
 # Install saviour-config as a system-wide command
 sudo ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
-chmod +x "$TARGET_DIR/saviour-config"
+sudo chmod +x "$TARGET_DIR/saviour-config"
 
 echo ""
 echo "Setup complete!"

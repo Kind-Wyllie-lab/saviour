@@ -391,3 +391,12 @@
   font-weight: 500;
   margin-top: 2px;
 }
+
+.session-ptp-warning {
+  font-size: 0.82rem;
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.07);
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin: 6px 0 0;
+}

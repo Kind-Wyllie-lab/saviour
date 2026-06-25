@@ -18,7 +18,7 @@ function diskClass(pct) {
   return "val--ok";
 }
 
-// ptp4l_offset is in nanoseconds throughout the stack
+// ptp4l_offset_ns is in nanoseconds throughout the stack
 function ptpClass(ns) {
   const abs = Math.abs(ns);
   if (abs >= 10000) return "val--danger";
@@ -124,10 +124,10 @@ export default function HealthSummaryWidget() {
   let worstPtp = null;
   let worstPtpId = null;
   entries.forEach(([id, h]) => {
-    if (h.ptp4l_offset != null) {
-      const abs = Math.abs(h.ptp4l_offset);
+    if (h.ptp4l_offset_ns != null) {
+      const abs = Math.abs(h.ptp4l_offset_ns);
       if (worstPtp == null || abs > Math.abs(worstPtp)) {
-        worstPtp = h.ptp4l_offset;
+        worstPtp = h.ptp4l_offset_ns;
         worstPtpId = modules[id]?.name ?? id;
       }
     }

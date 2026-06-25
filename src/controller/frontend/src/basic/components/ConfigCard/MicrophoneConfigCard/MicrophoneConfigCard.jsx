@@ -16,8 +16,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
   const reconnectTimer = useRef(null);
   const bump = () => setBumpKey(Date.now());
 
-  // Reconnect whenever display options change
-  const imgKey = `${bumpKey}-${plotMode}-${freqRange}-${layout}`;
+  const imgKey = `${bumpKey}`;
 
   useEffect(() => {
     stallTimer.current = setTimeout(bump, STALL_MS);
@@ -35,7 +34,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
     reconnectTimer.current = setTimeout(bump, RECONNECT_MS);
   };
 
-  const src = `http://${ip}:${port}/video_feed?mode=${plotMode}&range=${freqRange}&layout=${layout}&t=${bumpKey}`;
+  const src = `http://${ip}:${port}/video_feed?t=${bumpKey}`;
 
   return (
     <>

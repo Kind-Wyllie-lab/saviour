@@ -797,6 +797,9 @@ class AudiomothModule(Module):
             with self.monitor_data_lock:
                 data_snapshot = dict(self.monitor_data)
 
+            if mode == 'compact_peaks':
+                return self._render_compact_peaks_frame()
+
             sample_rate = self.config.get("audiomoth.sample_rate", 192000)
             WIDTH = 800
             ROW_H = {'peaks': 90, 'waveform': 120, 'history': 120,
@@ -1003,12 +1006,6 @@ class AudiomothModule(Module):
                 mimetype='multipart/x-mixed-replace; boundary=frame'
             )
 
-        @self.monitoring_app.route('/peak_feed')
-        def peak_feed():
-            return Response(
-                self._generate_peak_frames(),
-                mimetype='multipart/x-mixed-replace; boundary=frame'
-            )
 
 
     def run_monitoring_server(self, port: int = 8081) -> None:

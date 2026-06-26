@@ -47,7 +47,7 @@ function HabitatMicrophoneStrip({ modules }) {
   const allModules = Array.isArray(modules) ? modules : Object.values(modules ?? {});
   const mics = allModules
     .filter(m => m.type === "microphone")
-    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+    .sort((a, b) => (b.name || b.id).localeCompare(a.name || a.id));
 
   if (!mics.length) return null;
 

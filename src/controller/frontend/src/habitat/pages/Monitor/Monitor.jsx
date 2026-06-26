@@ -27,11 +27,11 @@ function Monitor() {
 
     return (
         <div className="fullscreen-modal">
-            <div className="monitor-left">
-              <HabitatMicrophoneStrip modules={modules} />
-            </div>
-            <div className="monitor-right">
+            <div className="monitor-cameras">
                 <HabitatLivestreamGrid modules={modules} />
+            </div>
+            <div className="monitor-mics">
+              <HabitatMicrophoneStrip modules={modules} />
             </div>
         </div>
     )

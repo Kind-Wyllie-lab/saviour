@@ -111,6 +111,16 @@ class Module(ABC):
 
         # Manager objects
         self.config = Config()
+
+        # Ensure group is set — active_config.json created before this field
+        # existed (or saved with an empty value) would otherwise override the
+        # base-config default and leave the module unsubscribed from its group topic.
+        if not self.config.get("module.group"):
+            self.logger.info(
+                f"module.group not set, defaulting to module type '{self.module_type}'"
+            )
+            self.config.set("module.group", self.module_type)
+
         self.export = Export(module_id=self.module_id, config=self.config) # Export object - exports to samba share
         self.communication = Communication(config=self.config) # Communication object - handles ZMQ messaging
         self.health = Health(config=self.config) # Health object - monitors system health e.g. temperature, resource utilisation, ptp sync

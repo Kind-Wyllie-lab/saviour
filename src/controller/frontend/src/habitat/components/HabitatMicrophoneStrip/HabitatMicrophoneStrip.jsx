@@ -22,18 +22,20 @@ function MicModuleColumn({ module }) {
     reconnectTimer.current = setTimeout(bump, RECONNECT_DELAY_MS);
   };
 
+  const label = module.name || module.id;
+
   return (
     <div className="mic-module-col">
+      <div className="mic-module-label">{label}</div>
       {module.status === "OFFLINE" ? (
         <div className="mic-module-offline">
-          <span>{module.name || module.id}</span>
           <span className="mic-module-offline-label">OFFLINE</span>
         </div>
       ) : (
         <img
           key={streamKey}
           src={`http://${module.ip}:8081/video_feed`}
-          alt={module.name || module.id}
+          alt={label}
           onLoad={resetStall}
           onError={handleError}
         />

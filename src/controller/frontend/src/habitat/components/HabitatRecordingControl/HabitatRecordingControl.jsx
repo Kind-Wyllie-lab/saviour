@@ -5,7 +5,6 @@ import "./HabitatRecordingControl.css";
 
 function formatTime(t) {
   if (!t) return "—";
-  // YYYYMMDD-HHMMSS → "25 Jun, 14:30"
   const m = t.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
   if (!m) return t;
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -27,15 +26,12 @@ export default function HabitatRecordingControl({ sessionList = [], modules = {}
   useEffect(() => {
     const onError = (data) => {
       setStartError(data.error || "Failed to start recording");
-      setBusy(false);
       setTimeout(() => setStartError(null), 10000);
     };
     socket.on("session_error", onError);
     return () => socket.off("session_error", onError);
   }, []);
 
-
-  // ── Derive session state ─────────────────────────────────────────────────
   const cameraSession = useMemo(
     () => sessionList.find(s => s.target?.includes("camera") && s.state !== "stopped"),
     [sessionList]
@@ -50,91 +46,68 @@ export default function HabitatRecordingControl({ sessionList = [], modules = {}
     !Object.values(modules).some(m => m.type?.includes("camera") && m.status === "RECORDING");
   const hasFault    = cameraSession?.state === "error";
 
-  // ── Module counts ────────────────────────────────────────────────────────
-  const moduleList = useMemo(() => Object.values(modules), [modules]);
-
+  const moduleList      = useMemo(() => Object.values(modules), [modules]);
   const cameras         = moduleList.filter(m => m.type?.includes("camera"));
   const cameraOnline    = cameras.filter(m => m.online !== false).length;
   const cameraRecording = cameras.filter(m => m.status === "RECORDING").length;
-
   const mics            = moduleList.filter(m => m.type === "microphone");
   const micOnline       = mics.filter(m => m.online !== false).length;
   const micRecording    = mics.filter(m => m.status === "RECORDING").length;
 
-  // ── Config values ────────────────────────────────────────────────────────
-  const habitatName = habitatConfig?.name       ?? "Habitat";
-  const audioStart  = habitatConfig?.audioStart ?? "—";
-  const audioEnd    = habitatConfig?.audioEnd   ?? "—";
+  const habitatName = habitatConfig?.name ?? "Habitat";
 
-  // ── Audio status line ────────────────────────────────────────────────────
-  let audioLine;
-  if (!audioSession) {
-    audioLine = `${micOnline} online · schedule ${audioStart}–${audioEnd}`;
-  } else if (audioSession.state === "active") {
-    audioLine = `${micRecording} / ${mics.length} recording`;
-  } else if (audioSession.state === "scheduled") {
-    audioLine = `${micOnline} online · scheduled ${audioStart}–${audioEnd} daily`;
+  let stateClass, stateLabel;
+  if (isStarting) {
+    stateClass = "hrc--starting"; stateLabel = "Starting";
+  } else if (isRecording) {
+    stateClass = "hrc--recording"; stateLabel = "Recording";
+  } else if (hasFault) {
+    stateClass = "hrc--fault"; stateLabel = "Fault";
   } else {
-    audioLine = `${audioSession.state}`;
+    stateClass = "hrc--ready"; stateLabel = "Ready";
   }
 
-  // ── State label ──────────────────────────────────────────────────────────
-  let statusLabel, statusClass;
-  if (isStarting) {
-    statusLabel = "STARTING";
-    statusClass = "hrc-badge--starting";
-  } else if (isRecording) {
-    statusLabel = "● RECORDING";
-    statusClass = "hrc-badge--recording";
-  } else if (hasFault) {
-    statusLabel = "⚠ FAULT";
-    statusClass = "hrc-badge--fault";
+  const cameraStr = isRecording || isStarting
+    ? `${cameraRecording}/${cameras.length} cameras`
+    : `${cameraOnline} cameras`;
+
+  let audioStr;
+  if (!audioSession) {
+    audioStr = `${micOnline} audio`;
+  } else if (audioSession.state === "active") {
+    audioStr = `${micRecording}/${mics.length} audio`;
+  } else if (audioSession.state === "scheduled") {
+    audioStr = `${micOnline} audio (scheduled)`;
   } else {
-    statusLabel = "READY";
-    statusClass = "hrc-badge--ready";
+    audioStr = `${micOnline} audio`;
   }
 
   return (
     <div
-      className={`hrc card hrc--clickable ${isRecording || isStarting ? "hrc--active" : hasFault ? "hrc--fault" : ""}`}
+      className={`hrc card hrc--clickable ${stateClass}`}
       onClick={() => navigate("/recording")}
       title="Go to Recording"
     >
-      <div className="hrc-header">
-        <div className="hrc-identity">
-          <span className="hrc-name">{habitatName}</span>
-          <span className={`hrc-badge ${statusClass}`}>{statusLabel}</span>
-        </div>
+      <div className="hrc-bar">
+        <span className={`hrc-dot hrc-dot--${isStarting ? "starting" : isRecording ? "recording" : hasFault ? "fault" : "ready"}`} />
+        <span className="hrc-name">{habitatName}</span>
+        <span className={`hrc-state hrc-state--${isStarting ? "starting" : isRecording ? "recording" : hasFault ? "fault" : "ready"}`}>
+          {stateLabel}
+        </span>
+        <span className="hrc-spacer" />
+        <span className="hrc-stat">{cameraStr}</span>
+        <span className="hrc-sep">·</span>
+        <span className="hrc-stat">{audioStr}</span>
+        {isRecording && cameraSession?.start_time && (
+          <>
+            <span className="hrc-sep">·</span>
+            <span className="hrc-since">since {formatTime(cameraSession.start_time)}</span>
+          </>
+        )}
+        {(hasFault || startError) && (
+          <span className="hrc-fault-inline">{startError || cameraSession?.error_message}</span>
+        )}
       </div>
-
-      <div className="hrc-summary">
-        <div className="hrc-row">
-          <span className="hrc-row-label">Cameras</span>
-          <span className="hrc-row-value">
-            {isRecording || isStarting
-              ? <><span className={`hrc-module-dot ${cameraRecording > 0 ? "hrc-module-dot--recording" : "hrc-module-dot--idle"}`} />{cameraRecording} / {cameras.length} recording</>
-              : `${cameraOnline} online`
-            }
-          </span>
-        </div>
-        <div className="hrc-row">
-          <span className="hrc-row-label">Audio</span>
-          <span className="hrc-row-value">
-            {micRecording > 0 && <span className="hrc-module-dot hrc-module-dot--recording" />}
-            {audioLine}
-          </span>
-        </div>
-      </div>
-
-      {isRecording && cameraSession?.start_time && (
-        <p className="hrc-since">Recording since {formatTime(cameraSession.start_time)}</p>
-      )}
-      {hasFault && cameraSession?.error_message && (
-        <p className="hrc-fault-msg">{cameraSession.error_message}</p>
-      )}
-      {startError && (
-        <p className="hrc-fault-msg">{startError}</p>
-      )}
     </div>
   );
 }

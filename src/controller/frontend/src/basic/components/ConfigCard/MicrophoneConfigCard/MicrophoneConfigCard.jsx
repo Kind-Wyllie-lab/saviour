@@ -42,7 +42,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
         key={imgKey}
         src={src}
         alt="Microphone monitor stream"
-        style={{ width: "100%", display: "block", borderRadius: "4px", cursor: "pointer" }}
+        style={{ width: "100%", maxHeight: "400px", objectFit: "contain", display: "block", borderRadius: "4px", cursor: "pointer" }}
         onLoad={resetStall}
         onError={handleError}
         onClick={() => setFullscreen(true)}

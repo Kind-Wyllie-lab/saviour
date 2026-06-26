@@ -286,22 +286,24 @@ function NewSessionForm({ modules, sessionList = {} }) {
         {!timedDurationValid && (
           <p className="form-warning">Enter a duration greater than 0.</p>
         )}
-        {ptpSyncStatus !== null && !ptpSyncStatus.ok && (
+        {recordingMode !== "scheduled" && ptpSyncStatus !== null && !ptpSyncStatus.ok && (
           <p className="form-warning">
             PTP not synchronised —{" "}
             {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
           </p>
         )}
-        {ptpSyncStatus?.ok && (
+        {recordingMode !== "scheduled" && ptpSyncStatus?.ok && (
           <p className="form-ok">
             PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
           </p>
         )}
 
         <div className="button-row">
-          <button type="button" className="secondary-button" onClick={checkReady}>
-            Check Ready
-          </button>
+          {recordingMode !== "scheduled" && (
+            <button type="button" className="secondary-button" onClick={checkReady}>
+              Check Ready
+            </button>
+          )}
           <button type="submit" className="primary-button" disabled={recordingMode === "scheduled" ? !canSchedule : !canStart}>
             {recordingMode === "scheduled" ? "Schedule Session" : "Start Recording"}
           </button>

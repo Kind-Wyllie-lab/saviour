@@ -109,6 +109,7 @@ class Recording:
         self._daily_summary_sent: set = set()               # "session:date" already summarized
         self._gap_check_date: Optional[str] = None          # last date gap-check ran
         self._monitor_cycle: int = 0                        # loop counter for periodic tasks
+        self._readiness_checks: Dict[str, float] = {}       # session_name → epoch when validate_readiness was dispatched
 
         self._load_sessions()
 
@@ -494,8 +495,10 @@ class Recording:
         if session.state == SessionState.STOPPED:
             return {"success": False, "error": "Session is stopped — recreate it to restart"}
 
-        # Clear any stale day-lock so _start_scheduled_session will proceed
+        # Clear any stale day-lock and pending readiness check so
+        # _start_scheduled_session will proceed immediately.
         today = date.today().isoformat()
+        self._readiness_checks.pop(session_name, None)
         with self._lock:
             session.scheduled_last_start_date = None
             if session.state == SessionState.ERROR:
@@ -823,6 +826,53 @@ class Recording:
             )
         with self._lock:
             session.modules = available
+
+        # ── Pre-flight readiness check (two-pass, non-blocking) ───────────────
+        # Pass 1: dispatch validate_readiness + get_health to all target modules
+        #         and return — responses arrive asynchronously over the PoE LAN.
+        # Pass 2: one monitor cycle later (≥5 s) the responses have arrived;
+        #         check module statuses and alert on NOT_READY before proceeding.
+        _READINESS_WAIT_SECS = 5  # one monitor cycle is ample for LAN round-trips
+        sent_at = self._readiness_checks.get(session_name)
+        if sent_at is None:
+            for mid in available:
+                self.facade.send_command(mid, "get_health", {})
+                self.facade.send_command(mid, "validate_readiness", {})
+            self._readiness_checks[session_name] = time.time()
+            self.logger.info(
+                f"Scheduled session '{session_name}': dispatched readiness checks "
+                f"to {len(available)} module(s) — will verify next cycle"
+            )
+            return
+
+        if time.time() - sent_at < _READINESS_WAIT_SECS:
+            return  # responses still in flight — wait one more cycle
+
+        # Responses should be in by now — check and clear the pending entry
+        del self._readiness_checks[session_name]
+        not_ready = []
+        for mid in available:
+            mod = self.facade.get_modules_by_target(mid).get(mid, {})
+            if mod.get("status") == "NOT_READY":
+                msg = mod.get("ready_message") or "no detail"
+                not_ready.append(f"{mid}: {msg}")
+
+        if not_ready:
+            self.logger.warning(
+                f"Scheduled session '{session_name}': module readiness warnings — "
+                + "; ".join(not_ready)
+            )
+            self.facade.send_alert(
+                key=f"readiness_{session_name}_{today}",
+                title=f"Module readiness warning — {session_name}",
+                message=(
+                    f"Session **{session_name}** started its {today} run but "
+                    f"the following module(s) reported not ready:\n\n"
+                    + "\n".join(f"- {m}" for m in not_ready)
+                    + "\n\nRecording will proceed — check module logs for details."
+                ),
+                severity="warning",
+            )
 
         # ── Expected module count ─────────────────────────────────────────────
         expected_counts: dict = rec_cfg.get("expected_module_counts", {})

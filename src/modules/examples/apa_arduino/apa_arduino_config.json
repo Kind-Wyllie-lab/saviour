@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "apa_arduino"
+    },
     "arduino": {
         "baudrate": {"value": 115200, "editable": "False"},
         "motor": {

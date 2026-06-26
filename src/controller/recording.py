@@ -276,7 +276,8 @@ class Recording:
 
     def create_session(self, session_name: str, target: str,
                        duration_minutes: Optional[int] = None,
-                       researcher: Optional[str] = None) -> dict:
+                       researcher: Optional[str] = None,
+                       raw_name: bool = False) -> dict:
         """Create a session that begins recording immediately.
 
         Returns a result dict so the caller can surface errors to the frontend.
@@ -305,7 +306,8 @@ class Recording:
             self.logger.warning(f"create_session blocked by PTP check: {ptp['error']}")
             return {"success": False, "error": ptp["error"]}
 
-        session_name = self._format_session_name(session_name, target)
+        session_name = self._format_session_name(session_name, target) if not raw_name else \
+            "".join(c for c in session_name if c.isalnum() or c in ("-", "_"))
 
         start_at = time.time() + LEAD_SECS
         timed_stop_at = (start_at + duration_minutes * 60) if duration_minutes else None
@@ -348,7 +350,8 @@ class Recording:
     def create_scheduled_session(self, session_name: str, target: str,
                                   start_time: str, end_time: str,
                                   days: Optional[list] = None,
-                                  researcher: Optional[str] = None) -> dict:
+                                  researcher: Optional[str] = None,
+                                  raw_name: bool = False) -> dict:
         """Create a session that records on specified days between start_time and end_time (HH:MM).
 
         days is a list of weekday ints (0=Mon…6=Sun). Empty / None means every day.
@@ -367,7 +370,8 @@ class Recording:
                 f"session will pick them up when it starts"
             )
 
-        session_name = self._format_session_name(session_name, target)
+        session_name = self._format_session_name(session_name, target) if not raw_name else \
+            "".join(c for c in session_name if c.isalnum() or c in ("-", "_"))
 
         session = RecordingSession(
             session_name=session_name,
@@ -471,6 +475,46 @@ class Recording:
         )
         # If all modules were already offline, complete the transition immediately
         self._check_all_stopped(session_name)
+
+
+    def force_start_scheduled_session(self, session_name: str) -> dict:
+        """Immediately start a scheduled (or errored scheduled) session.
+
+        Bypasses the time-of-day check so the operator can start a session on
+        demand without waiting for the scheduled window.  All other pre-flight
+        checks (module availability, PTP, NAS space) still run.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        session = self.sessions[session_name]
+        if not session.scheduled:
+            return {"success": False, "error": "Not a scheduled session — use stop/create instead"}
+        if session.state == SessionState.ACTIVE:
+            return {"success": False, "error": "Session is already recording"}
+        if session.state == SessionState.STOPPED:
+            return {"success": False, "error": "Session is stopped — recreate it to restart"}
+
+        # Clear any stale day-lock so _start_scheduled_session will proceed
+        today = date.today().isoformat()
+        with self._lock:
+            session.scheduled_last_start_date = None
+            if session.state == SessionState.ERROR:
+                session.state = SessionState.SCHEDULED
+                session.error_message = ""
+        self._start_scheduled_session(session_name, today)
+
+        with self._lock:
+            new_state = session.state
+            error_msg = session.error_message
+        if new_state == SessionState.ACTIVE:
+            return {"success": True}
+        if new_state == SessionState.ERROR:
+            return {"success": False, "error": error_msg or "Session failed to start"}
+        # Still SCHEDULED — soft failure (PTP settling, no modules online, etc.)
+        return {
+            "success": False,
+            "error": "Could not start yet — PTP may still be settling or no modules are online. Try again in a few seconds.",
+        }
 
 
     def module_stopped(self, module_id: str) -> None:
@@ -755,21 +799,10 @@ class Recording:
         # Modules online at session-creation time may differ from today's set.
         current_modules = list(self.facade.get_modules_by_target(session.target).keys())
         if not current_modules:
-            self.logger.warning(
-                f"Scheduled session '{session_name}': no '{session.target}' modules online "
-                f"— skipping {today} run"
-            )
-            with self._lock:
-                session.scheduled_last_start_date = today  # prevent same-day retry
-            self._save_sessions()
-            self.facade.send_alert(
-                key=f"no_modules_{session_name}_{today}",
-                title=f"Scheduled recording skipped — no modules",
-                message=(
-                    f"Session **{session_name}** could not start its {today} run: "
-                    f"no online modules for target '{session.target}'."
-                ),
-                severity="error",
+            # Transient — modules may not have connected yet.  Retry next cycle.
+            self.logger.info(
+                f"Scheduled session '{session_name}': no '{session.target}' modules online yet "
+                f"— will retry"
             )
             return
 
@@ -777,12 +810,10 @@ class Recording:
         busy = self._busy_modules()
         available = [m for m in current_modules if m not in busy]
         if not available:
-            self.logger.warning(
-                f"Scheduled session '{session_name}': all target modules are busy — skipping {today}"
+            # Transient — busy modules may finish stopping soon.  Retry next cycle.
+            self.logger.info(
+                f"Scheduled session '{session_name}': all target modules are busy — will retry"
             )
-            with self._lock:
-                session.scheduled_last_start_date = today
-            self._save_sessions()
             return
 
         if set(available) != set(session.modules):
@@ -873,6 +904,22 @@ class Recording:
         # ── PTP sync ──────────────────────────────────────────────────────────
         ptp = self._check_ptp_sync(session.modules)
         if not ptp["ok"]:
+            # Distinguish transient "still settling" from confirmed bad offsets.
+            # "No health data" and "not yet reported" are startup-transient — retry
+            # next cycle rather than locking out the entire day.
+            settling_phrases = ("not yet reported", "still be settling", "no health data")
+            failures = ptp.get("failures", [])
+            all_settling = bool(failures) and all(
+                any(p in f.get("reason", "").lower() for p in settling_phrases)
+                for f in failures
+            )
+            if all_settling:
+                self.logger.info(
+                    f"Scheduled session '{session_name}': PTP still settling on "
+                    f"{len(failures)} module(s) — will retry next cycle"
+                )
+                return  # don't lock out the day
+
             self.logger.error(
                 f"Scheduled session '{session_name}' blocked by PTP check: {ptp['error']}"
             )

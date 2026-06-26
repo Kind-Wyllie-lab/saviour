@@ -256,6 +256,16 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 
+.session-btn--start {
+  background-color: #1b6e2e;
+  color: white;
+  border: none;
+}
+
+.session-btn--start:hover {
+  background-color: #145424;
+}
+
 .session-btn--stop {
   background-color: #c62828;
   color: white;

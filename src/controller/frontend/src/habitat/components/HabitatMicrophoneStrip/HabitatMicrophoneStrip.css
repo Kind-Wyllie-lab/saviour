@@ -1,0 +1,60 @@
+/* Horizontal container: one column per microphone module */
+.mic-strip {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  height: 100%;
+  align-items: flex-start;
+}
+
+/* One column per module — fixed 120 px to match the stream width */
+.mic-module-col {
+  position: relative;
+  width: 120px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.mic-module-col img {
+  width: 120px;
+  height: auto;
+  display: block;
+}
+
+.mic-rec-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e74c3c;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.mic-module-offline {
+  width: 120px;
+  min-height: 100px;
+  background: #111;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #444;
+  padding: 8px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.mic-module-offline-label {
+  font-size: 10px;
+  color: #333;
+  letter-spacing: 0.06em;
+}

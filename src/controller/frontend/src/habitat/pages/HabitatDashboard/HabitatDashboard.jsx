@@ -4,9 +4,10 @@ import "./HabitatDashboard.css";
 import useModules from "/src/hooks/useModules";
 import useSessions from "/src/hooks/useSessions";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
-import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
 import HabitatModuleStatusList from "../../components/HabitatModuleStatusList/HabitatModuleStatusList";
+import HabitatRecordingControl from "../../components/HabitatRecordingControl/HabitatRecordingControl";
+import HabitatMicrophoneStrip from "../../components/HabitatMicrophoneStrip/HabitatMicrophoneStrip";
 
 function HabitatDashboard() {
   const { modules } = useModules();
@@ -14,7 +15,7 @@ function HabitatDashboard() {
 
   return (
     <main className="habitat-dashboard">
-      <RecordingStatusWidget />
+      <HabitatRecordingControl sessionList={sessionList} modules={modules} />
 
       <div className="habitat-dashboard-body">
         <section className="habitat-dashboard-left">
@@ -22,10 +23,14 @@ function HabitatDashboard() {
           <HabitatModuleStatusList modules={modules} sessions={sessionList} />
         </section>
 
-        <section className="habitat-dashboard-right">
+        <section className="habitat-dashboard-center">
           <div className="livestream-square">
             <HabitatLivestreamGrid modules={modules} />
           </div>
+        </section>
+
+        <section className="habitat-dashboard-mics">
+          <HabitatMicrophoneStrip modules={modules} />
         </section>
       </div>
     </main>

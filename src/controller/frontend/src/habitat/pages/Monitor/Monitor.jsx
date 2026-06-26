@@ -4,6 +4,7 @@ import "./Monitor.css";
 
 import useModules from "/src/hooks/useModules";
 import HabitatLivestreamGrid from "/src/habitat/components/HabitatLivestreamGrid/HabitatLivestreamGrid";
+import HabitatMicrophoneStrip from "/src/habitat/components/HabitatMicrophoneStrip/HabitatMicrophoneStrip";
 
 function Monitor() {
     // Press escape to return to homepae
@@ -27,7 +28,7 @@ function Monitor() {
     return (
         <div className="fullscreen-modal">
             <div className="monitor-left">
-
+              <HabitatMicrophoneStrip modules={modules} />
             </div>
             <div className="monitor-right">
                 <HabitatLivestreamGrid modules={modules} />

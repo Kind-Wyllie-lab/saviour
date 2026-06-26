@@ -183,6 +183,7 @@ class AudiomothModule(Module):
         return (labels.get(serial) or serial) if isinstance(labels, dict) else serial
 
     def _find_audiomoths(self):
+        self.audiomoths = {}  # clear stale entries before each scan
         self.mics = soundcard.all_microphones()
         for mic in self.mics:
             if "AudioMoth" in mic.name.split(" "):
@@ -454,6 +455,12 @@ class AudiomothModule(Module):
                         }
         except Exception as e:
             self.logger.error(f"Monitor thread error for audiomoth {serial}: {e}")
+        finally:
+            # Remove the entry so the meter disappears immediately rather than
+            # showing NO SIG indefinitely after disconnection or thread failure.
+            with self.monitor_data_lock:
+                self.monitor_data.pop(serial, None)
+            self.peak_hold_data.pop(serial, None)
 
         self.logger.info(f"Monitor thread finished for audiomoth {serial}")
 
@@ -939,7 +946,7 @@ class AudiomothModule(Module):
                 cv2.rectangle(frame, (bx0, by0), (bx1, by1), (60, 60, 60), 1)
 
                 # ── dB readout ────────────────────────────────────────────
-                db_str = f"{level_db:.0f}" if not is_stale else "—"
+                db_str = f"{level_db:.0f} dBFS" if not is_stale else "—"
                 (tw, _), _ = cv2.getTextSize(
                     db_str, cv2.FONT_HERSHEY_SIMPLEX, 0.32, 1)
                 cv2.putText(frame, db_str,

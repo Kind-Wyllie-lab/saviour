@@ -58,3 +58,15 @@
   color: #333;
   letter-spacing: 0.06em;
 }
+
+.mic-module-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  text-align: center;
+  padding: 2px 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 120px;
+}

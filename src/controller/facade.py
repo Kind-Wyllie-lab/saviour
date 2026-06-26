@@ -134,14 +134,17 @@ class ControllerFacade():
             return {"ok": True}
         return self.controller.recording._check_ptp_sync(modules)
 
-    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None) -> dict:
-        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher)
+    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False) -> dict:
+        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name)
 
-    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None) -> dict:
-        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
+    def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False) -> dict:
+        return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name)
 
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
+
+    def force_start_scheduled_session(self, session_name: str) -> dict:
+        return self.controller.recording.force_start_scheduled_session(session_name)
 
     def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
         return self.controller.recording.delete_session(session_name, delete_files)

@@ -21,6 +21,7 @@ Created: 12/01/2026
 import logging
 import threading
 import os
+import shutil
 import datetime
 import time
 import csv
@@ -259,10 +260,59 @@ class Recording():
         segment_length = self.config.get("recording.segment_length_mins", 30) * 60 # Get segment length in mins and convert to seconds
         self.logger.info(f"Segment started at {self.segment_start_time},  segment length {segment_length}")
 
+        recording_folder = self.config.get("recording._recording_folder", "/var/lib/saviour/recordings")
+        to_export_folder = f"{recording_folder}/to_export"
+        min_free_pct     = self.config.get("recording.local_min_free_pct", 10)
+        # Re-signal export_ready every 5 minutes while files are waiting,
+        # so a controller restart or dropped ZMQ message doesn't silently block exports.
+        export_signal_interval = 300
+        last_export_signal     = 0.0
+
         while not self.monitor_recording_segments_stop_flag.is_set():
-            if (time.time() - self.segment_start_time > segment_length):
+            now = time.time()
+
+            if (now - self.segment_start_time > segment_length):
+                # Check local disk space before starting a new segment.
+                try:
+                    usage = shutil.disk_usage(recording_folder)
+                    free_pct = usage.free / usage.total * 100
+                    free_mb  = usage.free / 1_048_576
+                    if free_pct < min_free_pct:
+                        self.logger.error(
+                            f"Local disk critically low ({free_pct:.1f}% free, {free_mb:.0f} MB) — "
+                            f"stopping recording to protect filesystem. Exports must clear space before recording can resume."
+                        )
+                        self.stop_recording()
+                        return
+                except Exception as e:
+                    self.logger.warning(f"Could not check disk space before new segment: {e}")
+
                 self._create_new_recording_segment()
+                last_export_signal = now
                 self.logger.info(f"Segment duration elapsed - new segment {self.segment_id} started at {self.segment_start_time}")
+
+            # Periodically re-signal the controller if files are still waiting.
+            elif (now - last_export_signal > export_signal_interval
+                    and self.current_session_name):
+                try:
+                    waiting = [
+                        f for f in os.listdir(to_export_folder)
+                        if not f.startswith("PENDING_")
+                    ]
+                    if waiting:
+                        export_path = (
+                            f"{self.current_session_name}"
+                            f"/{self.facade.get_utc_date(now)}"
+                            f"/{self.facade.get_module_name()}"
+                        )
+                        self.logger.info(
+                            f"{len(waiting)} file(s) still in to_export — re-signalling export_ready"
+                        )
+                        self.facade.signal_export_ready(export_path)
+                        last_export_signal = now
+                except Exception as e:
+                    self.logger.warning(f"Export re-signal check failed: {e}")
+
             time.sleep(0.1) # Avoid busy waiting
             
                 

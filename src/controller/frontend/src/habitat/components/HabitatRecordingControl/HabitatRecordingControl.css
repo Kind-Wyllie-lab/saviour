@@ -1,0 +1,184 @@
+.hrc {
+  padding: 1rem 1.25rem;
+  border-left: 4px solid transparent;
+  transition: border-color 0.3s;
+}
+
+.hrc--active {
+  border-left-color: #e53935;
+}
+
+.hrc--fault {
+  border-left-color: #f57c00;
+}
+
+.hrc--clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.hrc--clickable:hover {
+  background: color-mix(in srgb, var(--card-bg-color, #fff) 90%, var(--accent-color, #3b82f6));
+}
+
+/* ── Header row ─────────────────────────────────────────────────────────── */
+
+.hrc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.hrc-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.hrc-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* ── Status badge ───────────────────────────────────────────────────────── */
+
+.hrc-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.hrc-badge--recording {
+  background: #e53935;
+  color: #fff;
+  animation: hrc-pulse 2s ease-in-out infinite;
+}
+
+.hrc-badge--starting {
+  background: #fb8c00;
+  color: #fff;
+}
+
+.hrc-badge--fault {
+  background: #f57c00;
+  color: #fff;
+}
+
+.hrc-badge--ready {
+  background: #e0e0e0;
+  color: #555;
+}
+
+.dark-mode .hrc-badge--ready {
+  background: #444;
+  color: #ccc;
+}
+
+.hrc-badge--busy {
+  background: #bdbdbd;
+  color: #555;
+}
+
+@keyframes hrc-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+/* ── Action buttons ─────────────────────────────────────────────────────── */
+
+.hrc-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hrc-btn {
+  padding: 0.45rem 1rem;
+  border-radius: 4px;
+  border: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.hrc-btn--start {
+  background: #1b6e2e;
+  color: #fff;
+}
+.hrc-btn--start:hover { background: #145424; }
+
+.hrc-btn--stop {
+  background: #c62828;
+  color: #fff;
+}
+.hrc-btn--stop:hover { background: #a61d1d; }
+
+/* ── Summary rows ───────────────────────────────────────────────────────── */
+
+.hrc-summary {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.hrc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.hrc-row-label {
+  width: 4.5rem;
+  font-weight: 600;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.dark-mode .hrc-row-label { color: #aaa; }
+
+.hrc-row-value {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.hrc-module-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.hrc-module-dot--recording {
+  background: #e53935;
+  box-shadow: 0 0 4px #e53935;
+}
+
+.hrc-module-dot--idle {
+  background: #bdbdbd;
+}
+
+/* ── Footer lines ───────────────────────────────────────────────────────── */
+
+.hrc-since {
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.dark-mode .hrc-since { color: #aaa; }
+
+.hrc-fault-msg {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: #f57c00;
+}

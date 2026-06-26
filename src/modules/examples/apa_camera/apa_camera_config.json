@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "camera"
+    },
     "camera": {
         "monochrome": false,
         "sensor_mode_index": 0,

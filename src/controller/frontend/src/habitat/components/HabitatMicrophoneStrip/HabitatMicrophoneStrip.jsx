@@ -32,7 +32,7 @@ function MicModuleColumn({ module }) {
       ) : (
         <img
           key={streamKey}
-          src={`http://${module.ip}:8081/peak_feed`}
+          src={`http://${module.ip}:8081/video_feed`}
           alt={module.name || module.id}
           onLoad={resetStall}
           onError={handleError}

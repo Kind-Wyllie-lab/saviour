@@ -47,6 +47,15 @@
         text-align: center;
     }
 
+    .sidebar-hostname {
+        font-size: 11px;
+        text-align: center;
+        opacity: 0.5;
+        margin: -8px 0 4px;
+        word-break: break-all;
+        padding: 0 8px;
+    }
+
     .nav-link {
         text-decoration: none;
         color: var(--text-color);

@@ -8,9 +8,9 @@
 .habitat-dashboard-body {
   display: flex;
   flex: 1;
-  gap: 24px;
+  gap: 12px;
   padding: 16px;
-  min-height: 0;   /* allow flex child to shrink below content size */
+  min-height: 0;
 }
 
 .habitat-dashboard-left {
@@ -23,13 +23,22 @@
   align-self: flex-start;
 }
 
-.habitat-dashboard-right {
+/* Camera grid: takes all remaining space */
+.habitat-dashboard-center {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Mic columns: fixed width, sits to the right of camera grid */
+.habitat-dashboard-mics {
+  flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .livestream-square {

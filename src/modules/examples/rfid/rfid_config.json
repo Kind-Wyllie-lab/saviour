@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "rfid"
+    },
     "rfid": {
         "reader_type": "rc522",
         "bus": 0,

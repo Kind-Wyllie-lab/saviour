@@ -37,6 +37,43 @@
 }
 
 .clock-modal__msg {
-  margin: 0 0 12px;
+  margin: 8px 0 0;
   font-size: 0.88em;
 }
+
+.clock-modal__section {
+  margin-bottom: 4px;
+}
+
+.clock-modal__section-label {
+  font-weight: 600;
+  font-size: 0.88em;
+  margin: 0 0 2px;
+}
+
+.clock-modal__section-hint {
+  font-size: 0.82em;
+  opacity: 0.55;
+  margin: 0 0 8px;
+}
+
+.clock-modal__divider {
+  text-align: center;
+  font-size: 0.8em;
+  opacity: 0.4;
+  margin: 16px 0;
+  position: relative;
+}
+
+.clock-modal__divider::before,
+.clock-modal__divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 38%;
+  height: 1px;
+  background: var(--border-color);
+}
+
+.clock-modal__divider::before { left: 0; }
+.clock-modal__divider::after  { right: 0; }

@@ -782,7 +782,8 @@ class Web(ABC):
                 ip = nm.stdout.strip().split("/")[0] if nm.returncode == 0 else "unknown"
             except Exception:
                 ip = "unknown"
-            self.socketio.emit("controller_info_response", {"ip": ip, "version": version})
+            name = self.config.get("controller.name", _socket.gethostname())
+            self.socketio.emit("controller_info_response", {"ip": ip, "version": version, "hostname": name})
 
 
         @self.socketio.on("get_controller_health")

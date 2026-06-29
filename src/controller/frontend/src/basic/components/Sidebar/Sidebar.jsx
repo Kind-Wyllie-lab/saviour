@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import socket from "/src/socket";
 
@@ -10,6 +10,14 @@ function Sidebar({ navItems }) {
   const [showPowerModal, setShowPowerModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateState, setUpdateState] = useState(null); // null | "updating" | "done"
+  const [hostname, setHostname] = useState(null);
+
+  useEffect(() => {
+    socket.emit("get_controller_info");
+    const handler = (data) => { if (data.hostname) setHostname(data.hostname); };
+    socket.on("controller_info_response", handler);
+    return () => socket.off("controller_info_response", handler);
+  }, []);
 
   const handleRebootAll = () => {
     socket.emit("reboot_saviour");
@@ -39,6 +47,7 @@ function Sidebar({ navItems }) {
         </div>
 
         <h1 className="sidebar-title">{document.title}</h1>
+        {hostname && <p className="sidebar-hostname">{hostname}</p>}
 
         <nav className="main-nav">
           {navItems.map(({ label, path, disabled }) =>

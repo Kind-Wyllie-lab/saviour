@@ -108,6 +108,15 @@ export default function System() {
     setRemoveTarget(null);
   };
 
+  // ── Shutdown module ───────────────────────────────────────────────────────
+  const [shutdownTarget, setShutdownTarget] = useState(null); // { id, name }
+
+  const handleShutdownConfirm = () => {
+    if (!shutdownTarget) return;
+    socket.emit("send_command", { module_id: shutdownTarget.id, type: "shutdown", params: {} });
+    setShutdownTarget(null);
+  };
+
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
 
@@ -259,7 +268,7 @@ export default function System() {
             {moduleRows.map((row) => {
               const isOnline = modules[row.id]?.online ?? false;
               return (
-                <tr key={row.id}>
+                <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                   <td>
                     <span className="device-name">{row.name}</span>
                     <span className="device-id">{row.id}</span>
@@ -267,13 +276,23 @@ export default function System() {
                   <td>{statusCell(row.status ?? "offline")}</td>
                   <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
                   <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
-                  <td>{cpuCell(row.cpu_usage)}</td>
-                  <td>{tempCell(row.cpu_temp)}</td>
-                  <td>{memoryCell(row.memory_usage, row.memory_total_gb)}</td>
-                  <td>{diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb)}</td>
-                  <td>{ptpCell(row.ptp4l_offset_ns)}</td>
+                  <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? ptpCell(row.ptp4l_offset_ns) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
+                    {isOnline && (
+                      <button
+                        type="button"
+                        className="remove-btn shutdown-btn"
+                        style={{marginRight: "6px"}}
+                        onClick={() => setShutdownTarget({ id: row.id, name: row.name })}
+                      >
+                        Shutdown
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="remove-btn"
@@ -334,6 +353,25 @@ export default function System() {
         </div>
       )}
 
+
+      {shutdownTarget && (
+        <div className="modal-overlay" onClick={() => setShutdownTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Shut down <strong>{shutdownTarget.name}</strong>?</p>
+            <p className="modal-subtext">
+              The module will power off. It will be re-added automatically when it comes back online.
+            </p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleShutdownConfirm}>
+                Shutdown
+              </button>
+              <button className="save-button" type="button" onClick={() => setShutdownTarget(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {removeTarget && (
         <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>

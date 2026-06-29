@@ -94,8 +94,8 @@ export default function System() {
 
   // Build sorted rows: modules sorted by name
   const moduleRows = useMemo(() => {
-    return Object.entries(moduleHealth)
-      .map(([id, h]) => ({ id, name: modules[id]?.name ?? id, ...h }))
+    return Object.entries(modules)
+      .map(([id, m]) => ({ id, name: m.name ?? id, ...moduleHealth[id] }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [moduleHealth, modules]);
 
@@ -188,14 +188,25 @@ export default function System() {
               <th>Device</th>
               <th>Status</th>
               <th>IP</th>
-              <th>Version</th>
+              <th className="th--version">
+                Version
+                <button
+                  className="th-update-btn"
+                  type="button"
+                  onClick={() => setShowUpdateConfirm(true)}
+                  disabled={Object.values(deviceStatuses).some(s => s === "updating")}
+                  title="Update all devices to latest version"
+                >
+                  {Object.values(deviceStatuses).some(s => s === "updating") ? "Updating…" : "Update All"}
+                </button>
+              </th>
               <th>CPU</th>
               <th>Temp</th>
               <th>Memory</th>
               <th>Disk</th>
-              <th>PTP offset</th>
+              <th>Time Sync</th>
               <th>Last seen</th>
-              <th></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -211,9 +222,37 @@ export default function System() {
               <td>{tempCell(controllerHealth?.cpu_temp)}</td>
               <td>{memoryCell(controllerHealth?.memory_usage, controllerHealth?.memory_total_gb)}</td>
               <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_used_gb, controllerHealth?.disk_total_gb)}</td>
+              <td className="system-time-cell">
+                {displayedControllerMs != null ? (
+                  <>
+                    <span className="system-time-value">
+                      {new Date(displayedControllerMs).toISOString().slice(11, 19)} UTC
+                    </span>
+                    <span className="system-time-date">
+                      {new Date(displayedControllerMs).toISOString().slice(0, 10)}
+                      {controllerDriftMs != null && Math.abs(controllerDriftMs) >= 5000 && (
+                        <span className={`hsw-drift ${Math.abs(controllerDriftMs) >= 120000 ? "val--danger" : "val--warn"}`}>
+                          {" "}({Math.abs(controllerDriftMs) >= 60000
+                            ? `${Math.round(Math.abs(controllerDriftMs) / 60000)}m`
+                            : `${Math.round(Math.abs(controllerDriftMs) / 1000)}s`} drift)
+                        </span>
+                      )}
+                    </span>
+                  </>
+                ) : (
+                  <span className="cell--muted">—</span>
+                )}
+              </td>
               <td className="cell--muted">—</td>
-              <td className="cell--muted">—</td>
-              <td></td>
+              <td>
+                <button
+                  type="button"
+                  className="remove-btn sync-btn"
+                  onClick={() => setShowClockModal(true)}
+                >
+                  Set Time
+                </button>
+              </td>
             </tr>
 
             {/* Module rows */}
@@ -257,21 +296,9 @@ export default function System() {
           </tbody>
         </table>
       </div>
-      {/* ── Update all devices ── */}
-      <div className="system-update-section">
-        <div className="system-header">
-          <h2>Update All Devices</h2>
-          <button
-            className="refresh-btn"
-            type="button"
-            onClick={() => setShowUpdateConfirm(true)}
-            disabled={Object.values(deviceStatuses).some(s => s === "updating")}
-          >
-            {Object.values(deviceStatuses).some(s => s === "updating") ? "Updating…" : "Update All"}
-          </button>
-        </div>
-
-        {updateDevices.length > 0 && (
+      {/* ── Update results (shown only while/after update runs) ── */}
+      {updateDevices.length > 0 && (
+        <div className="system-update-section">
           <div className="system-table-wrapper">
             <table className="system-table">
               <thead>
@@ -304,40 +331,9 @@ export default function System() {
               </tbody>
             </table>
           </div>
-        )}
-      </div>
-
-      {/* ── Controller Time ── */}
-      <div className="system-update-section">
-        <div className="system-header">
-          <h2>Controller Time</h2>
-          <button className="refresh-btn" type="button" onClick={() => setShowClockModal(true)}>
-            Set Time
-          </button>
         </div>
-        {displayedControllerMs != null ? (
-          <p className="system-clock-display">
-            {new Date(displayedControllerMs).toUTCString().replace(/GMT$/, "UTC")}
-            {controllerDriftMs != null && Math.abs(controllerDriftMs) >= 5000 && (
-              <span className={`hsw-drift ${Math.abs(controllerDriftMs) >= 120000 ? "val--danger" : "val--warn"}`}>
-                {" "}({Math.abs(controllerDriftMs) >= 60000
-                  ? `${Math.round(Math.abs(controllerDriftMs) / 60000)}m`
-                  : `${Math.round(Math.abs(controllerDriftMs) / 1000)}s`} vs browser)
-              </span>
-            )}
-          </p>
-        ) : (
-          <p className="cell--muted">Waiting for health data…</p>
-        )}
-      </div>
-
-      {showClockModal && (
-        <ClockModal
-          driftMs={controllerDriftMs}
-          controllerTime={displayedControllerMs ? new Date(displayedControllerMs).toISOString() : controllerHealth?.controller_time}
-          onClose={() => setShowClockModal(false)}
-        />
       )}
+
 
       {removeTarget && (
         <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>
@@ -362,6 +358,14 @@ export default function System() {
             </div>
           </div>
         </div>
+      )}
+
+      {showClockModal && (
+        <ClockModal
+          driftMs={controllerDriftMs}
+          controllerTime={displayedControllerMs ? new Date(displayedControllerMs).toISOString() : controllerHealth?.controller_time}
+          onClose={() => setShowClockModal(false)}
+        />
       )}
 
       {showUpdateConfirm && (

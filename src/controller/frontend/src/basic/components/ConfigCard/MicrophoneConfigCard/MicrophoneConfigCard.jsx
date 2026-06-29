@@ -16,8 +16,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
   const reconnectTimer = useRef(null);
   const bump = () => setBumpKey(Date.now());
 
-  // Reconnect whenever display options change
-  const imgKey = `${bumpKey}-${plotMode}-${freqRange}-${layout}`;
+  const imgKey = `${bumpKey}`;
 
   useEffect(() => {
     stallTimer.current = setTimeout(bump, STALL_MS);
@@ -35,7 +34,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
     reconnectTimer.current = setTimeout(bump, RECONNECT_MS);
   };
 
-  const src = `http://${ip}:${port}/video_feed?mode=${plotMode}&range=${freqRange}&layout=${layout}&t=${bumpKey}`;
+  const src = `http://${ip}:${port}/video_feed?t=${bumpKey}`;
 
   return (
     <>
@@ -43,7 +42,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
         key={imgKey}
         src={src}
         alt="Microphone monitor stream"
-        style={{ width: "100%", display: "block", borderRadius: "4px", cursor: "pointer" }}
+        style={{ width: "100%", maxHeight: "400px", objectFit: "contain", display: "block", borderRadius: "4px", cursor: "pointer" }}
         onLoad={resetStall}
         onError={handleError}
         onClick={() => setFullscreen(true)}
@@ -232,12 +231,13 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
         <div className="monitor-controls__row">
           <span className="monitor-controls__label">Plot</span>
           {[
-            ["spectrogram", "Spectrogram"],
-            ["spectrum",    "Spectrum"],
-            ["peaks",       "Peaks"],
-            ["waveform",    "Waveform"],
-            ["history",     "History"],
-            ["band_power",  "Band Power"],
+            ["spectrogram",    "Spectrogram"],
+            ["spectrum",       "Spectrum"],
+            ["peaks",          "Peaks"],
+            ["compact_peaks",  "Compact Peaks"],
+            ["waveform",       "Waveform"],
+            ["history",        "History"],
+            ["band_power",     "Band Power"],
           ].map(([val, lbl]) => (
             <button key={val} type="button"
               className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}

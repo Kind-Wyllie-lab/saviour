@@ -1,9 +1,7 @@
 /* ── Wrapper — fills the livestream-square container ─────────────────────── */
 
 .habitat-grid-wrapper {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
+  position: relative;
   height: 100%;
   width: 100%;
 }
@@ -12,9 +10,7 @@
 
 .habitat-grid {
   height: 100%;
-  aspect-ratio: 1 / 1;
-  flex-shrink: 0;
-  width: auto;
+  width: 100%;
   display: grid;
   box-sizing: border-box;
   padding: 8px;
@@ -47,12 +43,14 @@
 /* ── Corner overlay buttons ───────────────────────────────────────────────── */
 
 .habitat-grid-corner {
+  position: absolute;
+  top: 10px;
+  right: 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 6px 0 0 6px;
-  align-self: flex-start;
+  z-index: 5;
 }
 
 .habitat-grid-icon-btn {

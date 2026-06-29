@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "sound"
+    },
     "sound": {
         "volume": 1,
         "duration": 1

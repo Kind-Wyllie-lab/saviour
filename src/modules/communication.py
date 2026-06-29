@@ -142,17 +142,21 @@ class Communication:
 
 
     def subscribe_to_topic(self, topic: str) -> None:
-        full_topic = f"cmd/{topic}"
-        self.logger.info(f"Subscribing to {full_topic}")
+        # Trailing space is intentional: ZMQ subscribe is pure prefix-matching,
+        # so "cmd/microphone" would match "cmd/microphone_3606 ..." as well as
+        # "cmd/microphone ...". The space acts as a word boundary because the
+        # message format is "cmd/<id> <command> <params>".
+        full_topic = f"cmd/{topic} "
+        self.logger.info(f"Subscribing to {full_topic!r}")
         self.command_socket.subscribe(full_topic)
         self.subscribed_topics.append(full_topic)
 
-    
     def unsubscribe_from_topic(self, topic: str) -> None:
-        if topic in self.subscribed_topics:
-            self.subscribed_topics.pop(self.subscribed_topics.index(topic))
-        self.command_socket.unsubscribe(topic)
-        self.logger.info(f"Unsubscribed from {topic}")
+        full_topic = f"cmd/{topic} "
+        if full_topic in self.subscribed_topics:
+            self.subscribed_topics.remove(full_topic)
+        self.command_socket.unsubscribe(full_topic)
+        self.logger.info(f"Unsubscribed from {full_topic!r}")
 
 
     def start_command_listener(self) -> bool:

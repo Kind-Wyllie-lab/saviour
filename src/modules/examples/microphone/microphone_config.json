@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "microphone"
+    },
     "audiomoth": {
         "sample_rate": 192000,
         "gain": 2,

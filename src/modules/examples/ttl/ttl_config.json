@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "ttl"
+    },
     "ttl": {
         "active_logic": "active_low",
         "_active_logic_options": ["active_low", "active_high"],

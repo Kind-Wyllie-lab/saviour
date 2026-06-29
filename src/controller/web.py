@@ -111,26 +111,26 @@ class Web(ABC):
         return name
 
 
-    def _check_nas_writable(self) -> "str | None":
-        """Mount the NAS, write a probe file, delete it, then unmount.
+    def _check_nas_free_space(self) -> "str | None":
+        """Mount the NAS and check free space against nas_min_free_pct.
 
-        Returns None if the share is reachable and writable, or an error string
-        suitable for surfacing to the user if anything fails.  If no NAS is
-        configured (export.share_ip is empty) returns None immediately.
+        Returns None if the share is reachable with sufficient space, or an
+        error string for surfacing to the user.  Returns None immediately if no
+        NAS IP is configured.
         """
-        import subprocess, uuid as _uuid
+        import subprocess, shutil as _shutil
         nas_ip = self.config.get("export.share_ip", "")
         if not nas_ip:
             return None
-        share_path = self.config.get("export.share_path", "controller_share")
-        username   = self.config.get("export.share_username", "")
-        password   = self.config.get("export.share_password", "")
+        share_path  = self.config.get("export.share_path", "controller_share")
+        username    = self.config.get("export.share_username", "")
+        password    = self.config.get("export.share_password", "")
+        min_free_pct = self.config.get("recording.nas_min_free_pct", 5)
         mount_point = Path("/mnt/nas_probe")
         try:
             mount_point.mkdir(parents=True, exist_ok=True)
             if mount_point.is_mount():
-                subprocess.run(["sudo", "umount", str(mount_point)],
-                               check=False, timeout=10)
+                subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
             auth_opts = f"username={username},password={password}" if username else "guest"
             result = subprocess.run(
                 ["sudo", "mount", "-t", "cifs",
@@ -139,7 +139,19 @@ class Web(ABC):
                 capture_output=True, text=True, timeout=15,
             )
             if result.returncode != 0:
-                return f"Cannot reach NAS at {nas_ip}: {result.stderr.strip() or 'mount failed'}"
+                stderr = result.stderr.strip()
+                if "Permission denied" in stderr or "error(13)" in stderr:
+                    return f"NAS at {nas_ip} rejected the credentials — check share username/password in Settings"
+                return f"Cannot reach NAS at {nas_ip}: {stderr or 'mount failed'}"
+            usage = _shutil.disk_usage(str(mount_point))
+            free_pct = usage.free / usage.total * 100 if usage.total else 100
+            free_gb  = usage.free / 1_073_741_824
+            if free_pct < min_free_pct:
+                return (
+                    f"NAS has only {free_pct:.1f}% free ({free_gb:.1f} GB) — "
+                    f"need at least {min_free_pct}% before starting a new session"
+                )
+            import uuid as _uuid
             probe = mount_point / f".saviour_probe_{_uuid.uuid4().hex}"
             try:
                 probe.write_text("probe")
@@ -407,7 +419,7 @@ class Web(ABC):
             duration_minutes = data.get("duration_minutes")  # None = infinite
             researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
-            nas_error = self._check_nas_writable()
+            nas_error = self._check_nas_free_space()
             if nas_error:
                 self.logger.error(f"NAS pre-check failed: {nas_error}")
                 self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
@@ -428,17 +440,23 @@ class Web(ABC):
             days = data.get("days")  # list of ints (0=Mon…6=Sun), None/[] = every day
             researcher = data.get("researcher") or None
             self.logger.info(f"Received request to create scheduled session {session_name} targeting {target} between {start_time} and {end_time} on days={days}")
-            nas_error = self._check_nas_writable()
-            if nas_error:
-                self.logger.error(f"NAS pre-check failed: {nas_error}")
-                self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
-                return
             result = self.facade.create_scheduled_session(session_name, target, start_time, end_time, days, researcher)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
                 self._write_session_metadata(result["session_name"], target)
 
+
+        @self.socketio.on("force_start_session")
+        def handle_force_start_session(data):
+            session_name = data.get("session_name")
+            self.logger.info(f"Received force-start request for session '{session_name}'")
+            result = self.facade.force_start_scheduled_session(session_name)
+            self.socketio.emit("force_start_result", {
+                "session_name": session_name,
+                "success": bool(result and result.get("success")),
+                "error": result.get("error") if result and not result.get("success") else None,
+            })
 
         @self.socketio.on("stop_session")
         def handle_stop_session(data):
@@ -764,7 +782,8 @@ class Web(ABC):
                 ip = nm.stdout.strip().split("/")[0] if nm.returncode == 0 else "unknown"
             except Exception:
                 ip = "unknown"
-            self.socketio.emit("controller_info_response", {"ip": ip, "version": version})
+            name = self.config.get("controller.name", _socket.gethostname())
+            self.socketio.emit("controller_info_response", {"ip": ip, "version": version, "hostname": name})
 
 
         @self.socketio.on("get_controller_health")
@@ -1084,7 +1103,7 @@ class Web(ABC):
         if not nas_ip:
             new = {"status": "unconfigured", "error": None, "checked_at": time.time()}
         else:
-            error = self._check_nas_writable()
+            error = self._check_nas_free_space()
             new = {
                 "status": "ok" if error is None else "error",
                 "error": error,

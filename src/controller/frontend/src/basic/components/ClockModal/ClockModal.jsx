@@ -16,15 +16,22 @@ function formatDrift(ms) {
 }
 
 export default function ClockModal({ driftMs, controllerTime, onClose }) {
-  const [value, setValue] = useState(() => toDatetimeLocal(new Date()));
+  const [manualValue, setManualValue] = useState(() => toDatetimeLocal(new Date()));
   const [status, setStatus] = useState(null); // null | "saving" | "ok" | "error"
   const [error, setError] = useState("");
+  const [browserNow, setBrowserNow] = useState(() => new Date());
+
+  // Keep browser time live in the modal
+  useEffect(() => {
+    const id = setInterval(() => setBrowserNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const handler = (data) => {
       if (data.success) {
         setStatus("ok");
-        setTimeout(onClose, 1500);
+        setTimeout(onClose, 1200);
       } else {
         setStatus("error");
         setError(data.error || "Unknown error");
@@ -34,9 +41,10 @@ export default function ClockModal({ driftMs, controllerTime, onClose }) {
     return () => socket.off("set_time_result", handler);
   }, [onClose]);
 
-  const handleSubmit = () => {
+  const send = (iso) => {
     setStatus("saving");
-    socket.emit("set_controller_time", { iso: new Date(value).toISOString() });
+    setError("");
+    socket.emit("set_controller_time", { iso });
   };
 
   const isDone = status === "saving" || status === "ok";
@@ -44,11 +52,11 @@ export default function ClockModal({ driftMs, controllerTime, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal clock-modal" onClick={e => e.stopPropagation()}>
-        <h2>Controller Clock</h2>
+        <h2>Set Controller Time</h2>
 
-        {driftMs != null && Math.abs(driftMs) >= 2 * 60 * 1000 && (
+        {driftMs != null && Math.abs(driftMs) >= 2000 && (
           <p className="modal-subtext clock-modal__drift">
-            Controller clock is <strong>{formatDrift(driftMs)}</strong> compared to this browser.
+            Controller is <strong>{formatDrift(driftMs)}</strong> compared to this browser.
           </p>
         )}
 
@@ -57,28 +65,47 @@ export default function ClockModal({ driftMs, controllerTime, onClose }) {
             <span className="clock-modal__label">Controller</span>
             <span>{new Date(controllerTime).toUTCString().replace(/GMT$/, "UTC")}</span>
             <span className="clock-modal__label">Browser</span>
-            <span>{new Date().toUTCString().replace(/GMT$/, "UTC")}</span>
+            <span>{browserNow.toUTCString().replace(/GMT$/, "UTC")}</span>
           </div>
         )}
 
-        <label className="clock-modal__label" htmlFor="clock-input">Set to (local time)</label>
-        <input
-          id="clock-input"
-          type="datetime-local"
-          className="clock-modal__input"
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          disabled={isDone}
-        />
+        <div className="clock-modal__section">
+          <p className="clock-modal__section-label">Sync to browser</p>
+          <p className="clock-modal__section-hint">Time is captured at the moment you click.</p>
+          <button
+            className="save-button"
+            onClick={() => send(new Date().toISOString())}
+            disabled={isDone}
+          >
+            {status === "saving" ? "Setting…" : status === "ok" ? "Done" : `Sync to ${browserNow.toUTCString().replace(/GMT$/, "UTC")}`}
+          </button>
+        </div>
 
-        {status === "ok"    && <p className="clock-modal__msg val--ok">Time set successfully.</p>}
+        <div className="clock-modal__divider">or set manually</div>
+
+        <div className="clock-modal__section">
+          <label className="clock-modal__label" htmlFor="clock-input">Date &amp; time (local)</label>
+          <input
+            id="clock-input"
+            type="datetime-local"
+            className="clock-modal__input"
+            value={manualValue}
+            onChange={e => setManualValue(e.target.value)}
+            disabled={isDone}
+          />
+          <button
+            className="reset-button"
+            onClick={() => send(new Date(manualValue).toISOString())}
+            disabled={isDone}
+          >
+            Set Manually
+          </button>
+        </div>
+
         {status === "error" && <p className="clock-modal__msg val--danger">{error}</p>}
 
-        <div className="modal-buttons">
-          <button className="save-button" onClick={handleSubmit} disabled={isDone}>
-            {status === "saving" ? "Setting…" : "Set Time"}
-          </button>
-          <button className="reset-button" onClick={onClose}>Skip</button>
+        <div className="modal-buttons" style={{marginTop: "16px"}}>
+          <button className="reset-button" onClick={onClose}>Cancel</button>
         </div>
       </div>
     </div>

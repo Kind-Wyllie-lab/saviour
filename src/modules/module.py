@@ -12,6 +12,7 @@ Created: 17/03/2025
 import sys
 import os
 import json
+import tempfile
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -110,6 +111,16 @@ class Module(ABC):
 
         # Manager objects
         self.config = Config()
+
+        # Ensure group is set — active_config.json created before this field
+        # existed (or saved with an empty value) would otherwise override the
+        # base-config default and leave the module unsubscribed from its group topic.
+        if not self.config.get("module.group"):
+            self.logger.info(
+                f"module.group not set, defaulting to module type '{self.module_type}'"
+            )
+            self.config.set("module.group", self.module_type)
+
         self.export = Export(module_id=self.module_id, config=self.config) # Export object - exports to samba share
         self.communication = Communication(config=self.config) # Communication object - handles ZMQ messaging
         self.health = Health(config=self.config) # Health object - monitors system health e.g. temperature, resource utilisation, ptp sync
@@ -803,32 +814,53 @@ class Module(ABC):
             self.logger.info("set_export_config skipped — export_target is not controller")
             return {"result": "skipped"}
         self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
+
+        # Update the running config unconditionally — must not be gated on file I/O.
+        self.config.set("export.share_ip", share_ip)
+        self.config.set("export.share_username", share_username)
+        self.config.set("export.share_password", share_password)
+        if share_path:
+            self.config.set("export.share_path", share_path)
+
+        # Persist to base_config.json so values survive a config reset.
+        # Uses atomic rename so a disk-full failure never corrupts the file.
         try:
-            # Persist to base_config.json so a reset_config doesn't revert the credentials
-            with open(self.config.base_config_path) as f:
-                base = json.load(f)
+            try:
+                with open(self.config.base_config_path) as f:
+                    base = json.load(f)
+            except (json.JSONDecodeError, ValueError, FileNotFoundError):
+                self.logger.warning(
+                    "base_config.json missing or corrupt — rebuilding from scratch"
+                )
+                base = {}
+
             export = base.setdefault("export", {})
             export["share_ip"] = share_ip
             export["share_username"] = share_username
             export["share_password"] = share_password
             if share_path:
                 export["share_path"] = share_path
-            with open(self.config.base_config_path, "w") as f:
-                json.dump(base, f, indent=2)
-                f.write("\n")
 
-            # Also update the running config so the change takes effect immediately
-            self.config.set("export.share_ip", share_ip)
-            self.config.set("export.share_username", share_username)
-            self.config.set("export.share_password", share_password)
-            if share_path:
-                self.config.set("export.share_path", share_path)
+            base_dir = os.path.dirname(self.config.base_config_path)
+            fd, tmp_path = tempfile.mkstemp(dir=base_dir, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(base, f, indent=2)
+                    f.write("\n")
+                os.replace(tmp_path, self.config.base_config_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
             self.logger.info("Export config updated and persisted to base_config.json")
             return {"result": "success"}
         except Exception as e:
-            self.logger.error(f"set_export_config failed: {e}")
-            return {"result": "error", "output": str(e)}
+            self.logger.error(f"set_export_config: failed to persist to base_config.json: {e}")
+            # Running config was already updated; export will work this session
+            return {"result": "partial", "output": str(e)}
 
 
     def _get_required_disk_space_mb(self) -> float:

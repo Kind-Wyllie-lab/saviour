@@ -1,0 +1,118 @@
+.hrc {
+  padding: 8px 14px;
+  border-left: 4px solid var(--border-color);
+  transition: border-color 0.3s;
+}
+
+.hrc--recording { border-left-color: #2e7d32; }
+.hrc--starting  { border-left-color: #e8a020; }
+.hrc--fault     { border-left-color: #c62828; }
+.hrc--ready     { border-left-color: var(--border-color); }
+
+.hrc--clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.hrc--clickable:hover {
+  background: color-mix(in srgb, var(--card-bg-color, #fff) 90%, var(--accent-color, #3b82f6));
+}
+
+/* ── Bar layout ─────────────────────────────────────────────────────────── */
+
+.hrc-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.hrc-spacer { flex: 1; }
+
+/* ── Status dot ─────────────────────────────────────────────────────────── */
+
+.hrc-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.hrc-dot--recording {
+  background: #2e7d32;
+  box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.2);
+  animation: hrc-pulse-green 2s ease-in-out infinite;
+}
+
+.hrc-dot--starting {
+  background: #e8a020;
+  box-shadow: 0 0 0 3px rgba(232, 160, 32, 0.2);
+  animation: hrc-pulse-amber 1.2s ease-in-out infinite;
+}
+
+.hrc-dot--fault { background: #c62828; }
+.hrc-dot--ready { background: #bbb; }
+
+@keyframes hrc-pulse-green {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.2); }
+  50%       { box-shadow: 0 0 0 6px rgba(46, 125, 50, 0.08); }
+}
+
+@keyframes hrc-pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(232, 160, 32, 0.25); }
+  50%       { box-shadow: 0 0 0 6px rgba(232, 160, 32, 0.08); opacity: 0.7; }
+}
+
+/* ── Text elements ──────────────────────────────────────────────────────── */
+
+.hrc-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hrc-state {
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hrc-state--recording { color: #2e7d32; }
+.hrc-state--starting  { color: #e8a020; }
+.hrc-state--fault     { color: #c62828; }
+.hrc-state--ready     { color: var(--text-muted, #888); }
+
+.hrc-stat {
+  font-size: 0.82rem;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hrc-sep {
+  font-size: 0.75rem;
+  color: var(--text-muted, #bbb);
+  flex-shrink: 0;
+}
+
+.hrc-since {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hrc-fault-inline {
+  font-size: 0.8rem;
+  color: #c62828;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

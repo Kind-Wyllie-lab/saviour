@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import threading
+import time
 
 
 QUEUE_FILE = "/var/lib/saviour/controller/export_queue.json"
@@ -40,9 +41,13 @@ class ExportQueue:
         self._lock = threading.Lock()
         self._queue = []          # list of (module_id, export_path, attempt)
         self._active = set()      # module_ids currently exporting
-        # Tracks (export_path, attempt) for each active module so we can
-        # re-enqueue on failure without the caller needing to pass it back.
+        # Tracks (export_path, attempt, dispatch_time) for each active module
+        # so we can re-enqueue on failure and detect stale dispatches.
         self._active_meta: dict = {}
+
+    # How long (seconds) a dispatched start_export may go unanswered before
+    # we assume the module missed it and re-dispatch on the next export_ready.
+    _STALE_DISPATCH_SECS = 900  # 15 minutes
 
     @property
     def _max_concurrent(self) -> int:
@@ -70,8 +75,38 @@ class ExportQueue:
     # -----------------------------------------------------------------------
 
     def enqueue(self, module_id: str, export_path: str) -> None:
-        """Add a module to the export queue and dispatch if capacity allows."""
+        """Add a module to the export queue and dispatch if capacity allows.
+
+        Deduplicates: if the module is already queued or actively exporting,
+        the signal is dropped — export_staged picks up ALL files in to_export/
+        so a single dispatch handles every pending segment.
+        """
         with self._lock:
+            if module_id in self._active:
+                meta = self._active_meta.get(module_id)
+                if meta:
+                    _, _, dispatch_time = meta
+                    if time.time() - dispatch_time > self._STALE_DISPATCH_SECS:
+                        self.logger.warning(
+                            f"start_export to {module_id} unanswered for "
+                            f">{self._STALE_DISPATCH_SECS // 60} min — "
+                            f"assuming dropped; clearing and re-dispatching"
+                        )
+                        self._active.discard(module_id)
+                        self._active_meta.pop(module_id, None)
+                        # fall through to normal enqueue below
+                    else:
+                        self.logger.debug(
+                            f"Export already active for {module_id} — ignoring duplicate signal"
+                        )
+                        return
+                else:
+                    return
+            if any(mid == module_id for mid, _, _ in self._queue):
+                self.logger.debug(
+                    f"Export already queued for {module_id} — ignoring duplicate signal"
+                )
+                return
             self._queue.append((module_id, export_path, 1))
             self.logger.info(
                 f"Export queued for {module_id} → {export_path}. "
@@ -102,7 +137,7 @@ class ExportQueue:
             self._active.discard(module_id)
             meta = self._active_meta.pop(module_id, None)
             if meta:
-                export_path, attempt = meta
+                export_path, attempt, *_ = meta
                 if attempt < self.MAX_RETRIES:
                     self.logger.warning(
                         f"Export failed for {module_id} (attempt {attempt}/{self.MAX_RETRIES}) "
@@ -134,7 +169,7 @@ class ExportQueue:
         while self._queue and len(self._active) < self._max_concurrent:
             module_id, export_path, attempt = self._queue.pop(0)
             self._active.add(module_id)
-            self._active_meta[module_id] = (export_path, attempt)
+            self._active_meta[module_id] = (export_path, attempt, time.time())
             self.logger.info(
                 f"Dispatching start_export to {module_id} → {export_path} "
                 f"(attempt {attempt}/{self.MAX_RETRIES})"
@@ -158,7 +193,7 @@ class ExportQueue:
                 ],
                 "active": [
                     {"module_id": mid, "export_path": path, "attempt": attempt}
-                    for mid, (path, attempt) in self._active_meta.items()
+                    for mid, (path, attempt, *_) in self._active_meta.items()
                 ],
             }
             os.makedirs(os.path.dirname(QUEUE_FILE), exist_ok=True)

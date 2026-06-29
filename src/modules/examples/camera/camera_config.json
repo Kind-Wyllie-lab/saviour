@@ -1,4 +1,7 @@
 {
+    "module": {
+        "group": "camera"
+    },
     "camera": {
         "monochrome": false,
         "hflip": false,

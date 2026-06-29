@@ -28,11 +28,22 @@ function NewSessionForm({ modules, sessionList = {} }) {
 
   const [recordingMode, setRecordingMode] = useState("immediate");
   const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
 
   useEffect(() => { setPtpSyncStatus(null); }, [target]);
   useEffect(() => {
     socket.on("ptp_sync_status", setPtpSyncStatus);
     return () => socket.off("ptp_sync_status", setPtpSyncStatus);
+  }, []);
+
+  useEffect(() => {
+    const onError = (data) => {
+      setSubmitError(data.error || "Unknown error");
+      const t = setTimeout(() => setSubmitError(null), 12000);
+      return () => clearTimeout(t);
+    };
+    socket.on("session_error", onError);
+    return () => socket.off("session_error", onError);
   }, []);
 
   // Request a fresh health snapshot on mount so PTP offset data is available
@@ -79,6 +90,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
 
   const ptpOk = ptpSyncStatus === null || ptpSyncStatus.ok;
   const canStart = experimentName && allTargetReady && !anyTargetRecording && timedDurationValid && ptpOk;
+  const canSchedule = !!experimentName;
 
   const nameAlreadyUsed = experimentName
     ? Object.values(sessionList).some(s => s.session_name.startsWith(experimentName + "-"))
@@ -117,6 +129,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!experimentName) return;
+    setSubmitError(null);
 
     if (recordingMode === "scheduled") {
       const daysArray = scheduledDays.size === 0 || scheduledDays.size === 7
@@ -258,35 +271,40 @@ function NewSessionForm({ modules, sessionList = {} }) {
           </div>
         </div>
 
+        {submitError && (
+          <p className="form-warning">{submitError}</p>
+        )}
         {nameAlreadyUsed && (
           <p className="form-warning">Session name already used — previous recordings exist with this name. Consider updating the trial or rat ID.</p>
         )}
-        {!canStart && anyTargetRecording && (
+        {recordingMode !== "scheduled" && !canStart && anyTargetRecording && (
           <p className="form-warning">One or more target modules are already recording.</p>
         )}
-        {!canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
+        {recordingMode !== "scheduled" && !canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
           <p className="form-warning">Not all target modules are ready.</p>
         )}
         {!timedDurationValid && (
           <p className="form-warning">Enter a duration greater than 0.</p>
         )}
-        {ptpSyncStatus !== null && !ptpSyncStatus.ok && (
+        {recordingMode !== "scheduled" && ptpSyncStatus !== null && !ptpSyncStatus.ok && (
           <p className="form-warning">
             PTP not synchronised —{" "}
             {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
           </p>
         )}
-        {ptpSyncStatus?.ok && (
+        {recordingMode !== "scheduled" && ptpSyncStatus?.ok && (
           <p className="form-ok">
             PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
           </p>
         )}
 
         <div className="button-row">
-          <button type="button" className="secondary-button" onClick={checkReady}>
-            Check Ready
-          </button>
-          <button type="submit" className="primary-button" disabled={!canStart}>
+          {recordingMode !== "scheduled" && (
+            <button type="button" className="secondary-button" onClick={checkReady}>
+              Check Ready
+            </button>
+          )}
+          <button type="submit" className="primary-button" disabled={recordingMode === "scheduled" ? !canSchedule : !canStart}>
             {recordingMode === "scheduled" ? "Schedule Session" : "Start Recording"}
           </button>
         </div>

@@ -183,6 +183,7 @@ class AudiomothModule(Module):
         return (labels.get(serial) or serial) if isinstance(labels, dict) else serial
 
     def _find_audiomoths(self):
+        self.audiomoths = {}  # clear stale entries before each scan
         self.mics = soundcard.all_microphones()
         for mic in self.mics:
             if "AudioMoth" in mic.name.split(" "):
@@ -454,6 +455,12 @@ class AudiomothModule(Module):
                         }
         except Exception as e:
             self.logger.error(f"Monitor thread error for audiomoth {serial}: {e}")
+        finally:
+            # Remove the entry so the meter disappears immediately rather than
+            # showing NO SIG indefinitely after disconnection or thread failure.
+            with self.monitor_data_lock:
+                self.monitor_data.pop(serial, None)
+            self.peak_hold_data.pop(serial, None)
 
         self.logger.info(f"Monitor thread finished for audiomoth {serial}")
 
@@ -797,6 +804,9 @@ class AudiomothModule(Module):
             with self.monitor_data_lock:
                 data_snapshot = dict(self.monitor_data)
 
+            if mode == 'compact_peaks':
+                return self._render_compact_peaks_frame()
+
             sample_rate = self.config.get("audiomoth.sample_rate", 192000)
             WIDTH = 800
             ROW_H = {'peaks': 90, 'waveform': 120, 'history': 120,
@@ -845,11 +855,141 @@ class AudiomothModule(Module):
             return None
 
 
-    def _generate_monitor_frames(self, mode: str = 'spectrogram',
-                                  freq_range: str = 'band',
-                                  layout: str = 'stacked'):
-        """MJPEG generator — yields frames at ~10 fps."""
+    def _render_compact_peaks_frame(self) -> bytes | None:
+        """Narrow vertical strip: one square vertical peak meter per AudioMoth,
+        sorted alphabetically by label.  Always 120 px wide."""
+        try:
+            with self.monitor_data_lock:
+                data_snapshot = dict(self.monitor_data)
+
+            CELL_W     = 120
+            LABEL_H    = 20
+            BAR_PAD    = 10
+            BAR_W      = CELL_W - 2 * BAR_PAD   # 100 px
+            BAR_H      = BAR_W                   # 100 px — square
+            SCALE_H    = 14
+            CELL_H     = LABEL_H + BAR_H + SCALE_H + BAR_PAD  # 144 px
+
+            DB_MIN, DB_MAX     = -80, 0
+            PEAK_HOLD_DURATION = float(self.config.get("monitoring.peak_hold_s", 2.0))
+
+            if not data_snapshot:
+                frame = np.zeros((200, CELL_W, 3), dtype=np.uint8)
+                cv2.putText(frame, "No signal", (8, 100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1)
+                _, jpeg = cv2.imencode('.jpg', frame)
+                return jpeg.tobytes()
+
+            serials = sorted(data_snapshot.keys(),
+                             key=lambda s: self._label_for(s).lower())
+            n       = len(serials)
+            frame   = np.zeros((n * CELL_H, CELL_W, 3), dtype=np.uint8)
+            now     = time.time()
+
+            for i, serial in enumerate(serials):
+                data     = data_snapshot[serial]
+                y0       = i * CELL_H
+                level_db = data.get('level_db', DB_MIN)
+                peak_db  = data.get('peak_db',  DB_MIN)
+                is_stale = (now - data.get('timestamp', 0)) > 0.5
+                label    = self._label_for(serial)
+
+                # ── Label ─────────────────────────────────────────────────
+                (tw, _), _ = cv2.getTextSize(
+                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+                cv2.putText(frame, label,
+                            (max(2, (CELL_W - tw) // 2), y0 + 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38,
+                            (80, 80, 80) if is_stale else (210, 210, 210), 1)
+
+                # ── Bar ───────────────────────────────────────────────────
+                bx0 = BAR_PAD;  bx1 = bx0 + BAR_W
+                by0 = y0 + LABEL_H;  by1 = by0 + BAR_H
+                cv2.rectangle(frame, (bx0, by0), (bx1, by1), (18, 18, 18), -1)
+
+                if not is_stale:
+                    lvl_norm = max(0.0, min(1.0,
+                        (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
+                    bar_top  = by1 - int(lvl_norm * BAR_H)
+                    bar_col  = (
+                        (30, 30, 210) if level_db > -6   else   # red
+                        (20, 160, 210) if level_db > -20 else   # amber
+                        (20, 180, 80)                           # green
+                    )
+                    cv2.rectangle(frame, (bx0, bar_top), (bx1, by1), bar_col, -1)
+
+                    # Peak hold line
+                    hold = self.peak_hold_data.get(
+                        serial, {'value_db': DB_MIN, 'time': 0.0})
+                    if peak_db >= hold['value_db'] or \
+                            (now - hold['time']) > PEAK_HOLD_DURATION:
+                        self.peak_hold_data[serial] = {
+                            'value_db': peak_db, 'time': now}
+                        hold_db = peak_db
+                    else:
+                        hold_db = hold['value_db']
+                    hold_norm = max(0.0, min(1.0,
+                        (hold_db - DB_MIN) / (DB_MAX - DB_MIN)))
+                    hold_y = by1 - int(hold_norm * BAR_H)
+                    cv2.line(frame, (bx0, hold_y), (bx1, hold_y),
+                             (220, 220, 220), 2)
+                else:
+                    msg = "NO SIG"
+                    (tw, th), _ = cv2.getTextSize(
+                        msg, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+                    cv2.putText(frame, msg,
+                                (bx0 + (BAR_W - tw) // 2,
+                                 by0 + (BAR_H + th) // 2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                                (55, 55, 55), 1)
+
+                cv2.rectangle(frame, (bx0, by0), (bx1, by1), (60, 60, 60), 1)
+
+                # ── dB readout ────────────────────────────────────────────
+                db_str = f"{level_db:.0f} dBFS" if not is_stale else "—"
+                (tw, _), _ = cv2.getTextSize(
+                    db_str, cv2.FONT_HERSHEY_SIMPLEX, 0.32, 1)
+                cv2.putText(frame, db_str,
+                            (bx0 + (BAR_W - tw) // 2, by1 + SCALE_H - 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.32,
+                            (100, 100, 100), 1)
+
+                if i < n - 1:
+                    cv2.line(frame,
+                             (0, y0 + CELL_H - 1), (CELL_W, y0 + CELL_H - 1),
+                             (40, 40, 40), 1)
+
+            _, jpeg = cv2.imencode('.jpg', frame,
+                                   [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return jpeg.tobytes()
+
+        except Exception as e:
+            self.logger.error(f"Compact peaks render error: {e}")
+            return None
+
+
+    def _generate_peak_frames(self):
+        """MJPEG generator for the compact peak strip — always compact_peaks."""
         while not self.should_stop_monitoring_stream:
+            frame = self._render_compact_peaks_frame()
+            if frame is not None:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" +
+                    frame +
+                    b"\r\n"
+                )
+            time.sleep(0.1)
+
+
+    def _generate_monitor_frames(self):
+        """MJPEG generator — yields frames at ~10 fps.
+        Mode, range, and layout are read from config each frame so changes
+        take effect immediately after a config save without reconnecting."""
+        while not self.should_stop_monitoring_stream:
+            mode       = self.config.get("monitoring.plot_mode",  "spectrogram")
+            freq_range = self.config.get("monitoring.freq_range", "band")
+            layout     = self.config.get("monitoring.layout",     "stacked")
             frame = self._render_monitor_frame(mode, freq_range, layout)
             if frame is not None:
                 yield (
@@ -868,13 +1008,11 @@ class AudiomothModule(Module):
 
         @self.monitoring_app.route('/video_feed')
         def video_feed():
-            mode       = request.args.get('mode',   'spectrogram')
-            freq_range = request.args.get('range',  'band')
-            layout     = request.args.get('layout', 'stacked')
             return Response(
-                self._generate_monitor_frames(mode, freq_range, layout),
+                self._generate_monitor_frames(),
                 mimetype='multipart/x-mixed-replace; boundary=frame'
             )
+
 
 
     def run_monitoring_server(self, port: int = 8081) -> None:

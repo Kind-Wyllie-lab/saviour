@@ -126,6 +126,7 @@ function SessionList({ sessionList, modules = [] }) {
   const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
   const [shareInfo, setShareInfo] = useState(null);
   const [pendingClearAll, setPendingClearAll] = useState(false);
+  const [forceStartErrors, setForceStartErrors] = useState({}); // session_name → error string
 
   useEffect(() => {
     socket.emit("get_controller_samba_info");
@@ -134,8 +135,29 @@ function SessionList({ sessionList, modules = [] }) {
     return () => socket.off("controller_samba_info_response", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = ({ session_name, success, error }) => {
+      if (!success && session_name && error) {
+        setForceStartErrors(prev => ({ ...prev, [session_name]: error }));
+        setTimeout(() => {
+          setForceStartErrors(prev => {
+            const next = { ...prev };
+            delete next[session_name];
+            return next;
+          });
+        }, 8000);
+      }
+    };
+    socket.on("force_start_result", handler);
+    return () => socket.off("force_start_result", handler);
+  }, []);
+
   const handleStop = (sessionName) => {
     socket.emit("stop_session", { session_name: sessionName });
+  };
+
+  const handleForceStart = (sessionName) => {
+    socket.emit("force_start_session", { session_name: sessionName });
   };
 
   const handleDeleteConfirm = (sessionName) => {
@@ -379,6 +401,10 @@ function SessionList({ sessionList, modules = [] }) {
                     </div>
                   )}
 
+                  {forceStartErrors[session.session_name] && (
+                    <p className="session-error-message">{forceStartErrors[session.session_name]}</p>
+                  )}
+
                   <div className="session-actions">
                     {(isActive || isStarting || isError) && (
                       <button
@@ -389,11 +415,29 @@ function SessionList({ sessionList, modules = [] }) {
                       </button>
                     )}
                     {isScheduled && (
+                      <>
+                        <button
+                          className="session-btn session-btn--start"
+                          onClick={() => handleForceStart(session.session_name)}
+                          title="Start recording now, bypassing the scheduled time window"
+                        >
+                          Start Now
+                        </button>
+                        <button
+                          className="session-btn session-btn--stop"
+                          onClick={() => handleStop(session.session_name)}
+                        >
+                          Cancel Schedule
+                        </button>
+                      </>
+                    )}
+                    {isError && session.scheduled && (
                       <button
-                        className="session-btn session-btn--stop"
-                        onClick={() => handleStop(session.session_name)}
+                        className="session-btn session-btn--start"
+                        onClick={() => handleForceStart(session.session_name)}
+                        title="Retry this scheduled session now"
                       >
-                        Cancel Schedule
+                        Retry Now
                       </button>
                     )}
                     {(isActive || isStarting || isError) && candidates.length > 0 && (

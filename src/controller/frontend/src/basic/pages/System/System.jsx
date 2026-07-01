@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useEffect, useState, useRef } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
@@ -107,6 +107,54 @@ export default function System() {
     socket.emit("remove_module", { id: removeTarget.id });
     setRemoveTarget(null);
   };
+
+  // ── Shutdown module ───────────────────────────────────────────────────────
+  const [shutdownTarget, setShutdownTarget] = useState(null); // { id, name }
+  const [shutdownStates, setShutdownStates] = useState({}); // { module_id: "sent" | "acked" }
+  const shutdownTimers = useRef({});
+
+  const clearShutdownState = (id) => {
+    setShutdownStates(prev => { const n = { ...prev }; delete n[id]; return n; });
+    clearTimeout(shutdownTimers.current[id]);
+    delete shutdownTimers.current[id];
+  };
+
+  const handleShutdownConfirm = () => {
+    if (!shutdownTarget) return;
+    const id = shutdownTarget.id;
+    socket.emit("send_command", { module_id: id, type: "shutdown", params: {} });
+    setShutdownStates(prev => ({ ...prev, [id]: "sent" }));
+    setShutdownTarget(null);
+    // Fallback: clear after 90 s (heartbeat timeout) in case the offline
+    // transition never fires in this browser session
+    clearTimeout(shutdownTimers.current[id]);
+    shutdownTimers.current[id] = setTimeout(() => clearShutdownState(id), 90000);
+  };
+
+  useEffect(() => {
+    const onAck = ({ module_id }) => {
+      setShutdownStates(prev => ({ ...prev, [module_id]: "acked" }));
+    };
+    socket.on("module_shutdown_ack", onAck);
+    return () => socket.off("module_shutdown_ack", onAck);
+  }, []);
+
+  // Clear shutdown state once a module goes offline (shutdown complete)
+  useEffect(() => {
+    setShutdownStates(prev => {
+      const updated = { ...prev };
+      let changed = false;
+      Object.keys(updated).forEach(id => {
+        if (!modules[id]?.online) {
+          delete updated[id];
+          changed = true;
+          clearTimeout(shutdownTimers.current[id]);
+          delete shutdownTimers.current[id];
+        }
+      });
+      return changed ? updated : prev;
+    });
+  }, [modules]);
 
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
@@ -259,7 +307,7 @@ export default function System() {
             {moduleRows.map((row) => {
               const isOnline = modules[row.id]?.online ?? false;
               return (
-                <tr key={row.id}>
+                <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                   <td>
                     <span className="device-name">{row.name}</span>
                     <span className="device-id">{row.id}</span>
@@ -267,13 +315,36 @@ export default function System() {
                   <td>{statusCell(row.status ?? "offline")}</td>
                   <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
                   <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
-                  <td>{cpuCell(row.cpu_usage)}</td>
-                  <td>{tempCell(row.cpu_temp)}</td>
-                  <td>{memoryCell(row.memory_usage, row.memory_total_gb)}</td>
-                  <td>{diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb)}</td>
-                  <td>{ptpCell(row.ptp4l_offset_ns)}</td>
+                  <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? ptpCell(row.ptp4l_offset_ns) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
+                    {(() => {
+                      const sdState = shutdownStates[row.id];
+                      if (sdState && isOnline) {
+                        return (
+                          <span className="shutdown-progress">
+                            {sdState === "acked" ? "Powering off…" : "Shutting down…"}
+                          </span>
+                        );
+                      }
+                      if (!sdState && isOnline) {
+                        return (
+                          <button
+                            type="button"
+                            className="remove-btn shutdown-btn"
+                            style={{marginRight: "6px"}}
+                            onClick={() => setShutdownTarget({ id: row.id, name: row.name })}
+                          >
+                            Shutdown
+                          </button>
+                        );
+                      }
+                      return null;
+                    })()}
                     <button
                       type="button"
                       className="remove-btn"
@@ -334,6 +405,25 @@ export default function System() {
         </div>
       )}
 
+
+      {shutdownTarget && (
+        <div className="modal-overlay" onClick={() => setShutdownTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Shut down <strong>{shutdownTarget.name}</strong>?</p>
+            <p className="modal-subtext">
+              The module will power off. It will be re-added automatically when it comes back online.
+            </p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleShutdownConfirm}>
+                Shutdown
+              </button>
+              <button className="save-button" type="button" onClick={() => setShutdownTarget(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {removeTarget && (
         <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>

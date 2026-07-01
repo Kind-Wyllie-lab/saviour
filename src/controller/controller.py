@@ -477,8 +477,8 @@ class Controller(ABC):
         """Callback for when a new module is discovered"""
         self.logger.info(f"Module discovered: {module.id}")
         if self.modules.is_removed(module.id):
-            self.logger.info(f"Ignoring rediscovery of explicitly removed module {module.id}")
-            return
+            self.logger.info(f"Previously removed module {module.id} has reappeared — re-adding")
+            self.modules.clear_removed(module.id)
         
         # Add module to health monitor with initial offline status
         # This allows the health monitor to track the module even before it sends heartbeat

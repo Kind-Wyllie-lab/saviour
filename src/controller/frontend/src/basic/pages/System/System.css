@@ -88,6 +88,15 @@
   font-weight: 500;
 }
 
+.system-table__offline-row td {
+  opacity: 0.5;
+}
+
+.system-table__offline-row td:first-child,
+.system-table__offline-row td:nth-child(2) {
+  opacity: 1;
+}
+
 .system-table__empty {
   text-align: center;
   padding: 24px !important;
@@ -161,6 +170,24 @@
 
 .remove-btn:hover {
   background: color-mix(in srgb, #cc3333 12%, transparent);
+}
+
+.shutdown-btn {
+  border-color: color-mix(in srgb, var(--border-color) 80%, transparent);
+  color: var(--text-color);
+}
+
+.shutdown-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.shutdown-progress {
+  font-size: 0.82em;
+  opacity: 0.6;
+  font-style: italic;
+  margin-right: 6px;
 }
 
 .modal-subtext--warn {

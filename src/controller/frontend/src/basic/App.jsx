@@ -12,6 +12,7 @@ import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
 import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
+import ConnectionOverlay from "./components/ConnectionOverlay/ConnectionOverlay";
 import useClockOnce from "/src/hooks/useClockOnce";
 import useSessions from "/src/hooks/useSessions";
 import socket from "/src/socket";
@@ -135,6 +136,7 @@ function App() {
           onAcknowledge={handleAcknowledge}
         />
       )}
+      <ConnectionOverlay />
     </div>
   );
 }

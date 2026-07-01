@@ -10,6 +10,7 @@ import Settings from "/src/basic/pages/Settings/Settings";
 import System from "/src/basic/pages/System/System";
 
 import Dashboard from "/src/acoustic_startle/pages/AcousticStartleDashboard/AcousticStartleDashboard";
+import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 
 document.title="Acoustic Startle";
 
@@ -42,6 +43,7 @@ function App() {
             </Routes>
             </div>
         </div>
+      <ConnectionOverlay />
     )
 }
 

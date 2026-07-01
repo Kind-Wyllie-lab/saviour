@@ -101,6 +101,11 @@ class Health:
         if module_id in self.module_health.keys():
             self.module_health.pop(module_id)
 
+    def force_offline(self, module_id: str) -> None:
+        """Immediately mark a module offline — used when mDNS goodbye is received."""
+        if module_id in self.module_health:
+            self._confirm_module_offline(module_id, 0)
+
 
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
         """

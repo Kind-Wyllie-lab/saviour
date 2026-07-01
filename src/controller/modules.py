@@ -140,6 +140,9 @@ class Modules:
     def is_removed(self, module_id: str) -> bool:
         return module_id in self._removed_ids
 
+    def clear_removed(self, module_id: str) -> None:
+        self._removed_ids.discard(module_id)
+
 
     def module_discovery(self, module: Module) -> None:
         """Called by Network when zeroconf reports a new or updated module."""

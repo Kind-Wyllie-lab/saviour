@@ -106,6 +106,22 @@ detect_interface_name() {
 }
 
 # ── Menus ──────────────────────────────────────────────────────────────────────
+run_mend() {
+    local mend_script="$DIR/mend.sh"
+    if [ ! -f "$mend_script" ]; then
+        whiptail --title "Not Found" --msgbox "\nmend.sh not found at $mend_script" 7 $W || true
+        return
+    fi
+    whiptail --title "Repair / Update" \
+        --yesno "\nThis will pull the latest code, rebuild dependencies, and restart the service.\n\nThe process takes a few minutes. Continue?" \
+        10 $W || return
+    tput rmcup 2>/dev/null || clear
+    bash "$mend_script"
+    echo ""
+    echo "Press Enter to return to the configuration menu..."
+    read -r
+}
+
 main_menu() {
     if detect_clone; then
         clone_fix_menu
@@ -124,11 +140,12 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 5 \
+            $H $W 6 \
             "configure" "Configure this device  (role / type)" \
             "network"   "Network settings  (controller only)" \
             "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
             "view"      "View current configuration" \
+            "mend"      "Repair / update this device" \
             "exit"      "Exit") || return 0
 
         case "$choice" in
@@ -136,6 +153,7 @@ main_menu() {
             network)   network_settings ;;
             refresh)   clone_fix_menu ;;
             view)      view_config ;;
+            mend)      run_mend ;;
             exit)      return 0 ;;
         esac
     done

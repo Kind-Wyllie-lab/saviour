@@ -145,6 +145,7 @@ class Module(ABC):
             'shutdown': self._shutdown,
             "update_saviour": self.update_saviour,
             "reboot": self.reboot,
+            "restart_service": self.restart_service,
             "reset_config": self.reset_config,
             "start_export": self.start_export,
             "set_export_config": self.set_export_config,
@@ -221,6 +222,21 @@ class Module(ABC):
 
     def reboot(self) -> None:
         os.system("sudo reboot now")
+
+    def restart_service(self) -> dict:
+        """Restart the saviour service. Sends ack before restarting so the controller hears it."""
+        import threading, time as _time
+        def _do_restart():
+            self.communication.send_status({
+                "type": "cmd_ack",
+                "command": "restart_service",
+                "result": "success",
+                "output": "Service restarting…",
+            })
+            _time.sleep(1)
+            subprocess.run(["sudo", "systemctl", "restart", "saviour.service"])
+        threading.Thread(target=_do_restart, daemon=True, name="saviour-restart").start()
+        return {"result": "started"}
 
 
     def update_saviour(self) -> dict:

@@ -1352,11 +1352,13 @@ class Web(ABC):
                             "audiomoths": status.get("audiomoths", {}),
                         })
                     elif command == "update_saviour":
-                        self.socketio.emit("module_update_result", {
-                            "module_id": module_id,
-                            "success": status.get("result") == "success",
-                            "output": status.get("output", ""),
-                        })
+                        result = status.get("result")
+                        if result in ("success", "error"):
+                            self.socketio.emit("module_update_result", {
+                                "module_id": module_id,
+                                "success": result == "success",
+                                "output": status.get("output", ""),
+                            })
                     elif command == "shutdown":
                         self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
                     else:

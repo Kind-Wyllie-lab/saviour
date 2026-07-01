@@ -183,6 +183,13 @@
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
+.shutdown-progress {
+  font-size: 0.82em;
+  opacity: 0.6;
+  font-style: italic;
+  margin-right: 6px;
+}
+
 .modal-subtext--warn {
   color: #cc3333;
 }

@@ -933,9 +933,23 @@ class Web(ABC):
             threading.Thread(target=_run_update, daemon=True).start()
 
 
+        @self.socketio.on('shutdown_saviour')
+        def handle_shutdown_saviour(data=None):
+            self.logger.info("Shutdown SAVIOUR requested — sending shutdown to all modules then shutting down controller")
+            for mid in list(self.facade.get_modules().keys()):
+                try:
+                    self.facade.send_command(mid, "shutdown", {})
+                except Exception as e:
+                    self.logger.error(f"Failed to send shutdown to module {mid}: {e}")
+            self.socketio.emit("shutdown_saviour_ack", {})
+            def _shutdown():
+                time.sleep(5)
+                subprocess.Popen(['sudo', 'shutdown', 'now'])
+            threading.Thread(target=_shutdown, daemon=True).start()
+
+
         @self.socketio.on('reboot_saviour')
         def handle_reboot_saviour(data=None):
-            import subprocess
             self.logger.info("Reboot SAVIOUR requested — sending reboot to all modules then rebooting controller")
             for mid in list(self.facade.get_modules().keys()):
                 try:
@@ -947,6 +961,36 @@ class Web(ABC):
                 time.sleep(3)
                 subprocess.Popen(['sudo', 'reboot'])
             threading.Thread(target=_reboot, daemon=True).start()
+
+
+        @self.socketio.on('restart_saviour_controller_service')
+        def handle_restart_controller_service(data=None):
+            self.logger.info("Controller service restart requested")
+            self.socketio.emit("controller_action_ack", {"action": "restart_service"})
+            def _restart():
+                time.sleep(1)
+                subprocess.Popen(['sudo', 'systemctl', 'restart', 'saviour.service'])
+            threading.Thread(target=_restart, daemon=True).start()
+
+
+        @self.socketio.on('reboot_controller')
+        def handle_reboot_controller(data=None):
+            self.logger.info("Controller reboot requested")
+            self.socketio.emit("controller_action_ack", {"action": "reboot"})
+            def _reboot():
+                time.sleep(2)
+                subprocess.Popen(['sudo', 'reboot'])
+            threading.Thread(target=_reboot, daemon=True).start()
+
+
+        @self.socketio.on('shutdown_controller')
+        def handle_shutdown_controller(data=None):
+            self.logger.info("Controller shutdown requested")
+            self.socketio.emit("controller_action_ack", {"action": "shutdown"})
+            def _shutdown():
+                time.sleep(2)
+                subprocess.Popen(['sudo', 'shutdown', 'now'])
+            threading.Thread(target=_shutdown, daemon=True).start()
 
 
         @self.socketio.on("set_controller_time")

@@ -10,6 +10,7 @@ function Sidebar({ navItems }) {
   const [showPowerModal, setShowPowerModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateState, setUpdateState] = useState(null); // null | "updating" | "done"
+  const [shutdownState, setShutdownState] = useState(null); // null | "sent" | "acked"
   const [hostname, setHostname] = useState(null);
 
   useEffect(() => {
@@ -26,8 +27,14 @@ function Sidebar({ navItems }) {
 
   const handleShutdownAll = () => {
     socket.emit("shutdown_saviour");
-    setShowPowerModal(false);
+    setShutdownState("sent");
   };
+
+  useEffect(() => {
+    const onAck = () => setShutdownState("acked");
+    socket.on("shutdown_saviour_ack", onAck);
+    return () => socket.off("shutdown_saviour_ack", onAck);
+  }, []);
 
   const handleUpdateAll = () => {
     if (updateState === "updating") return;
@@ -119,25 +126,36 @@ function Sidebar({ navItems }) {
         </div>
       )}
 
-      {showPowerModal && (
-        <div className="modal-overlay" onClick={() => setShowPowerModal(false)}>
+      {(showPowerModal || shutdownState) && (
+        <div className="modal-overlay" onClick={() => { if (!shutdownState) setShowPowerModal(false); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Power action for <strong>all modules and controller</strong></p>
-            <p className="modal-subtext">
-              Reboot will restart all devices and reconnect automatically.<br />
-              Shutdown will power off all devices — manual restart required.
-            </p>
-            <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={handleRebootAll}>
-                Reboot All
-              </button>
-              <button className="reset-button" type="button" onClick={handleShutdownAll}>
-                Shutdown All
-              </button>
-              <button className="save-button" type="button" onClick={() => setShowPowerModal(false)}>
-                Cancel
-              </button>
-            </div>
+            {shutdownState ? (<>
+              <p>
+                {shutdownState === "acked" ? "Powering off…" : "Shutting down…"}
+              </p>
+              <p className="modal-subtext">
+                {shutdownState === "acked"
+                  ? "Shutdown command acknowledged. All devices are powering off."
+                  : "Sending shutdown command to all devices…"}
+              </p>
+            </>) : (<>
+              <p>Power action for <strong>all modules and controller</strong></p>
+              <p className="modal-subtext">
+                Reboot will restart all devices and reconnect automatically.<br />
+                Shutdown will power off all devices — manual restart required.
+              </p>
+              <div className="modal-buttons">
+                <button className="save-button" type="button" onClick={handleRebootAll}>
+                  Reboot All
+                </button>
+                <button className="reset-button" type="button" onClick={handleShutdownAll}>
+                  Shutdown All
+                </button>
+                <button className="save-button" type="button" onClick={() => setShowPowerModal(false)}>
+                  Cancel
+                </button>
+              </div>
+            </>)}
           </div>
         </div>
       )}

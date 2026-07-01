@@ -173,6 +173,18 @@ export default function System() {
     });
   }, [modules]);
 
+  // ── Controller actions ────────────────────────────────────────────────────
+  const [showControllerActions, setShowControllerActions] = useState(false);
+  const [controllerActionTarget, setControllerActionTarget] = useState(null); // "restart_service" | "reboot" | "shutdown"
+
+  const handleControllerActionConfirm = () => {
+    if (!controllerActionTarget) return;
+    if (controllerActionTarget === "restart_service") socket.emit("restart_saviour_controller_service");
+    else if (controllerActionTarget === "reboot") socket.emit("reboot_controller");
+    else if (controllerActionTarget === "shutdown") socket.emit("shutdown_controller");
+    setControllerActionTarget(null);
+  };
+
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
 
@@ -312,10 +324,10 @@ export default function System() {
               <td>
                 <button
                   type="button"
-                  className="remove-btn sync-btn"
-                  onClick={() => setShowClockModal(true)}
+                  className="action-menu-btn"
+                  onClick={() => setShowControllerActions(true)}
                 >
-                  Set Time
+                  Actions ▾
                 </button>
               </td>
             </tr>
@@ -408,6 +420,65 @@ export default function System() {
         </div>
       )}
 
+
+      {showControllerActions && (
+        <div className="modal-overlay" onClick={() => setShowControllerActions(false)}>
+          <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
+            <p className="actions-modal__title">Controller</p>
+            <div className="actions-modal__list">
+              <button type="button" className="actions-modal__item"
+                onClick={() => { setShowClockModal(true); setShowControllerActions(false); }}>
+                <span>Set Time</span>
+                <span className="actions-modal__hint">Manually set the controller clock</span>
+              </button>
+              <button type="button" className="actions-modal__item"
+                onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
+                <span>Restart service</span>
+                <span className="actions-modal__hint">Restarts the SAVIOUR program — controller does not reboot, reconnects automatically</span>
+              </button>
+              <button type="button" className="actions-modal__item"
+                onClick={() => { setControllerActionTarget("reboot"); setShowControllerActions(false); }}>
+                <span>Reboot</span>
+                <span className="actions-modal__hint">Reboots the controller Pi — reconnects automatically</span>
+              </button>
+              <div className="actions-modal__divider" />
+              <button type="button" className="actions-modal__item actions-modal__item--danger"
+                onClick={() => { setControllerActionTarget("shutdown"); setShowControllerActions(false); }}>
+                <span>Shutdown</span>
+                <span className="actions-modal__hint">Powers off the controller — requires manual power cycle to restart</span>
+              </button>
+            </div>
+            <div className="modal-buttons" style={{ marginTop: "8px" }}>
+              <button className="save-button" type="button" onClick={() => setShowControllerActions(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {controllerActionTarget && (
+        <div className="modal-overlay" onClick={() => setControllerActionTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            {controllerActionTarget === "restart_service" && <>
+              <p>Restart the controller service?</p>
+              <p className="modal-subtext">The SAVIOUR program will restart. The controller will briefly disconnect then reconnect automatically.</p>
+            </>}
+            {controllerActionTarget === "reboot" && <>
+              <p>Reboot the controller?</p>
+              <p className="modal-subtext">The controller Pi will reboot. It will reconnect automatically after restart. Any active recording sessions will be interrupted.</p>
+            </>}
+            {controllerActionTarget === "shutdown" && <>
+              <p>Shut down the controller?</p>
+              <p className="modal-subtext modal-subtext--warn">The controller will power off. A manual power cycle is required to bring it back online. Any active recording sessions will be interrupted.</p>
+            </>}
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleControllerActionConfirm}>
+                {controllerActionTarget === "restart_service" ? "Restart" : controllerActionTarget === "reboot" ? "Reboot" : "Shutdown"}
+              </button>
+              <button className="save-button" type="button" onClick={() => setControllerActionTarget(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {actionTarget && (
         <div className="modal-overlay" onClick={() => setActionTarget(null)}>

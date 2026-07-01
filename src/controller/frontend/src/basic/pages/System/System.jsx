@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useEffect, useState, useRef } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
@@ -110,12 +110,51 @@ export default function System() {
 
   // ── Shutdown module ───────────────────────────────────────────────────────
   const [shutdownTarget, setShutdownTarget] = useState(null); // { id, name }
+  const [shutdownStates, setShutdownStates] = useState({}); // { module_id: "sent" | "acked" }
+  const shutdownTimers = useRef({});
+
+  const clearShutdownState = (id) => {
+    setShutdownStates(prev => { const n = { ...prev }; delete n[id]; return n; });
+    clearTimeout(shutdownTimers.current[id]);
+    delete shutdownTimers.current[id];
+  };
 
   const handleShutdownConfirm = () => {
     if (!shutdownTarget) return;
-    socket.emit("send_command", { module_id: shutdownTarget.id, type: "shutdown", params: {} });
+    const id = shutdownTarget.id;
+    socket.emit("send_command", { module_id: id, type: "shutdown", params: {} });
+    setShutdownStates(prev => ({ ...prev, [id]: "sent" }));
     setShutdownTarget(null);
+    // Fallback: clear after 90 s (heartbeat timeout) in case the offline
+    // transition never fires in this browser session
+    clearTimeout(shutdownTimers.current[id]);
+    shutdownTimers.current[id] = setTimeout(() => clearShutdownState(id), 90000);
   };
+
+  useEffect(() => {
+    const onAck = ({ module_id }) => {
+      setShutdownStates(prev => ({ ...prev, [module_id]: "acked" }));
+    };
+    socket.on("module_shutdown_ack", onAck);
+    return () => socket.off("module_shutdown_ack", onAck);
+  }, []);
+
+  // Clear shutdown state once a module goes offline (shutdown complete)
+  useEffect(() => {
+    setShutdownStates(prev => {
+      const updated = { ...prev };
+      let changed = false;
+      Object.keys(updated).forEach(id => {
+        if (!modules[id]?.online) {
+          delete updated[id];
+          changed = true;
+          clearTimeout(shutdownTimers.current[id]);
+          delete shutdownTimers.current[id];
+        }
+      });
+      return changed ? updated : prev;
+    });
+  }, [modules]);
 
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
@@ -283,16 +322,29 @@ export default function System() {
                   <td>{isOnline ? ptpCell(row.ptp4l_offset_ns) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
-                    {isOnline && (
-                      <button
-                        type="button"
-                        className="remove-btn shutdown-btn"
-                        style={{marginRight: "6px"}}
-                        onClick={() => setShutdownTarget({ id: row.id, name: row.name })}
-                      >
-                        Shutdown
-                      </button>
-                    )}
+                    {(() => {
+                      const sdState = shutdownStates[row.id];
+                      if (sdState && isOnline) {
+                        return (
+                          <span className="shutdown-progress">
+                            {sdState === "acked" ? "Powering off…" : "Shutting down…"}
+                          </span>
+                        );
+                      }
+                      if (!sdState && isOnline) {
+                        return (
+                          <button
+                            type="button"
+                            className="remove-btn shutdown-btn"
+                            style={{marginRight: "6px"}}
+                            onClick={() => setShutdownTarget({ id: row.id, name: row.name })}
+                          >
+                            Shutdown
+                          </button>
+                        );
+                      }
+                      return null;
+                    })()}
                     <button
                       type="button"
                       className="remove-btn"

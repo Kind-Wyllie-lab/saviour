@@ -737,12 +737,18 @@ class Module(ABC):
         return f"REC_{timestamp}_{module_id}" # Generate a new session ID
 
 
-    def _shutdown(self): 
+    def _shutdown(self):
         """Shut down the module"""
         try:
-            # Stop the module gracefully
+            # Ack before shutdown — the command dispatcher sends its ack after
+            # the handler returns, but the process is killed by systemd before
+            # that happens, so we must send it here while the socket is alive.
+            self.communication.send_status({
+                "type": "cmd_ack",
+                "command": "shutdown",
+                "result": "success",
+            })
             if self.stop():
-                # Only shutdown system if module stopped successfully
                 subprocess.run(["sudo", "shutdown", "now"])
             else:
                 self.logger.error("Failed to stop module, not shutting down system")

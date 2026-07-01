@@ -1357,6 +1357,8 @@ class Web(ABC):
                             "success": status.get("result") == "success",
                             "output": status.get("output", ""),
                         })
+                    elif command == "shutdown":
+                        self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
                     else:
                         self.handle_special_module_status(module_id, status)
 

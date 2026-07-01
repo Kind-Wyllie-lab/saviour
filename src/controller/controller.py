@@ -299,6 +299,9 @@ class Controller(ABC):
             self.facade.module_offline(module_id)
 
         self.modules.notify_module_online_update(module_id, online)
+        # Push updated health (including status field) so the frontend status dot
+        # reflects the new state without waiting for the next get_health poll.
+        self.web.broadcast_module_health()
 
 
     def _setup_logging(self): 

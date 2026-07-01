@@ -65,7 +65,7 @@ echo ""
 
 # ── 1. Pull latest code ────────────────────────────────────────────────────────
 
-section "1/7  Code update"
+section "1/8  Code update"
 
 cd "$TARGET_DIR"
 
@@ -87,7 +87,7 @@ fi
 
 # ── 2. System packages ─────────────────────────────────────────────────────────
 
-section "2/7  System packages"
+section "2/8  System packages"
 
 sudo apt-get update -y -qq
 
@@ -140,7 +140,7 @@ done
 
 # ── 3. Python environment ──────────────────────────────────────────────────────
 
-section "3/7  Python environment"
+section "3/8  Python environment"
 
 if [ ! -d "$TARGET_DIR/env" ]; then
     fix "Creating virtual environment"
@@ -155,9 +155,40 @@ pip install --quiet --force-reinstall simplejpeg >> "$LOG" 2>&1
 
 ok "Python environment up to date"
 
-# ── 4. AudioMoth USB command ───────────────────────────────────────────────────
+# ── 4. Frontend build (controller only) ───────────────────────────────────────
 
-section "4/7  AudioMoth-USB-Microphone"
+section "4/8  Frontend build"
+
+if [ -f /etc/saviour/config ]; then
+    # shellcheck source=/dev/null
+    source /etc/saviour/config
+    if [ "${ROLE:-none}" = "controller" ]; then
+        NVM_DIR="/home/${SUDO_USER:-pi}/.nvm"
+        export NVM_DIR
+        # shellcheck source=/dev/null
+        [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+
+        if command -v npm &>/dev/null; then
+            fix "Rebuilding frontend for ${TYPE:-unknown} controller"
+            cd "$TARGET_DIR/src/controller/frontend"
+            npm install --silent >> "$LOG" 2>&1
+            npm run build >> "$LOG" 2>&1
+            cd "$TARGET_DIR"
+            ok "Frontend rebuilt"
+        else
+            warn "npm not found — skipping frontend build"
+            warn "Run manually: cd $TARGET_DIR/src/controller/frontend && npm run build"
+        fi
+    else
+        ok "Module device — no frontend to rebuild"
+    fi
+else
+    warn "No /etc/saviour/config found — skipping frontend build"
+fi
+
+# ── 5. AudioMoth USB command ───────────────────────────────────────────────────
+
+section "5/8  AudioMoth-USB-Microphone"
 
 BINARY_PATH="/usr/local/bin/AudioMoth-USB-Microphone"
 REPO="OpenAcousticDevices/AudioMoth-USB-Microphone-Cmd"
@@ -183,7 +214,7 @@ fi
 
 # ── 5. saviour-config symlink ──────────────────────────────────────────────────
 
-section "5/7  saviour-config"
+section "6/8  saviour-config"
 
 SAVIOUR_CONFIG_SRC="$TARGET_DIR/saviour-config"
 SAVIOUR_CONFIG_LINK="/usr/local/bin/saviour-config"
@@ -202,7 +233,7 @@ fi
 
 # ── 6. Logging + NTP ──────────────────────────────────────────────────────────
 
-section "6/7  Logging + NTP"
+section "7/8  Logging + NTP"
 
 # Persistent journald logging
 if grep -q "Storage=persistent" /etc/systemd/journald.conf 2>/dev/null; then
@@ -234,7 +265,7 @@ fi
 
 # ── 7. Restart service ─────────────────────────────────────────────────────────
 
-section "7/7  Service restart"
+section "8/8  Service restart"
 
 if systemctl is-active --quiet saviour.service; then
     fix "Restarting saviour.service to pick up code changes"

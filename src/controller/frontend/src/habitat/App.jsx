@@ -10,6 +10,7 @@ import Recording from '../basic/pages/Recording/Recording';
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Monitor from "./pages/Monitor/Monitor";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
+import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useSessions from "/src/hooks/useSessions";
 
 
@@ -74,6 +75,7 @@ function App() {
         </Routes>
       </div>
 
+      <ConnectionOverlay />
       {pendingFaults.length > 0 && (
         <FaultAlertModal
           faultedSessions={pendingFaults}

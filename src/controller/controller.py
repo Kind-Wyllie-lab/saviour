@@ -499,8 +499,10 @@ class Controller(ABC):
             self.web.notify_module_update()
 
 
-    def on_module_removed(self, module):
-        """Callback for when a module network is removed"""
+    def on_module_removed(self, module_id):
+        """Callback for when a module sends an mDNS goodbye (graceful shutdown)."""
+        self.logger.info(f"mDNS goodbye from {module_id} — marking offline immediately")
+        self.health.force_offline(module_id)
         self.web.notify_module_update()
 
 

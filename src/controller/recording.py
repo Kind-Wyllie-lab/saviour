@@ -20,6 +20,7 @@ from enum import StrEnum
 
 
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
+_SHARE_ROOT_DEFAULT = "/home/pi/controller_share"
 
 _MONITOR_INTERVAL_SECS = 5
 
@@ -211,7 +212,7 @@ class Recording:
 
     def _check_share_writable(self) -> Optional[str]:
         """Return an error string if the controller share is not writable, else None."""
-        share = "/home/pi/controller_share"
+        share = self._get_share_root()
         probe = os.path.join(share, ".saviour_write_probe")
         try:
             with open(probe, "w") as f:
@@ -227,7 +228,7 @@ class Recording:
         Returns {"ok": True, "free_pct": float, "free_gb": float} on success, or
         {"ok": False, "error": str} if the share is unreachable or the call fails.
         """
-        share = "/home/pi/controller_share"
+        share = self._get_share_root()
         try:
             usage = shutil.disk_usage(share)
             free_pct = usage.free / usage.total * 100
@@ -339,6 +340,8 @@ class Recording:
         self.logger.info(
             f"Session '{session_name}' created targeting {target} ({len(modules)} modules)"
         )
+        self._log_session_event(session_name, "INFO",
+            f"Session started — modules: {', '.join(modules)}")
         self.facade.send_alert(
             key=f"session_started_{session_name}",
             title=f"Recording started — {session_name}",
@@ -413,7 +416,7 @@ class Recording:
             return {"error": f"Cannot delete a session in state '{session.state}' — stop it first"}
 
         if delete_files:
-            share_dir = f"/home/pi/controller_share/{session_name}"
+            share_dir = os.path.join(self._get_share_root(), session_name)
             if os.path.isdir(share_dir):
                 try:
                     shutil.rmtree(share_dir)
@@ -558,9 +561,11 @@ class Recording:
                 self._export_failure_streak[module_id] = 0
             elif state == "failed":
                 self.sessions[session_name].total_exports_failed += 1
-                self._export_failure_streak[module_id] = (
-                    self._export_failure_streak.get(module_id, 0) + 1
-                )
+                streak = self._export_failure_streak.get(module_id, 0) + 1
+                self._export_failure_streak[module_id] = streak
+                self._log_session_event(session_name, "WARNING",
+                    f"Export failed for {module_id} — path: {export_path}"
+                    + (f" ({streak} consecutive failures)" if streak > 1 else ""))
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -665,6 +670,7 @@ class Recording:
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
             self.logger.info(f"Session '{session_name}' → ERROR: {module_id} offline")
+            self._log_session_event(session_name, "FAULT", f"{module_id} went offline")
             self.facade.send_alert(
                 key=f"module_offline_{module_id}",
                 title=f"Module offline — {module_id}",
@@ -709,6 +715,8 @@ class Recording:
             self.logger.info(
                 f"Module {module_id} back online — restarted recording in '{session_name}'"
             )
+            self._log_session_event(session_name, "RECOVERY",
+                f"{module_id} came back online — recording resumed")
 
 
     def handle_module_health_response(self, module_id: str, is_recording: bool) -> None:
@@ -786,6 +794,12 @@ class Recording:
         self.logger.info(
             f"All modules confirmed stopped — session '{session_name}' → {new_state}"
         )
+        if new_state == SessionState.STOPPED:
+            self._log_session_event(session_name, "INFO",
+                "Session stopped — all modules confirmed")
+        else:
+            self._log_session_event(session_name, "INFO",
+                "Daily recording run ended")
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
@@ -933,6 +947,8 @@ class Recording:
                     session.scheduled_last_start_date = today
                 self.facade.update_sessions(self.sessions)
                 self._save_sessions()
+                self._log_session_event(session_name, "FAULT",
+                    f"Scheduled recording blocked — NAS full: {err}")
                 self.facade.send_alert(
                     key=f"nas_full_{session_name}_{today}",
                     title=f"Scheduled recording blocked — NAS nearly full",
@@ -980,6 +996,8 @@ class Recording:
                 session.scheduled_last_start_date = today
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
+            self._log_session_event(session_name, "FAULT",
+                f"Scheduled recording blocked — PTP not synchronised: {ptp['error']}")
             self.facade.send_alert(
                 key=f"ptp_fail_{session_name}_{today}",
                 title=f"Scheduled recording blocked — PTP not synchronised",
@@ -1013,6 +1031,8 @@ class Recording:
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Scheduled session '{session_name}' started for {today}")
+        self._log_session_event(session_name, "INFO",
+            f"Scheduled recording started — run for {today}, modules: {', '.join(session.modules)}")
         self.facade.send_alert(
             key=f"session_started_{session_name}_{today}",
             title=f"Scheduled recording started — {session_name}",
@@ -1090,6 +1110,7 @@ class Recording:
             self.logger.warning(f"Session '{session_name}': {warning}")
             with self._lock:
                 session.ptp_warning = warning
+            self._log_session_event(session_name, "WARNING", warning)
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
             self.facade.send_alert(
@@ -1103,6 +1124,8 @@ class Recording:
             self.logger.info(f"Session '{session_name}': PTP recovered on all modules")
             with self._lock:
                 session.ptp_warning = None
+            self._log_session_event(session_name, "RECOVERY",
+                "PTP sync recovered — all modules within threshold")
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
 
@@ -1370,7 +1393,33 @@ class Recording:
                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"
                     session.module_stop_states = {m: "unknown" for m in session.modules}
+                    self._log_session_event(name, "FAULT",
+                        "Controller restarted during active session — awaiting module reconnect")
                 self.sessions[name] = session
             self.logger.info(f"Loaded {len(self.sessions)} session(s) from disk")
         except Exception as e:
             self.logger.error(f"Failed to load sessions: {e}")
+
+
+    def _get_share_root(self) -> str:
+        try:
+            return self.facade.get_share_path()
+        except AttributeError:
+            return _SHARE_ROOT_DEFAULT
+
+    def _log_session_event(self, session_name: str, level: str, message: str) -> None:
+        """Append a timestamped event line to session_events.log on the NAS share.
+
+        Silently swallows all errors — the log is best-effort and must never
+        affect session operation or propagate exceptions to the caller.
+        """
+        log_path = os.path.join(self._get_share_root(), session_name, "session_events.log")
+        line = f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} [{level:<8}] {message}\n"
+        try:
+            session_dir = os.path.dirname(log_path)
+            os.makedirs(session_dir, exist_ok=True)
+            os.chmod(session_dir, 0o777)
+            with open(log_path, "a") as f:
+                f.write(line)
+        except Exception:
+            pass

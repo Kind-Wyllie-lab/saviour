@@ -92,16 +92,54 @@ class Export:
             return False
 
 
-    def _extract_session_from_filename(self, filename: str) -> str | None:
+    def _setup_recovered_export(self, session_name: str):
+        """Like _setup_export but writes to _recovered/{session}/{date}/{module}/.
+
+        Used when files from an interrupted session cannot be routed to their
+        original session directory (e.g. due to permissions or the directory
+        not existing on the NAS).
+        """
+        if not self._mount_share():
+            return False
+        date_str = self.facade.get_utc_date(time.time())
+        module_name = self.facade.get_module_name()
+        path = os.path.join(
+            self.mount_point, "_recovered", session_name, date_str, module_name
+        )
+        if not self._create_export_path(path):
+            return False
+        try:
+            os.chmod(path, 0o777)
+        except Exception:
+            pass
+        self.logger.info(f"Using recovered export path: {path}")
+        return path
+
+    def _extract_session_from_filename(self, filename: str):
         """Extract the session name prefix from a recorded filename.
 
-        Filenames follow the pattern: {session_name}_{module_id}_{rest}
-        e.g. NO-NAME-20260415-111025_camera_a349_(0_...)
+        Filenames follow the pattern:
+            {session_name}_{animal_id}_{short_module_id}_{rest}
+        e.g. habitat6-20260415-111025_A1_a349_(0_20260415-111025).ts
+
+        The short module ID is the last dash-separated component of self.module_id
+        (e.g. "a349" from "camera-module-a349").  Filenames use the short form
+        even though self.module_id is the full identifier.
         """
-        marker = f"_{self.module_id}"
-        idx = filename.find(marker)
-        if idx > 0:
-            return filename[:idx]
+        short_id = self.module_id.split("-")[-1]
+        for strip_animal_id, marker in (
+            (False, f"_{self.module_id}_"),
+            (True,  f"_{short_id}_"),
+        ):
+            idx = filename.find(marker)
+            if idx > 0:
+                prefix = filename[:idx]
+                if strip_animal_id:
+                    # prefix is "{session_name}_{animal_id}"; strip the animal_id suffix
+                    last_sep = prefix.rfind("_")
+                    if last_sep > 0:
+                        return prefix[:last_sep]
+                return prefix
         return None
 
 
@@ -141,7 +179,19 @@ class Export:
             for session, files in session_file_map.items():
                 session_export_path = self._setup_export(session)
                 if not session_export_path:
-                    self.logger.error(f"Could not set up export path for session '{session}'; skipping {len(files)} file(s)")
+                    # Primary path failed — try routing to _recovered/ on the share
+                    # so files from interrupted sessions aren't silently dropped
+                    session_name = session.split("/")[0] if "/" in session else session
+                    self.logger.warning(
+                        f"Could not set up export path for '{session}'; "
+                        f"attempting _recovered/ fallback for {len(files)} file(s)"
+                    )
+                    session_export_path = self._setup_recovered_export(session_name)
+                if not session_export_path:
+                    self.logger.error(
+                        f"All export paths failed for session '{session}'; "
+                        f"skipping {len(files)} file(s)"
+                    )
                     session_results[session] = False
                     continue
 

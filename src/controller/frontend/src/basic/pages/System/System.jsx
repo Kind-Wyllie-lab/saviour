@@ -211,32 +211,49 @@ export default function System() {
     : null;
   const controllerDriftMs = clockRef ? clockRef.controllerMs - clockRef.browserMs : null;
 
-  // ── Update all devices ────────────────────────────────────────────────────
-  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
-  const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | { success, output }
+  // ── Update all devices (ZIP-based deploy) ────────────────────────────────
+  const [stagedMeta, setStagedMeta] = useState(null); // { version, size, filename } or null
+  const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | "restarting" | { success, output }
+
+  useEffect(() => {
+    socket.emit("get_update_info");
+    const onUpdateInfo = (data) => {
+      setStagedMeta(data?.staged ?? null);
+    };
+    socket.on("update_info", onUpdateInfo);
+    return () => socket.off("update_info", onUpdateInfo);
+  }, []);
 
   useEffect(() => {
     const onModuleResult = (data) => {
       setDeviceStatuses(prev => ({ ...prev, [data.module_id]: { success: data.success, output: data.output } }));
     };
-    const onControllerResult = (data) => {
-      setDeviceStatuses(prev => ({ ...prev, controller: { success: data.success, output: data.output } }));
+    const onDeployStatus = (data) => {
+      if (data.stage === "modules_notified") {
+        // Sidebar triggered a full deploy — initialise all module rows as updating
+        setDeviceStatuses(prev => {
+          const next = { ...prev, controller: "restarting" };
+          moduleList.forEach(m => { if (!next[m.id]) next[m.id] = "updating"; });
+          return next;
+        });
+      }
+    };
+    const onDeployError = (data) => {
+      setDeviceStatuses(prev => ({ ...prev, controller: { success: false, output: data.error } }));
     };
     socket.on("module_update_result", onModuleResult);
-    socket.on("update_saviour_controller_result", onControllerResult);
+    socket.on("deploy_update_status", onDeployStatus);
+    socket.on("deploy_update_error", onDeployError);
     return () => {
       socket.off("module_update_result", onModuleResult);
-      socket.off("update_saviour_controller_result", onControllerResult);
+      socket.off("deploy_update_status", onDeployStatus);
+      socket.off("deploy_update_error", onDeployError);
     };
-  }, []);
+  }, [moduleList]);
 
-  const handleUpdateAll = () => {
-    const initial = { controller: "updating" };
-    moduleList.forEach(m => { initial[m.id] = "updating"; });
-    setDeviceStatuses(initial);
-    setShowUpdateConfirm(false);
-    socket.emit("update_saviour_controller");
-    socket.emit("send_command", { module_id: "all", type: "update_saviour", params: {} });
+  const handleDeployToModule = (moduleId) => {
+    setDeviceStatuses(prev => ({ ...prev, [moduleId]: "updating" }));
+    socket.emit("deploy_update_to_module", { module_id: moduleId });
   };
 
   const updateDevices = useMemo(() => {
@@ -270,11 +287,13 @@ export default function System() {
                 <button
                   className="th-update-btn"
                   type="button"
-                  onClick={() => setShowUpdateConfirm(true)}
-                  disabled={Object.values(deviceStatuses).some(s => s === "updating")}
-                  title="Update all devices to latest version"
+                  onClick={() => window.dispatchEvent(new CustomEvent("saviour:open-update-modal"))}
+                  disabled={Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
+                  title={stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} — click to open update panel` : "Open update panel"}
                 >
-                  {Object.values(deviceStatuses).some(s => s === "updating") ? "Updating…" : "Update All"}
+                  {Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")
+                    ? "Deploying…"
+                    : "Update"}
                 </button>
               </th>
               <th>CPU</th>
@@ -397,19 +416,20 @@ export default function System() {
               <tbody>
                 {updateDevices.map(({ id, name }) => {
                   const s = deviceStatuses[id];
+                  const isInProgress = s === "updating" || s === "restarting";
                   return (
                     <tr key={id} className={id === "controller" ? "system-table__controller-row" : ""}>
                       <td><span className="device-name">{name}</span></td>
                       <td>
-                        {s === "updating"
-                          ? <span className="cell--muted">Updating…</span>
+                        {isInProgress
+                          ? <span className="cell--muted">{s === "restarting" ? "Restarting…" : "Updating…"}</span>
                           : s?.success
                             ? <span className="val--ok">&#10003; Updated</span>
                             : <span className="val--danger">&#10007; Failed</span>
                         }
                       </td>
                       <td className="cell--muted update-output">
-                        {s && s !== "updating" ? s.output : ""}
+                        {s && !isInProgress ? s.output : ""}
                       </td>
                     </tr>
                   );
@@ -486,6 +506,13 @@ export default function System() {
             <p className="actions-modal__title">{actionTarget.name}</p>
             <div className="actions-modal__list">
               {actionTarget.isOnline ? (<>
+                {stagedMeta && (
+                  <button type="button" className="actions-modal__item"
+                    onClick={() => { handleDeployToModule(actionTarget.id); setActionTarget(null); }}>
+                    <span>Update</span>
+                    <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to this module only</span>
+                  </button>
+                )}
                 <button type="button" className="actions-modal__item"
                   onClick={() => { setRestartTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
                   <span>Restart service</span>
@@ -595,18 +622,6 @@ export default function System() {
         />
       )}
 
-      {showUpdateConfirm && (
-        <div className="modal-overlay" onClick={() => setShowUpdateConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Update SAVIOUR on all <strong>{moduleList.length + 1}</strong> devices?</p>
-            <p className="modal-subtext">Runs <code>git pull</code> on the controller and all connected modules. Restart services afterwards to apply changes.</p>
-            <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={handleUpdateAll}>Update All</button>
-              <button className="reset-button" type="button" onClick={() => setShowUpdateConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

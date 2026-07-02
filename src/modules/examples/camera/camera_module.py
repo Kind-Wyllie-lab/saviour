@@ -16,6 +16,7 @@ Created: 17/03/2025
 # TODO: Consider using http.server instead of flask
 """
 
+import collections
 import csv
 import datetime
 import sys
@@ -82,6 +83,19 @@ class CameraModule(Module):
         # State flags
         self.is_recording = False
         self.is_streaming = False
+
+        # Per-frame callback caches — updated by _cache_frame_config()
+        self._cb_monochrome        = False
+        self._cb_overlay_timestamp = True
+        self._cb_flip_code         = None   # None | -1 | 0 | 1
+        self._cb_module_name       = None   # cached once
+        self._cache_frame_config()
+
+        # Off-thread CSV write buffer: pre_callback appends rows here;
+        # a background thread drains them so file I/O never stalls capture.
+        self._csv_row_buffer  = collections.deque()
+        self._csv_flush_stop  = threading.Event()
+        self._csv_flush_thread = None  # type: Optional[threading.Thread]
         # self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler
@@ -226,6 +240,11 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
 
+            _cb_keys = {"camera.monochrome", "camera.overlay_timestamp",
+                        "camera.hflip", "camera.vflip"}
+            if _cb_keys.intersection(updated_keys or []):
+                self._cache_frame_config()
+
             fps = self.config.get("camera.fps", 25)
             if self.config.get("camera.manual_exposure", False):
                 exposure_time = self.config.get("camera.exposure_time", 10000)
@@ -253,6 +272,42 @@ class CameraModule(Module):
             except Exception as e:
                 self.logger.error(f"Error reconfiguring camera: {e}")
 
+
+    def _cache_frame_config(self) -> None:
+        """Cache config values that are read on every capture callback.
+
+        Called once at startup and again whenever relevant config keys change,
+        so the pre_callback never pays the dict-traversal cost per frame.
+        """
+        self._cb_monochrome        = self.config.get("camera.monochrome") is True
+        self._cb_overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
+        hflip = self.config.get("camera.hflip", False) is True
+        vflip = self.config.get("camera.vflip", False) is True
+        if hflip and vflip:
+            self._cb_flip_code = -1
+        elif hflip:
+            self._cb_flip_code = 1
+        elif vflip:
+            self._cb_flip_code = 0
+        else:
+            self._cb_flip_code = None
+        self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
+
+    def _csv_flush_worker(self) -> None:
+        """Drain _csv_row_buffer to disk every 50 ms until stopped."""
+        while not self._csv_flush_stop.wait(0.05):
+            self._drain_csv_buffer()
+        self._drain_csv_buffer()  # final flush after stop
+
+    def _drain_csv_buffer(self) -> None:
+        if self._timestamp_csv_writer is None:
+            return
+        buf = self._csv_row_buffer
+        try:
+            while buf:
+                self._timestamp_csv_writer.writerow(buf.popleft())
+        except Exception as e:
+            self.logger.warning(f"CSV flush error: {e}")
 
     def _configure_camera(self):
         """Configure the camera with current settings"""
@@ -328,8 +383,8 @@ class CameraModule(Module):
                     controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
             sync_mode_str = self.config.get("camera.sync_mode", "none")
+            from libcamera import controls as lc
             if sync_mode_str in ("server", "client"):
-                from libcamera import controls as lc
                 controls["SyncMode"] = (
                     lc.rpi.SyncModeEnum.Server
                     if sync_mode_str == "server"
@@ -342,6 +397,8 @@ class CameraModule(Module):
                 if self.config.get("camera.sync_lock_awb", False):
                     controls["AwbEnable"] = False
                     self.logger.info("AWB disabled (sync_lock_awb)")
+            else:
+                controls["SyncMode"] = lc.rpi.SyncModeEnum.Off
 
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
@@ -353,7 +410,7 @@ class CameraModule(Module):
                         lores=lores,
                         sensor=sensor,
                         controls=controls,
-                        buffer_count=16) # Buffer size of 16 increases potential framerate.
+                        buffer_count=32)
             
             # Apply configuration
             self.picam2.configure(config)
@@ -367,6 +424,7 @@ class CameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate) # The main enocder that will be used for recording video
             self.lores_encoder = H264Encoder(bitrate=bitrate/10) # Lower bitrate for streaming
 
+            self._cache_frame_config()
             self.logger.info(f"Camera configured successfully at {self.fps}fps")
             return True
             
@@ -389,16 +447,29 @@ class CameraModule(Module):
         """Open a per-frame timestamp CSV sidecar alongside video_filename."""
         stem = os.path.splitext(video_filename)[0]
         self._current_csv_path = f"{stem}_timestamps.csv"
-        self._timestamp_csv_file = open(self._current_csv_path, "w", newline="")
+        self._timestamp_csv_file = open(self._current_csv_path, "w", newline="",
+                                        buffering=1 << 20)  # 1 MiB write buffer
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
         self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before", "sync_lag_us", "exposure_time_us", "analogue_gain", "colour_gain_r", "colour_gain_b"])
         self._frame_id = 0
         self._csv_prev_ns = None
+        self._csv_row_buffer.clear()
+        self._csv_flush_stop.clear()
+        self._csv_flush_thread = threading.Thread(
+            target=self._csv_flush_worker, daemon=True, name="csv-flush"
+        )
+        self._csv_flush_thread.start()
         self.facade.add_session_file(self._current_csv_path)
 
     def _close_timestamp_csv(self) -> None:
         """Flush, close, and stage the current timestamp CSV for export."""
         if self._timestamp_csv_file is not None:
+            # Stop the flush thread and drain any remaining buffered rows
+            self._csv_flush_stop.set()
+            if self._csv_flush_thread is not None:
+                self._csv_flush_thread.join(timeout=5)
+                self._csv_flush_thread = None
+            self._drain_csv_buffer()
             self._timestamp_csv_file.flush()
             os.fsync(self._timestamp_csv_file.fileno())
             self._timestamp_csv_file.close()
@@ -583,22 +654,32 @@ class CameraModule(Module):
 
 
     """Timestamping frames"""
-    def _get_frame_timestamp(self, req) -> Optional[int]:
+    # Cached wall-clock minus monotonic offset in nanoseconds.
+    # Recomputed at most once per second; drift between recomputations is <1 µs.
+    _wall_mono_offset_ns: int = 0
+    _wall_mono_offset_updated_s: float = 0.0
+
+    def _get_wall_mono_offset_ns(self) -> int:
+        now = time.monotonic()
+        if now - self._wall_mono_offset_updated_s >= 1.0:
+            self._wall_mono_offset_ns = int((time.time() - now) * 1e9)
+            self._wall_mono_offset_updated_s = now
+        return self._wall_mono_offset_ns
+
+    def _get_frame_timestamp(self, metadata: dict) -> Optional[int]:
         """Return the frame exposure time as wall-clock nanoseconds.
+
+        Accepts an already-fetched metadata dict so the caller can reuse it
+        for other fields (SyncTimer, ExposureTime, etc.) without a second copy.
 
         Prefers SensorTimestamp (hardware-stamped at actual sensor exposure,
         CLOCK_MONOTONIC) converted to CLOCK_REALTIME.  Falls back to
-        FrameWallClock (picamera2 wall-clock stamp at ISP output) if
-        SensorTimestamp is unavailable.
+        FrameWallClock if SensorTimestamp is unavailable.
         """
         try:
-            metadata = req.get_metadata()
             sensor_ts = metadata.get('SensorTimestamp')
             if sensor_ts is not None:
-                # CLOCK_MONOTONIC → CLOCK_REALTIME conversion (cheap, two syscalls).
-                # On Pi, CLOCK_BOOTTIME == CLOCK_MONOTONIC (no suspend), so this is exact.
-                wall_mono_offset_ns = int((time.time() - time.monotonic()) * 1e9)
-                return sensor_ts + wall_mono_offset_ns
+                return sensor_ts + self._get_wall_mono_offset_ns()
             frame_wall_clock = metadata.get('FrameWallClock')
             if frame_wall_clock is not None:
                 return frame_wall_clock
@@ -610,82 +691,82 @@ class CameraModule(Module):
 
     def _get_and_apply_frame_timestamp(self, req) -> None:
         try:
-            # Get and format timestamp
-            timestamp = self._get_frame_timestamp(req)
+            # Single metadata fetch — reused for timestamp, CSV fields, and overlays.
+            meta = req.get_metadata()
+
+            timestamp = self._get_frame_timestamp(meta)
             if timestamp is None:
                 self.logger.warning("No frame timestamp available from metadata")
                 return
 
-            # Calculate actual framerate
             actual_fps = None
             if self.last_frame_timestamp:
                 actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 3)
-                self.last_frame_timestamp = timestamp
-            else:
-                self.last_frame_timestamp = timestamp
+            self.last_frame_timestamp = timestamp
 
-            dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc) # Format timestamp. Example: 2026-01-08 15:25:01.125786+00:00
+            dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)
 
-            # Write per-frame CSV row while recording.
-            # Guard on writer rather than is_recording: the base class sets
-            # is_recording=True *after* _create_initial_recording_segment(), so
-            # the first few frames would be silently skipped by an is_recording check.
+            # Buffer CSV row for off-thread write — no file I/O on the capture thread.
             if self._timestamp_csv_writer is not None:
                 timestamp_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
                 if self._csv_prev_ns is not None and self.fps:
-                    delta_ms = round((timestamp - self._csv_prev_ns) / 1e6, 3)
-                    expected_ms = 1000.0 / self.fps
+                    delta_ms       = round((timestamp - self._csv_prev_ns) / 1e6, 3)
+                    expected_ms    = 1000.0 / self.fps
                     dropped_before = max(0, round(delta_ms / expected_ms) - 1)
                 else:
-                    delta_ms = ""
-                    dropped_before = ""
-                meta = req.get_metadata()
-                sync_lag_us = meta.get("SyncTimer", "")
+                    delta_ms = dropped_before = ""
+                sync_lag_us      = meta.get("SyncTimer", "")
                 exposure_time_us = meta.get("ExposureTime", "")
-                analogue_gain = meta.get("AnalogueGain", "")
-                colour_gains = meta.get("ColourGains") or ("", "")
+                analogue_gain    = meta.get("AnalogueGain", "")
+                colour_gains     = meta.get("ColourGains") or ("", "")
                 self._csv_prev_ns = timestamp
-                self._timestamp_csv_writer.writerow([self._frame_id, timestamp, timestamp_utc, delta_ms, dropped_before, sync_lag_us, exposure_time_us, analogue_gain, colour_gains[0], colour_gains[1]])
+                self._csv_row_buffer.append([
+                    self._frame_id, timestamp, timestamp_utc,
+                    delta_ms, dropped_before, sync_lag_us,
+                    exposure_time_us, analogue_gain,
+                    colour_gains[0], colour_gains[1],
+                ])
                 self._frame_id += 1
 
-            timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "+00:00" # Drop 3 digits worth of milliseconds
-            # alt: timestmap = str(dt)
-            timestamp = f"{self.facade.get_module_name()} {timestamp}"
+            # Use cached config values — read once per config change, not per frame
+            flip_code         = self._cb_flip_code
+            monochrome        = self._cb_monochrome
+            overlay_timestamp = self._cb_overlay_timestamp
+            module_name       = self._cb_module_name or self.facade.get_module_name()
 
-            monochrome = self.config.get("camera.monochrome") is True
-            overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
-            hflip = self.config.get("camera.hflip", False) is True
-            vflip = self.config.get("camera.vflip", False) is True
-            if hflip and vflip:
-                flip_code = -1
-            elif hflip:
-                flip_code = 1
-            elif vflip:
-                flip_code = 0
-            else:
-                flip_code = None
+            ts_str = (f"{module_name} "
+                      f"{dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}+00:00")
 
-            # Modify main stream - used for recording.
-            with MappedArray(req, 'main') as m:
-                if flip_code is not None:
-                    m.array[:] = cv2.flip(m.array, flip_code)
-                if monochrome:
-                    gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                    m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                if overlay_timestamp:
-                    self._apply_timestamp(m, timestamp, "main")
+            # Main stream — only map the buffer when something will actually change it.
+            if flip_code is not None or monochrome or overlay_timestamp:
+                with MappedArray(req, 'main') as m:
+                    if flip_code is not None:
+                        m.array[:] = cv2.flip(m.array, flip_code)
+                    if monochrome:
+                        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                    if overlay_timestamp:
+                        self._apply_timestamp(m, ts_str, "main")
 
-            # Modify lores stream - used for streaming.
-            with MappedArray(req, "lores") as m:
-                if flip_code is not None:
-                    m.array[:] = cv2.flip(m.array, flip_code)
-                if monochrome:
-                    gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-                    m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                if overlay_timestamp:
-                    self._apply_timestamp(m, timestamp, "lores")
-                if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
-                    self._apply_framerate(m, str(actual_fps), "lores")
+            # Lores stream — only process frames that will actually be JPEG-encoded.
+            # _stream_post_callback throttles encoding to _STREAM_FPS (24 fps). At
+            # 100fps that means 76 % of lores frames would otherwise be overlaid and
+            # then discarded.  By mirroring the same time check here we do cv2 work
+            # only on frames that the post_callback will encode.  Both callbacks run
+            # on the same capture thread so sharing _last_stream_encode_time is safe.
+            if self.is_streaming:
+                now = time.monotonic()
+                if now - self._last_stream_encode_time >= self._stream_interval_s:
+                    with MappedArray(req, "lores") as m:
+                        if flip_code is not None:
+                            m.array[:] = cv2.flip(m.array, flip_code)
+                        if monochrome:
+                            gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+                            m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                        if overlay_timestamp:
+                            self._apply_timestamp(m, ts_str, "lores")
+                        if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
+                            self._apply_framerate(m, str(actual_fps), "lores")
 
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
@@ -833,6 +914,8 @@ class CameraModule(Module):
         every frame is passed through so the interval never accidentally skips
         frames (e.g. a 25 fps camera with a 24 fps throttle loses every other frame).
         """
+        if not self.is_streaming:
+            return
         try:
             now = time.monotonic()
             if now - self._last_stream_encode_time < self._stream_interval_s:

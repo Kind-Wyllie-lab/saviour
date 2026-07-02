@@ -328,8 +328,8 @@ class CameraModule(Module):
                     controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
             sync_mode_str = self.config.get("camera.sync_mode", "none")
+            from libcamera import controls as lc
             if sync_mode_str in ("server", "client"):
-                from libcamera import controls as lc
                 controls["SyncMode"] = (
                     lc.rpi.SyncModeEnum.Server
                     if sync_mode_str == "server"
@@ -342,6 +342,8 @@ class CameraModule(Module):
                 if self.config.get("camera.sync_lock_awb", False):
                     controls["AwbEnable"] = False
                     self.logger.info("AWB disabled (sync_lock_awb)")
+            else:
+                controls["SyncMode"] = lc.rpi.SyncModeEnum.Off
 
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")

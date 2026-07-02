@@ -62,8 +62,8 @@ class ControllerFacade():
         return self.controller.get_controller_own_share_info()
 
 
-    def get_share_path(self):
-        return "/home/pi/controller_share"
+    def get_share_path(self) -> str:
+        return self.controller.config.get("export.mount_path", "/home/pi/controller_share")
 
 
     def get_config(self) -> dict:

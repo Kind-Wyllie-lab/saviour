@@ -87,7 +87,7 @@ class Web(ABC):
         self._running = False
 
         # Set up paths
-        self.habitat_share_dir = Path("/home/pi/controller_share")
+        self.habitat_share_dir = Path(self.config.get("export.mount_path", "/home/pi/controller_share"))
     
     
     def _generate_experiment_name(self) -> str:
@@ -410,6 +410,24 @@ class Web(ABC):
 
             self.socketio.emit("sessions_update", serializable_sessions)
             self.logger.info(f"Send sessions to clients: {serializable_sessions}")
+
+        @self.socketio.on('get_session_log')
+        def handle_get_session_log(data=None):
+            from flask_socketio import emit as _emit
+            session_name = (data or {}).get('session_name', '')
+            if not session_name:
+                _emit('session_log_response', {'session_name': '', 'lines': []})
+                return
+            mount = self.config.get("export.mount_path", "/home/pi/controller_share")
+            log_path = os.path.join(mount, session_name, "session_events.log")
+            try:
+                with open(log_path) as f:
+                    lines = [l.rstrip() for l in f.readlines()]
+                _emit('session_log_response', {'session_name': session_name, 'lines': lines[-30:]})
+            except FileNotFoundError:
+                _emit('session_log_response', {'session_name': session_name, 'lines': []})
+            except Exception as e:
+                _emit('session_log_response', {'session_name': session_name, 'lines': [], 'error': str(e)})
 
         
         @self.socketio.on("create_session")

@@ -16,7 +16,10 @@ Created: ?
 import os
 import json
 import logging
+import shutil
 from typing import Dict, Any, Optional, Union
+
+_OLD_ACTIVE_CONFIG_PATH = "/usr/local/src/saviour/src/controller/config/active_config.json"
 
 class Config:
     """Manages configuration for the habitat controller system"""
@@ -26,9 +29,9 @@ class Config:
     }
     
     def __init__(
-        self, 
+        self,
         base_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/base_config.json",
-        active_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/active_config.json"
+        active_config_path: Optional[str] = "/etc/saviour/controller/active_config.json"
     ):
         """
         Initialize the configuration manager
@@ -38,9 +41,21 @@ class Config:
             config_file_path: Path to configuration file (optional)
         """
         self.logger = logging.getLogger(__name__)
-        self.base_config_path = os.path.abspath(base_config_path) # Base config, i.e. defaults for SAVIOUR framework
-        self.active_config_path = os.path.abspath(active_config_path) # Active config, aggregates base config + controller specific config
-        self.config: Dict[str, Any] = {} # Where runtime config is stored in program
+        self.base_config_path = os.path.abspath(base_config_path)
+        self.active_config_path = os.path.abspath(active_config_path)
+        self.config: Dict[str, Any] = {}
+
+        # One-time migration: copy active config from old in-tree location if needed
+        if (not os.path.exists(self.active_config_path)
+                and os.path.exists(_OLD_ACTIVE_CONFIG_PATH)):
+            try:
+                os.makedirs(os.path.dirname(self.active_config_path), exist_ok=True)
+                shutil.copy2(_OLD_ACTIVE_CONFIG_PATH, self.active_config_path)
+                self.logger.info(
+                    f"Migrated active config: {_OLD_ACTIVE_CONFIG_PATH} → {self.active_config_path}"
+                )
+            except Exception as e:
+                self.logger.warning(f"Could not migrate active config: {e}")
 
         # Load or build config
         if os.path.exists(self.active_config_path):

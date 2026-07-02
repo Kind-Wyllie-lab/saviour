@@ -255,7 +255,21 @@ class Module(ABC):
                 self.logger.info(f"Downloading update from {pkg_url}")
 
                 tmp_zip = "/tmp/saviour_update.zip"
-                urllib.request.urlretrieve(pkg_url, tmp_zip)
+                # Retry download — the controller may be mid-restart when we
+                # first try, so back off and retry before giving up.
+                for _attempt in range(1, 6):
+                    try:
+                        urllib.request.urlretrieve(pkg_url, tmp_zip)
+                        break
+                    except Exception as _dl_err:
+                        if _attempt == 5:
+                            raise
+                        import time as _t
+                        self.logger.warning(
+                            f"Download attempt {_attempt} failed ({_dl_err}); "
+                            f"retrying in 15s"
+                        )
+                        _t.sleep(15)
 
                 if not zipfile.is_zipfile(tmp_zip):
                     raise ValueError("Downloaded file is not a valid ZIP archive")

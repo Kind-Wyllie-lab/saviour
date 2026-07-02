@@ -255,6 +255,11 @@ export default function System() {
     socket.emit("deploy_update");
   };
 
+  const handleDeployToModule = (moduleId) => {
+    setDeviceStatuses(prev => ({ ...prev, [moduleId]: "updating" }));
+    socket.emit("deploy_update_to_module", { module_id: moduleId });
+  };
+
   const updateDevices = useMemo(() => {
     if (Object.keys(deviceStatuses).length === 0) return [];
     const rows = [{ id: "controller", name: "Controller" }];
@@ -507,6 +512,13 @@ export default function System() {
             <p className="actions-modal__title">{actionTarget.name}</p>
             <div className="actions-modal__list">
               {actionTarget.isOnline ? (<>
+                {stagedMeta && (
+                  <button type="button" className="actions-modal__item"
+                    onClick={() => { handleDeployToModule(actionTarget.id); setActionTarget(null); }}>
+                    <span>Update</span>
+                    <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to this module only</span>
+                  </button>
+                )}
                 <button type="button" className="actions-modal__item"
                   onClick={() => { setRestartTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
                   <span>Restart service</span>

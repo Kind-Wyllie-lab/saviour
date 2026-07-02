@@ -113,6 +113,8 @@ function Sidebar({ navItems }) {
     }
     setUploadError(null);
     setStagedMeta(null);
+    setDeployStatus(null);
+    setDeployError(null);
     setUploadProgress({ received: 0, total: 0 });
 
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -218,8 +220,8 @@ function Sidebar({ navItems }) {
               </div>
             )}
 
-            {/* Drop zone */}
-            {!uploadProgress && !deployStatus && (
+            {/* Drop zone — always shown unless an upload is in flight */}
+            {!uploadProgress && (
               <div
                 className="update-dropzone"
                 onDragOver={e => e.preventDefault()}

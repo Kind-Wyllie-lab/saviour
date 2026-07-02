@@ -56,6 +56,8 @@ class Recording():
 
         # Tracking files for export
         self.current_filename_prefix = None
+        # Set by _scheduled_start to avoid when_recording_starts() running twice
+        self._recording_start_prepped = False
 
         # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
@@ -127,7 +129,13 @@ class Recording():
         #    inside the module hook (current_filename_prefix would be None otherwise)
         self._pre_setup_session(session_name, start_at)
 
-        # 3. Pre-create file handles before sleeping
+        # 3. Run when_recording_starts() BEFORE sleeping so that Samba I/O
+        #    (config export, directory creation) is off the critical path.
+        #    _begin_recording checks the flag and skips its own call.
+        self.facade.when_recording_starts()
+        self._recording_start_prepped = True
+
+        # 4. Pre-create file handles before sleeping
         try:
             self.facade.pre_create_first_segment(start_at)
         except Exception as e:
@@ -135,7 +143,7 @@ class Recording():
                 f"pre_create_first_segment failed ({e}); will open files at start time"
             )
 
-        # 4. Sleep then spin
+        # 5. Sleep then spin
         delay = start_at - time.time()
         if delay > 0.010:
             time.sleep(delay - 0.010)
@@ -181,8 +189,11 @@ class Recording():
         # Store experiment folder information for export
         self.current_session_name = self._format_session_name(session_name)
 
-        # Set the export folder based on the supplied experiment name
-        self.facade.when_recording_starts()
+        # For scheduled starts, when_recording_starts() was already called in
+        # _scheduled_start (before the sleep, off the critical path).
+        if not self._recording_start_prepped:
+            self.facade.when_recording_starts()
+        self._recording_start_prepped = False
 
         # Set up recording - filename and folder
         module_name = self.facade.get_module_name()

@@ -106,10 +106,38 @@ class Recording():
 
 
     def _scheduled_start(self, session_name: str, duration: str, start_at: float) -> None:
-        """Sleep until start_at then begin recording."""
+        """Pre-prepare, spin-wait to start_at, then begin recording.
+
+        Three-stage approach to minimise inter-camera start jitter:
+          1. Elevate this thread to SCHED_FIFO so the OS doesn't pre-empt it
+             during the spin-wait (requires CAP_SYS_NICE / root).
+          2. Pre-create the video container and CSV via the module hook so the
+             only work left at start_at is start_encoder().
+          3. Sleep until 10 ms before start_at then busy-spin so the wakeup
+             jitter floor (~100–300 µs for time.sleep) is eliminated.
+        """
+        # 1. Real-time scheduling
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(80))
+            self.logger.info("Elevated to SCHED_FIFO priority 80 for scheduled start")
+        except (PermissionError, AttributeError, OSError) as e:
+            self.logger.debug(f"SCHED_FIFO unavailable ({e}); using normal scheduling")
+
+        # 2. Pre-create file handles before sleeping
+        try:
+            self.facade.pre_create_first_segment(start_at)
+        except Exception as e:
+            self.logger.warning(
+                f"pre_create_first_segment failed ({e}); will open files at start time"
+            )
+
+        # 3. Sleep then spin
         delay = start_at - time.time()
-        if delay > 0:
-            time.sleep(delay)
+        if delay > 0.010:
+            time.sleep(delay - 0.010)
+        while time.time() < start_at:
+            pass
+
         self._begin_recording(session_name, duration)
 
 

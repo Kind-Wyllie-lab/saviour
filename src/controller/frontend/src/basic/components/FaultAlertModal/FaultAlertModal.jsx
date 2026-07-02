@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import socket from "/src/socket";
 import "./FaultAlertModal.css";
 
 function parseTimestamp(str) {
@@ -12,8 +14,27 @@ function formatDateTime(date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function levelClass(line) {
+  const m = line.match(/\[(\w+)\s*\]/);
+  if (!m) return "";
+  return `fault-alert-log-line--${m[1].toLowerCase()}`;
+}
+
 export default function FaultAlertModal({ faultedSessions, onAcknowledge }) {
-  const hasActiveFault   = faultedSessions.some((s) => s.state === "error");
+  const [sessionLogs, setSessionLogs] = useState({});
+
+  useEffect(() => {
+    const handler = ({ session_name, lines }) => {
+      setSessionLogs((prev) => ({ ...prev, [session_name]: lines }));
+    };
+    socket.on("session_log_response", handler);
+    faultedSessions.forEach((s) =>
+      socket.emit("get_session_log", { session_name: s.session_name })
+    );
+    return () => socket.off("session_log_response", handler);
+  }, [faultedSessions]);
+
+  const hasActiveFault    = faultedSessions.some((s) => s.state === "error");
   const hasRecoveredFault = faultedSessions.some((s) => s.state !== "error");
 
   const title = faultedSessions.length === 1
@@ -40,6 +61,7 @@ export default function FaultAlertModal({ faultedSessions, onAcknowledge }) {
           {faultedSessions.map((session) => {
             const faultDate = parseTimestamp(session.error_time);
             const isRecovered = session.state !== "error";
+            const logLines = sessionLogs[session.session_name];
             return (
               <div
                 key={session.session_name}
@@ -58,6 +80,18 @@ export default function FaultAlertModal({ faultedSessions, onAcknowledge }) {
                 )}
                 {session.error_message && (
                   <div className="fault-alert-message">{session.error_message}</div>
+                )}
+                {logLines !== undefined && (
+                  <div className="fault-alert-log">
+                    {logLines.length === 0
+                      ? <span className="fault-alert-log-empty">No events logged yet</span>
+                      : logLines.map((line, i) => (
+                          <div key={i} className={`fault-alert-log-line ${levelClass(line)}`}>
+                            {line}
+                          </div>
+                        ))
+                    }
+                  </div>
                 )}
               </div>
             );

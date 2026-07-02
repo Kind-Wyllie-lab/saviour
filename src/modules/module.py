@@ -12,7 +12,6 @@ Created: 17/03/2025
 import sys
 import os
 import json
-import tempfile
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -145,6 +144,7 @@ class Module(ABC):
             'shutdown': self._shutdown,
             "update_saviour": self.update_saviour,
             "reboot": self.reboot,
+            "restart_service": self.restart_service,
             "reset_config": self.reset_config,
             "start_export": self.start_export,
             "set_export_config": self.set_export_config,
@@ -180,7 +180,7 @@ class Module(ABC):
         # DISCONNECT_RECORDING_GRACE_SECS, the timer is cancelled and recording
         # continues uninterrupted.  This protects against brief network blips
         # and controller restarts that would otherwise cut a segment short.
-        self._disconnect_recording_timer: threading.Timer | None = None
+        self._disconnect_recording_timer = None  # type: Optional[threading.Timer]
         self._disconnect_recording_timer_lock = threading.Lock()
 
         # Ready checks
@@ -222,116 +222,112 @@ class Module(ABC):
     def reboot(self) -> None:
         os.system("sudo reboot now")
 
+    def restart_service(self) -> dict:
+        """Restart the saviour service. Sends ack before restarting so the controller hears it."""
+        import threading, time as _time
+        def _do_restart():
+            self.communication.send_status({
+                "type": "cmd_ack",
+                "command": "restart_service",
+                "result": "success",
+                "output": "Service restarting…",
+            })
+            _time.sleep(1)
+            subprocess.run(["sudo", "systemctl", "restart", "saviour.service"])
+        threading.Thread(target=_do_restart, daemon=True, name="saviour-restart").start()
+        return {"result": "started"}
 
-    def update_saviour(self) -> dict:
-        """Update saviour to the latest version from git.
 
-        Returns immediately; the actual update runs in a background thread so
-        the ZMQ command thread is not blocked by network I/O.
+    def update_saviour(self, controller_url: str = "") -> dict:
+        """Download and apply a staged update from the controller's HTTP endpoint.
+
+        The controller serves the package at GET /update/package.  After rsync
+        the service restarts itself so the ZMQ command thread returns first.
         """
-        import re
-        import threading
+        import threading, shutil, zipfile, urllib.request
 
         def _do_update():
             try:
-                self.logger.info("Checking internet connectivity before updating SAVIOUR")
-                try:
-                    subprocess.run(
-                        ["ping", "-c", "1", "-W", "5", "github.com"],
-                        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
-                    self.logger.info("Internet connectivity confirmed")
-                except subprocess.CalledProcessError:
-                    self.logger.warning("No internet connectivity, cannot update SAVIOUR")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": "No internet connectivity — update skipped.",
-                    })
-                    return
+                if not controller_url:
+                    raise ValueError("controller_url parameter is required")
 
-                self.logger.info("Updating SAVIOUR to the latest version from git")
-                url_result = subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "remote", "get-url", "origin"],
-                    capture_output=True, text=True
-                )
-                remote_url = url_result.stdout.strip()
-                if url_result.returncode != 0 or not remote_url:
-                    err = url_result.stderr.strip() or "No git remote origin configured"
-                    self.logger.error(f"SAVIOUR update: could not get remote URL — {err}")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": f"Could not get remote URL: {err}",
-                    })
-                    return
-                https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
-                                   r'https://\1/\2.git', remote_url)
-                checkout_result = subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "checkout", "main"],
-                    capture_output=True, text=True
-                )
-                if checkout_result.returncode != 0:
-                    err = checkout_result.stderr.strip() or "Could not switch to main branch"
-                    self.logger.error(f"SAVIOUR update: git checkout main failed: {err}")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": f"git checkout main failed: {err}",
-                    })
-                    return
-                result = subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "pull", https_url, "main"],
-                    capture_output=True, text=True, timeout=60
-                )
-                subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "fetch", https_url, "--tags"],
-                    capture_output=True, text=True, timeout=30
-                )
-                if result.returncode == 0:
-                    output = result.stdout.strip() or "Already up to date."
-                    self.logger.info(f"SAVIOUR update: {output}")
-                    if "Already up to date." not in output:
-                        self.communication.send_status({
-                            "type": "cmd_ack",
-                            "command": "update_saviour",
-                            "result": "success",
-                            "output": "Update found — module is restarting...",
-                        })
-                        import time as _time
-                        _time.sleep(3)
-                        subprocess.run(
-                            ["sudo", "systemctl", "restart", "saviour.service"],
-                            capture_output=True
+                pkg_url = f"{controller_url.rstrip('/')}/update/package"
+                self.logger.info(f"Downloading update from {pkg_url}")
+
+                tmp_zip = "/tmp/saviour_update.zip"
+                # Retry download — the controller may be mid-restart when we
+                # first try, so back off and retry before giving up.
+                for _attempt in range(1, 6):
+                    try:
+                        urllib.request.urlretrieve(pkg_url, tmp_zip)
+                        break
+                    except Exception as _dl_err:
+                        if _attempt == 5:
+                            raise
+                        import time as _t
+                        self.logger.warning(
+                            f"Download attempt {_attempt} failed ({_dl_err}); "
+                            f"retrying in 15s"
                         )
-                    else:
-                        self.communication.send_status({
-                            "type": "cmd_ack",
-                            "command": "update_saviour",
-                            "result": "success",
-                            "output": "Already up to date.",
-                        })
-                else:
-                    err = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-                    self.logger.error(f"SAVIOUR update failed: {err}")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": err,
-                    })
+                        _t.sleep(15)
+
+                if not zipfile.is_zipfile(tmp_zip):
+                    raise ValueError("Downloaded file is not a valid ZIP archive")
+
+                extract_dir = "/tmp/saviour_update_extract"
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                os.makedirs(extract_dir)
+                with zipfile.ZipFile(tmp_zip) as z:
+                    z.extractall(extract_dir)
+
+                contents = os.listdir(extract_dir)
+                source = extract_dir
+                if (len(contents) == 1
+                        and os.path.isdir(os.path.join(extract_dir, contents[0]))):
+                    source = os.path.join(extract_dir, contents[0])
+
+                subprocess.run([
+                    "rsync", "-a",
+                    "--exclude=env/",
+                    "--exclude=.git/",
+                    f"{source}/",
+                    f"{INSTALL_DIR}/",
+                ], check=True)
+
+                # pip install is best-effort — modules are offline.
+                pip_result = subprocess.run([
+                    f"{INSTALL_DIR}/env/bin/pip", "install", "-q",
+                    "--no-index",
+                    "-r", f"{INSTALL_DIR}/requirements.txt",
+                ])
+                if pip_result.returncode != 0:
+                    self.logger.warning(
+                        "pip install --no-index failed; new dependencies (if any) "
+                        "will need a manual install with internet access"
+                    )
+
+                self.logger.info("Update applied — restarting module service")
+                self.communication.send_status({
+                    "type": "cmd_ack",
+                    "command": "update_saviour",
+                    "result": "success",
+                    "output": "Update applied — module is restarting...",
+                })
+                import time as _time
+                _time.sleep(2)
+                subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
+
             except Exception as e:
-                self.logger.error(f"Error updating SAVIOUR: {e}")
+                self.logger.error(f"SAVIOUR update failed: {e}")
+                self.communication.send_status({
+                    "type": "cmd_ack",
+                    "command": "update_saviour",
+                    "result": "error",
+                    "output": str(e),
+                })
 
         threading.Thread(target=_do_update, daemon=True, name="saviour-update").start()
-        return {"result": "started", "output": "Update check started — module will restart if an update is available."}
+        return {"result": "started", "output": "Update download started."}
 
 
     def _handle_set_config(self, **kwargs) -> dict:
@@ -812,61 +808,23 @@ class Module(ABC):
     def set_export_config(self, share_ip: str, share_username: str, share_password: str, share_path: str = "") -> dict:
         """
         Update the export (Samba) credentials sent by the controller on discovery.
-        Writes to base_config.json so the values survive a config reset, and also
-        updates the running config immediately.
-        Skipped if export.use_controller_export is false (custom export route).
+        Persists to active_config.json via config.set(). Credentials are always
+        re-sent by the controller on reconnect so they do not need to survive a
+        config reset.
+        Skipped if export.export_target is not 'controller'.
         """
         if self.config.get("export.export_target", "controller") != "controller":
             self.logger.info("set_export_config skipped — export_target is not controller")
             return {"result": "skipped"}
         self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
 
-        # Update the running config unconditionally — must not be gated on file I/O.
         self.config.set("export.share_ip", share_ip)
         self.config.set("export.share_username", share_username)
         self.config.set("export.share_password", share_password)
         if share_path:
             self.config.set("export.share_path", share_path)
 
-        # Persist to base_config.json so values survive a config reset.
-        # Uses atomic rename so a disk-full failure never corrupts the file.
-        try:
-            try:
-                with open(self.config.base_config_path) as f:
-                    base = json.load(f)
-            except (json.JSONDecodeError, ValueError, FileNotFoundError):
-                self.logger.warning(
-                    "base_config.json missing or corrupt — rebuilding from scratch"
-                )
-                base = {}
-
-            export = base.setdefault("export", {})
-            export["share_ip"] = share_ip
-            export["share_username"] = share_username
-            export["share_password"] = share_password
-            if share_path:
-                export["share_path"] = share_path
-
-            base_dir = os.path.dirname(self.config.base_config_path)
-            fd, tmp_path = tempfile.mkstemp(dir=base_dir, suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(base, f, indent=2)
-                    f.write("\n")
-                os.replace(tmp_path, self.config.base_config_path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-
-            self.logger.info("Export config updated and persisted to base_config.json")
-            return {"result": "success"}
-        except Exception as e:
-            self.logger.error(f"set_export_config: failed to persist to base_config.json: {e}")
-            # Running config was already updated; export will work this session
-            return {"result": "partial", "output": str(e)}
+        return {"result": "success"}
 
 
     def _get_required_disk_space_mb(self) -> float:
@@ -1141,9 +1099,23 @@ class Module(ABC):
 
 
     def _get_version(self) -> str:
-        """Get the current saviour version"""
+        """Get the current saviour version.
+
+        Prefers src/__version__.py (updated by ZIP deploys) over git describe
+        (which is stale after a ZIP deploy because .git is excluded from rsync).
+        """
+        version_file = "/usr/local/src/saviour/src/__version__.py"
         try:
-            # Get version
+            import re as _re
+            with open(version_file) as _f:
+                _m = _re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', _f.read())
+                if _m:
+                    vers = _m.group(1)
+                    self.logger.info(f"Retrieved version: {vers}")
+                    return vers
+        except Exception:
+            pass
+        try:
             s = subprocess.run(
                 ["git", "-c", "safe.directory=/usr/local/src/saviour", "describe", "--tags"],
                 cwd="/usr/local/src/saviour",

@@ -299,6 +299,9 @@ class Controller(ABC):
             self.facade.module_offline(module_id)
 
         self.modules.notify_module_online_update(module_id, online)
+        # Push updated health (including status field) so the frontend status dot
+        # reflects the new state without waiting for the next get_health poll.
+        self.web.broadcast_module_health()
 
 
     def _setup_logging(self): 
@@ -499,8 +502,10 @@ class Controller(ABC):
             self.web.notify_module_update()
 
 
-    def on_module_removed(self, module):
-        """Callback for when a module network is removed"""
+    def on_module_removed(self, module_id):
+        """Callback for when a module sends an mDNS goodbye (graceful shutdown)."""
+        self.logger.info(f"mDNS goodbye from {module_id} — marking offline immediately")
+        self.health.force_offline(module_id)
         self.web.notify_module_update()
 
 

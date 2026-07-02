@@ -108,6 +108,23 @@ export default function System() {
     setRemoveTarget(null);
   };
 
+  // ── Module actions modal ──────────────────────────────────────────────────
+  const [actionTarget, setActionTarget] = useState(null); // { id, name, isOnline }
+  const [rebootTarget, setRebootTarget] = useState(null);
+  const [restartTarget, setRestartTarget] = useState(null);
+
+  const handleRebootConfirm = () => {
+    if (!rebootTarget) return;
+    socket.emit("send_command", { module_id: rebootTarget.id, type: "reboot", params: {} });
+    setRebootTarget(null);
+  };
+
+  const handleRestartConfirm = () => {
+    if (!restartTarget) return;
+    socket.emit("send_command", { module_id: restartTarget.id, type: "restart_service", params: {} });
+    setRestartTarget(null);
+  };
+
   // ── Shutdown module ───────────────────────────────────────────────────────
   const [shutdownTarget, setShutdownTarget] = useState(null); // { id, name }
   const [shutdownStates, setShutdownStates] = useState({}); // { module_id: "sent" | "acked" }
@@ -156,6 +173,18 @@ export default function System() {
     });
   }, [modules]);
 
+  // ── Controller actions ────────────────────────────────────────────────────
+  const [showControllerActions, setShowControllerActions] = useState(false);
+  const [controllerActionTarget, setControllerActionTarget] = useState(null); // "restart_service" | "reboot" | "shutdown"
+
+  const handleControllerActionConfirm = () => {
+    if (!controllerActionTarget) return;
+    if (controllerActionTarget === "restart_service") socket.emit("restart_saviour_controller_service");
+    else if (controllerActionTarget === "reboot") socket.emit("reboot_controller");
+    else if (controllerActionTarget === "shutdown") socket.emit("shutdown_controller");
+    setControllerActionTarget(null);
+  };
+
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
 
@@ -182,32 +211,60 @@ export default function System() {
     : null;
   const controllerDriftMs = clockRef ? clockRef.controllerMs - clockRef.browserMs : null;
 
-  // ── Update all devices ────────────────────────────────────────────────────
-  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
-  const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | { success, output }
+  // ── Update all devices (ZIP-based deploy) ────────────────────────────────
+  const [stagedMeta, setStagedMeta] = useState(null); // { version, size, filename } or null
+  const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | "restarting" | { success, output }
+
+  useEffect(() => {
+    socket.emit("get_update_info");
+    const onUpdateInfo = (data) => {
+      setStagedMeta(data?.staged ?? null);
+    };
+    socket.on("update_info", onUpdateInfo);
+    return () => socket.off("update_info", onUpdateInfo);
+  }, []);
 
   useEffect(() => {
     const onModuleResult = (data) => {
       setDeviceStatuses(prev => ({ ...prev, [data.module_id]: { success: data.success, output: data.output } }));
     };
-    const onControllerResult = (data) => {
-      setDeviceStatuses(prev => ({ ...prev, controller: { success: data.success, output: data.output } }));
+    const onDeployStatus = (data) => {
+      if (data.stage === "modules_notified") {
+        // Sidebar triggered a full deploy — initialise all module rows as updating
+        setDeviceStatuses(prev => {
+          const next = { ...prev, controller: "restarting" };
+          moduleList.forEach(m => { if (!next[m.id]) next[m.id] = "updating"; });
+          return next;
+        });
+      }
+    };
+    const onDeployError = (data) => {
+      setDeviceStatuses(prev => ({ ...prev, controller: { success: false, output: data.error } }));
+    };
+    const onReconnect = () => {
+      setDeviceStatuses(prev => {
+        if (prev.controller === "restarting" || prev.controller === "updating") {
+          return { ...prev, controller: { success: true, output: "Service restarted" } };
+        }
+        return prev;
+      });
+      socket.emit("get_update_info");
     };
     socket.on("module_update_result", onModuleResult);
-    socket.on("update_saviour_controller_result", onControllerResult);
+    socket.on("deploy_update_status", onDeployStatus);
+    socket.on("deploy_update_error", onDeployError);
+    socket.on("connect", onReconnect);
     return () => {
       socket.off("module_update_result", onModuleResult);
-      socket.off("update_saviour_controller_result", onControllerResult);
+      socket.off("deploy_update_status", onDeployStatus);
+      socket.off("deploy_update_error", onDeployError);
+      socket.off("connect", onReconnect);
     };
-  }, []);
+  }, [moduleList]);
 
-  const handleUpdateAll = () => {
-    const initial = { controller: "updating" };
-    moduleList.forEach(m => { initial[m.id] = "updating"; });
-    setDeviceStatuses(initial);
-    setShowUpdateConfirm(false);
-    socket.emit("update_saviour_controller");
-    socket.emit("send_command", { module_id: "all", type: "update_saviour", params: {} });
+  const handleDeployToModule = (moduleId) => {
+    setDeviceStatuses(prev => ({ ...prev, [moduleId]: "updating" }));
+    socket.emit("deploy_update_to_module", { module_id: moduleId });
   };
 
   const updateDevices = useMemo(() => {
@@ -241,11 +298,13 @@ export default function System() {
                 <button
                   className="th-update-btn"
                   type="button"
-                  onClick={() => setShowUpdateConfirm(true)}
-                  disabled={Object.values(deviceStatuses).some(s => s === "updating")}
-                  title="Update all devices to latest version"
+                  onClick={() => window.dispatchEvent(new CustomEvent("saviour:open-update-modal"))}
+                  disabled={Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
+                  title={stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} — click to open update panel` : "Open update panel"}
                 >
-                  {Object.values(deviceStatuses).some(s => s === "updating") ? "Updating…" : "Update All"}
+                  {Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")
+                    ? "Deploying…"
+                    : "Update"}
                 </button>
               </th>
               <th>CPU</th>
@@ -295,10 +354,10 @@ export default function System() {
               <td>
                 <button
                   type="button"
-                  className="remove-btn sync-btn"
-                  onClick={() => setShowClockModal(true)}
+                  className="action-menu-btn"
+                  onClick={() => setShowControllerActions(true)}
                 >
-                  Set Time
+                  Actions ▾
                 </button>
               </td>
             </tr>
@@ -306,13 +365,16 @@ export default function System() {
             {/* Module rows */}
             {moduleRows.map((row) => {
               const isOnline = modules[row.id]?.online ?? false;
+              // If modules.online is false (authoritative, fast update), always show
+              // offline dot even if the health broadcast hasn't caught up yet.
+              const statusForDot = isOnline ? (row.status ?? "online") : "offline";
               return (
                 <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                   <td>
                     <span className="device-name">{row.name}</span>
                     <span className="device-id">{row.id}</span>
                   </td>
-                  <td>{statusCell(row.status ?? "offline")}</td>
+                  <td>{statusCell(statusForDot)}</td>
                   <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
                   <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
                   <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
@@ -322,36 +384,19 @@ export default function System() {
                   <td>{isOnline ? ptpCell(row.ptp4l_offset_ns) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
-                    {(() => {
-                      const sdState = shutdownStates[row.id];
-                      if (sdState && isOnline) {
-                        return (
-                          <span className="shutdown-progress">
-                            {sdState === "acked" ? "Powering off…" : "Shutting down…"}
-                          </span>
-                        );
-                      }
-                      if (!sdState && isOnline) {
-                        return (
-                          <button
-                            type="button"
-                            className="remove-btn shutdown-btn"
-                            style={{marginRight: "6px"}}
-                            onClick={() => setShutdownTarget({ id: row.id, name: row.name })}
-                          >
-                            Shutdown
-                          </button>
-                        );
-                      }
-                      return null;
-                    })()}
-                    <button
-                      type="button"
-                      className="remove-btn"
-                      onClick={() => setRemoveTarget({ id: row.id, name: row.name, online: isOnline })}
-                    >
-                      Remove
-                    </button>
+                    {shutdownStates[row.id] ? (
+                      <span className="shutdown-progress">
+                        {shutdownStates[row.id] === "acked" ? "Powering off…" : "Shutting down…"}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="action-menu-btn"
+                        onClick={() => setActionTarget({ id: row.id, name: row.name, isOnline })}
+                      >
+                        Actions ▾
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
@@ -382,19 +427,20 @@ export default function System() {
               <tbody>
                 {updateDevices.map(({ id, name }) => {
                   const s = deviceStatuses[id];
+                  const isInProgress = s === "updating" || s === "restarting";
                   return (
                     <tr key={id} className={id === "controller" ? "system-table__controller-row" : ""}>
                       <td><span className="device-name">{name}</span></td>
                       <td>
-                        {s === "updating"
-                          ? <span className="cell--muted">Updating…</span>
+                        {isInProgress
+                          ? <span className="cell--muted">{s === "restarting" ? "Restarting…" : "Updating…"}</span>
                           : s?.success
                             ? <span className="val--ok">&#10003; Updated</span>
                             : <span className="val--danger">&#10007; Failed</span>
                         }
                       </td>
                       <td className="cell--muted update-output">
-                        {s && s !== "updating" ? s.output : ""}
+                        {s && !isInProgress ? s.output : ""}
                       </td>
                     </tr>
                   );
@@ -405,6 +451,135 @@ export default function System() {
         </div>
       )}
 
+
+      {showControllerActions && (
+        <div className="modal-overlay" onClick={() => setShowControllerActions(false)}>
+          <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
+            <p className="actions-modal__title">Controller</p>
+            <div className="actions-modal__list">
+              <button type="button" className="actions-modal__item"
+                onClick={() => { setShowClockModal(true); setShowControllerActions(false); }}>
+                <span>Set Time</span>
+                <span className="actions-modal__hint">Manually set the controller clock</span>
+              </button>
+              <button type="button" className="actions-modal__item"
+                onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
+                <span>Restart service</span>
+                <span className="actions-modal__hint">Restarts the SAVIOUR program — controller does not reboot, reconnects automatically</span>
+              </button>
+              <button type="button" className="actions-modal__item"
+                onClick={() => { setControllerActionTarget("reboot"); setShowControllerActions(false); }}>
+                <span>Reboot</span>
+                <span className="actions-modal__hint">Reboots the controller Pi — reconnects automatically</span>
+              </button>
+              <div className="actions-modal__divider" />
+              <button type="button" className="actions-modal__item actions-modal__item--danger"
+                onClick={() => { setControllerActionTarget("shutdown"); setShowControllerActions(false); }}>
+                <span>Shutdown</span>
+                <span className="actions-modal__hint">Powers off the controller — requires manual power cycle to restart</span>
+              </button>
+            </div>
+            <div className="modal-buttons" style={{ marginTop: "8px" }}>
+              <button className="save-button" type="button" onClick={() => setShowControllerActions(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {controllerActionTarget && (
+        <div className="modal-overlay" onClick={() => setControllerActionTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            {controllerActionTarget === "restart_service" && <>
+              <p>Restart the controller service?</p>
+              <p className="modal-subtext">The SAVIOUR program will restart. The controller will briefly disconnect then reconnect automatically.</p>
+            </>}
+            {controllerActionTarget === "reboot" && <>
+              <p>Reboot the controller?</p>
+              <p className="modal-subtext">The controller Pi will reboot. It will reconnect automatically after restart. Any active recording sessions will be interrupted.</p>
+            </>}
+            {controllerActionTarget === "shutdown" && <>
+              <p>Shut down the controller?</p>
+              <p className="modal-subtext modal-subtext--warn">The controller will power off. A manual power cycle is required to bring it back online. Any active recording sessions will be interrupted.</p>
+            </>}
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleControllerActionConfirm}>
+                {controllerActionTarget === "restart_service" ? "Restart" : controllerActionTarget === "reboot" ? "Reboot" : "Shutdown"}
+              </button>
+              <button className="save-button" type="button" onClick={() => setControllerActionTarget(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {actionTarget && (
+        <div className="modal-overlay" onClick={() => setActionTarget(null)}>
+          <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
+            <p className="actions-modal__title">{actionTarget.name}</p>
+            <div className="actions-modal__list">
+              {actionTarget.isOnline ? (<>
+                {stagedMeta && (
+                  <button type="button" className="actions-modal__item"
+                    onClick={() => { handleDeployToModule(actionTarget.id); setActionTarget(null); }}>
+                    <span>Update</span>
+                    <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to this module only</span>
+                  </button>
+                )}
+                <button type="button" className="actions-modal__item"
+                  onClick={() => { setRestartTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
+                  <span>Restart service</span>
+                  <span className="actions-modal__hint">Restarts the SAVIOUR program — module does not reboot, reconnects automatically</span>
+                </button>
+                <button type="button" className="actions-modal__item"
+                  onClick={() => { setRebootTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
+                  <span>Reboot</span>
+                  <span className="actions-modal__hint">Reboots the module — reconnects automatically</span>
+                </button>
+                <div className="actions-modal__divider" />
+                <button type="button" className="actions-modal__item actions-modal__item--danger"
+                  onClick={() => { setShutdownTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
+                  <span>Shutdown</span>
+                  <span className="actions-modal__hint">Powers off — reconnects when switched back on</span>
+                </button>
+              </>) : (
+                <button type="button" className="actions-modal__item actions-modal__item--danger"
+                  onClick={() => { setRemoveTarget({ id: actionTarget.id, name: actionTarget.name, online: false }); setActionTarget(null); }}>
+                  <span>Remove</span>
+                  <span className="actions-modal__hint">Remove offline module from tracking</span>
+                </button>
+              )}
+            </div>
+            <div className="modal-buttons" style={{ marginTop: "8px" }}>
+              <button className="save-button" type="button" onClick={() => setActionTarget(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rebootTarget && (
+        <div className="modal-overlay" onClick={() => setRebootTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Reboot <strong>{rebootTarget.name}</strong>?</p>
+            <p className="modal-subtext">The module will reboot and reconnect automatically. Any active recording will be interrupted.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleRebootConfirm}>Reboot</button>
+              <button className="save-button" type="button" onClick={() => setRebootTarget(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {restartTarget && (
+        <div className="modal-overlay" onClick={() => setRestartTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Restart service on <strong>{restartTarget.name}</strong>?</p>
+            <p className="modal-subtext">The saviour service will restart. The module will briefly go offline then reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleRestartConfirm}>Restart</button>
+              <button className="save-button" type="button" onClick={() => setRestartTarget(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {shutdownTarget && (
         <div className="modal-overlay" onClick={() => setShutdownTarget(null)}>
@@ -458,18 +633,6 @@ export default function System() {
         />
       )}
 
-      {showUpdateConfirm && (
-        <div className="modal-overlay" onClick={() => setShowUpdateConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Update SAVIOUR on all <strong>{moduleList.length + 1}</strong> devices?</p>
-            <p className="modal-subtext">Runs <code>git pull</code> on the controller and all connected modules. Restart services afterwards to apply changes.</p>
-            <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={handleUpdateAll}>Update All</button>
-              <button className="reset-button" type="button" onClick={() => setShowUpdateConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

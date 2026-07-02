@@ -8,6 +8,7 @@ import Recording from "../basic/pages/Recording/Recording";
 import Settings from "../basic/pages/Settings/Settings";
 import System from "../basic/pages/System/System";
 import Debug from "../basic/pages/Debug/Debug";
+import ConnectionOverlay from "../basic/components/ConnectionOverlay/ConnectionOverlay";
 
 document.title = "APA";
 
@@ -48,6 +49,7 @@ function App() {
           <Route path="/debug" element={<Debug />} />
         </Routes>
       </div>
+      <ConnectionOverlay />
     </div>
   );
 }

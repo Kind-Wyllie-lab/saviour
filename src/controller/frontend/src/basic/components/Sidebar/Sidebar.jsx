@@ -30,6 +30,13 @@ function Sidebar({ navItems }) {
     return () => socket.off("controller_info_response", handler);
   }, []);
 
+  // Allow other pages to open the update modal via a window event
+  useEffect(() => {
+    const handler = () => openUpdateModal();
+    window.addEventListener("saviour:open-update-modal", handler);
+    return () => window.removeEventListener("saviour:open-update-modal", handler);
+  }, []);
+
   useEffect(() => {
     const onAck = () => setShutdownState("acked");
     socket.on("shutdown_saviour_ack", onAck);
@@ -178,9 +185,9 @@ function Sidebar({ navItems }) {
             onClick={openUpdateModal}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="23 4 23 10 17 10" />
-              <polyline points="1 20 1 14 7 14" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
           </button>
           <button

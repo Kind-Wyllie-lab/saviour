@@ -984,8 +984,28 @@ class Web(ABC):
                 if not zipfile.is_zipfile(io.BytesIO(assembled)):
                     _emit("upload_update_error", {"error": "File is not a valid ZIP archive"})
                     return
+                # Try version sources in order of reliability:
+                # 1. v<digits> tag in the filename (release ZIPs from GitHub)
+                # 2. src/__version__.py inside the ZIP (tracked file, updated at tag time)
+                # 3. Filename stem as a last resort
                 m = re.search(r'v(\d[\d\.\-\w]*)', filename)
-                version = f"v{m.group(1)}" if m else "unknown"
+                if m:
+                    version = f"v{m.group(1)}"
+                else:
+                    version = None
+                    try:
+                        with zipfile.ZipFile(io.BytesIO(assembled)) as z:
+                            for name in z.namelist():
+                                if name.split('/')[-1] == '__version__.py':
+                                    src = z.read(name).decode()
+                                    vm = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', src)
+                                    if vm:
+                                        version = vm.group(1)
+                                        break
+                    except Exception:
+                        pass
+                    if not version:
+                        version = os.path.splitext(filename)[0]
                 os.makedirs(_UPDATE_STORE, exist_ok=True)
                 tmp = _UPDATE_ZIP + ".tmp"
                 with open(tmp, "wb") as f:

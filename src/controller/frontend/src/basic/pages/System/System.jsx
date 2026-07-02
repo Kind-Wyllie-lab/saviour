@@ -213,7 +213,6 @@ export default function System() {
 
   // ── Update all devices (ZIP-based deploy) ────────────────────────────────
   const [stagedMeta, setStagedMeta] = useState(null); // { version, size, filename } or null
-  const [showDeployConfirm, setShowDeployConfirm] = useState(false);
   const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | "restarting" | { success, output }
 
   useEffect(() => {
@@ -231,7 +230,12 @@ export default function System() {
     };
     const onDeployStatus = (data) => {
       if (data.stage === "modules_notified") {
-        setDeviceStatuses(prev => ({ ...prev, controller: "restarting" }));
+        // Sidebar triggered a full deploy — initialise all module rows as updating
+        setDeviceStatuses(prev => {
+          const next = { ...prev, controller: "restarting" };
+          moduleList.forEach(m => { if (!next[m.id]) next[m.id] = "updating"; });
+          return next;
+        });
       }
     };
     const onDeployError = (data) => {
@@ -245,15 +249,7 @@ export default function System() {
       socket.off("deploy_update_status", onDeployStatus);
       socket.off("deploy_update_error", onDeployError);
     };
-  }, []);
-
-  const handleDeploy = () => {
-    const initial = { controller: "updating" };
-    moduleList.forEach(m => { initial[m.id] = "updating"; });
-    setDeviceStatuses(initial);
-    setShowDeployConfirm(false);
-    socket.emit("deploy_update");
-  };
+  }, [moduleList]);
 
   const handleDeployToModule = (moduleId) => {
     setDeviceStatuses(prev => ({ ...prev, [moduleId]: "updating" }));
@@ -291,15 +287,15 @@ export default function System() {
                 <button
                   className="th-update-btn"
                   type="button"
-                  onClick={() => setShowDeployConfirm(true)}
-                  disabled={!stagedMeta || Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
-                  title={stagedMeta ? `Deploy staged update ${stagedMeta.version ?? ""}` : "No update staged — upload a package via the sidebar"}
+                  onClick={() => window.dispatchEvent(new CustomEvent("saviour:open-update-modal"))}
+                  disabled={Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
+                  title={stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} — click to open update panel` : "Open update panel"}
                 >
                   {Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")
                     ? "Deploying…"
                     : stagedMeta
-                      ? `Deploy ${stagedMeta.version ?? "update"}`
-                      : "No update staged"}
+                      ? `Update ${stagedMeta.version ?? ""}`
+                      : "Update"}
                 </button>
               </th>
               <th>CPU</th>
@@ -628,27 +624,6 @@ export default function System() {
         />
       )}
 
-      {showDeployConfirm && (
-        <div className="modal-overlay" onClick={() => setShowDeployConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Deploy update to all <strong>{moduleList.length + 1}</strong> devices?</p>
-            {stagedMeta && (
-              <p className="modal-subtext">
-                Staged package: <strong>{stagedMeta.filename ?? "saviour-latest.zip"}</strong>
-                {stagedMeta.version ? <> — version <strong>{stagedMeta.version}</strong></> : null}
-              </p>
-            )}
-            <p className="modal-subtext">
-              Modules will download and apply the update then restart their service.
-              The controller will apply and restart immediately — this page will briefly disconnect.
-            </p>
-            <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={handleDeploy}>Deploy</button>
-              <button className="reset-button" type="button" onClick={() => setShowDeployConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

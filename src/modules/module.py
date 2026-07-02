@@ -180,7 +180,7 @@ class Module(ABC):
         # DISCONNECT_RECORDING_GRACE_SECS, the timer is cancelled and recording
         # continues uninterrupted.  This protects against brief network blips
         # and controller restarts that would otherwise cut a segment short.
-        self._disconnect_recording_timer: threading.Timer | None = None
+        self._disconnect_recording_timer = None  # type: Optional[threading.Timer]
         self._disconnect_recording_timer_lock = threading.Lock()
 
         # Ready checks

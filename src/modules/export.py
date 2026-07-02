@@ -92,7 +92,7 @@ class Export:
             return False
 
 
-    def _setup_recovered_export(self, session_name: str) -> str | False:
+    def _setup_recovered_export(self, session_name: str):
         """Like _setup_export but writes to _recovered/{session}/{date}/{module}/.
 
         Used when files from an interrupted session cannot be routed to their
@@ -115,7 +115,7 @@ class Export:
         self.logger.info(f"Using recovered export path: {path}")
         return path
 
-    def _extract_session_from_filename(self, filename: str) -> str | None:
+    def _extract_session_from_filename(self, filename: str):
         """Extract the session name prefix from a recorded filename.
 
         Filenames follow the pattern:

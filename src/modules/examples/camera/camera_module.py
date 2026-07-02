@@ -95,7 +95,7 @@ class CameraModule(Module):
         # a background thread drains them so file I/O never stalls capture.
         self._csv_row_buffer  = collections.deque()
         self._csv_flush_stop  = threading.Event()
-        self._csv_flush_thread: threading.Thread | None = None
+        self._csv_flush_thread = None  # type: Optional[threading.Thread]
         # self.frame_times = []  # For storing frame timestamps
 
         # Set up camera-specific callbacks for the command handler

@@ -146,15 +146,15 @@ class Recording():
 
 
     def _pre_setup_session(self, session_name: str, start_at: float) -> None:
-        """Mirror the session-name / filename-prefix setup from _begin_recording
-        so that _get_video_filename() returns the correct path when called from
-        the module's pre_create hook before _begin_recording has run.
+        """Set the string fields that _get_video_filename() needs before
+        _begin_recording has run.
 
-        _begin_recording will re-run these assignments with the same values, so
-        calling this early is safe and idempotent.
+        Only sets in-memory string state — deliberately does NOT call
+        when_recording_starts() (which has I/O side effects and already runs
+        inside _begin_recording). _begin_recording will overwrite these with
+        the same values, so calling this early is safe and idempotent.
         """
         self.current_session_name = self._format_session_name(session_name)
-        self.facade.when_recording_starts()
         module_name = self.facade.get_module_name()
         short_mac   = self.facade.get_short_mac()
         self.recording_session_id = (
@@ -491,5 +491,11 @@ class Recording():
 
     
     def get_start_time_from_filename(self, filename: str) -> str:
-        start_time = filename.split("_")[-1][0:-1]
-        return start_time
+        import re
+        # Extract "YYYYMMDD-HHMMSS" from the "(segment_YYYYMMDD-HHMMSS)" pattern.
+        # Handles filenames that have suffixes after the datetime (e.g. _timestamps.csv).
+        m = re.search(r'\((\d+)_(\d{8}-\d{6})\)', filename)
+        if m:
+            return m.group(2)
+        # Fallback: old behaviour (works for bare .ts files)
+        return filename.split("_")[-1][0:-1]

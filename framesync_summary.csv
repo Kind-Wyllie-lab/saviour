@@ -1,0 +1,2 @@
+session,ref_camera,client_camera,fps,n_frames,n_artefacts,mean_offset_us,std_offset_us,mean_abs_offset_us,mean_abs_offset_s,p50_offset_us,p95_offset_us,max_abs_offset_us,pct_within_half_frame
+100fps_noframesync-2-155514,A1_3536,camera_d61d,100,264,390,2084.18,4588.71,3874.768,0.003874768,-195.784,8705.872,8992.472,62.12

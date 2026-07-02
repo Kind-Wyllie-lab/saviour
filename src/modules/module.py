@@ -1085,9 +1085,23 @@ class Module(ABC):
 
 
     def _get_version(self) -> str:
-        """Get the current saviour version"""
+        """Get the current saviour version.
+
+        Prefers src/__version__.py (updated by ZIP deploys) over git describe
+        (which is stale after a ZIP deploy because .git is excluded from rsync).
+        """
+        version_file = "/usr/local/src/saviour/src/__version__.py"
         try:
-            # Get version
+            import re as _re
+            with open(version_file) as _f:
+                _m = _re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', _f.read())
+                if _m:
+                    vers = _m.group(1)
+                    self.logger.info(f"Retrieved version: {vers}")
+                    return vers
+        except Exception:
+            pass
+        try:
             s = subprocess.run(
                 ["git", "-c", "safe.directory=/usr/local/src/saviour", "describe", "--tags"],
                 cwd="/usr/local/src/saviour",

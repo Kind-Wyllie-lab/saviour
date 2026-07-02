@@ -127,14 +127,18 @@ class Export:
         even though self.module_id is the full identifier.
         """
         short_id = self.module_id.split("-")[-1]
-        for marker in (f"_{self.module_id}_", f"_{short_id}_"):
+        for strip_animal_id, marker in (
+            (False, f"_{self.module_id}_"),
+            (True,  f"_{short_id}_"),
+        ):
             idx = filename.find(marker)
             if idx > 0:
-                # filename[:idx] is "{session_name}_{animal_id}"; strip animal_id
                 prefix = filename[:idx]
-                last_sep = prefix.rfind("_")
-                if last_sep > 0:
-                    return prefix[:last_sep]
+                if strip_animal_id:
+                    # prefix is "{session_name}_{animal_id}"; strip the animal_id suffix
+                    last_sep = prefix.rfind("_")
+                    if last_sep > 0:
+                        return prefix[:last_sep]
                 return prefix
         return None
 

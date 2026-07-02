@@ -237,26 +237,13 @@ export default function System() {
     const onDeployError = (data) => {
       setDeviceStatuses(prev => ({ ...prev, controller: { success: false, output: data.error } }));
     };
-    // When the socket reconnects after a controller restart, mark it done and
-    // refresh version info so the header button shows the new running version.
-    const onReconnect = () => {
-      setDeviceStatuses(prev => {
-        if (prev.controller === "restarting" || prev.controller === "updating") {
-          return { ...prev, controller: { success: true, output: "Service restarted" } };
-        }
-        return prev;
-      });
-      socket.emit("get_update_info");
-    };
     socket.on("module_update_result", onModuleResult);
     socket.on("deploy_update_status", onDeployStatus);
     socket.on("deploy_update_error", onDeployError);
-    socket.on("connect", onReconnect);
     return () => {
       socket.off("module_update_result", onModuleResult);
       socket.off("deploy_update_status", onDeployStatus);
       socket.off("deploy_update_error", onDeployError);
-      socket.off("connect", onReconnect);
     };
   }, []);
 

@@ -123,7 +123,11 @@ class Recording():
         except (PermissionError, AttributeError, OSError) as e:
             self.logger.debug(f"SCHED_FIFO unavailable ({e}); using normal scheduling")
 
-        # 2. Pre-create file handles before sleeping
+        # 2. Pre-compute session state so _get_video_filename() works correctly
+        #    inside the module hook (current_filename_prefix would be None otherwise)
+        self._pre_setup_session(session_name, start_at)
+
+        # 3. Pre-create file handles before sleeping
         try:
             self.facade.pre_create_first_segment(start_at)
         except Exception as e:
@@ -131,7 +135,7 @@ class Recording():
                 f"pre_create_first_segment failed ({e}); will open files at start time"
             )
 
-        # 3. Sleep then spin
+        # 4. Sleep then spin
         delay = start_at - time.time()
         if delay > 0.010:
             time.sleep(delay - 0.010)
@@ -139,6 +143,37 @@ class Recording():
             pass
 
         self._begin_recording(session_name, duration)
+
+
+    def _pre_setup_session(self, session_name: str, start_at: float) -> None:
+        """Mirror the session-name / filename-prefix setup from _begin_recording
+        so that _get_video_filename() returns the correct path when called from
+        the module's pre_create hook before _begin_recording has run.
+
+        _begin_recording will re-run these assignments with the same values, so
+        calling this early is safe and idempotent.
+        """
+        self.current_session_name = self._format_session_name(session_name)
+        self.facade.when_recording_starts()
+        module_name = self.facade.get_module_name()
+        short_mac   = self.facade.get_short_mac()
+        self.recording_session_id = (
+            module_name if short_mac in module_name
+            else f"{module_name}_{short_mac}"
+        )
+        if session_name:
+            self.current_filename_prefix = (
+                f"{self.recording_folder}/"
+                f"{self.current_session_name}_{self.recording_session_id}"
+            )
+        else:
+            self.current_filename_prefix = (
+                f"{self.recording_folder}/{self.recording_session_id}"
+            )
+        os.makedirs(self.recording_folder, exist_ok=True)
+        # Seed segment state so _get_video_filename() produces the correct name
+        self.segment_id = 0
+        self.segment_start_time = start_at
 
 
     def _begin_recording(self, session_name: str, duration: str) -> dict:

@@ -293,9 +293,7 @@ export default function System() {
                 >
                   {Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")
                     ? "Deploying…"
-                    : stagedMeta
-                      ? `Update ${stagedMeta.version ?? ""}`
-                      : "Update"}
+                    : "Update"}
                 </button>
               </th>
               <th>CPU</th>

@@ -179,6 +179,30 @@
     color: var(--accent-color, #3b82f6);
 }
 
+.update-stage-btn {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--text-color) 30%, transparent);
+    background: transparent;
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.75;
+    white-space: nowrap;
+}
+
+.update-stage-btn:hover:not(:disabled) {
+    border-color: var(--accent-color, #3b82f6);
+    color: var(--accent-color, #3b82f6);
+    opacity: 1;
+}
+
+.update-stage-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 .update-dropzone {
     border: 1.5px dashed color-mix(in srgb, var(--text-color) 30%, transparent);
     border-radius: 8px;

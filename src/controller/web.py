@@ -924,18 +924,23 @@ class Web(ABC):
                              download_name="saviour-update.zip",
                              mimetype="application/zip")
 
+        _VERSION_FILE = "/usr/local/src/saviour/src/__version__.py"
+
+        def _read_running_version() -> str:
+            try:
+                with open(_VERSION_FILE) as _vf:
+                    import re as _re
+                    _m = _re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', _vf.read())
+                    if _m:
+                        return _m.group(1)
+            except Exception:
+                pass
+            return "unknown"
+
         @self.socketio.on("get_update_info")
         def handle_get_update_info(data=None):
             from flask_socketio import emit as _emit
-            try:
-                r = subprocess.run(
-                    ["git", "-C", "/usr/local/src/saviour",
-                     "describe", "--tags", "--always"],
-                    capture_output=True, text=True, timeout=5
-                )
-                running = r.stdout.strip() or "unknown"
-            except Exception:
-                running = "unknown"
+            running = _read_running_version()
             staged = None
             if os.path.exists(_UPDATE_META):
                 try:
@@ -1076,16 +1081,26 @@ class Web(ABC):
                         f"{source}/",
                         "/usr/local/src/saviour/",
                     ], check=True)
-                    subprocess.run([
+                    # pip install is best-effort — devices may be offline.
+                    # The rsync above is the critical step; a failed dependency
+                    # install is logged but must not block the service restart.
+                    pip_result = subprocess.run([
                         "/usr/local/src/saviour/env/bin/pip", "install", "-q",
+                        "--no-index",
                         "-r", "/usr/local/src/saviour/requirements.txt",
-                    ], check=True)
-                    self.logger.info("Update applied — restarting controller service")
-                    time.sleep(2)
-                    subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
+                    ])
+                    if pip_result.returncode != 0:
+                        self.logger.warning(
+                            "pip install --no-index failed (new dependencies may need "
+                            "a manual `pip install -r requirements.txt` with internet access)"
+                        )
                 except Exception as e:
                     self.logger.error(f"Controller update failed: {e}")
                     self.socketio.emit("deploy_update_error", {"error": str(e)})
+                    return
+                self.logger.info("Update applied — restarting controller service")
+                time.sleep(2)
+                subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
 
             threading.Thread(target=_apply_to_controller, daemon=True,
                              name="saviour-deploy").start()

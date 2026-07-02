@@ -280,10 +280,17 @@ class Module(ABC):
                     f"{INSTALL_DIR}/",
                 ], check=True)
 
-                subprocess.run([
+                # pip install is best-effort — modules are offline.
+                pip_result = subprocess.run([
                     f"{INSTALL_DIR}/env/bin/pip", "install", "-q",
+                    "--no-index",
                     "-r", f"{INSTALL_DIR}/requirements.txt",
-                ], check=True)
+                ])
+                if pip_result.returncode != 0:
+                    self.logger.warning(
+                        "pip install --no-index failed; new dependencies (if any) "
+                        "will need a manual install with internet access"
+                    )
 
                 self.logger.info("Update applied — restarting module service")
                 self.communication.send_status({

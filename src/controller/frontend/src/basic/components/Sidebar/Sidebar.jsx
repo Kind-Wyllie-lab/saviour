@@ -21,6 +21,7 @@ function Sidebar({ navItems }) {
   const [stagedMeta, setStagedMeta]           = useState(null); // completed upload metadata
   const [deployStatus, setDeployStatus]       = useState(null); // null | "deploying" | "done" | "error"
   const [deployError, setDeployError]         = useState(null);
+  const [stagingCurrent, setStagingCurrent]   = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -58,11 +59,13 @@ function Sidebar({ navItems }) {
     const onComplete = (meta) => {
       setStagedMeta(meta);
       setUploadProgress(null);
+      setStagingCurrent(false);
       setUpdateInfo(prev => prev ? { ...prev, staged: meta } : { running_version: "?", staged: meta });
     };
     const onError = ({ error }) => {
       setUploadError(error);
       setUploadProgress(null);
+      setStagingCurrent(false);
     };
     socket.on("upload_update_progress", onProgress);
     socket.on("upload_update_complete", onComplete);
@@ -153,6 +156,15 @@ function Sidebar({ navItems }) {
     socket.emit("deploy_update");
   };
 
+  const handleStageCurrent = () => {
+    setStagingCurrent(true);
+    setUploadError(null);
+    setStagedMeta(null);
+    setDeployStatus(null);
+    setDeployError(null);
+    socket.emit("stage_current_version");
+  };
+
   const staged = stagedMeta || updateInfo?.staged;
 
   return (
@@ -217,6 +229,14 @@ function Sidebar({ navItems }) {
               <code className="update-version-value">
                 {updateInfo ? updateInfo.running_version : "…"}
               </code>
+              <button
+                className="update-stage-btn"
+                onClick={handleStageCurrent}
+                disabled={stagingCurrent || !!uploadProgress}
+                title="Package the currently-running code as the staged update"
+              >
+                {stagingCurrent ? "Staging…" : "Stage"}
+              </button>
             </div>
             {staged && (
               <div className="update-version-row">

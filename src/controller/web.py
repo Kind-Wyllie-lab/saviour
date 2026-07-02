@@ -1092,6 +1092,52 @@ class Web(ABC):
             threading.Thread(target=_apply_to_controller, daemon=True,
                              name="saviour-deploy").start()
 
+        @self.socketio.on("stage_current_version")
+        def handle_stage_current_version(data=None):
+            import zipfile as _zf
+            _SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
+                          '.pytest_cache', 'dist', '.eggs'}
+
+            def _do_stage():
+                src_root = "/usr/local/src/saviour"
+                version = _read_running_version()
+                try:
+                    os.makedirs(_UPDATE_STORE, exist_ok=True)
+                    tmp = _UPDATE_ZIP + ".tmp"
+                    with _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED) as zf:
+                        for dirpath, dirnames, filenames in os.walk(src_root):
+                            dirnames[:] = [
+                                d for d in dirnames
+                                if d not in _SKIP_DIRS
+                                and not d.endswith('.egg-info')
+                            ]
+                            for filename in filenames:
+                                if filename.endswith('.pyc'):
+                                    continue
+                                abs_path = os.path.join(dirpath, filename)
+                                rel_path = os.path.relpath(abs_path, src_root)
+                                zf.write(abs_path, rel_path)
+                    size = os.path.getsize(tmp)
+                    os.replace(tmp, _UPDATE_ZIP)
+                    meta = {
+                        "version":     version,
+                        "filename":    f"saviour-{version}.zip",
+                        "size_bytes":  size,
+                        "uploaded_at": datetime.now().isoformat(),
+                    }
+                    with open(_UPDATE_META, "w") as f:
+                        json.dump(meta, f, indent=2)
+                    self.logger.info(
+                        f"Staged current version {version} ({size // 1024} KiB)"
+                    )
+                    self.socketio.emit("upload_update_complete", meta)
+                except Exception as e:
+                    self.logger.error(f"Stage current version failed: {e}")
+                    self.socketio.emit("upload_update_error", {"error": str(e)})
+
+            threading.Thread(target=_do_stage, daemon=True,
+                             name="saviour-stage").start()
+
         @self.socketio.on("deploy_update_to_module")
         def handle_deploy_update_to_module(data):
             from flask_socketio import emit as _emit

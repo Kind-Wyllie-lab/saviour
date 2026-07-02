@@ -72,6 +72,11 @@ class Health:
         self.is_monitoring = False
         self.monitor_thread = None
 
+        # Modules explicitly force-offlined (e.g. mDNS goodbye). These must not
+        # be re-marked online by stale ZMQ messages or the heartbeat monitor loop;
+        # only a fresh mDNS re-discovery clears the flag.
+        self._force_offline_ids: set = set()
+
         self.logger.info(
             f"Initialised health monitor with heartbeat interval {self.heartbeat_interval}s, "
             f"timeout {self.heartbeat_timeout}s, suspicion threshold {self.suspicion_timeout}s."
@@ -93,13 +98,30 @@ class Health:
         waiting up to heartbeat_interval seconds for the next scheduled heartbeat.
         """
         if module_id in self.module_health:
+            if module_id in self._force_offline_ids:
+                # Stale ZMQ message after an explicit shutdown — ignore it.
+                return
             self.module_health[module_id]['last_heartbeat'] = time.time()
             if self.module_health[module_id].get('status') in ('offline', 'suspected'):
                 self._mark_module_online(module_id, trigger="ZMQ message received (proof of life)")
 
     def remove_module(self, module_id: str):
+        self._force_offline_ids.discard(module_id)
         if module_id in self.module_health.keys():
             self.module_health.pop(module_id)
+
+    def force_offline(self, module_id: str) -> None:
+        """Immediately mark a module offline — used when mDNS goodbye is received.
+
+        Resets last_heartbeat to 0 so the health monitor loop cannot re-mark the
+        module online based on a recently-refreshed heartbeat timestamp. The
+        _force_offline_ids guard prevents stale ZMQ messages (e.g. streaming_stopped
+        delivered after the mDNS goodbye) from undoing the offline state.
+        """
+        if module_id in self.module_health:
+            self._force_offline_ids.add(module_id)
+            self.module_health[module_id]['last_heartbeat'] = 0
+            self._confirm_module_offline(module_id, 0)
 
 
     def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
@@ -174,6 +196,9 @@ class Health:
         Ensures health tracking is aware of the module.
         """
         self.logger.info(f"Received discovered module from Network: {module}")
+        # Module came back via mDNS — lift any force-offline guard so ZMQ
+        # messages and heartbeats can mark it online again.
+        self._force_offline_ids.discard(module.id)
         if module.id not in self.module_health:
             self.logger.info(f"Discovered new module {module.id}, adding to health tracking")
             now = time.time()
@@ -324,7 +349,7 @@ class Health:
 
                 if time_diff <= self.suspicion_timeout:
                     # Recent heartbeat — module is healthy
-                    if status in ('offline', 'suspected'):
+                    if status in ('offline', 'suspected') and module_id not in self._force_offline_ids:
                         self._mark_module_online(module_id, trigger="heartbeat received")
 
                 elif time_diff <= self.heartbeat_timeout:

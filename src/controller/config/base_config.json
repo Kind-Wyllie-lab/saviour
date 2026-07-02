@@ -27,7 +27,8 @@
         "_health_export_interval": 30
     },
     "export": {
-        "max_concurrent_exports": 2
+        "max_concurrent_exports": 2,
+        "mount_path": "/home/pi/controller_share"
     },
     "recording": {
         "ptp_threshold_us": 1000.0,

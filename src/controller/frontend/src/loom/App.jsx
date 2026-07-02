@@ -8,6 +8,7 @@ import Settings from "/src/basic/pages/Settings/Settings";
 import LoomRecording from "/src/loom/pages/LoomRecording/LoomRecording";
 import System from "/src/basic/pages/System/System";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
+import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useSessions from "/src/hooks/useSessions";
 import { usePrefersDarkMode } from "/src/hooks/usePrefersDarkMode";
 import { LoomStageProvider } from "/src/loom/LoomStageContext";
@@ -77,6 +78,7 @@ function App() {
             onAcknowledge={handleAcknowledge}
           />
         )}
+        <ConnectionOverlay />
       </div>
     </LoomStageProvider>
   );

@@ -962,6 +962,8 @@ run_clone_fix() {
 
     progress "Clearing saved config…"
     for cfg in \
+        "/etc/saviour/controller/active_config.json" \
+        "/etc/saviour/module/active_config.json" \
         "${DIR}/src/modules/config/active_config.json" \
         "${DIR}/src/controller/config/active_config.json"
     do
@@ -992,6 +994,8 @@ run_configuration() {
 
     if $role_changed || $type_changed; then
         for cfg in \
+            "/etc/saviour/controller/active_config.json" \
+            "/etc/saviour/module/active_config.json" \
             "${DIR}/src/modules/config/active_config.json" \
             "${DIR}/src/controller/config/active_config.json"
         do

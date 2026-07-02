@@ -28,6 +28,7 @@ class Network():
         # Module tracking with timestamps for reconnection detection
         self.module_discovery_times = {}
         self.module_last_seen = {}
+        self._zeroconf_name_to_id = {}  # name → module_id for remove_service lookup
         
         # Get the ip address of the controller
         self.interface = "eth0" # The interface connected to the SAVIOUR network
@@ -149,6 +150,7 @@ class Network():
                 # Clear module list
                 self.module_discovery_times.clear()
                 self.module_last_seen.clear()
+                self._zeroconf_name_to_id.clear()
                 self.logger.info("Cleared module tracking")
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
@@ -189,7 +191,8 @@ class Network():
         current_time = time.time()
         self.module_discovery_times[module.id] = current_time
         self.module_last_seen[module.id] = current_time
-    
+        self._zeroconf_name_to_id[name] = module.id
+
         self.facade.module_discovery(module)
 
 
@@ -215,6 +218,7 @@ class Network():
         )
 
         self.module_last_seen[module_id] = time.time()
+        self._zeroconf_name_to_id[name] = module_id
         self.logger.info(f"Updated last seen time for module: {module_id}")
         self.facade.module_rediscovered(module_id)
         self.facade.module_discovery(module)
@@ -226,13 +230,21 @@ class Network():
         """
         self.logger.info(f"Removing module: {name}")
         try:
-            # Find the module being removed
+            # Try service info first; fall back to cached name map because
+            # get_service_info returns None once the record has already been
+            # withdrawn (the common case for a graceful shutdown).
             info = zeroconf.get_service_info(service_type, name)
-            if not info: 
-                self.logger.warning("update_service was called with no service info") 
-                return
-            module_to_remove = str(info.properties.get(b'id', b'unknown').decode())
-            
+            if info:
+                module_to_remove = self._prop(info.properties, b'id')
+            else:
+                module_to_remove = self._zeroconf_name_to_id.get(name)
+                if not module_to_remove:
+                    self.logger.warning(f"remove_service: no module ID found for {name}")
+                    return
+                self.logger.info(f"Used cached name map to identify module: {module_to_remove}")
+
+            self._zeroconf_name_to_id.pop(name, None)
+
             # Call the callback if it exists
             if self.on_module_removed:
                 self.logger.info(f"Calling module removal callback")

@@ -48,12 +48,11 @@
 }
 
 .th--version {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  white-space: nowrap;
 }
 
 .th-update-btn {
+  margin-left: 8px;
   padding: 2px 8px;
   border-radius: 4px;
   border: 1px solid var(--border-color);
@@ -64,6 +63,7 @@
   font-weight: 500;
   opacity: 1;
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 .th-update-btn:hover:not(:disabled) {
@@ -156,6 +156,83 @@
 .val--ok     { color: #2d9e4f; }
 .val--warn   { color: #d4820a; }
 .val--danger { color: #cc3333; }
+
+.action-menu-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.82em;
+  white-space: nowrap;
+}
+
+.action-menu-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.actions-modal {
+  min-width: 300px;
+  max-width: 380px;
+}
+
+.actions-modal__title {
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.actions-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.actions-modal__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.actions-modal__item:hover {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
+}
+
+.actions-modal__item--danger {
+  color: #cc3333;
+}
+
+.actions-modal__item--danger:hover {
+  background: color-mix(in srgb, #cc3333 10%, transparent);
+  border-color: color-mix(in srgb, #cc3333 30%, transparent);
+}
+
+.actions-modal__item span:first-child {
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.actions-modal__hint {
+  font-size: 0.78em;
+  opacity: 0.55;
+  margin-top: 1px;
+}
+
+.actions-modal__divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
 
 .remove-btn {
   padding: 3px 10px;

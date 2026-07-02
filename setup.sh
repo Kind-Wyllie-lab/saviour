@@ -15,7 +15,7 @@ sudo apt-get update -y
 
 TARGET_DIR="/usr/local/src/saviour"
 
-sudo mkdir -p "/etc/saviour"
+sudo mkdir -p "/etc/saviour" "/etc/saviour/controller" "/etc/saviour/module"
 
 sudo tee /etc/saviour/config > /dev/null <<EOF
 ROLE=none
@@ -89,6 +89,11 @@ is_installed() {
 
 install_system_packages() {
     echo "Installing required system packages..."
+
+    # Suppress iptables-persistent's interactive "save current rules?" prompts.
+    echo "iptables-persistent iptables/autosave_v4 boolean false" | sudo debconf-set-selections
+    echo "iptables-persistent iptables/autosave_v6 boolean false" | sudo debconf-set-selections
+
     for pkg in "${SYSTEM_PACKAGES[@]}"; do
         if is_installed "$pkg"; then
             echo "[OK] $pkg is already installed."

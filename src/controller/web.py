@@ -1092,6 +1092,28 @@ class Web(ABC):
             threading.Thread(target=_apply_to_controller, daemon=True,
                              name="saviour-deploy").start()
 
+        @self.socketio.on("deploy_update_to_module")
+        def handle_deploy_update_to_module(data):
+            from flask_socketio import emit as _emit
+            module_id = data.get("module_id") if data else None
+            if not module_id:
+                _emit("deploy_update_error", {"error": "module_id required"})
+                return
+            if not os.path.exists(_UPDATE_ZIP):
+                _emit("deploy_update_error", {"error": "No update staged — upload a package first"})
+                return
+            controller_ip = "localhost"
+            try:
+                controller_ip = self.facade.controller.network.ip
+            except Exception:
+                pass
+            controller_url = f"http://{controller_ip}:5000"
+            try:
+                self.facade.send_command(module_id, "update_saviour",
+                                         {"controller_url": controller_url})
+            except Exception as e:
+                _emit("deploy_update_error", {"error": str(e)})
+
         @self.socketio.on("update_saviour_controller")
         def handle_update_saviour_controller(data=None):
             import subprocess, os

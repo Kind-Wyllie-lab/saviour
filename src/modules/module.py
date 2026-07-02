@@ -12,7 +12,6 @@ Created: 17/03/2025
 import sys
 import os
 import json
-import tempfile
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -828,61 +827,23 @@ class Module(ABC):
     def set_export_config(self, share_ip: str, share_username: str, share_password: str, share_path: str = "") -> dict:
         """
         Update the export (Samba) credentials sent by the controller on discovery.
-        Writes to base_config.json so the values survive a config reset, and also
-        updates the running config immediately.
-        Skipped if export.use_controller_export is false (custom export route).
+        Persists to active_config.json via config.set(). Credentials are always
+        re-sent by the controller on reconnect so they do not need to survive a
+        config reset.
+        Skipped if export.export_target is not 'controller'.
         """
         if self.config.get("export.export_target", "controller") != "controller":
             self.logger.info("set_export_config skipped — export_target is not controller")
             return {"result": "skipped"}
         self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
 
-        # Update the running config unconditionally — must not be gated on file I/O.
         self.config.set("export.share_ip", share_ip)
         self.config.set("export.share_username", share_username)
         self.config.set("export.share_password", share_password)
         if share_path:
             self.config.set("export.share_path", share_path)
 
-        # Persist to base_config.json so values survive a config reset.
-        # Uses atomic rename so a disk-full failure never corrupts the file.
-        try:
-            try:
-                with open(self.config.base_config_path) as f:
-                    base = json.load(f)
-            except (json.JSONDecodeError, ValueError, FileNotFoundError):
-                self.logger.warning(
-                    "base_config.json missing or corrupt — rebuilding from scratch"
-                )
-                base = {}
-
-            export = base.setdefault("export", {})
-            export["share_ip"] = share_ip
-            export["share_username"] = share_username
-            export["share_password"] = share_password
-            if share_path:
-                export["share_path"] = share_path
-
-            base_dir = os.path.dirname(self.config.base_config_path)
-            fd, tmp_path = tempfile.mkstemp(dir=base_dir, suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(base, f, indent=2)
-                    f.write("\n")
-                os.replace(tmp_path, self.config.base_config_path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-
-            self.logger.info("Export config updated and persisted to base_config.json")
-            return {"result": "success"}
-        except Exception as e:
-            self.logger.error(f"set_export_config: failed to persist to base_config.json: {e}")
-            # Running config was already updated; export will work this session
-            return {"result": "partial", "output": str(e)}
+        return {"result": "success"}
 
 
     def _get_required_disk_space_mb(self) -> float:

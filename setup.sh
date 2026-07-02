@@ -15,7 +15,7 @@ sudo apt-get update -y
 
 TARGET_DIR="/usr/local/src/saviour"
 
-sudo mkdir -p "/etc/saviour"
+sudo mkdir -p "/etc/saviour" "/etc/saviour/controller" "/etc/saviour/module"
 
 sudo tee /etc/saviour/config > /dev/null <<EOF
 ROLE=none

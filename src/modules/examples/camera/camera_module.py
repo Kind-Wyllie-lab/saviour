@@ -245,7 +245,7 @@ class CameraModule(Module):
             self._restarting_stream = False # Reset the "restarting stream" flag
 
             _cb_keys = {"camera.monochrome", "camera.overlay_timestamp",
-                        "camera.hflip", "camera.vflip"}
+                        "camera.hflip", "camera.vflip", "module.name"}
             if _cb_keys.intersection(updated_keys or []):
                 self._cache_frame_config()
 
@@ -296,6 +296,9 @@ class CameraModule(Module):
         else:
             self._cb_flip_code = None
         self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
+        # Clear layout caches so _apply_timestamp recomputes font_scale for the new text width
+        self._ts_layout_main  = None
+        self._ts_layout_lores = None
 
     def _csv_flush_worker(self) -> None:
         """Drain _csv_row_buffer to disk every 50 ms until stopped."""
@@ -847,11 +850,13 @@ class CameraModule(Module):
         """
         size_preset = self.config.get("camera.text_size", "medium")
         cache_attr = f"_ts_layout_{stream}"
-        cached = getattr(self, cache_attr, None)  # (preset, height, width, font_scale, thickness, x, y)
+        cached = getattr(self, cache_attr, None)  # (preset, height, width, textlen, font_scale, thickness, x, y)
 
         actual_height, actual_width = m.array.shape[:2]
+        text_len = len(timestamp)
 
-        if cached is None or cached[0] != size_preset or cached[1] != actual_height or cached[2] != actual_width:
+        if (cached is None or cached[0] != size_preset or cached[1] != actual_height
+                or cached[2] != actual_width or cached[3] != text_len):
             font = cv2.FONT_HERSHEY_SIMPLEX
             target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
             thickness = 2 if size_preset == "large" else 1
@@ -861,10 +866,10 @@ class CameraModule(Module):
             x = int((actual_width - text_width) / 2)
             padding = max(4, int(actual_height * 0.01))
             y = text_height + padding
-            cached = (size_preset, actual_height, actual_width, font_scale, thickness, x, y)
+            cached = (size_preset, actual_height, actual_width, text_len, font_scale, thickness, x, y)
             setattr(self, cache_attr, cached)
 
-        _, _, _, font_scale, thickness, x, y = cached
+        _, _, _, _, font_scale, thickness, x, y = cached
         cv2.putText(
             img=m.array,
             text=timestamp,

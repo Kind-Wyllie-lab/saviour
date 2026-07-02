@@ -179,9 +179,14 @@ export default function System() {
 
   const handleControllerActionConfirm = () => {
     if (!controllerActionTarget) return;
-    if (controllerActionTarget === "restart_service") socket.emit("restart_saviour_controller_service");
-    else if (controllerActionTarget === "reboot") socket.emit("reboot_controller");
-    else if (controllerActionTarget === "shutdown") socket.emit("shutdown_controller");
+    if (controllerActionTarget === "restart_service") {
+      socket.emit("restart_saviour_controller_service");
+      setDeviceStatuses({ controller: "restarting" });
+    } else if (controllerActionTarget === "reboot") {
+      socket.emit("reboot_controller");
+    } else if (controllerActionTarget === "shutdown") {
+      socket.emit("shutdown_controller");
+    }
     setControllerActionTarget(null);
   };
 
@@ -241,13 +246,24 @@ export default function System() {
     const onDeployError = (data) => {
       setDeviceStatuses(prev => ({ ...prev, controller: { success: false, output: data.error } }));
     };
+    const onReconnect = () => {
+      setDeviceStatuses(prev => {
+        if (prev.controller === "restarting" || prev.controller === "updating") {
+          return { ...prev, controller: { success: true, output: "Service restarted" } };
+        }
+        return prev;
+      });
+      socket.emit("get_update_info");
+    };
     socket.on("module_update_result", onModuleResult);
     socket.on("deploy_update_status", onDeployStatus);
     socket.on("deploy_update_error", onDeployError);
+    socket.on("connect", onReconnect);
     return () => {
       socket.off("module_update_result", onModuleResult);
       socket.off("deploy_update_status", onDeployStatus);
       socket.off("deploy_update_error", onDeployError);
+      socket.off("connect", onReconnect);
     };
   }, [moduleList]);
 
@@ -258,8 +274,9 @@ export default function System() {
 
   const updateDevices = useMemo(() => {
     if (Object.keys(deviceStatuses).length === 0) return [];
-    const rows = [{ id: "controller", name: "Controller" }];
-    moduleList.forEach(m => rows.push({ id: m.id, name: m.name }));
+    const rows = [];
+    if (deviceStatuses.controller !== undefined) rows.push({ id: "controller", name: "Controller" });
+    moduleList.forEach(m => { if (deviceStatuses[m.id] !== undefined) rows.push({ id: m.id, name: m.name }); });
     return rows;
   }, [deviceStatuses, moduleList]);
 

@@ -1101,10 +1101,13 @@ class Web(ABC):
             def _do_stage():
                 src_root = "/usr/local/src/saviour"
                 version = _read_running_version()
+                self.logger.info(f"Staging current version {version} from {src_root}")
                 try:
                     os.makedirs(_UPDATE_STORE, exist_ok=True)
                     tmp = _UPDATE_ZIP + ".tmp"
-                    with _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED) as zf:
+                    skipped = 0
+                    with _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED,
+                                     compresslevel=1) as zf:
                         for dirpath, dirnames, filenames in os.walk(src_root):
                             dirnames[:] = [
                                 d for d in dirnames
@@ -1116,7 +1119,13 @@ class Web(ABC):
                                     continue
                                 abs_path = os.path.join(dirpath, filename)
                                 rel_path = os.path.relpath(abs_path, src_root)
-                                zf.write(abs_path, rel_path)
+                                try:
+                                    zf.write(abs_path, rel_path)
+                                except Exception as _fe:
+                                    self.logger.warning(
+                                        f"Skipping {rel_path}: {_fe}"
+                                    )
+                                    skipped += 1
                     size = os.path.getsize(tmp)
                     os.replace(tmp, _UPDATE_ZIP)
                     meta = {
@@ -1128,7 +1137,8 @@ class Web(ABC):
                     with open(_UPDATE_META, "w") as f:
                         json.dump(meta, f, indent=2)
                     self.logger.info(
-                        f"Staged current version {version} ({size // 1024} KiB)"
+                        f"Staged current version {version} "
+                        f"({size // 1024} KiB, {skipped} files skipped)"
                     )
                     self.socketio.emit("upload_update_complete", meta)
                 except Exception as e:

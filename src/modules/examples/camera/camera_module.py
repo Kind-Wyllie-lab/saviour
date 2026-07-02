@@ -118,6 +118,10 @@ class CameraModule(Module):
         self.current_video_segment = None
         self.last_video_segment = None
 
+        # Pre-created segment for scheduled starts (set by _pre_create_first_segment,
+        # consumed by _start_new_recording so start_encoder() is the only call at t0)
+        self._prestaged_segment = None
+
         # Per-frame timestamp CSV sidecar
         self._timestamp_csv_file = None
         self._timestamp_csv_writer = None
@@ -479,28 +483,62 @@ class CameraModule(Module):
                 self.facade.stage_file_for_export(self._current_csv_path)
                 self._current_csv_path = None
 
+    def _pre_create_first_segment(self, start_at: float) -> None:
+        """Pre-create the video file and CSV before sleeping so that only
+        start_encoder() needs to run at the scheduled start moment.
+
+        Called by Recording._scheduled_start before the spin-wait.
+        Any exception is caught by the caller and falls back to normal start.
+        """
+        from picamera2.outputs import PyavOutput, SplittableOutput as _SO
+        filename = self._get_video_filename()
+        self.logger.info(f"Pre-staging recording segment: {filename}")
+
+        # Open the mpegts container — this is the slow step (~5–20 ms on Pi).
+        file_output = _SO(PyavOutput(filename, format="mpegts"))
+
+        # Open the timestamp CSV (writes header row, starts flush thread).
+        # We call _open_timestamp_csv which sets self._timestamp_csv_* directly;
+        # _start_new_recording will skip re-opening it when prestaged is set.
+        self._open_timestamp_csv(filename)
+
+        self._prestaged_segment = {
+            "filename":    filename,
+            "file_output": file_output,
+        }
+        self.logger.info("Pre-staging complete")
+
     def _start_new_recording(self) -> None:
         """Start a new recording session - set up SplittableOutput"""
-        # Start video
-        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.ts
-        self.logger.info(f"Starting recording with filename {filename}")
-        self.current_video_segment = filename
-        self.facade.add_session_file(filename)
+        if self._prestaged_segment is not None:
+            # Fast path: file and CSV were pre-created before the spin-wait.
+            prestaged = self._prestaged_segment
+            self._prestaged_segment = None
+            filename = prestaged["filename"]
+            self.logger.info(f"Using pre-staged segment: {filename}")
+            self.current_video_segment = filename
+            self.facade.add_session_file(filename)
+            self.file_output = prestaged["file_output"]
+            self.main_encoder.output = self.file_output
+            # CSV is already open from _pre_create_first_segment
+        else:
+            # Normal path (immediate start or pre-stage failed)
+            filename = self._get_video_filename()
+            self.logger.info(f"Starting recording with filename {filename}")
+            self.current_video_segment = filename
+            self.facade.add_session_file(filename)
 
-        # Start the camera 
-        if not self.picam2.started:
-            self.picam2.start()
-            time.sleep(0.1)  # Give camera time to start
-        
-        # Create file output
-        self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
-        self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
+            if not self.picam2.started:
+                self.picam2.start()
+                time.sleep(0.1)
 
-        # Start recording
+            self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts"))
+            self.main_encoder.output = self.file_output
+            self._open_timestamp_csv(filename)
+
+        # Start recording — this is the precise moment we want to align across cameras
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
-
-        self._open_timestamp_csv(filename)
 
 
     def _get_video_filename(self) -> str:

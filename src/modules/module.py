@@ -238,115 +238,75 @@ class Module(ABC):
         return {"result": "started"}
 
 
-    def update_saviour(self) -> dict:
-        """Update saviour to the latest version from git.
+    def update_saviour(self, controller_url: str = "") -> dict:
+        """Download and apply a staged update from the controller's HTTP endpoint.
 
-        Returns immediately; the actual update runs in a background thread so
-        the ZMQ command thread is not blocked by network I/O.
+        The controller serves the package at GET /update/package.  After rsync
+        the service restarts itself so the ZMQ command thread returns first.
         """
-        import re
-        import threading
+        import threading, shutil, zipfile, urllib.request
 
         def _do_update():
             try:
-                self.logger.info("Checking internet connectivity before updating SAVIOUR")
-                try:
-                    subprocess.run(
-                        ["ping", "-c", "1", "-W", "5", "github.com"],
-                        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
-                    self.logger.info("Internet connectivity confirmed")
-                except subprocess.CalledProcessError:
-                    self.logger.warning("No internet connectivity, cannot update SAVIOUR")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": "No internet connectivity — update skipped.",
-                    })
-                    return
+                if not controller_url:
+                    raise ValueError("controller_url parameter is required")
 
-                self.logger.info("Updating SAVIOUR to the latest version from git")
-                url_result = subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "remote", "get-url", "origin"],
-                    capture_output=True, text=True
-                )
-                remote_url = url_result.stdout.strip()
-                if url_result.returncode != 0 or not remote_url:
-                    err = url_result.stderr.strip() or "No git remote origin configured"
-                    self.logger.error(f"SAVIOUR update: could not get remote URL — {err}")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": f"Could not get remote URL: {err}",
-                    })
-                    return
-                https_url = re.sub(r'^git@([^:]+):(.+?)(?:\.git)?$',
-                                   r'https://\1/\2.git', remote_url)
-                checkout_result = subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "checkout", "main"],
-                    capture_output=True, text=True
-                )
-                if checkout_result.returncode != 0:
-                    err = checkout_result.stderr.strip() or "Could not switch to main branch"
-                    self.logger.error(f"SAVIOUR update: git checkout main failed: {err}")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": f"git checkout main failed: {err}",
-                    })
-                    return
-                result = subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "pull", https_url, "main"],
-                    capture_output=True, text=True, timeout=60
-                )
-                subprocess.run(
-                    ["git", "-c", f"safe.directory={INSTALL_DIR}", "-C", INSTALL_DIR,
-                     "fetch", https_url, "--tags"],
-                    capture_output=True, text=True, timeout=30
-                )
-                if result.returncode == 0:
-                    output = result.stdout.strip() or "Already up to date."
-                    self.logger.info(f"SAVIOUR update: {output}")
-                    if "Already up to date." not in output:
-                        self.communication.send_status({
-                            "type": "cmd_ack",
-                            "command": "update_saviour",
-                            "result": "success",
-                            "output": "Update found — module is restarting...",
-                        })
-                        import time as _time
-                        _time.sleep(3)
-                        subprocess.run(
-                            ["sudo", "systemctl", "restart", "saviour.service"],
-                            capture_output=True
-                        )
-                    else:
-                        self.communication.send_status({
-                            "type": "cmd_ack",
-                            "command": "update_saviour",
-                            "result": "success",
-                            "output": "Already up to date.",
-                        })
-                else:
-                    err = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-                    self.logger.error(f"SAVIOUR update failed: {err}")
-                    self.communication.send_status({
-                        "type": "cmd_ack",
-                        "command": "update_saviour",
-                        "result": "error",
-                        "output": err,
-                    })
+                pkg_url = f"{controller_url.rstrip('/')}/update/package"
+                self.logger.info(f"Downloading update from {pkg_url}")
+
+                tmp_zip = "/tmp/saviour_update.zip"
+                urllib.request.urlretrieve(pkg_url, tmp_zip)
+
+                if not zipfile.is_zipfile(tmp_zip):
+                    raise ValueError("Downloaded file is not a valid ZIP archive")
+
+                extract_dir = "/tmp/saviour_update_extract"
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                os.makedirs(extract_dir)
+                with zipfile.ZipFile(tmp_zip) as z:
+                    z.extractall(extract_dir)
+
+                contents = os.listdir(extract_dir)
+                source = extract_dir
+                if (len(contents) == 1
+                        and os.path.isdir(os.path.join(extract_dir, contents[0]))):
+                    source = os.path.join(extract_dir, contents[0])
+
+                subprocess.run([
+                    "rsync", "-a",
+                    "--exclude=env/",
+                    "--exclude=.git/",
+                    f"{source}/",
+                    f"{INSTALL_DIR}/",
+                ], check=True)
+
+                subprocess.run([
+                    f"{INSTALL_DIR}/env/bin/pip", "install", "-q",
+                    "-r", f"{INSTALL_DIR}/requirements.txt",
+                ], check=True)
+
+                self.logger.info("Update applied — restarting module service")
+                self.communication.send_status({
+                    "type": "cmd_ack",
+                    "command": "update_saviour",
+                    "result": "success",
+                    "output": "Update applied — module is restarting...",
+                })
+                import time as _time
+                _time.sleep(2)
+                subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
+
             except Exception as e:
-                self.logger.error(f"Error updating SAVIOUR: {e}")
+                self.logger.error(f"SAVIOUR update failed: {e}")
+                self.communication.send_status({
+                    "type": "cmd_ack",
+                    "command": "update_saviour",
+                    "result": "error",
+                    "output": str(e),
+                })
 
         threading.Thread(target=_do_update, daemon=True, name="saviour-update").start()
-        return {"result": "started", "output": "Update check started — module will restart if an update is available."}
+        return {"result": "started", "output": "Update download started."}
 
 
     def _handle_set_config(self, **kwargs) -> dict:

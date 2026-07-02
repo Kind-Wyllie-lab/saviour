@@ -1416,7 +1416,9 @@ class Recording:
         log_path = os.path.join(self._get_share_root(), session_name, "session_events.log")
         line = f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} [{level:<8}] {message}\n"
         try:
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            session_dir = os.path.dirname(log_path)
+            os.makedirs(session_dir, exist_ok=True)
+            os.chmod(session_dir, 0o777)
             with open(log_path, "a") as f:
                 f.write(line)
         except Exception:

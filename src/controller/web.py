@@ -16,7 +16,7 @@ Created: ?
 import logging
 import subprocess
 import time
-from flask import Flask, render_template, jsonify, request, send_from_directory
+from flask import Flask, render_template, jsonify, request, send_from_directory, send_file
 from flask_socketio import SocketIO
 from typing import Any
 import threading
@@ -88,6 +88,11 @@ class Web(ABC):
 
         # Set up paths
         self.habitat_share_dir = Path(self.config.get("export.mount_path", "/home/pi/controller_share"))
+
+        # Upload state for chunked update package uploads
+        self._upload_chunks: dict = {}
+        self._upload_meta: dict = {}
+        self._upload_lock = threading.Lock()
     
     
     def _generate_experiment_name(self) -> str:
@@ -905,6 +910,165 @@ class Web(ABC):
         def handle_get_nas_health(data=None):
             self.socketio.emit("nas_health_update", self._nas_health)
 
+
+        # ── Update package store ──────────────────────────────────────────────
+        _UPDATE_STORE = "/var/lib/saviour/updates"
+        _UPDATE_ZIP   = os.path.join(_UPDATE_STORE, "saviour-latest.zip")
+        _UPDATE_META  = os.path.join(_UPDATE_STORE, "update_meta.json")
+
+        @self.app.route("/update/package")
+        def serve_update_package():
+            if not os.path.exists(_UPDATE_ZIP):
+                return "No update staged", 404
+            return send_file(_UPDATE_ZIP, as_attachment=True,
+                             download_name="saviour-update.zip",
+                             mimetype="application/zip")
+
+        @self.socketio.on("get_update_info")
+        def handle_get_update_info(data=None):
+            from flask_socketio import emit as _emit
+            try:
+                r = subprocess.run(
+                    ["git", "-C", "/usr/local/src/saviour",
+                     "describe", "--tags", "--always"],
+                    capture_output=True, text=True, timeout=5
+                )
+                running = r.stdout.strip() or "unknown"
+            except Exception:
+                running = "unknown"
+            staged = None
+            if os.path.exists(_UPDATE_META):
+                try:
+                    with open(_UPDATE_META) as f:
+                        staged = json.load(f)
+                except Exception:
+                    pass
+            _emit("update_info", {"running_version": running, "staged": staged})
+
+        @self.socketio.on("upload_update_start")
+        def handle_upload_update_start(data):
+            from flask_socketio import emit as _emit
+            with self._upload_lock:
+                self._upload_chunks = {}
+                self._upload_meta = {
+                    "filename":     data.get("filename", "saviour-update.zip"),
+                    "total_chunks": int(data.get("total_chunks", 0)),
+                    "total_bytes":  int(data.get("total_bytes", 0)),
+                }
+            _emit("upload_update_ack", {"status": "ready"})
+
+        @self.socketio.on("upload_update_chunk")
+        def handle_upload_update_chunk(data):
+            from flask_socketio import emit as _emit
+            import zipfile, io, re
+            chunk_index = data.get("index")
+            chunk_data  = data.get("data")   # bytes from Socket.IO binary frame
+            if chunk_data is None or chunk_index is None:
+                return
+            with self._upload_lock:
+                self._upload_chunks[chunk_index] = (
+                    chunk_data if isinstance(chunk_data, (bytes, bytearray))
+                    else bytes(chunk_data)
+                )
+                received = len(self._upload_chunks)
+                total    = self._upload_meta.get("total_chunks", 0)
+                filename = self._upload_meta.get("filename", "")
+            _emit("upload_update_progress", {"received": received, "total": total})
+            if received < total:
+                return
+            # All chunks received — assemble and validate
+            try:
+                assembled = b"".join(
+                    self._upload_chunks[i] for i in range(total)
+                )
+                if not zipfile.is_zipfile(io.BytesIO(assembled)):
+                    _emit("upload_update_error", {"error": "File is not a valid ZIP archive"})
+                    return
+                m = re.search(r'v(\d[\d\.\-\w]*)', filename)
+                version = f"v{m.group(1)}" if m else "unknown"
+                os.makedirs(_UPDATE_STORE, exist_ok=True)
+                tmp = _UPDATE_ZIP + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(assembled)
+                os.replace(tmp, _UPDATE_ZIP)
+                meta = {
+                    "version":     version,
+                    "filename":    filename,
+                    "size_bytes":  len(assembled),
+                    "uploaded_at": datetime.now().isoformat(),
+                }
+                with open(_UPDATE_META, "w") as f:
+                    json.dump(meta, f, indent=2)
+                self.logger.info(
+                    f"Update package staged: {filename} ({version}, "
+                    f"{len(assembled) // 1024} KiB)"
+                )
+                _emit("upload_update_complete", meta)
+            except Exception as e:
+                self.logger.error(f"Upload assembly failed: {e}")
+                _emit("upload_update_error", {"error": str(e)})
+
+        @self.socketio.on("deploy_update")
+        def handle_deploy_update(data=None):
+            from flask_socketio import emit as _emit
+            import zipfile, shutil, re
+            if not os.path.exists(_UPDATE_ZIP):
+                _emit("deploy_update_error", {"error": "No update staged — upload a package first"})
+                return
+
+            controller_ip = getattr(self.facade, 'get_controller_ip',
+                                    lambda: None)() or "localhost"
+            try:
+                controller_ip = self.facade.controller.network.ip
+            except Exception:
+                pass
+            controller_url = f"http://{controller_ip}:5000"
+
+            # Send to modules first so they update in parallel while controller applies
+            modules = list(self.facade.get_modules().keys())
+            for mid in modules:
+                try:
+                    self.facade.send_command(
+                        mid, "update_saviour",
+                        {"controller_url": controller_url}
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to send update to {mid}: {e}")
+            self.socketio.emit("deploy_update_status",
+                               {"stage": "modules_notified", "count": len(modules)})
+
+            def _apply_to_controller():
+                try:
+                    extract_dir = "/tmp/saviour_update"
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+                    os.makedirs(extract_dir)
+                    with zipfile.ZipFile(_UPDATE_ZIP) as z:
+                        z.extractall(extract_dir)
+                    contents = os.listdir(extract_dir)
+                    source = extract_dir
+                    if (len(contents) == 1
+                            and os.path.isdir(os.path.join(extract_dir, contents[0]))):
+                        source = os.path.join(extract_dir, contents[0])
+                    subprocess.run([
+                        "rsync", "-a",
+                        "--exclude=env/",
+                        "--exclude=.git/",
+                        f"{source}/",
+                        "/usr/local/src/saviour/",
+                    ], check=True)
+                    subprocess.run([
+                        "/usr/local/src/saviour/env/bin/pip", "install", "-q",
+                        "-r", "/usr/local/src/saviour/requirements.txt",
+                    ], check=True)
+                    self.logger.info("Update applied — restarting controller service")
+                    time.sleep(2)
+                    subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
+                except Exception as e:
+                    self.logger.error(f"Controller update failed: {e}")
+                    self.socketio.emit("deploy_update_error", {"error": str(e)})
+
+            threading.Thread(target=_apply_to_controller, daemon=True,
+                             name="saviour-deploy").start()
 
         @self.socketio.on("update_saviour_controller")
         def handle_update_saviour_controller(data=None):

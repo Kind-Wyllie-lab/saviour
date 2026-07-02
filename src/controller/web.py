@@ -299,6 +299,23 @@ class Web(ABC):
 
 
     def _register_socketio_events(self):
+        # Single source of truth for the running version — reads __version__.py
+        # which is updated by the pre-commit hook and travels inside ZIP deploys.
+        # git describe is NOT used because .git is excluded from rsync, so it
+        # is stale on any device updated via the ZIP mechanism.
+        _VERSION_FILE = "/usr/local/src/saviour/src/__version__.py"
+
+        def _read_running_version() -> str:
+            try:
+                import re as _re
+                with open(_VERSION_FILE) as _vf:
+                    _m = _re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', _vf.read())
+                    if _m:
+                        return _m.group(1)
+            except Exception:
+                pass
+            return "unknown"
+
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect(auth=None):
@@ -786,17 +803,8 @@ class Web(ABC):
 
         @self.socketio.on("get_controller_info")
         def handle_get_controller_info(data=None):
-            import subprocess
             import socket as _socket
-            try:
-                result = subprocess.run(
-                    ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                     '-C', '/usr/local/src/saviour', 'describe', '--tags', '--always'],
-                    capture_output=True, text=True, timeout=5
-                )
-                version = result.stdout.strip() if result.returncode == 0 else "unknown"
-            except Exception:
-                version = "unknown"
+            version = _read_running_version()
             try:
                 nm = subprocess.run(
                     ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
@@ -884,15 +892,7 @@ class Web(ABC):
                     health['disk_used_gb'] = None
                     health['disk_total_gb'] = None
             # Version
-            try:
-                result = subprocess.run(
-                    ["git", "-c", "safe.directory=/usr/local/src/saviour",
-                     "-C", os.path.dirname(__file__), "describe", "--tags", "--always"],
-                    capture_output=True, text=True, timeout=5
-                )
-                health['version'] = result.stdout.strip() if result.returncode == 0 else None
-            except Exception:
-                health['version'] = None
+            health['version'] = _read_running_version() or None
             # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
             from datetime import datetime, timezone as _tz
             health['controller_time'] = datetime.now(_tz.utc).isoformat()
@@ -923,19 +923,6 @@ class Web(ABC):
             return send_file(_UPDATE_ZIP, as_attachment=True,
                              download_name="saviour-update.zip",
                              mimetype="application/zip")
-
-        _VERSION_FILE = "/usr/local/src/saviour/src/__version__.py"
-
-        def _read_running_version() -> str:
-            try:
-                with open(_VERSION_FILE) as _vf:
-                    import re as _re
-                    _m = _re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', _vf.read())
-                    if _m:
-                        return _m.group(1)
-            except Exception:
-                pass
-            return "unknown"
 
         @self.socketio.on("get_update_info")
         def handle_get_update_info(data=None):

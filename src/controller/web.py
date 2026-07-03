@@ -75,8 +75,8 @@ class Web(ABC):
         # Store module readiness state in memory 
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
 
-        self.rest_facade = False
-        if self.rest_facade == True:
+        self.rest_facade = True
+        if self.rest_facade:
             self._register_rest_facade_routes()
 
         # NAS health state

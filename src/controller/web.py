@@ -1063,6 +1063,7 @@ class Web(ABC):
                         source = os.path.join(extract_dir, contents[0])
                     subprocess.run([
                         "rsync", "-a",
+                        "--chown=pi:pi",
                         "--exclude=env/",
                         "--exclude=.git/",
                         f"{source}/",
@@ -1074,12 +1075,12 @@ class Web(ABC):
                     pip_result = subprocess.run([
                         "/usr/local/src/saviour/env/bin/pip", "install", "-q",
                         "--no-index",
-                        "-r", "/usr/local/src/saviour/requirements.txt",
+                        "/usr/local/src/saviour/",
                     ])
                     if pip_result.returncode != 0:
                         self.logger.warning(
                             "pip install --no-index failed (new dependencies may need "
-                            "a manual `pip install -r requirements.txt` with internet access)"
+                            "a manual `pip install .` with internet access)"
                         )
                 except Exception as e:
                     self.logger.error(f"Controller update failed: {e}")

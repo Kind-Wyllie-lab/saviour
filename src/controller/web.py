@@ -1689,7 +1689,7 @@ class Web(ABC):
                     elif command == "shutdown":
                         self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
                     else:
-                        self.handle_special_module_status(module_id, status)
+                        self.logger.debug(f"cmd_ack for '{command}' from {module_id} — no web-layer action")
 
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)

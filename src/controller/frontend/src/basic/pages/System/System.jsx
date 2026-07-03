@@ -68,7 +68,7 @@ function ptpCell(ns) {
   return <span className={cls}>{display}</span>;
 }
 
-function statusCell(status) {
+function connectionCell(status) {
   const cls = status === "online"    ? "status-dot--online"
             : status === "suspected" ? "status-dot--suspected"
             : "status-dot--offline";
@@ -78,6 +78,16 @@ function statusCell(status) {
       {status}
     </span>
   );
+}
+
+function activityCell(status) {
+  if (!status) return <span className="cell--muted">—</span>;
+  const cls = status === "RECORDING" ? "activity-badge--recording"
+            : status === "READY"     ? "activity-badge--ready"
+            : status === "NOT_READY" ? "activity-badge--warn"
+            : status === "FAULT"     ? "activity-badge--fault"
+            : "activity-badge--idle";
+  return <span className={`activity-badge ${cls}`}>{status}</span>;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -179,9 +189,14 @@ export default function System() {
 
   const handleControllerActionConfirm = () => {
     if (!controllerActionTarget) return;
-    if (controllerActionTarget === "restart_service") socket.emit("restart_saviour_controller_service");
-    else if (controllerActionTarget === "reboot") socket.emit("reboot_controller");
-    else if (controllerActionTarget === "shutdown") socket.emit("shutdown_controller");
+    if (controllerActionTarget === "restart_service") {
+      socket.emit("restart_saviour_controller_service");
+      setDeviceStatuses({ controller: "restarting" });
+    } else if (controllerActionTarget === "reboot") {
+      socket.emit("reboot_controller");
+    } else if (controllerActionTarget === "shutdown") {
+      socket.emit("shutdown_controller");
+    }
     setControllerActionTarget(null);
   };
 
@@ -241,13 +256,24 @@ export default function System() {
     const onDeployError = (data) => {
       setDeviceStatuses(prev => ({ ...prev, controller: { success: false, output: data.error } }));
     };
+    const onReconnect = () => {
+      setDeviceStatuses(prev => {
+        if (prev.controller === "restarting" || prev.controller === "updating") {
+          return { ...prev, controller: { success: true, output: "Service restarted" } };
+        }
+        return prev;
+      });
+      socket.emit("get_update_info");
+    };
     socket.on("module_update_result", onModuleResult);
     socket.on("deploy_update_status", onDeployStatus);
     socket.on("deploy_update_error", onDeployError);
+    socket.on("connect", onReconnect);
     return () => {
       socket.off("module_update_result", onModuleResult);
       socket.off("deploy_update_status", onDeployStatus);
       socket.off("deploy_update_error", onDeployError);
+      socket.off("connect", onReconnect);
     };
   }, [moduleList]);
 
@@ -258,8 +284,9 @@ export default function System() {
 
   const updateDevices = useMemo(() => {
     if (Object.keys(deviceStatuses).length === 0) return [];
-    const rows = [{ id: "controller", name: "Controller" }];
-    moduleList.forEach(m => rows.push({ id: m.id, name: m.name }));
+    const rows = [];
+    if (deviceStatuses.controller !== undefined) rows.push({ id: "controller", name: "Controller" });
+    moduleList.forEach(m => { if (deviceStatuses[m.id] !== undefined) rows.push({ id: m.id, name: m.name }); });
     return rows;
   }, [deviceStatuses, moduleList]);
 
@@ -280,6 +307,7 @@ export default function System() {
           <thead>
             <tr>
               <th>Device</th>
+              <th>Connection</th>
               <th>Status</th>
               <th>IP</th>
               <th className="th--version">
@@ -311,7 +339,8 @@ export default function System() {
               <td>
                 <span className="device-name">Controller</span>
               </td>
-              <td>{statusCell(controllerHealth ? "online" : "suspected")}</td>
+              <td>{connectionCell(controllerHealth ? "online" : "suspected")}</td>
+              <td><span className="cell--muted">—</span></td>
               <td className="cell--muted">{controllerHealth?.ip ?? "—"}</td>
               <td className="cell--muted">{controllerHealth?.version ?? "—"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
@@ -354,16 +383,16 @@ export default function System() {
             {/* Module rows */}
             {moduleRows.map((row) => {
               const isOnline = modules[row.id]?.online ?? false;
-              // If modules.online is false (authoritative, fast update), always show
-              // offline dot even if the health broadcast hasn't caught up yet.
-              const statusForDot = isOnline ? (row.status ?? "online") : "offline";
+              const connStatus = isOnline ? (row.status ?? "online") : "offline";
+              const moduleStatus = modules[row.id]?.status ?? null;
               return (
                 <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                   <td>
                     <span className="device-name">{row.name}</span>
                     <span className="device-id">{row.id}</span>
                   </td>
-                  <td>{statusCell(statusForDot)}</td>
+                  <td>{connectionCell(connStatus)}</td>
+                  <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
                   <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
                   <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>

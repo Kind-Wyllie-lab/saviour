@@ -461,7 +461,7 @@ class CameraModule(Module):
         self._timestamp_csv_file = open(self._current_csv_path, "w", newline="",
                                         buffering=1 << 20)  # 1 MiB write buffer
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
-        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before", "sync_lag_us", "exposure_time_us", "analogue_gain", "colour_gain_r", "colour_gain_b"])
+        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "wall_mono_offset_s", "delta_ms", "dropped_before", "sync_lag_us", "exposure_time_us", "analogue_gain", "colour_gain_r", "colour_gain_b"])
         self._frame_id = 0
         self._csv_prev_ns = None
         self._csv_row_buffer.clear()
@@ -760,6 +760,7 @@ class CameraModule(Module):
                     dropped_before = max(0, round(delta_ms / expected_ms) - 1)
                 else:
                     delta_ms = dropped_before = ""
+                wall_mono_offset = time.time() - time.monotonic()
                 sync_lag_us      = meta.get("SyncTimer", "")
                 exposure_time_us = meta.get("ExposureTime", "")
                 analogue_gain    = meta.get("AnalogueGain", "")
@@ -767,6 +768,7 @@ class CameraModule(Module):
                 self._csv_prev_ns = timestamp
                 self._csv_row_buffer.append([
                     self._frame_id, timestamp, timestamp_utc,
+                    round(wall_mono_offset, 9),
                     delta_ms, dropped_before, sync_lag_us,
                     exposure_time_us, analogue_gain,
                     colour_gains[0], colour_gains[1],

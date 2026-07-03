@@ -166,8 +166,8 @@ function SessionList({ sessionList, modules = [] }) {
   }, []);
 
   useEffect(() => {
-    const handler = ({ session_name, lines }) => {
-      setSessionLogs(prev => ({ ...prev, [session_name]: lines ?? [] }));
+    const handler = ({ session_name, lines, total, truncated }) => {
+      setSessionLogs(prev => ({ ...prev, [session_name]: { lines: lines ?? [], total: total ?? 0, truncated: !!truncated } }));
     };
     socket.on("session_log_response", handler);
     return () => socket.off("session_log_response", handler);
@@ -437,30 +437,41 @@ function SessionList({ sessionList, modules = [] }) {
                     <p className="session-error-message">{forceStartErrors[session.session_name]}</p>
                   )}
 
-                  {!isScheduled && (
-                    <div className="session-log-section">
-                      <button
-                        type="button"
-                        className="session-log-toggle"
-                        onClick={() => toggleSessionLog(session.session_name)}
-                      >
-                        {sessionLogs[session.session_name] !== undefined ? "▲ Hide events" : "▼ Events"}
-                      </button>
-                      {sessionLogs[session.session_name] !== undefined && (
-                        <div className="session-log">
-                          {sessionLogs[session.session_name] === "loading" ? (
-                            <span className="fault-alert-log-empty">Loading…</span>
-                          ) : sessionLogs[session.session_name].length === 0 ? (
-                            <span className="fault-alert-log-empty">No events recorded</span>
-                          ) : (
-                            sessionLogs[session.session_name].map((line, i) => (
-                              <div key={i} className={`session-log-line ${levelClass(line)}`}>{line}</div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {!isScheduled && (() => {
+                    const log = sessionLogs[session.session_name];
+                    const isOpen = log !== undefined;
+                    return (
+                      <div className="session-log-section">
+                        <button
+                          type="button"
+                          className="session-log-toggle"
+                          onClick={() => toggleSessionLog(session.session_name)}
+                        >
+                          {isOpen ? "▲ Hide events" : "▼ Events"}
+                        </button>
+                        {isOpen && (
+                          <div className="session-log">
+                            {log === "loading" ? (
+                              <span className="fault-alert-log-empty">Loading…</span>
+                            ) : log.lines.length === 0 ? (
+                              <span className="fault-alert-log-empty">No events recorded</span>
+                            ) : (
+                              <>
+                                {log.truncated && (
+                                  <div className="session-log-truncation">
+                                    {log.total} events total — showing last 200
+                                  </div>
+                                )}
+                                {log.lines.map((line, i) => (
+                                  <div key={i} className={`session-log-line ${levelClass(line)}`}>{line}</div>
+                                ))}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="session-actions">
                     {(isActive || isStarting || isError) && (

@@ -114,6 +114,32 @@ def report_dropped(cameras: dict[str, pd.DataFrame]) -> None:
               f"{n_events} events ({pct:.1f}%)  |  {n_lost} frames lost")
 
 
+def _verdict(detrended_p95_us: float, drift_us_per_sec: float,
+             half_frame_us: float, fps: float, phase_offset_us: float) -> None:
+    """Print a plain-language alignment verdict for a camera pair."""
+    # Maximum safe session length before drift accumulates past one half-frame,
+    # at which point nearest-neighbour timestamp matching may assign the wrong frame.
+    if drift_us_per_sec and abs(drift_us_per_sec) > 0:
+        max_safe_min = half_frame_us / abs(drift_us_per_sec) / 60.0
+    else:
+        max_safe_min = float("inf")
+
+    # Rough behavioural scale for context: fastest observable rodent events
+    # (whisker deflection, startle, lick) are ~5–50 ms; locomotion 50–500 ms.
+    margin_x = (5000 / detrended_p95_us) if detrended_p95_us else 0
+
+    print(f"\n── Alignment verdict ───────────────────────────────────")
+    print(f"  ★ Timing accuracy  : {detrended_p95_us:.1f} µs  (p95, after timestamp alignment)")
+    print(f"                       ~{margin_x:.0f}× better than fastest observable rodent events (~5 ms)")
+    print(f"  Phase offset       : {phase_offset_us:+.0f} µs  — fixed per session, subtract to align by frame number")
+    if max_safe_min < 9999:
+        print(f"  Max safe duration  : {max_safe_min:.0f} min at {fps:.0f} fps  "
+              f"(drift {abs(drift_us_per_sec):.2f} µs/sec → exceeds ½-frame at this point)")
+    else:
+        print(f"  Max safe duration  : no limit  (drift negligible)")
+    print(f"  Action required    : match frames via per-frame CSV timestamps, not frame numbers")
+
+
 def report_offsets(per_frame: pd.DataFrame, ref_tag: str, client_tags: list,
                    fps: float) -> list[dict]:
     """Print stats and return summary rows for CSV."""
@@ -145,22 +171,27 @@ def report_offsets(per_frame: pd.DataFrame, ref_tag: str, client_tags: list,
 
         print(f"\n  {tag}")
         if len(real):
-            mean_abs_us = real.abs().mean()
-            print(f"    mean ± std       : {real.mean():+.1f} ± {real.std():.1f} µs")
-            print(f"    mean abs offset  : {mean_abs_us:.1f} µs  "
-                  f"= {mean_abs_us/1e6:.6f} s")
-            print(f"    p50 / p95        : {real.quantile(.5):+.1f} / "
-                  f"{real.quantile(.95):+.1f} µs")
-            print(f"    min / max        : {real.min():+.1f} / {real.max():+.1f} µs")
-            print(f"    within ½ frame   : {within:.1f}%  ({len(real)} frames)")
+            mean_us = real.mean()
+            print(f"    phase offset     : {mean_us:+.1f} ± {real.std():.1f} µs"
+                  f"  [fixed per session; random at session start due to hardware sync limits]")
+            print(f"    within ½ frame   : {within:.1f}%  ({len(real)} frames)"
+                  f"  [100% = nearest-neighbour matching always picks the correct frame]")
         if drift_us_per_sec is not None:
-            print(f"    clock drift      : {drift_us_per_sec:+.3f} µs/sec "
-                  f"({drift_us_per_sec:.2f} ppm)")
-            print(f"    jitter (detrend p95): {detrended_p95_us:.1f} µs  "
-                  f"← timing noise floor")
+            if abs(drift_us_per_sec) > 0:
+                safe_min = half_frame_us / abs(drift_us_per_sec) / 60.0
+                safe_str = f"  [misassignment risk after {safe_min:.0f} min without timestamp alignment]"
+            else:
+                safe_str = ""
+            print(f"    clock drift      : {drift_us_per_sec:+.3f} µs/sec ({drift_us_per_sec:.2f} ppm)"
+                  + safe_str)
+            print(f"  ★ timing accuracy  : {detrended_p95_us:.1f} µs p95"
+                  f"  [residual uncertainty after phase+drift correction — report this number]")
         if len(artefacts):
             print(f"    matching artefacts (|offset| ≥ {outlier_thr_us/1000:.0f} ms): "
                   f"{len(artefacts)} — differing frame counts, not real sync error")
+
+        if detrended_p95_us is not None and drift_us_per_sec is not None and len(real):
+            _verdict(detrended_p95_us, drift_us_per_sec, half_frame_us, fps, real.mean())
 
         rows.append({
             "ref_camera":             ref_tag,

@@ -498,6 +498,7 @@ class CameraModule(Module):
         Any exception is caught by the caller and falls back to normal start.
         """
         from picamera2.outputs import PyavOutput, SplittableOutput as _SO
+        from libcamera import controls as lc
         filename = self._get_video_filename()
         self.logger.info(f"Pre-staging recording segment: {filename}")
 
@@ -513,6 +514,25 @@ class CameraModule(Module):
             "filename":    filename,
             "file_output": file_output,
         }
+
+        # If framesync is active (server or client), schedule a fresh SyncReady
+        # to fire just before T=0 so the encoder can spin up in time to catch it.
+        # SyncFrames tells libcamera how many frames to count before firing SyncReady.
+        sync_mode_str = self.config.get("camera.sync_mode", "none")
+        if sync_mode_str in ("server", "client"):
+            secs_until_start = max(0.0, start_at - time.time())
+            # Target SyncReady ~0.3s before T=0 so the encoder has time to process it.
+            sync_secs = max(0.1, secs_until_start - 0.3)
+            sync_frames = max(12, int(sync_secs * self.fps))
+            try:
+                self.picam2.set_controls({lc.rpi.SyncFrames: sync_frames})
+                self.logger.info(
+                    f"Framesync: scheduled SyncReady in {sync_frames} frames "
+                    f"({sync_secs:.2f}s) before T=0"
+                )
+            except Exception as e:
+                self.logger.warning(f"Framesync: failed to set SyncFrames: {e}")
+
         self.logger.info("Pre-staging complete")
 
     def _start_new_recording(self) -> None:
@@ -543,9 +563,33 @@ class CameraModule(Module):
             self.main_encoder.output = self.file_output
             self._open_timestamp_csv(filename)
 
+        # If framesync is active, enable sync_enable so the encoder waits for
+        # SyncReady before writing any frames.  SyncFrames was set in
+        # _pre_create_first_segment to fire just before this moment.
+        sync_mode_str = self.config.get("camera.sync_mode", "none")
+        sync_timeout = 2.0  # seconds — fallback if SyncReady never fires
+        if sync_mode_str in ("server", "client"):
+            self.main_encoder.sync_enable = True
+            self.main_encoder.sync.clear()
+
         # Start recording — this is the precise moment we want to align across cameras
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
+
+        if sync_mode_str in ("server", "client"):
+            if self.main_encoder.sync.wait(timeout=sync_timeout):
+                lag = (time.time() - self.recording_start_time) * 1e6
+                self.logger.info(
+                    f"Framesync: SyncReady received {lag:.0f}µs after encoder start — "
+                    f"recording aligned"
+                )
+            else:
+                # SyncReady didn't fire — force the encoder to start writing now.
+                self.main_encoder.sync_enable = False
+                self.logger.warning(
+                    f"Framesync: SyncReady not received within {sync_timeout:.1f}s — "
+                    f"recording started without frame alignment"
+                )
 
 
     def _get_video_filename(self) -> str:

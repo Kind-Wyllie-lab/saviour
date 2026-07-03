@@ -150,7 +150,7 @@ class Recording:
           {"ok": False, "error": str, "failures": [{"module_id": str, "reason": str, ...}]}
         """
         config = self.facade.get_config()
-        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 50.0)
         max_age_secs: float = 90.0
         now = time.time()
         failures = []
@@ -1077,7 +1077,7 @@ class Recording:
         None offsets are skipped: ptp4l may be restarting; we want confirmed violations only.
         """
         config = self.facade.get_config()
-        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 50.0)
         now = time.time()
         currently_degraded = self._ptp_degraded.setdefault(session_name, set())
         newly_degraded: list = []

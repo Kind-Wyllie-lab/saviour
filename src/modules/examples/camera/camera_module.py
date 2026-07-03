@@ -706,7 +706,7 @@ class CameraModule(Module):
 
     def _get_wall_mono_offset_ns(self) -> int:
         now = time.monotonic()
-        if now - self._wall_mono_offset_updated_s >= 1.0:
+        if now - self._wall_mono_offset_updated_s >= 0.01:
             self._wall_mono_offset_ns = int((time.time() - now) * 1e9)
             self._wall_mono_offset_updated_s = now
         return self._wall_mono_offset_ns

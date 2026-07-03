@@ -690,9 +690,10 @@ class Recording:
             already_tracking = (
                 session.module_stop_states.get(module_id) == "recording"
                 and session.state == SessionState.ACTIVE
+                and self.facade.is_module_recording(module_id)
             )
             if already_tracking:
-                # Module is already tracked as recording in an active session
+                # Module is already tracked as recording and confirmed still recording
                 # (e.g. an mDNS service-update triggered a spurious online transition).
                 # No recovery needed — avoid sending a duplicate start_recording.
                 self.logger.info(

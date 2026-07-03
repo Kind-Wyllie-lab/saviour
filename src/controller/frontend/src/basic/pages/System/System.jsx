@@ -68,7 +68,7 @@ function ptpCell(ns) {
   return <span className={cls}>{display}</span>;
 }
 
-function statusCell(status) {
+function connectionCell(status) {
   const cls = status === "online"    ? "status-dot--online"
             : status === "suspected" ? "status-dot--suspected"
             : "status-dot--offline";
@@ -78,6 +78,16 @@ function statusCell(status) {
       {status}
     </span>
   );
+}
+
+function activityCell(status) {
+  if (!status) return <span className="cell--muted">—</span>;
+  const cls = status === "RECORDING" ? "activity-badge--recording"
+            : status === "READY"     ? "activity-badge--ready"
+            : status === "NOT_READY" ? "activity-badge--warn"
+            : status === "FAULT"     ? "activity-badge--fault"
+            : "activity-badge--idle";
+  return <span className={`activity-badge ${cls}`}>{status}</span>;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -297,6 +307,7 @@ export default function System() {
           <thead>
             <tr>
               <th>Device</th>
+              <th>Connection</th>
               <th>Status</th>
               <th>IP</th>
               <th className="th--version">
@@ -328,7 +339,8 @@ export default function System() {
               <td>
                 <span className="device-name">Controller</span>
               </td>
-              <td>{statusCell(controllerHealth ? "online" : "suspected")}</td>
+              <td>{connectionCell(controllerHealth ? "online" : "suspected")}</td>
+              <td><span className="cell--muted">—</span></td>
               <td className="cell--muted">{controllerHealth?.ip ?? "—"}</td>
               <td className="cell--muted">{controllerHealth?.version ?? "—"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
@@ -371,16 +383,16 @@ export default function System() {
             {/* Module rows */}
             {moduleRows.map((row) => {
               const isOnline = modules[row.id]?.online ?? false;
-              // If modules.online is false (authoritative, fast update), always show
-              // offline dot even if the health broadcast hasn't caught up yet.
-              const statusForDot = isOnline ? (row.status ?? "online") : "offline";
+              const connStatus = isOnline ? (row.status ?? "online") : "offline";
+              const moduleStatus = modules[row.id]?.status ?? null;
               return (
                 <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                   <td>
                     <span className="device-name">{row.name}</span>
                     <span className="device-id">{row.id}</span>
                   </td>
-                  <td>{statusCell(statusForDot)}</td>
+                  <td>{connectionCell(connStatus)}</td>
+                  <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
                   <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
                   <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>

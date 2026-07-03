@@ -134,6 +134,21 @@
 .status-dot--suspected { background-color: #d4820a; }
 .status-dot--offline   { background-color: #cc3333; }
 
+.activity-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.activity-badge--recording { background: rgba(212, 130, 10, 0.15); color: #d4820a; }
+.activity-badge--ready     { background: rgba(45, 158, 79, 0.12);  color: #2d9e4f; }
+.activity-badge--warn      { background: rgba(212, 130, 10, 0.12); color: #d4820a; }
+.activity-badge--fault     { background: rgba(204, 51, 51, 0.12);  color: #cc3333; }
+.activity-badge--idle      { background: rgba(128, 128, 128, 0.1); color: var(--text-muted, #888); }
+
 .cell--muted {
   opacity: 0.45;
 }

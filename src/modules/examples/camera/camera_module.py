@@ -406,7 +406,7 @@ class CameraModule(Module):
 
             # Apply hflip/vflip via hardware Transform so the ISP handles it at
             # zero Python CPU cost — no cv2.flip() on every frame.
-            from picamera2 import Transform
+            from libcamera import Transform
             hflip = self.config.get("camera.hflip", False) is True
             vflip = self.config.get("camera.vflip", False) is True
             transform = Transform(hflip=hflip, vflip=vflip)

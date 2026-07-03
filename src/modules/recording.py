@@ -56,6 +56,8 @@ class Recording():
 
         # Tracking files for export
         self.current_filename_prefix = None
+        # Set by _scheduled_start to avoid when_recording_starts() running twice
+        self._recording_start_prepped = False
 
         # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
@@ -106,11 +108,80 @@ class Recording():
 
 
     def _scheduled_start(self, session_name: str, duration: str, start_at: float) -> None:
-        """Sleep until start_at then begin recording."""
+        """Pre-prepare, spin-wait to start_at, then begin recording.
+
+        Three-stage approach to minimise inter-camera start jitter:
+          1. Elevate this thread to SCHED_FIFO so the OS doesn't pre-empt it
+             during the spin-wait (requires CAP_SYS_NICE / root).
+          2. Pre-create the video container and CSV via the module hook so the
+             only work left at start_at is start_encoder().
+          3. Sleep until 10 ms before start_at then busy-spin so the wakeup
+             jitter floor (~100–300 µs for time.sleep) is eliminated.
+        """
+        # 1. Real-time scheduling
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(80))
+            self.logger.info("Elevated to SCHED_FIFO priority 80 for scheduled start")
+        except (PermissionError, AttributeError, OSError) as e:
+            self.logger.debug(f"SCHED_FIFO unavailable ({e}); using normal scheduling")
+
+        # 2. Pre-compute session state so _get_video_filename() works correctly
+        #    inside the module hook (current_filename_prefix would be None otherwise)
+        self._pre_setup_session(session_name, start_at)
+
+        # 3. Run when_recording_starts() BEFORE sleeping so that Samba I/O
+        #    (config export, directory creation) is off the critical path.
+        #    _begin_recording checks the flag and skips its own call.
+        self.facade.when_recording_starts()
+        self._recording_start_prepped = True
+
+        # 4. Pre-create file handles before sleeping
+        try:
+            self.facade.pre_create_first_segment(start_at)
+        except Exception as e:
+            self.logger.warning(
+                f"pre_create_first_segment failed ({e}); will open files at start time"
+            )
+
+        # 5. Sleep then spin
         delay = start_at - time.time()
-        if delay > 0:
-            time.sleep(delay)
+        if delay > 0.010:
+            time.sleep(delay - 0.010)
+        while time.time() < start_at:
+            pass
+
         self._begin_recording(session_name, duration)
+
+
+    def _pre_setup_session(self, session_name: str, start_at: float) -> None:
+        """Set the string fields that _get_video_filename() needs before
+        _begin_recording has run.
+
+        Only sets in-memory string state — deliberately does NOT call
+        when_recording_starts() (which has I/O side effects and already runs
+        inside _begin_recording). _begin_recording will overwrite these with
+        the same values, so calling this early is safe and idempotent.
+        """
+        self.current_session_name = self._format_session_name(session_name)
+        module_name = self.facade.get_module_name()
+        short_mac   = self.facade.get_short_mac()
+        self.recording_session_id = (
+            module_name if short_mac in module_name
+            else f"{module_name}_{short_mac}"
+        )
+        if session_name:
+            self.current_filename_prefix = (
+                f"{self.recording_folder}/"
+                f"{self.current_session_name}_{self.recording_session_id}"
+            )
+        else:
+            self.current_filename_prefix = (
+                f"{self.recording_folder}/{self.recording_session_id}"
+            )
+        os.makedirs(self.recording_folder, exist_ok=True)
+        # Seed segment state so _get_video_filename() produces the correct name
+        self.segment_id = 0
+        self.segment_start_time = start_at
 
 
     def _begin_recording(self, session_name: str, duration: str) -> dict:
@@ -118,8 +189,11 @@ class Recording():
         # Store experiment folder information for export
         self.current_session_name = self._format_session_name(session_name)
 
-        # Set the export folder based on the supplied experiment name
-        self.facade.when_recording_starts()
+        # For scheduled starts, when_recording_starts() was already called in
+        # _scheduled_start (before the sleep, off the critical path).
+        if not self._recording_start_prepped:
+            self.facade.when_recording_starts()
+        self._recording_start_prepped = False
 
         # Set up recording - filename and folder
         module_name = self.facade.get_module_name()
@@ -428,5 +502,11 @@ class Recording():
 
     
     def get_start_time_from_filename(self, filename: str) -> str:
-        start_time = filename.split("_")[-1][0:-1]
-        return start_time
+        import re
+        # Extract "YYYYMMDD-HHMMSS" from the "(segment_YYYYMMDD-HHMMSS)" pattern.
+        # Handles filenames that have suffixes after the datetime (e.g. _timestamps.csv).
+        m = re.search(r'\((\d+)_(\d{8}-\d{6})\)', filename)
+        if m:
+            return m.group(2)
+        # Fallback: old behaviour (works for bare .ts files)
+        return filename.split("_")[-1][0:-1]

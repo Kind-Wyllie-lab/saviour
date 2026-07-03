@@ -139,6 +139,14 @@ class ModuleFacade():
 
 
     """Module Specific Recording Methods"""
+    def pre_create_first_segment(self, start_at: float) -> None:
+        """Called before the scheduled-start spin-wait to let the module
+        pre-open the video container and CSV so start_encoder() is the
+        only call at the precise moment."""
+        fn = getattr(self.module, "_pre_create_first_segment", None)
+        if callable(fn):
+            fn(start_at)
+
     def start_new_recording(self) -> bool:
         """Implement module specific logic to start initial recording segment."""
         return self.module._start_new_recording()

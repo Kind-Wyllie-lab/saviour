@@ -58,7 +58,7 @@ function diskCell(usedPct, usedGb, totalGb) {
   return <span className={cls || undefined}>{`${(usedPct ?? 0).toFixed(1)}%`}</span>;
 }
 
-function ptpCell(ns) {
+function ptpVal(ns) {
   if (ns == null) return <span className="cell--muted">—</span>;
   const abs = Math.abs(ns);
   const cls = abs >= 10000 ? "val--danger" : abs >= 1000 ? "val--warn" : "val--ok";
@@ -66,6 +66,21 @@ function ptpCell(ns) {
     ? `${(ns / 1000).toFixed(1)} µs`
     : `${Math.round(ns)} ns`;
   return <span className={cls}>{display}</span>;
+}
+
+function ptpPairCell(ptp4l_ns, phc2sys_ns) {
+  return (
+    <div className="ptp-pair">
+      <div className="ptp-pair__row">
+        <span className="ptp-pair__label">ptp4l</span>
+        {ptpVal(ptp4l_ns)}
+      </div>
+      <div className="ptp-pair__row">
+        <span className="ptp-pair__label">phc2sys</span>
+        {ptpVal(phc2sys_ns)}
+      </div>
+    </div>
+  );
 }
 
 function connectionCell(status) {
@@ -399,7 +414,7 @@ export default function System() {
                   <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
                   <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
                   <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? ptpCell(row.ptp4l_offset_ns) : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
                     {shutdownStates[row.id] ? (

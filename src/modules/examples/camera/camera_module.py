@@ -525,7 +525,7 @@ class CameraModule(Module):
             sync_secs = max(0.1, secs_until_start - 0.3)
             sync_frames = max(12, int(sync_secs * self.fps))
             try:
-                self.picam2.set_controls({lc.rpi.SyncFrames: sync_frames})
+                self.picam2.set_controls({"SyncFrames": sync_frames})
                 self.logger.info(
                     f"Framesync: scheduled SyncReady in {sync_frames} frames "
                     f"({sync_secs:.2f}s) before T=0"

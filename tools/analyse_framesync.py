@@ -133,6 +133,16 @@ def report_offsets(per_frame: pd.DataFrame, ref_tag: str, client_tags: list,
         artefacts = v[v.abs() >= outlier_thr_us]
         within    = (real.abs() <= half_frame_us).mean() * 100 if len(real) else 0
 
+        # Linear drift fit: slope in µs/frame → µs/sec
+        drift_us_per_sec = None
+        detrended_p95_us = None
+        if len(real) >= 10:
+            x = np.arange(len(real), dtype=float)
+            slope, intercept = np.polyfit(x, real.values, 1)
+            drift_us_per_sec = slope * fps
+            detrended = real.values - (slope * x + intercept)
+            detrended_p95_us = float(np.percentile(np.abs(detrended), 95))
+
         print(f"\n  {tag}")
         if len(real):
             mean_abs_us = real.abs().mean()
@@ -143,24 +153,31 @@ def report_offsets(per_frame: pd.DataFrame, ref_tag: str, client_tags: list,
                   f"{real.quantile(.95):+.1f} µs")
             print(f"    min / max        : {real.min():+.1f} / {real.max():+.1f} µs")
             print(f"    within ½ frame   : {within:.1f}%  ({len(real)} frames)")
+        if drift_us_per_sec is not None:
+            print(f"    clock drift      : {drift_us_per_sec:+.3f} µs/sec "
+                  f"({drift_us_per_sec:.2f} ppm)")
+            print(f"    jitter (detrend p95): {detrended_p95_us:.1f} µs  "
+                  f"← timing noise floor")
         if len(artefacts):
             print(f"    matching artefacts (|offset| ≥ {outlier_thr_us/1000:.0f} ms): "
                   f"{len(artefacts)} — differing frame counts, not real sync error")
 
         rows.append({
-            "ref_camera":           ref_tag,
-            "client_camera":        tag,
-            "fps":                  fps,
-            "n_frames":             len(real),
-            "n_artefacts":          len(artefacts),
-            "mean_offset_us":       round(real.mean(), 3)           if len(real) else None,
-            "std_offset_us":        round(real.std(), 3)            if len(real) else None,
-            "mean_abs_offset_us":   round(real.abs().mean(), 3)     if len(real) else None,
-            "mean_abs_offset_s":    round(real.abs().mean() / 1e6, 9) if len(real) else None,
-            "p50_offset_us":        round(real.quantile(.50), 3)    if len(real) else None,
-            "p95_offset_us":        round(real.quantile(.95), 3)    if len(real) else None,
-            "max_abs_offset_us":    round(real.abs().max(), 3)      if len(real) else None,
-            "pct_within_half_frame": round(within, 2)               if len(real) else None,
+            "ref_camera":             ref_tag,
+            "client_camera":          tag,
+            "fps":                    fps,
+            "n_frames":               len(real),
+            "n_artefacts":            len(artefacts),
+            "mean_offset_us":         round(real.mean(), 3)             if len(real) else None,
+            "std_offset_us":          round(real.std(), 3)              if len(real) else None,
+            "mean_abs_offset_us":     round(real.abs().mean(), 3)       if len(real) else None,
+            "mean_abs_offset_s":      round(real.abs().mean() / 1e6, 9) if len(real) else None,
+            "p50_offset_us":          round(real.quantile(.50), 3)      if len(real) else None,
+            "p95_offset_us":          round(real.quantile(.95), 3)      if len(real) else None,
+            "max_abs_offset_us":      round(real.abs().max(), 3)        if len(real) else None,
+            "pct_within_half_frame":  round(within, 2)                  if len(real) else None,
+            "drift_us_per_sec":       round(drift_us_per_sec, 4)        if drift_us_per_sec is not None else None,
+            "detrended_p95_us":       round(detrended_p95_us, 1)        if detrended_p95_us is not None else None,
         })
     return rows
 

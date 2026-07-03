@@ -317,3 +317,24 @@
   font-size: 0.85em;
   margin-left: 8px;
 }
+
+.ptp-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ptp-pair__row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82em;
+  white-space: nowrap;
+}
+
+.ptp-pair__label {
+  font-size: 0.78rem;
+  font-family: monospace;
+  opacity: 0.45;
+  min-width: 44px;
+}

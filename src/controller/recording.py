@@ -103,6 +103,7 @@ class Recording:
         self.sessions: Dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
+        self._not_recording_strikes: dict = {}  # (session_name, module_id) → consecutive miss count
         self._ptp_degraded: Dict[str, set] = {}  # session_name → set of currently-degraded module IDs
         self._last_export_success: Dict[str, float] = {}   # module_id → epoch of last successful export
         self._export_failure_streak: Dict[str, int] = {}   # module_id → consecutive export failures
@@ -1316,15 +1317,24 @@ class Recording:
                                 except Exception as e:
                                     self.logger.warning(f"Could not probe {m}: {e}")
 
-                        # Check every module that should be recording actually is
+                        # Check every module that should be recording actually is.
+                        # Require _NOT_RECORDING_STRIKES_THRESHOLD consecutive misses before
+                        # declaring ERROR — one miss is normal during a segment transition.
+                        _NOT_RECORDING_STRIKES_THRESHOLD = 2
                         should_be_recording = [
                             m for m in session.modules
                             if session.module_stop_states.get(m) == "recording"
                         ]
-                        not_recording = [
-                            m for m in should_be_recording
-                            if not self.facade.is_module_recording(m)
-                        ]
+                        not_recording = []
+                        for m in should_be_recording:
+                            key = (session_name, m)
+                            if not self.facade.is_module_recording(m):
+                                strikes = self._not_recording_strikes.get(key, 0) + 1
+                                self._not_recording_strikes[key] = strikes
+                                if strikes >= _NOT_RECORDING_STRIKES_THRESHOLD:
+                                    not_recording.append(m)
+                            else:
+                                self._not_recording_strikes.pop(key, None)
                         if not_recording:
                             msg = f"Not recording: {', '.join(not_recording)}"
                             if session.error_message != msg or session.state != SessionState.ERROR:
@@ -1347,6 +1357,8 @@ class Recording:
                             # after a restart) we cannot confirm recovery, so leave the ERROR state.
                             session.error_message = ""
                             session.state = SessionState.ACTIVE
+                            for m in session.modules:
+                                self._not_recording_strikes.pop((session_name, m), None)
                             self.facade.update_sessions(self.sessions)
 
                         if session.state == SessionState.ACTIVE:

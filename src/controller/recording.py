@@ -207,6 +207,26 @@ class Recording:
                         f"{threshold_us:.0f}µs threshold — system clock still settling"
                     ),
                 })
+                continue
+
+            # Check phc2sys frequency correction — a large freq value means
+            # CLOCK_REALTIME is still slewing at a rate that will cause
+            # inter-camera timestamps to drift within the session.
+            # Default: 500 ppb (0.5 ppm) ≈ 0.5 µs/sec max drift.
+            freq_threshold_ppb: float = config.get("recording", {}).get(
+                "ptp_freq_threshold_ppb", 500.0
+            )
+            phc2sys_freq_ppb = health.get("phc2sys_freq")
+            if phc2sys_freq_ppb is not None and abs(phc2sys_freq_ppb) > freq_threshold_ppb:
+                failures.append({
+                    "module_id": module_id,
+                    "offset_us": round(offset_us, 1),
+                    "reason": (
+                        f"phc2sys frequency correction {phc2sys_freq_ppb:+.0f} ppb "
+                        f"exceeds {freq_threshold_ppb:.0f} ppb — "
+                        f"system clock still converging after recent reboot"
+                    ),
+                })
             else:
                 synced.append({"module_id": module_id, "offset_us": round(offset_us, 1)})
 

@@ -118,6 +118,10 @@ class CameraModule(Module):
         self.current_video_segment = None
         self.last_video_segment = None
 
+        # Pre-created segment for scheduled starts (set by _pre_create_first_segment,
+        # consumed by _start_new_recording so start_encoder() is the only call at t0)
+        self._prestaged_segment = None
+
         # Per-frame timestamp CSV sidecar
         self._timestamp_csv_file = None
         self._timestamp_csv_writer = None
@@ -214,6 +218,8 @@ class CameraModule(Module):
                 "camera.sync_mode",
                 "camera.sync_lock_exposure",
                 "camera.sync_lock_awb",
+                "camera.hflip",
+                "camera.vflip",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -240,8 +246,7 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
 
-            _cb_keys = {"camera.monochrome", "camera.overlay_timestamp",
-                        "camera.hflip", "camera.vflip"}
+            _cb_keys = {"camera.monochrome", "camera.overlay_timestamp", "module.name"}
             if _cb_keys.intersection(updated_keys or []):
                 self._cache_frame_config()
 
@@ -281,17 +286,13 @@ class CameraModule(Module):
         """
         self._cb_monochrome        = self.config.get("camera.monochrome") is True
         self._cb_overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
-        hflip = self.config.get("camera.hflip", False) is True
-        vflip = self.config.get("camera.vflip", False) is True
-        if hflip and vflip:
-            self._cb_flip_code = -1
-        elif hflip:
-            self._cb_flip_code = 1
-        elif vflip:
-            self._cb_flip_code = 0
-        else:
-            self._cb_flip_code = None
+        # Flip is handled by the hardware Transform in _configure_camera, so no
+        # per-frame cv2.flip() is needed.
+        self._cb_flip_code = None
         self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
+        # Clear layout caches so _apply_timestamp recomputes font_scale for the new text width
+        self._ts_layout_main  = None
+        self._ts_layout_lores = None
 
     def _csv_flush_worker(self) -> None:
         """Drain _csv_row_buffer to disk every 50 ms until stopped."""
@@ -403,6 +404,15 @@ class CameraModule(Module):
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
 
+            # Apply hflip/vflip via hardware Transform so the ISP handles it at
+            # zero Python CPU cost — no cv2.flip() on every frame.
+            from libcamera import Transform
+            hflip = self.config.get("camera.hflip", False) is True
+            vflip = self.config.get("camera.vflip", False) is True
+            transform = Transform(hflip=hflip, vflip=vflip)
+            if hflip or vflip:
+                self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip}")
+
             self.logger.info(f"Sensor stream set to size {self.width},{self.height} and bit depth {self.mode['bit_depth']} to target {self.fps}fps.")
 
             # Create video configuration with explicit framerate
@@ -410,6 +420,7 @@ class CameraModule(Module):
                         lores=lores,
                         sensor=sensor,
                         controls=controls,
+                        transform=transform,
                         buffer_count=32)
             
             # Apply configuration
@@ -450,7 +461,7 @@ class CameraModule(Module):
         self._timestamp_csv_file = open(self._current_csv_path, "w", newline="",
                                         buffering=1 << 20)  # 1 MiB write buffer
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
-        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "delta_ms", "dropped_before", "sync_lag_us", "exposure_time_us", "analogue_gain", "colour_gain_r", "colour_gain_b"])
+        self._timestamp_csv_writer.writerow(["frame_id", "timestamp_ns", "timestamp_utc", "wall_mono_offset_s", "delta_ms", "dropped_before", "sync_lag_us", "exposure_time_us", "analogue_gain", "colour_gain_r", "colour_gain_b"])
         self._frame_id = 0
         self._csv_prev_ns = None
         self._csv_row_buffer.clear()
@@ -479,28 +490,62 @@ class CameraModule(Module):
                 self.facade.stage_file_for_export(self._current_csv_path)
                 self._current_csv_path = None
 
+    def _pre_create_first_segment(self, start_at: float) -> None:
+        """Pre-create the video file and CSV before sleeping so that only
+        start_encoder() needs to run at the scheduled start moment.
+
+        Called by Recording._scheduled_start before the spin-wait.
+        Any exception is caught by the caller and falls back to normal start.
+        """
+        from picamera2.outputs import PyavOutput, SplittableOutput as _SO
+        filename = self._get_video_filename()
+        self.logger.info(f"Pre-staging recording segment: {filename}")
+
+        # Open the mpegts container — this is the slow step (~5–20 ms on Pi).
+        file_output = _SO(PyavOutput(filename, format="mpegts"))
+
+        # Open the timestamp CSV (writes header row, starts flush thread).
+        # We call _open_timestamp_csv which sets self._timestamp_csv_* directly;
+        # _start_new_recording will skip re-opening it when prestaged is set.
+        self._open_timestamp_csv(filename)
+
+        self._prestaged_segment = {
+            "filename":    filename,
+            "file_output": file_output,
+        }
+        self.logger.info("Pre-staging complete")
+
     def _start_new_recording(self) -> None:
         """Start a new recording session - set up SplittableOutput"""
-        # Start video
-        filename = self._get_video_filename() # should look like rec/wistar_103045_20250526_(1)_110045_20250526.ts
-        self.logger.info(f"Starting recording with filename {filename}")
-        self.current_video_segment = filename
-        self.facade.add_session_file(filename)
+        if self._prestaged_segment is not None:
+            # Fast path: file and CSV were pre-created before the spin-wait.
+            prestaged = self._prestaged_segment
+            self._prestaged_segment = None
+            filename = prestaged["filename"]
+            self.logger.info(f"Using pre-staged segment: {filename}")
+            self.current_video_segment = filename
+            self.facade.add_session_file(filename)
+            self.file_output = prestaged["file_output"]
+            self.main_encoder.output = self.file_output
+            # CSV is already open from _pre_create_first_segment
+        else:
+            # Normal path (immediate start or pre-stage failed)
+            filename = self._get_video_filename()
+            self.logger.info(f"Starting recording with filename {filename}")
+            self.current_video_segment = filename
+            self.facade.add_session_file(filename)
 
-        # Start the camera 
-        if not self.picam2.started:
-            self.picam2.start()
-            time.sleep(0.1)  # Give camera time to start
-        
-        # Create file output
-        self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts")) # 7.2.4 and 7.2.6 in docs. Use mpegts as it is more robust than mp4 if write gets interrupted.
-        self.main_encoder.output = self.file_output # Binding an output to an encoders output is discussed in 9.3. in the docs - originally for using multiple outputs, but i have used it for single output
+            if not self.picam2.started:
+                self.picam2.start()
+                time.sleep(0.1)
 
-        # Start recording
+            self.file_output = SplittableOutput(PyavOutput(filename, format="mpegts"))
+            self.main_encoder.output = self.file_output
+            self._open_timestamp_csv(filename)
+
+        # Start recording — this is the precise moment we want to align across cameras
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
-
-        self._open_timestamp_csv(filename)
 
 
     def _get_video_filename(self) -> str:
@@ -715,6 +760,7 @@ class CameraModule(Module):
                     dropped_before = max(0, round(delta_ms / expected_ms) - 1)
                 else:
                     delta_ms = dropped_before = ""
+                wall_mono_offset = time.time() - time.monotonic()
                 sync_lag_us      = meta.get("SyncTimer", "")
                 exposure_time_us = meta.get("ExposureTime", "")
                 analogue_gain    = meta.get("AnalogueGain", "")
@@ -722,6 +768,7 @@ class CameraModule(Module):
                 self._csv_prev_ns = timestamp
                 self._csv_row_buffer.append([
                     self._frame_id, timestamp, timestamp_utc,
+                    round(wall_mono_offset, 9),
                     delta_ms, dropped_before, sync_lag_us,
                     exposure_time_us, analogue_gain,
                     colour_gains[0], colour_gains[1],
@@ -809,11 +856,13 @@ class CameraModule(Module):
         """
         size_preset = self.config.get("camera.text_size", "medium")
         cache_attr = f"_ts_layout_{stream}"
-        cached = getattr(self, cache_attr, None)  # (preset, height, width, font_scale, thickness, x, y)
+        cached = getattr(self, cache_attr, None)  # (preset, height, width, textlen, font_scale, thickness, x, y)
 
         actual_height, actual_width = m.array.shape[:2]
+        text_len = len(timestamp)
 
-        if cached is None or cached[0] != size_preset or cached[1] != actual_height or cached[2] != actual_width:
+        if (cached is None or cached[0] != size_preset or cached[1] != actual_height
+                or cached[2] != actual_width or cached[3] != text_len):
             font = cv2.FONT_HERSHEY_SIMPLEX
             target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
             thickness = 2 if size_preset == "large" else 1
@@ -823,10 +872,10 @@ class CameraModule(Module):
             x = int((actual_width - text_width) / 2)
             padding = max(4, int(actual_height * 0.01))
             y = text_height + padding
-            cached = (size_preset, actual_height, actual_width, font_scale, thickness, x, y)
+            cached = (size_preset, actual_height, actual_width, text_len, font_scale, thickness, x, y)
             setattr(self, cache_attr, cached)
 
-        _, _, _, font_scale, thickness, x, y = cached
+        _, _, _, _, font_scale, thickness, x, y = cached
         cv2.putText(
             img=m.array,
             text=timestamp,

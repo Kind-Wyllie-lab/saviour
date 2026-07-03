@@ -288,6 +288,7 @@ class Module(ABC):
 
                 subprocess.run([
                     "rsync", "-a",
+                    "--chown=pi:pi",
                     "--exclude=env/",
                     "--exclude=.git/",
                     f"{source}/",
@@ -298,7 +299,7 @@ class Module(ABC):
                 pip_result = subprocess.run([
                     f"{INSTALL_DIR}/env/bin/pip", "install", "-q",
                     "--no-index",
-                    "-r", f"{INSTALL_DIR}/requirements.txt",
+                    f"{INSTALL_DIR}/",
                 ])
                 if pip_result.returncode != 0:
                     self.logger.warning(

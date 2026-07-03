@@ -274,7 +274,8 @@ def main() -> None:
     ap.add_argument("--no-plot", action="store_true", help="Skip matplotlib output")
     args = ap.parse_args()
 
-    cwd = Path.cwd()
+    # Summary CSV goes next to the session dirs, not in the shell's cwd
+    summary_dir = Path(args.session_dirs[0]).resolve().parent
     all_summary_rows: list[dict] = []
 
     for session_arg in args.session_dirs:
@@ -314,7 +315,7 @@ def main() -> None:
             plot(per_frame, ref_tag, client_tags, fps, session_dir)
 
     if all_summary_rows:
-        summary_out = write_summary_csv(all_summary_rows, cwd)
+        summary_out = write_summary_csv(all_summary_rows, summary_dir)
         print(f"\nSummary CSV    → {summary_out}")
 
     print()

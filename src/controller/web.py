@@ -1063,6 +1063,7 @@ class Web(ABC):
                         source = os.path.join(extract_dir, contents[0])
                     subprocess.run([
                         "rsync", "-a",
+                        "--chown=pi:pi",
                         "--exclude=env/",
                         "--exclude=.git/",
                         f"{source}/",
@@ -1074,12 +1075,12 @@ class Web(ABC):
                     pip_result = subprocess.run([
                         "/usr/local/src/saviour/env/bin/pip", "install", "-q",
                         "--no-index",
-                        "-r", "/usr/local/src/saviour/requirements.txt",
+                        "/usr/local/src/saviour/",
                     ])
                     if pip_result.returncode != 0:
                         self.logger.warning(
                             "pip install --no-index failed (new dependencies may need "
-                            "a manual `pip install -r requirements.txt` with internet access)"
+                            "a manual `pip install .` with internet access)"
                         )
                 except Exception as e:
                     self.logger.error(f"Controller update failed: {e}")
@@ -1101,10 +1102,13 @@ class Web(ABC):
             def _do_stage():
                 src_root = "/usr/local/src/saviour"
                 version = _read_running_version()
+                self.logger.info(f"Staging current version {version} from {src_root}")
                 try:
                     os.makedirs(_UPDATE_STORE, exist_ok=True)
                     tmp = _UPDATE_ZIP + ".tmp"
-                    with _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED) as zf:
+                    skipped = 0
+                    with _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED,
+                                     compresslevel=1) as zf:
                         for dirpath, dirnames, filenames in os.walk(src_root):
                             dirnames[:] = [
                                 d for d in dirnames
@@ -1116,7 +1120,13 @@ class Web(ABC):
                                     continue
                                 abs_path = os.path.join(dirpath, filename)
                                 rel_path = os.path.relpath(abs_path, src_root)
-                                zf.write(abs_path, rel_path)
+                                try:
+                                    zf.write(abs_path, rel_path)
+                                except Exception as _fe:
+                                    self.logger.warning(
+                                        f"Skipping {rel_path}: {_fe}"
+                                    )
+                                    skipped += 1
                     size = os.path.getsize(tmp)
                     os.replace(tmp, _UPDATE_ZIP)
                     meta = {
@@ -1128,7 +1138,8 @@ class Web(ABC):
                     with open(_UPDATE_META, "w") as f:
                         json.dump(meta, f, indent=2)
                     self.logger.info(
-                        f"Staged current version {version} ({size // 1024} KiB)"
+                        f"Staged current version {version} "
+                        f"({size // 1024} KiB, {skipped} files skipped)"
                     )
                     self.socketio.emit("upload_update_complete", meta)
                 except Exception as e:
@@ -1678,7 +1689,7 @@ class Web(ABC):
                     elif command == "shutdown":
                         self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
                     else:
-                        self.handle_special_module_status(module_id, status)
+                        self.logger.debug(f"cmd_ack for '{command}' from {module_id} — no web-layer action")
 
                 case _:
                     was_special_status = self.handle_special_module_status(module_id, status)

@@ -218,6 +218,8 @@ class CameraModule(Module):
                 "camera.sync_mode",
                 "camera.sync_lock_exposure",
                 "camera.sync_lock_awb",
+                "camera.hflip",
+                "camera.vflip",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -244,8 +246,7 @@ class CameraModule(Module):
             
             self._restarting_stream = False # Reset the "restarting stream" flag
 
-            _cb_keys = {"camera.monochrome", "camera.overlay_timestamp",
-                        "camera.hflip", "camera.vflip", "module.name"}
+            _cb_keys = {"camera.monochrome", "camera.overlay_timestamp", "module.name"}
             if _cb_keys.intersection(updated_keys or []):
                 self._cache_frame_config()
 
@@ -285,16 +286,9 @@ class CameraModule(Module):
         """
         self._cb_monochrome        = self.config.get("camera.monochrome") is True
         self._cb_overlay_timestamp = self.config.get("camera.overlay_timestamp", True)
-        hflip = self.config.get("camera.hflip", False) is True
-        vflip = self.config.get("camera.vflip", False) is True
-        if hflip and vflip:
-            self._cb_flip_code = -1
-        elif hflip:
-            self._cb_flip_code = 1
-        elif vflip:
-            self._cb_flip_code = 0
-        else:
-            self._cb_flip_code = None
+        # Flip is handled by the hardware Transform in _configure_camera, so no
+        # per-frame cv2.flip() is needed.
+        self._cb_flip_code = None
         self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
         # Clear layout caches so _apply_timestamp recomputes font_scale for the new text width
         self._ts_layout_main  = None
@@ -410,6 +404,15 @@ class CameraModule(Module):
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
 
+            # Apply hflip/vflip via hardware Transform so the ISP handles it at
+            # zero Python CPU cost — no cv2.flip() on every frame.
+            from picamera2 import Transform
+            hflip = self.config.get("camera.hflip", False) is True
+            vflip = self.config.get("camera.vflip", False) is True
+            transform = Transform(hflip=hflip, vflip=vflip)
+            if hflip or vflip:
+                self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip}")
+
             self.logger.info(f"Sensor stream set to size {self.width},{self.height} and bit depth {self.mode['bit_depth']} to target {self.fps}fps.")
 
             # Create video configuration with explicit framerate
@@ -417,6 +420,7 @@ class CameraModule(Module):
                         lores=lores,
                         sensor=sensor,
                         controls=controls,
+                        transform=transform,
                         buffer_count=32)
             
             # Apply configuration

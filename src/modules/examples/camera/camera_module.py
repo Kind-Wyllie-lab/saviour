@@ -421,7 +421,7 @@ class CameraModule(Module):
                         sensor=sensor,
                         controls=controls,
                         transform=transform,
-                        buffer_count=32)
+                        buffer_count=8)
             
             # Apply configuration
             self.picam2.configure(config)

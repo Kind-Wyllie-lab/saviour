@@ -42,6 +42,19 @@ npm run build
 npm run lint
 ```
 
+### Analysis tools
+
+```bash
+# env2 is a second venv for analysis scripts that need pandas/numpy
+# (the main env omits these to keep module installs lightweight)
+source env2/bin/activate
+
+# Framesync analysis — compare per-frame timestamp CSVs from a session directory
+python3 tools/analyse_framesync.py /path/to/session/date_dir
+# e.g.:
+python3 tools/analyse_framesync.py /home/pi/controller_share/my-session/20260703
+```
+
 ### Installation & role assignment
 
 ```bash
@@ -149,7 +162,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 These are larger structural issues that require significant refactoring. Recorded here so they are not lost.
 
-- [x] **PTP sync unvalidated before recording** — added `_check_ptp_sync()` gate in `create_session()` and `_start_scheduled_session()`; "Check Ready" now runs a controller-side PTP check and surfaces results to the frontend (240626).
+- [x] **PTP sync unvalidated before recording** — added `_check_ptp_sync()` gate in `create_session()` and `_start_scheduled_session()`; "Check Ready" now runs a controller-side PTP check and surfaces results to the frontend (240626). Gate now checks `ptp4l_offset`, `phc2sys_offset`, AND `phc2sys_freq` (frequency convergence) — a recently rebooted camera can show small instantaneous offsets while still drifting at several ppm; `phc2sys_freq` threshold is 500 ppb by default (`recording.ptp_freq_threshold_ppb`).
 - [x] **Mid-recording PTP degradation undetected** — `_check_ptp_mid_recording()` runs each monitor cycle for ACTIVE sessions; fires on transitions only (newly degraded / newly recovered); surfaces amber `ptp_warning` field on the session card and sends a Teams alert (240626).
 - [x] **Session state has no durability** — already implemented: `_save_sessions()` is called at every state transition; `_load_sessions()` on startup marks interrupted ACTIVE sessions as ERROR; `module_back_online()` re-issues `start_recording` and recovers ERROR → ACTIVE when modules reconnect; `handle_module_health_response()` handles the controller-restart case by probing module state and resuming or marking stopped accordingly.
 - [ ] **ZMQ PUB/SUB is the wrong transport for commands** — PUB/SUB drops messages to subscribers that haven't connected yet (slow-joiner problem). `start_recording` can silently drop and a session starts on some modules but not others, with no timeout or error surfaced. Commands requiring reliable delivery should use DEALER/ROUTER or REQ/REP. High effort — transport-layer change across every module.
@@ -180,3 +193,14 @@ These are larger structural issues that require significant refactoring. Recorde
 ### Module offline detection
 
 - Modules do **not** send a graceful mDNS goodbye on ungraceful disconnection (power loss, switch unplug). The heartbeat timeout (90 s, `HEARTBEAT_TIMEOUT_SECS` in `modules.py`) is the only mechanism for detecting these. The `last_heartbeat_time` field on `Module` must be non-zero before the timeout logic fires, so newly registered modules with no heartbeat yet are not immediately evicted.
+
+### Camera framesync (multi-camera timing)
+
+The camera module supports `camera.sync_mode: "server" | "client" | "none"`. This uses **libcamera's software sync mechanism**, not GPIO. The server broadcasts timing packets over UDP; clients adjust their framerate to match. Key facts:
+
+- **`SyncTimer` metadata**: counts down (in µs) to the agreed sync point, then goes negative. A very negative value (e.g. −26 seconds) means sync was established long before recording started — not an error.
+- **`SyncReady` metadata**: True on the single frame where synchronisation fires. The encoder's `sync_enable = True` flag discards frames until this fires, then starts recording. We set `SyncFrames` in `_pre_create_first_segment()` to force a fresh sync point close to T=0.
+- **Phase offset**: Even after sync-lock, there is a fixed per-session inter-camera phase offset (typically 0–8333 µs at 120 fps). This is a hardware characteristic of when the client's frame clock happened to be when sync was established — **not** a PTP error. It is constant within a session and can be calibrated out from the `framesync_per_frame.csv` sidecar.
+- **120 fps limitation**: libcamera sync requires the target framerate to be significantly below the camera's maximum so the client can speed up to catch the server. At 120 fps on Pi Camera Module 3 (which maxes at ~120 fps at the recording resolution), the client has no headroom and cannot phase-lock. The `sync_enable` / `SyncFrames` approach is still used (best-effort), with a 2-second fallback timeout.
+- **PTP two-servo rule**: `ptp4l` disciplines the PHC; `phc2sys` disciplines `CLOCK_REALTIME`. A camera that rebooted recently will have `ptp4l` offset <50 µs (looking fine) while `phc2sys_freq` is still several ppm — causing inter-camera CLOCK_REALTIME drift of µs/sec. The PTP gate in `recording.py` checks both `phc2sys_offset` AND `phc2sys_freq` (threshold: 500 ppb, configurable via `recording.ptp_freq_threshold_ppb`). Wait at least 5–10 minutes after a camera reboot before recording for PTP to fully converge.
+- **Framesync analysis**: `tools/analyse_framesync.py` reads per-session timestamp CSVs and reports inter-camera offset statistics including clock drift (µs/sec) and detrended jitter (the true timing noise floor once slow PTP drift is removed). Run with `source env2/bin/activate` (needs pandas). The "mean offset" includes the fixed phase offset; the **detrended p95** is the meaningful accuracy figure (<20 µs with settling PTP, <5 µs when fully converged).

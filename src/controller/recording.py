@@ -187,8 +187,24 @@ class Recording:
                     "module_id": module_id,
                     "offset_us": round(offset_us, 1),
                     "reason": (
-                        f"offset {offset_us:.1f}µs exceeds "
+                        f"ptp4l offset {offset_us:.1f}µs exceeds "
                         f"{threshold_us:.0f}µs threshold"
+                    ),
+                })
+                continue
+
+            # Also check phc2sys offset — CLOCK_REALTIME must track the PHC.
+            # Timestamps use CLOCK_REALTIME; a large phc2sys residual means step
+            # corrections mid-session will corrupt inter-camera sync even when
+            # ptp4l is settled.
+            phc2sys_ns = health.get("phc2sys_offset")
+            if phc2sys_ns is not None and abs(phc2sys_ns / 1000) > threshold_us:
+                failures.append({
+                    "module_id": module_id,
+                    "offset_us": round(phc2sys_ns / 1000, 1),
+                    "reason": (
+                        f"phc2sys offset {phc2sys_ns/1000:.1f}µs exceeds "
+                        f"{threshold_us:.0f}µs threshold — system clock still settling"
                     ),
                 })
             else:

@@ -80,7 +80,7 @@ class PTP:
         # Track latest values for each service
         self.latest_ptp4l_offset = None
         self.latest_ptp4l_freq = None
-        self.latest_phc2sys_offset = None
+        self.latest_phc2sys_offset_ns = None
         self.latest_phc2sys_freq = None
 
     def _check_required_packages(self):
@@ -247,11 +247,11 @@ class PTP:
             time.sleep(self.config.get("ptp.ptp_monitor_interval"))  # Check every second
 
     def _check_ptp_offsets(self):
-        if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset is None:
+        if self.latest_phc2sys_freq is None or self.latest_phc2sys_offset_ns is None:
             return
-        if abs(self.latest_phc2sys_offset) > 5000 or abs(self.latest_phc2sys_freq) > 100000:
+        if abs(self.latest_phc2sys_offset_ns) > 5000 or abs(self.latest_phc2sys_freq) > 100000:
             self.logger.warning(
-                f"PTP offset high: phc2sys offset={self.latest_phc2sys_offset}ns "
+                f"PTP offset high: phc2sys offset={self.latest_phc2sys_offset_ns}ns "
                 f"freq={self.latest_phc2sys_freq}ppb — converging"
             )
 
@@ -261,7 +261,7 @@ class PTP:
         entry = {
             'timestamp': timestamp,
             'phc2sys_freq': self.latest_phc2sys_freq,
-            'phc2sys_offset': self.latest_phc2sys_offset
+            'phc2sys_offset_ns': self.latest_phc2sys_offset_ns
         }
         
         self.ptp_buffer.append(entry)
@@ -284,7 +284,7 @@ class PTP:
                 offset_match = re.search(r'sys offset\s+(-?\d+)', line)
                 if offset_match:
                     current_offset = float(offset_match.group(1))
-                    self.latest_phc2sys_offset = current_offset
+                    self.latest_phc2sys_offset_ns = current_offset
                     self.last_offset = current_offset
                     self.last_sync_time = time.time()
                     self.status = 'synchronized'
@@ -394,7 +394,7 @@ class PTP:
             'interface': self.interface,
             'ptp_buffer_size': len(self.ptp_buffer),
             # Add individual service values for health manager
-            'phc2sys_offset': self.latest_phc2sys_offset,
+            'phc2sys_offset_ns': self.latest_phc2sys_offset_ns,
             'phc2sys_freq': self.latest_phc2sys_freq,
             'ntp_status': self.get_ntp_status()
         }

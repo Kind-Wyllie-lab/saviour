@@ -8,7 +8,8 @@
     "zeroconf": {
         "_port": 5353,
         "_service_type": "_controller._tcp.local.",
-        "_service_name": "controller._controller._tcp.local."
+        "_service_name": "controller._controller._tcp.local.",
+        "_valid_ip_prefixes": ["192.168.1.", "10.0."]
     },
     "zmq": {
         "_cmd_port": 5555,

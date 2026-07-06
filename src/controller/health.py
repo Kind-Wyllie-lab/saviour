@@ -564,9 +564,9 @@ class Health:
                 if abs(self.module_health[module]["ptp4l_offset_ns"]) > 10000:
                     self.logger.warning(f"ptp4l_offset_ns too high for module {module}: {self.module_health[module]['ptp4l_offset_ns']}")
                     reset_flag = True
-            if self.module_health[module]["phc2sys_offset"] is not None:
-                if abs(self.module_health[module]["phc2sys_offset"]) > 10000:
-                    self.logger.warning(f"phc2sys_offset too high for module {module}: {self.module_health[module]['phc2sys_offset']}")
+            if self.module_health[module]["phc2sys_offset_ns"] is not None:
+                if abs(self.module_health[module]["phc2sys_offset_ns"]) > 10000:
+                    self.logger.warning(f"phc2sys_offset_ns too high for module {module}: {self.module_health[module]['phc2sys_offset_ns']}")
                     reset_flag = True
             if reset_flag == True:
                 if (time.time() - self.module_health[module]["last_ptp_restart"]) > (2**self.module_health[module]["ptp_restarts"]) * 60: # Exponential backoff? Sort of.

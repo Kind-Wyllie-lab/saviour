@@ -444,19 +444,19 @@ class Export:
         """Check for updated samba settings from config"""
         old_samba_ip = self.samba_share_ip
 
-        self.samba_share_ip = self.config.get("export.share_ip", "10.0.0.1")
+        self.samba_share_ip = self.config.get("export.share_ip")
         self.samba_share_path = self.config.get("export.share_path", "controller_share")
         self.samba_share_username = self.config.get("export.share_username", "saviour_module")
         self.samba_share_password = self.config.get("export.share_password", "")
 
         # If IP has changed, reconfigure traffic control rules
-        if self.samba_share_ip != old_samba_ip: 
+        if self.samba_share_ip != old_samba_ip:
             self._clear_traffic_control_filter()
             self._apply_traffic_control_filter()
 
 
     def _samba_settings_changed(self):
-        self.samba_share_ip = self.config.get("export.share_ip", "10.0.0.1")
+        self.samba_share_ip = self.config.get("export.share_ip")
         self.samba_share_path = self.config.get("export.share_path", "controller_share")
         self.samba_share_username = self.config.get("export.share_username", "saviour_module")
         self.samba_share_password = self.config.get("export.share_password", "")

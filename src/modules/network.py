@@ -38,11 +38,6 @@ class Network:
         self.config = config
         self.module_id = module_id
         self.module_type = module_type
-        self.valid_ips = [
-            "192.168.1.",
-            "10.0.0."
-        ]
-
         # Controller connection params
         self.controller_ip = None
         self.controller_port = None

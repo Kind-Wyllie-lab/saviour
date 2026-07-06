@@ -176,44 +176,94 @@ class TestPendingRollback:
 
 class TestConcurrentExportRejected:
     def test_second_call_rejected_while_first_in_progress(self):
+        # Set the exporting flag directly to simulate a concurrent export in
+        # progress.  A threading barrier approach is inherently racy (Thread 1
+        # can complete the full export before Thread 2 checks the flag), so we
+        # test the guard in isolation without real concurrency.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            _write_test_file(exp.to_export_folder, "s_camera_test_001.flac")
+            exp.exporting = True  # simulate another export already running
+
+            result = exp.export_staged("s")
+
+            assert result.get("s") is False
+
+    def test_exporting_flag_set_during_export(self):
+        # Verify the flag is True while export_staged is executing, so that a
+        # concurrent second call (tested above) sees it.
         with tempfile.TemporaryDirectory() as tmpdir:
             exp = _make_export(tmpdir)
             nas_dir = os.path.join(tmpdir, "nas")
             os.makedirs(nas_dir)
             _write_test_file(exp.to_export_folder, "s_camera_test_001.flac")
+            flag_during = {}
 
-            barrier = threading.Barrier(2)
-            second_result = {}
-
-            def slow_setup(path):
-                barrier.wait()   # both threads reach here before first proceeds
+            def capturing_setup(path):
+                flag_during["exporting"] = exp.exporting
                 return nas_dir
 
-            def first_thread():
-                with patch.object(exp, "_setup_export", side_effect=slow_setup), \
-                     patch.object(exp, "_update_samba_settings"):
-                    exp.export_staged("s")
+            with patch.object(exp, "_setup_export", side_effect=capturing_setup), \
+                 patch.object(exp, "_update_samba_settings"):
+                exp.export_staged("s")
 
-            def second_thread():
-                barrier.wait()   # wait until first thread has set exporting=True
-                second_result["r"] = exp.export_staged("s")
-
-            t1 = threading.Thread(target=first_thread)
-            t2 = threading.Thread(target=second_thread)
-            t1.start()
-            t2.start()
-            t1.join(timeout=5)
-            t2.join(timeout=5)
-
-            # The second call must have been rejected (False result)
-            # rather than running a concurrent export.
-            if second_result.get("r") is not None:
-                assert second_result["r"].get("s") is False
+            assert flag_during.get("exporting") is True
 
 
 # ---------------------------------------------------------------------------
 # _mount_share — retry and timeout
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# delete_on_export — local copies removed after successful NAS transfer
+# ---------------------------------------------------------------------------
+
+class TestDeleteOnExport:
+    def test_exported_file_deleted_locally_when_flag_set(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            # Enable delete_on_export for this instance
+            exp.config.get.side_effect = lambda key, default=None: {
+                "recording.recording_folder": tmpdir,
+                "export.share_ip":            "10.0.0.1",
+                "export.share_path":          "controller_share",
+                "export.share_username":      "saviour_module",
+                "export.share_password":      "",
+                "export.delete_on_export":    True,
+                "export.manifest_enabled":    False,
+                "export.max_bitrate_mb":      10,
+                "export.max_burst_kb":        30,
+            }.get(key, default)
+
+            nas_dir = os.path.join(tmpdir, "nas_session")
+            os.makedirs(nas_dir)
+            filename = "session_camera_test_del.flac"
+            _write_test_file(exp.to_export_folder, filename)
+
+            with patch.object(exp, "_setup_export", return_value=nas_dir), \
+                 patch.object(exp, "_update_samba_settings"):
+                results = exp.export_staged("session")
+
+            assert results.get("session") is True
+            # File should have been removed from exported/ after NAS copy
+            assert not os.path.exists(os.path.join(exp.exported_folder, filename)), \
+                "local exported copy was not deleted despite delete_on_export=True"
+
+    def test_exported_file_kept_locally_when_flag_unset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)  # delete_on_export=False by default
+            nas_dir = os.path.join(tmpdir, "nas_session")
+            os.makedirs(nas_dir)
+            filename = "session_camera_test_keep.flac"
+            _write_test_file(exp.to_export_folder, filename)
+
+            with patch.object(exp, "_setup_export", return_value=nas_dir), \
+                 patch.object(exp, "_update_samba_settings"):
+                exp.export_staged("session")
+
+            assert os.path.exists(os.path.join(exp.exported_folder, filename)), \
+                "local exported copy was deleted despite delete_on_export=False"
+
 
 class TestMountShare:
     def test_succeeds_on_first_attempt(self):

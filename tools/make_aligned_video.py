@@ -109,24 +109,61 @@ def check_ptp(camera_dir: Path, threshold_ns: int) -> tuple[bool, str]:
 # Timestamp loading and alignment
 # ---------------------------------------------------------------------------
 
+def _segment_index(p: Path) -> int:
+    m = re.search(r'_\((\d+)_', p.name)
+    return int(m.group(1)) if m else 0
+
+
+def _video_frame_count(video: Path) -> int:
+    """Return the number of video frames in a .ts file via ffprobe packet scan.
+
+    Uses -count_packets (reads index/headers, ~0.3s) rather than -count_frames
+    (decodes every frame, ~15s).  For well-formed MPEG-TS the two values are
+    identical.
+    """
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+         "-count_packets", "-show_entries", "stream=nb_read_packets",
+         "-of", "csv=p=0", str(video)],
+        capture_output=True, text=True,
+    )
+    try:
+        return int(result.stdout.split()[0])
+    except (ValueError, IndexError):
+        return 0
+
+
 def load_timestamps(camera_dir: Path) -> np.ndarray:
-    """Load and concatenate per-frame timestamp_ns arrays across all segments."""
+    """Load per-frame timestamp_ns arrays across all segments, trimming any
+    pre-stage frames from the first segment.
+
+    The camera's pre_callback runs from when _open_timestamp_csv is called, but
+    the encoder only starts later (at the scheduled start time).  For the first
+    segment of scheduled recordings this creates extra rows at the head of the
+    CSV that have no corresponding video frame.  We detect and strip them by
+    comparing CSV row count to the actual video frame count.
+    """
     csvs = sorted(camera_dir.glob("*_timestamps.csv"),
                   key=lambda p: _segment_index(p))
     if not csvs:
         sys.exit(f"No *_timestamps.csv found in {camera_dir}")
 
+    videos = sorted(camera_dir.glob("*.ts"), key=lambda p: _segment_index(p))
+
     parts = []
-    for p in csvs:
+    for i, p in enumerate(csvs):
         df = pd.read_csv(p, usecols=["timestamp_ns"])
         ts = pd.to_numeric(df["timestamp_ns"], errors="coerce").dropna().values
+
+        if i == 0 and videos:
+            # Strip pre-stage frames: CSV rows written before the encoder started.
+            n_video = _video_frame_count(videos[0])
+            pre_stage = len(ts) - n_video
+            if pre_stage > 0:
+                ts = ts[pre_stage:]
+
         parts.append(ts)
     return np.concatenate(parts)
-
-
-def _segment_index(p: Path) -> int:
-    m = re.search(r'_\((\d+)_', p.name)
-    return int(m.group(1)) if m else 0
 
 
 def compute_alignment(timestamps: dict[str, np.ndarray]) -> dict[str, int]:

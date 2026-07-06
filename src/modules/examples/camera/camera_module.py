@@ -505,11 +505,6 @@ class CameraModule(Module):
         # Open the mpegts container — this is the slow step (~5–20 ms on Pi).
         file_output = _SO(PyavOutput(filename, format="mpegts"))
 
-        # Open the timestamp CSV (writes header row, starts flush thread).
-        # We call _open_timestamp_csv which sets self._timestamp_csv_* directly;
-        # _start_new_recording will skip re-opening it when prestaged is set.
-        self._open_timestamp_csv(filename)
-
         self._prestaged_segment = {
             "filename":    filename,
             "file_output": file_output,
@@ -529,7 +524,7 @@ class CameraModule(Module):
             self.facade.add_session_file(filename)
             self.file_output = prestaged["file_output"]
             self.main_encoder.output = self.file_output
-            # CSV is already open from _pre_create_first_segment
+            self._open_timestamp_csv(filename)
         else:
             # Normal path (immediate start or pre-stage failed)
             filename = self._get_video_filename()

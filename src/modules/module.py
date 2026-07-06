@@ -955,31 +955,65 @@ class Module(ABC):
         mount_point = self.export.mount_point
         _CHECK_TIMEOUT_S = 8
 
+        os.makedirs(mount_point, exist_ok=True)
+
         already_mounted = os.path.ismount(mount_point)
         mounted_for_check = False
-        try:
-            if not already_mounted:
-                auth = f"username={username},password={password}"
-                result = subprocess.run(
-                    [
-                        "sudo", "mount", "-t", "cifs",
-                        f"//{share_ip}/{share_path}", mount_point,
-                        "-o", f"{auth},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
-                    ],
-                    capture_output=True, text=True, timeout=_CHECK_TIMEOUT_S,
-                )
-                if result.returncode != 0:
-                    return False, (
-                        f"Cannot mount //{share_ip}/{share_path}: "
-                        f"{result.stderr.strip() or 'unknown error'}"
-                    )
-                mounted_for_check = True
 
+        def _mount() -> tuple[bool, str]:
+            """Mount the share; return (success, error_msg)."""
+            auth = f"username={username},password={password}"
+            r = subprocess.run(
+                [
+                    "sudo", "mount", "-t", "cifs",
+                    f"//{share_ip}/{share_path}", mount_point,
+                    "-o", f"{auth},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
+                ],
+                capture_output=True, text=True, timeout=_CHECK_TIMEOUT_S,
+            )
+            if r.returncode != 0:
+                return False, (
+                    f"Cannot mount //{share_ip}/{share_path}: "
+                    f"{r.stderr.strip() or 'unknown error'}"
+                )
+            return True, ""
+
+        def _test_write() -> bool:
             test_path = os.path.join(mount_point, ".saviour_check")
             with open(test_path, "w") as f:
                 f.write("check")
             os.remove(test_path)
-            return True, f"Controller share //{share_ip}/{share_path} reachable and writable"
+            return True
+
+        try:
+            if not already_mounted:
+                ok, err = _mount()
+                if not ok:
+                    return False, err
+                mounted_for_check = True
+
+            try:
+                _test_write()
+                return True, f"Controller share //{share_ip}/{share_path} reachable and writable"
+            except OSError:
+                # Write failed — likely a stale CIFS connection left over from a previous
+                # export session.  Attempt a lazy unmount and fresh remount, but only if
+                # no export is currently active (we must not pull the rug from live I/O).
+                if already_mounted and not self.export.exporting:
+                    subprocess.run(
+                        ["sudo", "umount", "-l", mount_point],
+                        capture_output=True, timeout=5,
+                    )
+                    ok, err = _mount()
+                    if not ok:
+                        return False, f"Stale mount, remount failed: {err}"
+                    mounted_for_check = True
+                    _test_write()
+                    return True, (
+                        f"Controller share //{share_ip}/{share_path} reachable "
+                        f"and writable (remounted stale connection)"
+                    )
+                raise  # already mounted and export active — re-raise for outer handler
 
         except subprocess.TimeoutExpired:
             return False, f"Mount timed out after {_CHECK_TIMEOUT_S}s — controller unreachable?"

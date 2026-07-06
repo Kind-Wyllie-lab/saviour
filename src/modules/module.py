@@ -189,7 +189,8 @@ class Module(ABC):
             self._check_readwrite,
             self._check_diskspace,
             self._check_ptp,
-            self._check_recording
+            self._check_recording,
+            self._check_export,
         ]
 
         # To be overriden by module?
@@ -935,8 +936,58 @@ class Module(ABC):
     def _check_recording(self) -> tuple[bool, str]:
         if self.is_recording:
             return False, "Module is currently recording"
-        else: 
+        else:
             return True, "Module not currently recording"
+
+
+    @check()
+    def _check_export(self) -> tuple[bool, str]:
+        if self.config.get("export.export_target", "controller") != "controller":
+            return True, "Export target is not controller — skipping share check"
+
+        password = self.config.get("export.share_password", "")
+        if not password:
+            return False, "Export credentials not set — use 'Sync Export' on the controller"
+
+        share_ip   = self.config.get("export.share_ip", "")
+        share_path = self.config.get("export.share_path", "controller_share")
+        username   = self.config.get("export.share_username", "saviour_module")
+        mount_point = self.export.mount_point
+        _CHECK_TIMEOUT_S = 8
+
+        already_mounted = os.path.ismount(mount_point)
+        mounted_for_check = False
+        try:
+            if not already_mounted:
+                auth = f"username={username},password={password}"
+                result = subprocess.run(
+                    [
+                        "sudo", "mount", "-t", "cifs",
+                        f"//{share_ip}/{share_path}", mount_point,
+                        "-o", f"{auth},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
+                    ],
+                    capture_output=True, text=True, timeout=_CHECK_TIMEOUT_S,
+                )
+                if result.returncode != 0:
+                    return False, (
+                        f"Cannot mount //{share_ip}/{share_path}: "
+                        f"{result.stderr.strip() or 'unknown error'}"
+                    )
+                mounted_for_check = True
+
+            test_path = os.path.join(mount_point, ".saviour_check")
+            with open(test_path, "w") as f:
+                f.write("check")
+            os.remove(test_path)
+            return True, f"Controller share //{share_ip}/{share_path} reachable and writable"
+
+        except subprocess.TimeoutExpired:
+            return False, f"Mount timed out after {_CHECK_TIMEOUT_S}s — controller unreachable?"
+        except Exception as e:
+            return False, f"Export check failed: {e}"
+        finally:
+            if mounted_for_check and os.path.ismount(mount_point):
+                subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
 
 
     def _run_checks(self):

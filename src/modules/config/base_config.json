@@ -31,7 +31,6 @@
     "share_ip": "10.0.0.1",
     "share_path": "controller_share",
     "share_username": "saviour_module",
-    "share_password": "",
     "max_bitrate_mb": 950,
     "max_burst_kb": 30
   }

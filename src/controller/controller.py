@@ -348,10 +348,6 @@ class Controller(ABC):
         self.logger.info("Stopping controller...")
         
         try:
-            # Stop PTP
-            self.logger.info("Stopping PTP manager")
-            self.ptp.stop()
-
             # Stop all threads by setting flags
             self.is_running = False
             

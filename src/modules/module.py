@@ -487,9 +487,6 @@ class Module(ABC):
                 self._disconnect_recording_timer.daemon = True
                 self._disconnect_recording_timer.start()
         
-        # Stop PTP services
-        self.ptp.stop()
-        
         # Stop heartbeats before cleaning up communication
         self.health.stop_heartbeats()
         
@@ -701,10 +698,6 @@ class Module(ABC):
             # Second: Stop the health manager (and its heartbeat thread)
             self.logger.info("Stopping health manager...")
             self.health.stop_heartbeats()
-
-            # Third: Stop PTP manager
-            self.logger.info("Stopping PTP manager...")
-            self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("Cleaning up network manager...")

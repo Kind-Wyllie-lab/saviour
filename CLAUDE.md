@@ -53,6 +53,12 @@ source env2/bin/activate
 python3 tools/analyse_framesync.py /path/to/session/date_dir
 # e.g.:
 python3 tools/analyse_framesync.py /home/pi/controller_share/my-session/20260703
+
+# Frame-aligned video — produce a side-by-side aligned output from a session directory
+# Checks PTP quality, strips pre-stage CSV frames, computes per-camera skip, calls ffmpeg
+python3 tools/make_aligned_video.py /path/to/session [--output out.mp4] [--layout side|stack|grid]
+# e.g.:
+python3 tools/make_aligned_video.py /home/pi/controller_share/my-session
 ```
 
 ### Installation & role assignment
@@ -78,10 +84,11 @@ The concrete implementations live under `src/controller/examples/` and `src/modu
 
 ### Inter-service communication
 
-ZeroMQ PUB/SUB is used for all controller↔module messaging:
+ZeroMQ **ROUTER/DEALER** is used for controller→module commands; modules publish status/heartbeats on a PUB/SUB socket:
 
-- Controller publishes commands on topics `cmd/<module_id>` or `cmd/all`
-- Modules publish status/heartbeats on `status/<module_id>`
+- Controller binds a ROUTER socket (port 5555); each module connects a DEALER socket with its `module_id` as the ZMQ identity and sends a `"hello"` frame on connect to register.
+- Controller tracks connected dealers in `_connected_dealers`; heartbeat timeout evicts a module and calls `remove_dealer()`.
+- Modules publish status/heartbeats on `status/<module_id>` (PUB, port 5556); controller SUBs to all topics.
 - Message envelope (JSON): `proto`, `type`, `timestamp`, `from`, `to`, `msg_id`, `command`, `params`, `status`, `result`, `error`
 
 See `docs/PROTOCOL_V1.md` for the full spec.
@@ -174,7 +181,7 @@ These are larger structural issues that require significant refactoring. Recorde
 ### Tests
 
 - [x] **Config merge has no unit tests** — `_merge_defaults`, `_merge_dicts`, `_merge_internal_defaults`, and `reset_to_defaults` are all untested; add `pytest` cases covering each merge path and edge cases (stale keys, `_`-prefix re-application).
-- [ ] **Export pipeline has no unit tests** — mock the Samba mount and verify PENDING rename, copy, cleanup, and failure rollback paths.
+- [x] **Export pipeline has no unit tests** — `src/modules/tests/test_export.py` and `src/controller/tests/test_export_queue.py` cover PENDING rename/rollback, mount retry, concurrency guard, retry-on-failure, stale dispatch timeout, delete_on_export, and queue persistence.
 - [ ] **No integration test for multi-module recording** — add a test that simulates controller + 2 modules, a full record/stop/export cycle, and a mid-session module dropout.
 - [ ] **No config schema regression test** — a renamed or removed config key silently breaks modules loading old `active_config.json`; add a test that loads each `*_config.json` against the current base and asserts all required keys are present.
 
@@ -199,7 +206,7 @@ These are larger structural issues that require significant refactoring. Recorde
 The camera module supports `camera.sync_mode: "server" | "client" | "none"`. This uses **libcamera's software sync mechanism**, not GPIO. The server broadcasts timing packets over UDP; clients adjust their framerate to match. Key facts:
 
 - **`SyncTimer` metadata**: counts down (in µs) to the agreed sync point, then goes negative. A very negative value (e.g. −26 seconds) means sync was established long before recording started — not an error.
-- **`SyncReady` metadata**: True on the single frame where synchronisation fires. The encoder's `sync_enable = True` flag discards frames until this fires, then starts recording. We set `SyncFrames` in `_pre_create_first_segment()` to force a fresh sync point close to T=0.
+- **`SyncReady` metadata**: True on the single frame where synchronisation fires. The encoder's `sync_enable = True` flag discards frames until this fires, then starts recording. `SyncFrames` is set in `_pre_create_first_segment()` to force a fresh sync point close to T=0. The per-frame timestamp CSV is opened in `_start_new_recording()` (not `_pre_create_first_segment()`) so CSV row 0 always corresponds to video frame 0.
 - **Phase offset**: Even after sync-lock, there is a fixed per-session inter-camera phase offset (typically 0–8333 µs at 120 fps). This is a hardware characteristic of when the client's frame clock happened to be when sync was established — **not** a PTP error. It is constant within a session and can be calibrated out from the `framesync_per_frame.csv` sidecar.
 - **120 fps limitation**: libcamera sync requires the target framerate to be significantly below the camera's maximum so the client can speed up to catch the server. At 120 fps on Pi Camera Module 3 (which maxes at ~120 fps at the recording resolution), the client has no headroom and cannot phase-lock. The `sync_enable` / `SyncFrames` approach is still used (best-effort), with a 2-second fallback timeout.
 - **PTP two-servo rule**: `ptp4l` disciplines the PHC; `phc2sys` disciplines `CLOCK_REALTIME`. The PTP gate in `recording.py` checks both `ptp4l_offset` and `phc2sys_offset` (both must be < `ptp_threshold_us`, default 50 µs). `phc2sys_freq` (the frequency correction in ppb) reflects the crystal oscillator's natural offset and is typically 20,000–30,000 ppb on settled hardware — **this is normal and should not be gated on**. What matters is the *difference* between cameras' freq values, not the absolute magnitude. Wait at least 5–10 minutes after a camera reboot before recording for phc2sys to converge its frequency estimate to the correct value for that crystal.

@@ -159,11 +159,11 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 ### Low priority — observability / maintenance
 
 - [ ] **No correlation IDs on ZMQ commands** — matching a `cmd_ack` to its originating command is impossible under concurrent load; add a `msg_id` round-trip in the command envelope.
-- [ ] **PTP offset stored as raw nanoseconds with no unit annotation** — annotate the field name (`ptp4l_offset_ns`) or normalise to µs so the frontend doesn't have to guess units.
+- [ ] **`phc2sys_offset` field has no unit suffix** — `ptp4l_offset_ns` correctly carries `_ns`; `phc2sys_offset` is also nanoseconds (parsed from `phc offset` log lines) but the field name doesn't say so. Rename to `phc2sys_offset_ns` in `src/shared/health.py`, `src/modules/ptp.py`, `src/modules/health.py`, and `src/controller/health.py`.
 - [ ] **Hardcoded IP ranges in three files** — `192.168.1.` and `10.0.0.` appear in `src/modules/network.py`, `src/controller/network.py`, and `src/modules/export.py`; centralise in `base_config.json`.
-- [ ] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — a typo or injection can embed shell syntax in `/etc/saviour/config`; validate against an allowlist.
+- [x] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — `switch_role.sh` is now a deprecated shim that execs `saviour-config`. In `saviour-config`, ROLE and TYPE values are set exclusively from fixed whiptail menu selections; there is no free-text input path to `write_config`, so injection is not possible.
 - [x] **`setup.sh`: `imx500-all` blocks install on devices without Pi AI camera repo** — moved to `OPTIONAL_PACKAGES`; failures warn but do not abort. Removed `apt-get upgrade -y`.
-- [ ] **Module version stays stale after restart** — zeroconf properties are not re-read on rediscovery; force a property refresh on `module_discovery()`.
+- [x] **Module version stays stale after restart** — `update_service` and `add_service` both call `zeroconf.get_service_info()` for fresh properties, construct a new `Module` object (including updated `version`), and pass it to `module_discovery()` → `add_module()` which replaces the stored entry wholesale.
 
 ### Architectural concerns
 

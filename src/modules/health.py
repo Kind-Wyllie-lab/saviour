@@ -113,7 +113,7 @@ class Health:
             disk_total_gb=round(disk.total / (1024 ** 3), 1),
             ptp4l_offset_ns=ptp_status.get('ptp4l_offset_ns'),
             ptp4l_freq=ptp_status.get('ptp4l_freq'),
-            phc2sys_offset=ptp_status.get('phc2sys_offset'),
+            phc2sys_offset_ns=ptp_status.get('phc2sys_offset_ns'),
             phc2sys_freq=ptp_status.get('phc2sys_freq'),
             recording=self.facade.get_recording_status(),
             version=self.facade.get_saviour_version(),

@@ -91,10 +91,10 @@ class Network():
 
     def _validate_ip(self, potential_ip: str) -> bool:
         """Check that the ip belongs to valid ranges"""
-        if potential_ip.startswith('192.168.1.') or potential_ip.startswith("10.0."):
-            ip = potential_ip
+        prefixes = self.config.get("zeroconf._valid_ip_prefixes", ["192.168.1.", "10.0."])
+        if any(potential_ip.startswith(p) for p in prefixes):
             self.ip_is_valid = True
-            self.logger.info(f"Found eth0 IP from ifconfig: {ip}")
+            self.logger.info(f"Found eth0 IP from ifconfig: {potential_ip}")
             return True
         else:
             return False

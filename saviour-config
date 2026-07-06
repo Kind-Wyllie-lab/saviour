@@ -620,25 +620,6 @@ password=${module_pass}
 CREDS
     chmod 600 /etc/saviour/samba_credentials
 
-    # Write credentials into /etc/saviour/module/active_config.json so they live
-    # on the writable config partition, not in the source tree.
-    python3 - "$module_pass" <<'PYEOF'
-import sys, json, os
-password = sys.argv[1]
-active_path = "/etc/saviour/module/active_config.json"
-cfg = {}
-if os.path.exists(active_path):
-    with open(active_path) as f:
-        cfg = json.load(f)
-export = cfg.setdefault("export", {})
-export["share_username"] = "saviour_module"
-export["share_password"] = password
-os.makedirs(os.path.dirname(active_path), exist_ok=True)
-with open(active_path, "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
-PYEOF
-
     # smb.conf
     [ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
     tee /etc/samba/smb.conf > /dev/null <<EOF

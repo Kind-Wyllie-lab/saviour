@@ -189,7 +189,8 @@ class Module(ABC):
             self._check_readwrite,
             self._check_diskspace,
             self._check_ptp,
-            self._check_recording
+            self._check_recording,
+            self._check_export,
         ]
 
         # To be overriden by module?
@@ -487,9 +488,6 @@ class Module(ABC):
                 self._disconnect_recording_timer.daemon = True
                 self._disconnect_recording_timer.start()
         
-        # Stop PTP services
-        self.ptp.stop()
-        
         # Stop heartbeats before cleaning up communication
         self.health.stop_heartbeats()
         
@@ -701,10 +699,6 @@ class Module(ABC):
             # Second: Stop the health manager (and its heartbeat thread)
             self.logger.info("Stopping health manager...")
             self.health.stop_heartbeats()
-
-            # Third: Stop PTP manager
-            self.logger.info("Stopping PTP manager...")
-            self.ptp.stop()
 
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("Cleaning up network manager...")
@@ -942,8 +936,92 @@ class Module(ABC):
     def _check_recording(self) -> tuple[bool, str]:
         if self.is_recording:
             return False, "Module is currently recording"
-        else: 
+        else:
             return True, "Module not currently recording"
+
+
+    @check()
+    def _check_export(self) -> tuple[bool, str]:
+        if self.config.get("export.export_target", "controller") != "controller":
+            return True, "Export target is not controller — skipping share check"
+
+        password = self.config.get("export.share_password", "")
+        if not password:
+            return False, "Export credentials not set — use 'Sync Export' on the controller"
+
+        share_ip   = self.config.get("export.share_ip", "")
+        share_path = self.config.get("export.share_path", "controller_share")
+        username   = self.config.get("export.share_username", "saviour_module")
+        mount_point = self.export.mount_point
+        _CHECK_TIMEOUT_S = 8
+
+        os.makedirs(mount_point, exist_ok=True)
+
+        already_mounted = os.path.ismount(mount_point)
+        mounted_for_check = False
+
+        def _mount() -> tuple[bool, str]:
+            """Mount the share; return (success, error_msg)."""
+            auth = f"username={username},password={password}"
+            r = subprocess.run(
+                [
+                    "sudo", "mount", "-t", "cifs",
+                    f"//{share_ip}/{share_path}", mount_point,
+                    "-o", f"{auth},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
+                ],
+                capture_output=True, text=True, timeout=_CHECK_TIMEOUT_S,
+            )
+            if r.returncode != 0:
+                return False, (
+                    f"Cannot mount //{share_ip}/{share_path}: "
+                    f"{r.stderr.strip() or 'unknown error'}"
+                )
+            return True, ""
+
+        def _test_write() -> bool:
+            test_path = os.path.join(mount_point, ".saviour_check")
+            with open(test_path, "w") as f:
+                f.write("check")
+            os.remove(test_path)
+            return True
+
+        try:
+            if not already_mounted:
+                ok, err = _mount()
+                if not ok:
+                    return False, err
+                mounted_for_check = True
+
+            try:
+                _test_write()
+                return True, f"Controller share //{share_ip}/{share_path} reachable and writable"
+            except OSError:
+                # Write failed — likely a stale CIFS connection left over from a previous
+                # export session.  Attempt a lazy unmount and fresh remount, but only if
+                # no export is currently active (we must not pull the rug from live I/O).
+                if already_mounted and not self.export.exporting:
+                    subprocess.run(
+                        ["sudo", "umount", "-l", mount_point],
+                        capture_output=True, timeout=5,
+                    )
+                    ok, err = _mount()
+                    if not ok:
+                        return False, f"Stale mount, remount failed: {err}"
+                    mounted_for_check = True
+                    _test_write()
+                    return True, (
+                        f"Controller share //{share_ip}/{share_path} reachable "
+                        f"and writable (remounted stale connection)"
+                    )
+                raise  # already mounted and export active — re-raise for outer handler
+
+        except subprocess.TimeoutExpired:
+            return False, f"Mount timed out after {_CHECK_TIMEOUT_S}s — controller unreachable?"
+        except Exception as e:
+            return False, f"Export check failed: {e}"
+        finally:
+            if mounted_for_check and os.path.ismount(mount_point):
+                subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
 
 
     def _run_checks(self):

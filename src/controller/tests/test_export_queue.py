@@ -133,6 +133,30 @@ class TestConcurrencyCap:
 # Persistence
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Stale dispatch timeout
+# ---------------------------------------------------------------------------
+
+class TestStaleDispatch:
+    def test_stale_active_entry_is_cleared_and_redispatched(self):
+        """If a dispatched start_export is never acked within _STALE_DISPATCH_SECS,
+        the next enqueue() for that module should clear the stale entry and
+        re-dispatch immediately (treating it as a fresh slot)."""
+        q, facade = _make_queue(max_concurrent=1)
+        q.enqueue("mod_a", "path_a")
+        assert facade.send_command.call_count == 1
+
+        # Backdate the dispatch time to simulate a very stale entry
+        with q._lock:
+            path, attempt, _ = q._active_meta["mod_a"]
+            q._active_meta["mod_a"] = (path, attempt, 0)  # epoch = ancient
+
+        # Enqueueing again should detect stale, clear, and re-dispatch
+        q.enqueue("mod_a", "path_a_new")
+        assert facade.send_command.call_count == 2
+        assert "mod_a" in q._active
+
+
 class TestPersistence:
     def _make_queue_with_tmp_file(self, max_concurrent: int = 2):
         """Return (queue, facade, tmp_path) using a temp file for persistence."""

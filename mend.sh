@@ -71,7 +71,15 @@ cd "$TARGET_DIR"
 
 if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
     BEFORE=$(git -C "$TARGET_DIR" rev-parse --short HEAD)
-    git -C "$TARGET_DIR" fetch --quiet origin
+    # Try SSH remote first; if that fails (no key on this device), try HTTPS
+    REMOTE_URL=$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)
+    HTTPS_URL=$(echo "$REMOTE_URL" | sed 's|git@github\.com:|https://github.com/|')
+    if ! git -C "$TARGET_DIR" fetch --quiet origin 2>>"$LOG"; then
+        warn "SSH fetch failed — retrying with HTTPS"
+        if ! git -C "$TARGET_DIR" fetch --quiet "$HTTPS_URL" 2>>"$LOG"; then
+            warn "git fetch failed — continuing with current code"
+        fi
+    fi
     git -C "$TARGET_DIR" pull --ff-only origin main 2>&1 | tee -a "$LOG" || {
         warn "git pull failed — continuing with current code"
     }
@@ -159,31 +167,40 @@ ok "Python environment up to date"
 
 section "4/8  Frontend build"
 
+# Determine role: prefer /etc/saviour/config, fall back to detecting a running controller service
+DETECTED_ROLE="none"
 if [ -f /etc/saviour/config ]; then
     # shellcheck source=/dev/null
     source /etc/saviour/config
-    if [ "${ROLE:-none}" = "controller" ]; then
-        NVM_DIR="/home/${SUDO_USER:-pi}/.nvm"
-        export NVM_DIR
-        # shellcheck source=/dev/null
-        [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-
-        if command -v npm &>/dev/null; then
-            fix "Rebuilding frontend for ${TYPE:-unknown} controller"
-            cd "$TARGET_DIR/src/controller/frontend"
-            npm install --silent >> "$LOG" 2>&1
-            npm run build >> "$LOG" 2>&1
-            cd "$TARGET_DIR"
-            ok "Frontend rebuilt"
-        else
-            warn "npm not found — skipping frontend build"
-            warn "Run manually: cd $TARGET_DIR/src/controller/frontend && npm run build"
-        fi
-    else
-        ok "Module device — no frontend to rebuild"
-    fi
+    DETECTED_ROLE="${ROLE:-none}"
+elif systemctl is-active --quiet saviour.service && \
+     journalctl -u saviour.service -n 50 --no-pager 2>/dev/null | grep -q "controller"; then
+    warn "No /etc/saviour/config — detected running controller service, assuming role=controller"
+    DETECTED_ROLE="controller"
+    TYPE="${TYPE:-unknown}"
 else
     warn "No /etc/saviour/config found — skipping frontend build"
+fi
+
+if [ "$DETECTED_ROLE" = "controller" ]; then
+    NVM_DIR="/home/${SUDO_USER:-pi}/.nvm"
+    export NVM_DIR
+    # shellcheck source=/dev/null
+    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+
+    if command -v npm &>/dev/null; then
+        fix "Rebuilding frontend for ${TYPE:-unknown} controller"
+        cd "$TARGET_DIR/src/controller/frontend"
+        npm install --silent >> "$LOG" 2>&1
+        npm run build >> "$LOG" 2>&1
+        cd "$TARGET_DIR"
+        ok "Frontend rebuilt"
+    else
+        warn "npm not found — skipping frontend build"
+        warn "Run manually: cd $TARGET_DIR/src/controller/frontend && npm run build"
+    fi
+elif [ "$DETECTED_ROLE" != "none" ]; then
+    ok "Module device — no frontend to rebuild"
 fi
 
 # ── 5. AudioMoth USB command ───────────────────────────────────────────────────

@@ -77,13 +77,13 @@ class PTP:
         # Track latest values for each service
         self.latest_ptp4l_offset = None
         self.latest_ptp4l_freq = None
-        self.latest_phc2sys_offset = None
+        self.latest_phc2sys_offset_ns = None
         self.latest_phc2sys_freq = None
 
         # Warning limits
         self.ptp4l_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
         self.ptp4l_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
-        self.phc2sys_offset_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
+        self.phc2sys_offset_ns_warning_threshold = 5000 # If offsets are larger than this value, a warning will be displayed.
         self.phc2sys_freq_warning_threshold = 100000 # If frequency correction is larger than this value, a warning will be displayed.
         self.ptp4l_threshold_flag = False
         self.phc2sys_threshold_flag = False
@@ -291,7 +291,7 @@ class PTP:
             'ptp4l_freq': self.latest_ptp4l_freq,
             'ptp4l_offset_ns': self.latest_ptp4l_offset,
             'phc2sys_freq': self.latest_phc2sys_freq,
-            'phc2sys_offset': self.latest_phc2sys_offset
+            'phc2sys_offset_ns': self.latest_phc2sys_offset_ns
         }
         
         self.ptp_buffer.append(entry)
@@ -382,7 +382,7 @@ class PTP:
                 offset_match = re.search(r'phc offset\s+(-?\d+)', line)
                 if offset_match:
                     current_offset = float(offset_match.group(1))
-                    self.latest_phc2sys_offset = current_offset
+                    self.latest_phc2sys_offset_ns = current_offset
                     self.last_offset = current_offset
                     self.last_sync_time = time.time()
                     self.status = 'synchronized'
@@ -470,7 +470,7 @@ class PTP:
             # Add individual service values for health manager
             'ptp4l_offset_ns': self.latest_ptp4l_offset,
             'ptp4l_freq': self.latest_ptp4l_freq,
-            'phc2sys_offset': self.latest_phc2sys_offset,
+            'phc2sys_offset_ns': self.latest_phc2sys_offset_ns,
             'phc2sys_freq': self.latest_phc2sys_freq,
         }
 
@@ -526,13 +526,13 @@ class PTP:
         # Extract values for each field
         ptp4l_offsets = [entry['ptp4l_offset_ns'] for entry in self.ptp_buffer]
         ptp4l_freqs = [entry['ptp4l_freq'] for entry in self.ptp_buffer]
-        phc2sys_offsets = [entry['phc2sys_offset'] for entry in self.ptp_buffer]
+        phc2sys_offset_nss = [entry['phc2sys_offset_ns'] for entry in self.ptp_buffer]
         phc2sys_freqs = [entry['phc2sys_freq'] for entry in self.ptp_buffer]
         
         return {
             'ptp4l_offset_ns': calculate_stats(ptp4l_offsets),
             'ptp4l_freq': calculate_stats(ptp4l_freqs),
-            'phc2sys_offset': calculate_stats(phc2sys_offsets),
+            'phc2sys_offset_ns': calculate_stats(phc2sys_offset_nss),
             'phc2sys_freq': calculate_stats(phc2sys_freqs)
         }
 

@@ -162,7 +162,10 @@ class Modules:
             return
         self.logger.info(f"Module {module_id} rediscovered – marking online")
         self._modules[module_id].online = True
-        self._modules[module_id].status = ModuleStatus.DEFAULT
+        # Don't overwrite RECORDING — a spurious mDNS re-announcement must not clear
+        # the confirmed recording state and cause the frontend to show "Starting".
+        if self._modules[module_id].status != ModuleStatus.RECORDING:
+            self._modules[module_id].status = ModuleStatus.DEFAULT
         self.broadcast_updated_modules()
 
 
@@ -231,10 +234,16 @@ class Modules:
             return
 
         is_recording = status_data.get("recording")
+        status_changed = False
         if is_recording is True and module.status != ModuleStatus.RECORDING:
             module.status = ModuleStatus.RECORDING
+            status_changed = True
         elif is_recording is False and module.status == ModuleStatus.RECORDING:
             module.status = ModuleStatus.DEFAULT
+            status_changed = True
+
+        if status_changed:
+            self.broadcast_updated_modules()
 
 
     def notify_module_online_update(self, module_id: str, online: bool) -> None:
@@ -603,6 +612,8 @@ class Modules:
                     module.online = False
                     module.status = ModuleStatus.OFFLINE
                     self._pending_online_counts.pop(module_id, None)
+                    if self.facade:
+                        self.facade.remove_dealer(module_id)
                     self.broadcast_updated_modules()
 
             # Expire PENDING config syncs that have gone unacknowledged too long.

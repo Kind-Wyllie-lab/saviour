@@ -197,7 +197,7 @@ class Recording:
             # Timestamps use CLOCK_REALTIME; a large phc2sys residual means step
             # corrections mid-session will corrupt inter-camera sync even when
             # ptp4l is settled.
-            phc2sys_ns = health.get("phc2sys_offset")
+            phc2sys_ns = health.get("phc2sys_offset_ns")
             if phc2sys_ns is not None and abs(phc2sys_ns / 1000) > threshold_us:
                 failures.append({
                     "module_id": module_id,

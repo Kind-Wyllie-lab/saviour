@@ -25,7 +25,7 @@ class ModuleHealthSnapshot:
     disk_total_gb:   Optional[float] = None
     ptp4l_offset_ns: Optional[float] = None
     ptp4l_freq:      Optional[float] = None
-    phc2sys_offset:  Optional[float] = None
+    phc2sys_offset_ns:  Optional[float] = None
     phc2sys_freq:    Optional[float] = None
     recording:       bool            = False
     version:         Optional[str]   = None

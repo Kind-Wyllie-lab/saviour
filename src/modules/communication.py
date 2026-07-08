@@ -48,7 +48,7 @@ class Communication:
         
         # ZeroMQ setup - initialized but not connected
         self.context = zmq.Context()
-        self.command_socket = self.context.socket(zmq.SUB)
+        self.command_socket = self.context.socket(zmq.DEALER)
         self.status_socket = self.context.socket(zmq.PUB)
 
         # Command listener thread
@@ -97,25 +97,21 @@ class Communication:
                 command_port = 5555
                 status_port = 5556
             
-            # Set up command subscription
-            self.subscribed_topics = []
-            self.subscribe_to_topic(self.facade.get_module_id())
-            self.subscribe_to_topic("all")
-            #self.subscribe_to_topic(self.facade.get_module_type())
-            group = self.group
-            if group is not None and len(group) > 0:
-                self.subscribe_to_topic(group)
-            # self.logger.info(f"Module ID: {self.facade.get_module_id()}")
-            # self.logger.info(f"Subscribing to topic: cmd/{self.facade.get_module_id()}")
-            # self.command_socket.subscribe(f"cmd/{self.facade.get_module_id()}")
-            # self.logger.info(f"Subscribing to topic: cmd/all")
-            # self.command_socket.subscribe(f"cmd/all")
-            
-            # Connect sockets with timeout
+            # Set DEALER identity to module_id before connecting — must be done
+            # before the first connect() call; cannot be changed afterwards.
+            module_id = self.facade.get_module_id()
+            self.command_socket.setsockopt(zmq.IDENTITY, module_id.encode())
+
+            # Connect sockets
             self.logger.info(f"Attempting to connect command socket to tcp://{controller_ip}:{command_port}")
             self.command_socket.connect(f"tcp://{controller_ip}:{command_port}")
             self.logger.info(f"Attempting to connect status socket to tcp://{controller_ip}:{status_port}")
             self.status_socket.connect(f"tcp://{controller_ip}:{status_port}")
+
+            # Register with the controller's ROUTER by sending a hello frame.
+            # The ROUTER sees our identity (set above) in the envelope and adds
+            # us to its routing table so it can send commands back to us.
+            self.command_socket.send(b"hello")
             self.logger.info(f"Connected to controller command socket at {controller_ip}:{command_port}, status socket at {controller_ip}:{status_port}")
             
             # Reset connection tracking on successful connection
@@ -130,33 +126,15 @@ class Communication:
 
         
     def group_changed(self):
-        old_group = self.group
+        # Group routing is now handled server-side by the controller's ROUTER.
+        # The module just needs to stay connected — no subscription changes needed.
         self.group = self.config.get("module.group")
-        new_group = self.group
-
-        if old_group is not None and len(old_group) > 0:
-            self.unsubscribe_from_topic(old_group)
-
-        if new_group is not None and len(new_group) > 0:
-            self.subscribe_to_topic(new_group)
-
 
     def subscribe_to_topic(self, topic: str) -> None:
-        # Trailing space is intentional: ZMQ subscribe is pure prefix-matching,
-        # so "cmd/microphone" would match "cmd/microphone_3606 ..." as well as
-        # "cmd/microphone ...". The space acts as a word boundary because the
-        # message format is "cmd/<id> <command> <params>".
-        full_topic = f"cmd/{topic} "
-        self.logger.info(f"Subscribing to {full_topic!r}")
-        self.command_socket.subscribe(full_topic)
-        self.subscribed_topics.append(full_topic)
+        pass  # No-op: DEALER/ROUTER — controller routes by identity, not topic
 
     def unsubscribe_from_topic(self, topic: str) -> None:
-        full_topic = f"cmd/{topic} "
-        if full_topic in self.subscribed_topics:
-            self.subscribed_topics.remove(full_topic)
-        self.command_socket.unsubscribe(full_topic)
-        self.logger.info(f"Unsubscribed from {full_topic!r}")
+        pass  # No-op: DEALER/ROUTER — controller routes by identity, not topic
 
 
     def start_command_listener(self) -> bool:
@@ -182,19 +160,15 @@ class Communication:
 
     def listen_for_commands(self):
         """Listen for commands from the controller"""
-        # Commands look like cmd/<module_id> <command> <params>
+        # DEALER receives a single frame: "<command> <params>" (no topic prefix)
         self.logger.info("Starting command listener thread")
-        
+
         # Set socket timeout to prevent blocking indefinitely
         self.command_socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
-        
+
         while self.command_listener_running:
             try:
-                # self.logger.info("Waiting for command...")
-                message = self.command_socket.recv_string()
-                # self.logger.info(f"Raw message received: {message} at {time.time()}")
-                topic, command = message.split(' ', 1)
-                # self.logger.info(f"Parsed topic: {topic}, command: {command}")
+                command = self.command_socket.recv_string()
 
                 # Intercept heartbeat_ack at the transport layer — no facade dispatch needed
                 cmd_type = command.split(' ', 1)[0]
@@ -406,7 +380,7 @@ class Communication:
             # Recreate sockets for future connections with error handling
             try:
                 self.context = zmq.Context()
-                self.command_socket = self.context.socket(zmq.SUB)
+                self.command_socket = self.context.socket(zmq.DEALER)
                 self.status_socket = self.context.socket(zmq.PUB)
                 self.logger.info("ZeroMQ resources cleaned up and recreated")
             except Exception as e:
@@ -427,7 +401,7 @@ class Communication:
             try:
                 time.sleep(0.1)  # Small delay before recreation
                 self.context = zmq.Context()
-                self.command_socket = self.context.socket(zmq.SUB)
+                self.command_socket = self.context.socket(zmq.DEALER)
                 self.status_socket = self.context.socket(zmq.PUB)
                 self.logger.info("ZeroMQ resources recreated after error")
             except Exception as e2:

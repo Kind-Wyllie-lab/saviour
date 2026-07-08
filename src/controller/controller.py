@@ -221,6 +221,12 @@ class Controller(ABC):
                         if config_data:
                             self.logger.info(f"Config received from {module_id} via {command}")
                             self.modules.received_module_config(module_id, config_data)
+                            # Command channel is confirmed working — push export creds now.
+                            # Doing this here (not at discovery) avoids the PUB/SUB
+                            # slow-joiner drop that happens when the module first connects.
+                            creds = self.get_export_credentials()
+                            if creds:
+                                self.communication.send_command(module_id, "set_export_config", creds)
 
                     elif command == 'set_config':
                         if result == 'success':

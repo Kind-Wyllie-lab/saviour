@@ -421,7 +421,7 @@ class CameraModule(Module):
                         sensor=sensor,
                         controls=controls,
                         transform=transform,
-                        buffer_count=32)
+                        buffer_count=8)
             
             # Apply configuration
             self.picam2.configure(config)
@@ -498,21 +498,18 @@ class CameraModule(Module):
         Any exception is caught by the caller and falls back to normal start.
         """
         from picamera2.outputs import PyavOutput, SplittableOutput as _SO
+        from libcamera import controls as lc
         filename = self._get_video_filename()
         self.logger.info(f"Pre-staging recording segment: {filename}")
 
         # Open the mpegts container — this is the slow step (~5–20 ms on Pi).
         file_output = _SO(PyavOutput(filename, format="mpegts"))
 
-        # Open the timestamp CSV (writes header row, starts flush thread).
-        # We call _open_timestamp_csv which sets self._timestamp_csv_* directly;
-        # _start_new_recording will skip re-opening it when prestaged is set.
-        self._open_timestamp_csv(filename)
-
         self._prestaged_segment = {
             "filename":    filename,
             "file_output": file_output,
         }
+
         self.logger.info("Pre-staging complete")
 
     def _start_new_recording(self) -> None:
@@ -527,7 +524,7 @@ class CameraModule(Module):
             self.facade.add_session_file(filename)
             self.file_output = prestaged["file_output"]
             self.main_encoder.output = self.file_output
-            # CSV is already open from _pre_create_first_segment
+            self._open_timestamp_csv(filename)
         else:
             # Normal path (immediate start or pre-stage failed)
             filename = self._get_video_filename()
@@ -543,7 +540,10 @@ class CameraModule(Module):
             self.main_encoder.output = self.file_output
             self._open_timestamp_csv(filename)
 
-        # Start recording — this is the precise moment we want to align across cameras
+        # Start recording — this is the precise moment we want to align across cameras.
+        # Cameras in sync mode have been running since module startup; we join the
+        # existing phase state rather than resetting it with SyncFrames/sync_enable,
+        # which would discard any accumulated phase convergence.
         self.picam2.start_encoder(self.main_encoder, name="main")
         self.recording_start_time = time.time()
 
@@ -706,7 +706,7 @@ class CameraModule(Module):
 
     def _get_wall_mono_offset_ns(self) -> int:
         now = time.monotonic()
-        if now - self._wall_mono_offset_updated_s >= 1.0:
+        if now - self._wall_mono_offset_updated_s >= 0.01:
             self._wall_mono_offset_ns = int((time.time() - now) * 1e9)
             self._wall_mono_offset_updated_s = now
         return self._wall_mono_offset_ns

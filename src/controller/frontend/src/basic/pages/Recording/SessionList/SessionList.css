@@ -402,6 +402,56 @@
   margin-top: 2px;
 }
 
+/* ── Session event log ────────────────────────────────────────────────── */
+
+.session-log-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-log-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.session-log-toggle:hover {
+  opacity: 1;
+}
+
+.session-log {
+  background: color-mix(in srgb, currentColor 3%, var(--bg-color, #fff));
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 0.72rem;
+  max-height: 280px;
+  overflow-y: auto;
+  line-height: 1.55;
+}
+
+.session-log-truncation {
+  font-style: italic;
+  opacity: 0.5;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color, #ddd);
+}
+
+.session-log-line { white-space: pre; }
+.session-log-line.fault-alert-log-line--fault    { color: #c0580a; }
+.session-log-line.fault-alert-log-line--warning  { color: #9a6800; }
+.session-log-line.fault-alert-log-line--recovery { color: #2a7a2a; }
+.session-log-line.fault-alert-log-line--info     { opacity: 0.7; }
+
 .session-ptp-warning {
   font-size: 0.82rem;
   color: #b45309;

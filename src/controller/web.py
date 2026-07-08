@@ -75,8 +75,8 @@ class Web(ABC):
         # Store module readiness state in memory 
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
 
-        self.rest_facade = False
-        if self.rest_facade == True:
+        self.rest_facade = True
+        if self.rest_facade:
             self._register_rest_facade_routes()
 
         # NAS health state
@@ -445,7 +445,14 @@ class Web(ABC):
             try:
                 with open(log_path) as f:
                     lines = [l.rstrip() for l in f.readlines()]
-                _emit('session_log_response', {'session_name': session_name, 'lines': lines[-30:]})
+                total = len(lines)
+                tail = lines[-200:]
+                _emit('session_log_response', {
+                    'session_name': session_name,
+                    'lines': tail,
+                    'total': total,
+                    'truncated': total > 200,
+                })
             except FileNotFoundError:
                 _emit('session_log_response', {'session_name': session_name, 'lines': []})
             except Exception as e:

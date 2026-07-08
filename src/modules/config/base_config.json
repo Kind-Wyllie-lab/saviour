@@ -6,7 +6,8 @@
   },
   "network": {
     "_zeroconf_port": 5353,
-    "_zeroconf_service_type": "_module._tcp.local."
+    "_zeroconf_service_type": "_module._tcp.local.",
+    "_valid_ip_prefixes": ["192.168.1.", "10.0."]
   },
   "communication": {
     "_command_socket_port": 5555,
@@ -31,7 +32,6 @@
     "share_ip": "10.0.0.1",
     "share_path": "controller_share",
     "share_username": "saviour_module",
-    "share_password": "nmqgu50wnKXlTc0L1emr",
     "max_bitrate_mb": 950,
     "max_burst_kb": 30
   }

@@ -150,7 +150,7 @@ class Recording:
           {"ok": False, "error": str, "failures": [{"module_id": str, "reason": str, ...}]}
         """
         config = self.facade.get_config()
-        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 50.0)
         max_age_secs: float = 90.0
         now = time.time()
         failures = []
@@ -187,12 +187,29 @@ class Recording:
                     "module_id": module_id,
                     "offset_us": round(offset_us, 1),
                     "reason": (
-                        f"offset {offset_us:.1f}µs exceeds "
+                        f"ptp4l offset {offset_us:.1f}µs exceeds "
                         f"{threshold_us:.0f}µs threshold"
                     ),
                 })
-            else:
-                synced.append({"module_id": module_id, "offset_us": round(offset_us, 1)})
+                continue
+
+            # Also check phc2sys offset — CLOCK_REALTIME must track the PHC.
+            # Timestamps use CLOCK_REALTIME; a large phc2sys residual means step
+            # corrections mid-session will corrupt inter-camera sync even when
+            # ptp4l is settled.
+            phc2sys_ns = health.get("phc2sys_offset_ns")
+            if phc2sys_ns is not None and abs(phc2sys_ns / 1000) > threshold_us:
+                failures.append({
+                    "module_id": module_id,
+                    "offset_us": round(phc2sys_ns / 1000, 1),
+                    "reason": (
+                        f"phc2sys offset {phc2sys_ns/1000:.1f}µs exceeds "
+                        f"{threshold_us:.0f}µs threshold — system clock still settling"
+                    ),
+                })
+                continue
+
+            synced.append({"module_id": module_id, "offset_us": round(offset_us, 1)})
 
         if not failures:
             max_offset = max((abs(m["offset_us"]) for m in synced), default=0.0)
@@ -690,9 +707,10 @@ class Recording:
             already_tracking = (
                 session.module_stop_states.get(module_id) == "recording"
                 and session.state == SessionState.ACTIVE
+                and self.facade.is_module_recording(module_id)
             )
             if already_tracking:
-                # Module is already tracked as recording in an active session
+                # Module is already tracked as recording and confirmed still recording
                 # (e.g. an mDNS service-update triggered a spurious online transition).
                 # No recovery needed — avoid sending a duplicate start_recording.
                 self.logger.info(
@@ -1076,7 +1094,7 @@ class Recording:
         None offsets are skipped: ptp4l may be restarting; we want confirmed violations only.
         """
         config = self.facade.get_config()
-        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 1000.0)
+        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 50.0)
         now = time.time()
         currently_degraded = self._ptp_degraded.setdefault(session_name, set())
         newly_degraded: list = []

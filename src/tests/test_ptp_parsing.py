@@ -61,7 +61,7 @@ def test_phc2sys_parsing():
     for line in test_lines:
         ptp_manager._parse_phc2sys_line(line)
 
-    assert ptp_manager.latest_phc2sys_offset is not None
+    assert ptp_manager.latest_phc2sys_offset_ns is not None
     assert ptp_manager.latest_phc2sys_freq is not None
 
 
@@ -71,7 +71,7 @@ def test_buffer_functionality():
 
     ptp_manager.latest_ptp4l_offset = 100
     ptp_manager.latest_ptp4l_freq = -150000
-    ptp_manager.latest_phc2sys_offset = 50
+    ptp_manager.latest_phc2sys_offset_ns = 50
     ptp_manager.latest_phc2sys_freq = -110000
 
     ptp_manager._add_buffer_entry(1234567890.0)

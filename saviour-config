@@ -620,25 +620,6 @@ password=${module_pass}
 CREDS
     chmod 600 /etc/saviour/samba_credentials
 
-    # Write credentials into modules base_config.json
-    local base_cfg="${DIR}/src/modules/config/base_config.json"
-    if [ -f "$base_cfg" ]; then
-        python3 - "$base_cfg" "$module_pass" <<'PYEOF'
-import sys, json
-path, password = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    cfg = json.load(f)
-export = cfg.setdefault("export", {})
-export["share_username"] = "saviour_module"
-export["share_password"] = password
-export.pop("_share_username", None)
-export.pop("_share_password", None)
-with open(path, "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
-PYEOF
-    fi
-
     # smb.conf
     [ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
     tee /etc/samba/smb.conf > /dev/null <<EOF
@@ -963,9 +944,7 @@ run_clone_fix() {
     progress "Clearing saved config…"
     for cfg in \
         "/etc/saviour/controller/active_config.json" \
-        "/etc/saviour/module/active_config.json" \
-        "${DIR}/src/modules/config/active_config.json" \
-        "${DIR}/src/controller/config/active_config.json"
+        "/etc/saviour/module/active_config.json"
     do
         if [ -f "$cfg" ]; then
             rm -f "$cfg"
@@ -995,9 +974,7 @@ run_configuration() {
     if $role_changed || $type_changed; then
         for cfg in \
             "/etc/saviour/controller/active_config.json" \
-            "/etc/saviour/module/active_config.json" \
-            "${DIR}/src/modules/config/active_config.json" \
-            "${DIR}/src/controller/config/active_config.json"
+            "/etc/saviour/module/active_config.json"
         do
             if [ -f "$cfg" ]; then
                 rm -f "$cfg"

@@ -42,6 +42,25 @@ npm run build
 npm run lint
 ```
 
+### Analysis tools
+
+```bash
+# env2 is a second venv for analysis scripts that need pandas/numpy
+# (the main env omits these to keep module installs lightweight)
+source env2/bin/activate
+
+# Framesync analysis — compare per-frame timestamp CSVs from a session directory
+python3 tools/analyse_framesync.py /path/to/session/date_dir
+# e.g.:
+python3 tools/analyse_framesync.py /home/pi/controller_share/my-session/20260703
+
+# Frame-aligned video — produce a side-by-side aligned output from a session directory
+# Checks PTP quality, strips pre-stage CSV frames, computes per-camera skip, calls ffmpeg
+python3 tools/make_aligned_video.py /path/to/session [--output out.mp4] [--layout side|stack|grid]
+# e.g.:
+python3 tools/make_aligned_video.py /home/pi/controller_share/my-session
+```
+
 ### Installation & role assignment
 
 ```bash
@@ -65,10 +84,11 @@ The concrete implementations live under `src/controller/examples/` and `src/modu
 
 ### Inter-service communication
 
-ZeroMQ PUB/SUB is used for all controller↔module messaging:
+ZeroMQ **ROUTER/DEALER** is used for controller→module commands; modules publish status/heartbeats on a PUB/SUB socket:
 
-- Controller publishes commands on topics `cmd/<module_id>` or `cmd/all`
-- Modules publish status/heartbeats on `status/<module_id>`
+- Controller binds a ROUTER socket (port 5555); each module connects a DEALER socket with its `module_id` as the ZMQ identity and sends a `"hello"` frame on connect to register.
+- Controller tracks connected dealers in `_connected_dealers`; heartbeat timeout evicts a module and calls `remove_dealer()`.
+- Modules publish status/heartbeats on `status/<module_id>` (PUB, port 5556); controller SUBs to all topics.
 - Message envelope (JSON): `proto`, `type`, `timestamp`, `from`, `to`, `msg_id`, `command`, `params`, `status`, `result`, `error`
 
 See `docs/PROTOCOL_V1.md` for the full spec.
@@ -139,29 +159,29 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 ### Low priority — observability / maintenance
 
 - [ ] **No correlation IDs on ZMQ commands** — matching a `cmd_ack` to its originating command is impossible under concurrent load; add a `msg_id` round-trip in the command envelope.
-- [ ] **PTP offset stored as raw nanoseconds with no unit annotation** — annotate the field name (`ptp4l_offset_ns`) or normalise to µs so the frontend doesn't have to guess units.
-- [ ] **Hardcoded IP ranges in three files** — `192.168.1.` and `10.0.0.` appear in `src/modules/network.py`, `src/controller/network.py`, and `src/modules/export.py`; centralise in `base_config.json`.
-- [ ] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — a typo or injection can embed shell syntax in `/etc/saviour/config`; validate against an allowlist.
+- [x] **`phc2sys_offset` field had no unit suffix** — renamed to `phc2sys_offset_ns` across `src/shared/health.py`, `src/modules/ptp.py`, `src/modules/health.py`, `src/controller/health.py`, `src/controller/ptp.py`, `src/controller/recording.py`, and `src/tests/test_ptp_parsing.py`. Note: exported health CSV column name changes accordingly — update any downstream analysis scripts that reference `phc2sys_offset` by name.
+- [x] **Hardcoded IP ranges in three files** — `network._valid_ip_prefixes` added to both `base_config.json` files; `controller/network.py` reads from config; dead `valid_ips` list removed from `modules/network.py`; redundant `"10.0.0.1"` fallback removed from `export.py` (base config is the authoritative default).
+- [x] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — `switch_role.sh` is now a deprecated shim that execs `saviour-config`. In `saviour-config`, ROLE and TYPE values are set exclusively from fixed whiptail menu selections; there is no free-text input path to `write_config`, so injection is not possible.
 - [x] **`setup.sh`: `imx500-all` blocks install on devices without Pi AI camera repo** — moved to `OPTIONAL_PACKAGES`; failures warn but do not abort. Removed `apt-get upgrade -y`.
-- [ ] **Module version stays stale after restart** — zeroconf properties are not re-read on rediscovery; force a property refresh on `module_discovery()`.
+- [x] **Module version stays stale after restart** — `update_service` and `add_service` both call `zeroconf.get_service_info()` for fresh properties, construct a new `Module` object (including updated `version`), and pass it to `module_discovery()` → `add_module()` which replaces the stored entry wholesale.
 
 ### Architectural concerns
 
 These are larger structural issues that require significant refactoring. Recorded here so they are not lost.
 
-- [x] **PTP sync unvalidated before recording** — added `_check_ptp_sync()` gate in `create_session()` and `_start_scheduled_session()`; "Check Ready" now runs a controller-side PTP check and surfaces results to the frontend (240626).
+- [x] **PTP sync unvalidated before recording** — added `_check_ptp_sync()` gate in `create_session()` and `_start_scheduled_session()`; "Check Ready" now runs a controller-side PTP check and surfaces results to the frontend (240626). Gate checks `ptp4l_offset` and `phc2sys_offset` (both < `ptp_threshold_us`, default 50 µs). Note: `phc2sys_freq` absolute magnitude is NOT gated — settled crystals run at 20–30 kppb permanently; what matters is inter-camera difference (see hardware gotchas).
 - [x] **Mid-recording PTP degradation undetected** — `_check_ptp_mid_recording()` runs each monitor cycle for ACTIVE sessions; fires on transitions only (newly degraded / newly recovered); surfaces amber `ptp_warning` field on the session card and sends a Teams alert (240626).
 - [x] **Session state has no durability** — already implemented: `_save_sessions()` is called at every state transition; `_load_sessions()` on startup marks interrupted ACTIVE sessions as ERROR; `module_back_online()` re-issues `start_recording` and recovers ERROR → ACTIVE when modules reconnect; `handle_module_health_response()` handles the controller-restart case by probing module state and resuming or marking stopped accordingly.
-- [ ] **ZMQ PUB/SUB is the wrong transport for commands** — PUB/SUB drops messages to subscribers that haven't connected yet (slow-joiner problem). `start_recording` can silently drop and a session starts on some modules but not others, with no timeout or error surfaced. Commands requiring reliable delivery should use DEALER/ROUTER or REQ/REP. High effort — transport-layer change across every module.
+- [x] **ZMQ PUB/SUB is the wrong transport for commands** — PUB/SUB drops messages to subscribers that haven't connected yet (slow-joiner problem). `start_recording` can silently drop and a session starts on some modules but not others, with no timeout or error surfaced. Commands requiring reliable delivery should use DEALER/ROUTER or REQ/REP. High effort — transport-layer change across every module.
 - [ ] **Module base class is a god object** — `module.py` (~1100 lines) owns config, export, PTP, recording, health, network, commands, and lifecycle. No concern can be tested in isolation; contributors must understand the entire base before writing a single sensor. High effort — requires composition refactor across all module types.
 - [ ] **Samba is the wrong export transport** — designed for Windows interoperability; adds credential management, mount failure modes, and an unreliable driver stack on a homogenous Linux PoE network. `rsync` over SSH or a simple HTTP PUT endpoint would be simpler and easier to debug. The complexity of `export.py` (PENDING rename, staged lists, thread locks) partly compensates for Samba fragility. High effort — requires rewriting all export logic.
-- [ ] **Health schema is duplicated** — `src/modules/health.py` and `src/controller/health.py` maintain separate schemas that can silently diverge. Define one canonical dataclass and import from both sides.
+- [x] **Health schema is duplicated** — canonical `ModuleHealthSnapshot` dataclass lives in `src/shared/health.py`; both `src/modules/health.py` and `src/controller/health.py` import from it.
 - [ ] **No authentication on the command bus** — any device on the PoE network can publish ZMQ commands. Acceptable for a closed lab network; becomes a concern if the network is ever bridged.
 
 ### Tests
 
 - [x] **Config merge has no unit tests** — `_merge_defaults`, `_merge_dicts`, `_merge_internal_defaults`, and `reset_to_defaults` are all untested; add `pytest` cases covering each merge path and edge cases (stale keys, `_`-prefix re-application).
-- [ ] **Export pipeline has no unit tests** — mock the Samba mount and verify PENDING rename, copy, cleanup, and failure rollback paths.
+- [x] **Export pipeline has no unit tests** — `src/modules/tests/test_export.py` and `src/controller/tests/test_export_queue.py` cover PENDING rename/rollback, mount retry, concurrency guard, retry-on-failure, stale dispatch timeout, delete_on_export, and queue persistence.
 - [ ] **No integration test for multi-module recording** — add a test that simulates controller + 2 modules, a full record/stop/export cycle, and a mid-session module dropout.
 - [ ] **No config schema regression test** — a renamed or removed config key silently breaks modules loading old `active_config.json`; add a test that loads each `*_config.json` against the current base and asserts all required keys are present.
 
@@ -180,3 +200,14 @@ These are larger structural issues that require significant refactoring. Recorde
 ### Module offline detection
 
 - Modules do **not** send a graceful mDNS goodbye on ungraceful disconnection (power loss, switch unplug). The heartbeat timeout (90 s, `HEARTBEAT_TIMEOUT_SECS` in `modules.py`) is the only mechanism for detecting these. The `last_heartbeat_time` field on `Module` must be non-zero before the timeout logic fires, so newly registered modules with no heartbeat yet are not immediately evicted.
+
+### Camera framesync (multi-camera timing)
+
+The camera module supports `camera.sync_mode: "server" | "client" | "none"`. This uses **libcamera's software sync mechanism**, not GPIO. The server broadcasts timing packets over UDP; clients adjust their framerate to match. Key facts:
+
+- **`SyncTimer` metadata**: counts down (in µs) to the agreed sync point, then goes negative. A very negative value (e.g. −26 seconds) means sync was established long before recording started — not an error.
+- **`SyncReady` metadata**: True on the single frame where synchronisation fires. The encoder's `sync_enable = True` flag discards frames until this fires, then starts recording. `SyncFrames` is set in `_pre_create_first_segment()` to force a fresh sync point close to T=0. The per-frame timestamp CSV is opened in `_start_new_recording()` (not `_pre_create_first_segment()`) so CSV row 0 always corresponds to video frame 0.
+- **Phase offset**: Even after sync-lock, there is a fixed per-session inter-camera phase offset (typically 0–8333 µs at 120 fps). This is a hardware characteristic of when the client's frame clock happened to be when sync was established — **not** a PTP error. It is constant within a session and can be calibrated out from the `framesync_per_frame.csv` sidecar.
+- **120 fps limitation**: libcamera sync requires the target framerate to be significantly below the camera's maximum so the client can speed up to catch the server. At 120 fps on Pi Camera Module 3 (which maxes at ~120 fps at the recording resolution), the client has no headroom and cannot phase-lock. The `sync_enable` / `SyncFrames` approach is still used (best-effort), with a 2-second fallback timeout.
+- **PTP two-servo rule**: `ptp4l` disciplines the PHC; `phc2sys` disciplines `CLOCK_REALTIME`. The PTP gate in `recording.py` checks both `ptp4l_offset` and `phc2sys_offset` (both must be < `ptp_threshold_us`, default 50 µs). `phc2sys_freq` (the frequency correction in ppb) reflects the crystal oscillator's natural offset and is typically 20,000–30,000 ppb on settled hardware — **this is normal and should not be gated on**. What matters is the *difference* between cameras' freq values, not the absolute magnitude. Wait at least 5–10 minutes after a camera reboot before recording for phc2sys to converge its frequency estimate to the correct value for that crystal.
+- **Framesync analysis**: `tools/analyse_framesync.py` reads per-session timestamp CSVs and reports inter-camera offset statistics including clock drift (µs/sec) and detrended jitter (the true timing noise floor once slow PTP drift is removed). Run with `source env2/bin/activate` (needs pandas). The "mean offset" includes the fixed phase offset; the **detrended p95** is the meaningful accuracy figure (<20 µs with settling PTP, <5 µs when fully converged).

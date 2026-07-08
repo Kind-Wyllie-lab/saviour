@@ -103,6 +103,9 @@ class ControllerFacade():
 
     def send_command(self, module_id: str, command: str, params: Dict) -> None:
         self.controller.communication.send_command(module_id, command, params)
+
+    def remove_dealer(self, module_id: str) -> None:
+        self.controller.communication.remove_dealer(module_id)
             
 
     """Callbacks"""

@@ -489,8 +489,13 @@ class LoomCameraModule(Module):
 
         self._stimulus_enabled = bool(stim_cfg.get("enabled", True))
         if getattr(self, "_stimulus_enabled", False):
-            # Start renderer immediately so HDMI background is up continuously
             self._loom_stimulus.start()
+            self.logger.info(
+                "loom_stimulus: renderer spawned (WAYLAND_DISPLAY=%s, DISPLAY=%s)",
+                os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY"),
+            )
+        else:
+            self.logger.info("loom_stimulus: disabled by config (enabled=%r)", stim_cfg.get("enabled"))
 
     # ---------------------------------------------------------------------
     # Config hooks

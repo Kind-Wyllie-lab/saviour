@@ -452,7 +452,7 @@ export default function System() {
                   <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
                   <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
                   <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset) : <span className="cell--muted">—</span>}</td>
+                  <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">—</span>}</td>
                   <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                   <td>
                     {shutdownStates[row.id] ? (

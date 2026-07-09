@@ -198,6 +198,9 @@ class Module(ABC):
         # and controller restarts that would otherwise cut a segment short.
         self._disconnect_recording_timer = None  # type: Optional[threading.Timer]
         self._disconnect_recording_timer_lock = threading.Lock()
+        # Prevents concurrent mDNS events from running when_controller_discovered
+        # simultaneously, which would interleave ZMQ cleanup and reconnect.
+        self._discovery_lock = threading.Lock()
 
         # Ready checks
         self.checks = [
@@ -418,6 +421,15 @@ class Module(ABC):
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         """Callback when controller is discovered via zeroconf"""
         self.logger.info(f"Network manager informs that controller was discovered at {controller_ip}:{controller_port}")
+        if not self._discovery_lock.acquire(blocking=False):
+            self.logger.info("Controller discovery already in progress — skipping duplicate event")
+            return
+        try:
+            self._when_controller_discovered_inner(controller_ip, controller_port)
+        finally:
+            self._discovery_lock.release()
+
+    def _when_controller_discovered_inner(self, controller_ip: str, controller_port: int):
         self.logger.info(f"Module will now initialize the necessary managers")
 
         # Cancel any pending stop-recording grace timer.  Must happen both

@@ -124,6 +124,14 @@ class Recording:
 
 
     # -----------------------------------------------------------------------
+    # Notification helpers
+    # -----------------------------------------------------------------------
+
+    def _notify_enabled(self, key: str, default: bool = True) -> bool:
+        """Return whether a teams notification toggle is enabled."""
+        return self.facade.get_config().get("teams", {}).get(key, default)
+
+    # -----------------------------------------------------------------------
     # Public session API
     # -----------------------------------------------------------------------
 
@@ -286,12 +294,13 @@ class Recording:
         if session.ptp_warning:
             lines.append(f"- PTP warning at stop: {session.ptp_warning}")
 
-        self.facade.send_alert(
-            key=f"daily_summary_{session_name}_{run_date}",
-            title=f"Daily summary — {session_name} — {run_date}",
-            message="\n".join(lines),
-            severity="info",
-        )
+        if self._notify_enabled("notify_daily_summary"):
+            self.facade.send_alert(
+                key=f"daily_summary_{session_name}_{run_date}",
+                title=f"Daily summary — {session_name} — {run_date}",
+                message="\n".join(lines),
+                severity="info",
+            )
 
 
     def create_session(self, session_name: str, target: str,
@@ -360,12 +369,13 @@ class Recording:
         )
         self._log_session_event(session_name, "INFO",
             f"Session started — modules: {', '.join(modules)}")
-        self.facade.send_alert(
-            key=f"session_started_{session_name}",
-            title=f"Recording started — {session_name}",
-            message=f"Session **{session_name}** started with {len(modules)} module(s): {', '.join(modules)}.",
-            severity="info",
-        )
+        if self._notify_enabled("notify_recording_started"):
+            self.facade.send_alert(
+                key=f"session_started_{session_name}",
+                title=f"Recording started — {session_name}",
+                message=f"Session **{session_name}** started with {len(modules)} module(s): {', '.join(modules)}.",
+                severity="info",
+            )
         return {"success": True, "session_name": session_name}
 
 
@@ -689,11 +699,12 @@ class Recording:
             self._save_sessions()
             self.logger.info(f"Session '{session_name}' → ERROR: {module_id} offline")
             self._log_session_event(session_name, "FAULT", f"{module_id} went offline")
-            self.facade.send_alert(
-                key=f"module_offline_{module_id}",
-                title=f"Module offline — {module_id}",
-                message=f"Module **{module_id}** went offline during recording session **{session_name}**.",
-            )
+            if self._notify_enabled("notify_module_offline"):
+                self.facade.send_alert(
+                    key=f"module_offline_{module_id}",
+                    title=f"Module offline — {module_id}",
+                    message=f"Module **{module_id}** went offline during recording session **{session_name}**.",
+                )
 
 
     def module_back_online(self, module_id: str) -> None:
@@ -736,6 +747,13 @@ class Recording:
             )
             self._log_session_event(session_name, "RECOVERY",
                 f"{module_id} came back online — recording resumed")
+            if self._notify_enabled("notify_module_online", default=False):
+                self.facade.send_alert(
+                    key=f"module_online_{module_id}",
+                    title=f"Module back online — {module_id}",
+                    message=f"Module **{module_id}** reconnected and resumed recording in session **{session_name}**.",
+                    severity="info",
+                )
 
 
     def handle_module_health_response(self, module_id: str, is_recording: bool) -> None:
@@ -822,6 +840,14 @@ class Recording:
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
+        if new_state == SessionState.STOPPED and self._notify_enabled("notify_recording_stopped", default=False):
+            self.facade.send_alert(
+                key=f"session_stopped_{session_name}",
+                title=f"Recording stopped — {session_name}",
+                message=f"Session **{session_name}** ended. Start: {session.start_time or '—'}, End: {session.end_time or '—'}.",
+                severity="info",
+            )
+
         if new_state == SessionState.SCHEDULED:
             self._send_daily_summary(session_name, session)
 
@@ -895,32 +921,34 @@ class Recording:
                 f"Scheduled session '{session_name}': module readiness warnings — "
                 + "; ".join(not_ready)
             )
-            self.facade.send_alert(
-                key=f"readiness_{session_name}_{today}",
-                title=f"Module readiness warning — {session_name}",
-                message=(
-                    f"Session **{session_name}** started its {today} run but "
-                    f"the following module(s) reported not ready:\n\n"
-                    + "\n".join(f"- {m}" for m in not_ready)
-                    + "\n\nRecording will proceed — check module logs for details."
-                ),
-                severity="warning",
-            )
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"readiness_{session_name}_{today}",
+                    title=f"Module readiness warning — {session_name}",
+                    message=(
+                        f"Session **{session_name}** started its {today} run but "
+                        f"the following module(s) reported not ready:\n\n"
+                        + "\n".join(f"- {m}" for m in not_ready)
+                        + "\n\nRecording will proceed — check module logs for details."
+                    ),
+                    severity="warning",
+                )
 
         # ── Expected module count ─────────────────────────────────────────────
         expected_counts: dict = rec_cfg.get("expected_module_counts", {})
         expected = expected_counts.get(session.target, 0)
         if expected > 0 and len(available) < expected:
-            self.facade.send_alert(
-                key=f"module_count_{session_name}_{today}",
-                title=f"Low module count — {session_name}",
-                message=(
-                    f"Session **{session_name}** ({today}): expected {expected} "
-                    f"'{session.target}' module(s) but only {len(available)} are online.\n\n"
-                    f"Online: {', '.join(available)}"
-                ),
-                severity="warning",
-            )
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"module_count_{session_name}_{today}",
+                    title=f"Low module count — {session_name}",
+                    message=(
+                        f"Session **{session_name}** ({today}): expected {expected} "
+                        f"'{session.target}' module(s) but only {len(available)} are online.\n\n"
+                        f"Online: {', '.join(available)}"
+                    ),
+                    severity="warning",
+                )
 
         # ── Local disk space (warning only — does not block) ──────────────────
         local_min_free = rec_cfg.get("local_min_free_pct", 10)
@@ -932,7 +960,7 @@ class Recording:
                 if disk_used is not None and disk_used > (100 - local_min_free):
                     free_pct = 100 - disk_used
                     low_disk.append(f"{module_id} ({free_pct:.0f}% free)")
-        if low_disk:
+        if low_disk and self._notify_enabled("notify_disk_space"):
             self.facade.send_alert(
                 key=f"local_disk_{session_name}_{today}",
                 title=f"Low local disk — {session_name}",
@@ -968,23 +996,25 @@ class Recording:
                 self._save_sessions()
                 self._log_session_event(session_name, "FAULT",
                     f"Scheduled recording blocked — NAS full: {err}")
-                self.facade.send_alert(
-                    key=f"nas_full_{session_name}_{today}",
-                    title=f"Scheduled recording blocked — NAS nearly full",
-                    message=f"Session **{session_name}** could not start its {today} run.\n\n{err}",
-                    severity="error",
-                )
+                if self._notify_enabled("notify_session_faults"):
+                    self.facade.send_alert(
+                        key=f"nas_full_{session_name}_{today}",
+                        title=f"Scheduled recording blocked — NAS nearly full",
+                        message=f"Session **{session_name}** could not start its {today} run.\n\n{err}",
+                        severity="error",
+                    )
                 return
             elif nas["free_pct"] < nas_warn:
-                self.facade.send_alert(
-                    key=f"nas_warn_{today}",
-                    title="NAS space low",
-                    message=(
-                        f"NAS is {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB). "
-                        f"At current write rates this may fill before the campaign ends."
-                    ),
-                    severity="warning",
-                )
+                if self._notify_enabled("notify_disk_space"):
+                    self.facade.send_alert(
+                        key=f"nas_warn_{today}",
+                        title="NAS space low",
+                        message=(
+                            f"NAS is {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB). "
+                            f"At current write rates this may fill before the campaign ends."
+                        ),
+                        severity="warning",
+                    )
 
         # ── PTP sync ──────────────────────────────────────────────────────────
         ptp = self._check_ptp_sync(session.modules)
@@ -1017,15 +1047,16 @@ class Recording:
             self._save_sessions()
             self._log_session_event(session_name, "FAULT",
                 f"Scheduled recording blocked — PTP not synchronised: {ptp['error']}")
-            self.facade.send_alert(
-                key=f"ptp_fail_{session_name}_{today}",
-                title=f"Scheduled recording blocked — PTP not synchronised",
-                message=(
-                    f"Session **{session_name}** could not start its {today} run.\n\n"
-                    f"{ptp['error']}"
-                ),
-                severity="error",
-            )
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"ptp_fail_{session_name}_{today}",
+                    title=f"Scheduled recording blocked — PTP not synchronised",
+                    message=(
+                        f"Session **{session_name}** could not start its {today} run.\n\n"
+                        f"{ptp['error']}"
+                    ),
+                    severity="error",
+                )
             return
 
         # ── Snapshot export counts for daily summary ──────────────────────────
@@ -1052,15 +1083,16 @@ class Recording:
         self.logger.info(f"Scheduled session '{session_name}' started for {today}")
         self._log_session_event(session_name, "INFO",
             f"Scheduled recording started — run for {today}, modules: {', '.join(session.modules)}")
-        self.facade.send_alert(
-            key=f"session_started_{session_name}_{today}",
-            title=f"Scheduled recording started — {session_name}",
-            message=(
-                f"Session **{session_name}** started its {today} run "
-                f"with {len(session.modules)} module(s)."
-            ),
-            severity="info",
-        )
+        if self._notify_enabled("notify_recording_started"):
+            self.facade.send_alert(
+                key=f"session_started_{session_name}_{today}",
+                title=f"Scheduled recording started — {session_name}",
+                message=(
+                    f"Session **{session_name}** started its {today} run "
+                    f"with {len(session.modules)} module(s)."
+                ),
+                severity="info",
+            )
 
 
     def _stop_scheduled_session(self, session_name: str) -> None:
@@ -1132,12 +1164,13 @@ class Recording:
             self._log_session_event(session_name, "WARNING", warning)
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
-            self.facade.send_alert(
-                key=f"ptp_degraded_{session_name}",
-                title=f"PTP sync degraded — {session_name}",
-                message=warning,
-                severity="warning",
-            )
+            if self._notify_enabled("notify_ptp_degraded"):
+                self.facade.send_alert(
+                    key=f"ptp_degraded_{session_name}",
+                    title=f"PTP sync degraded — {session_name}",
+                    message=warning,
+                    severity="warning",
+                )
 
         if newly_recovered and not currently_degraded:
             self.logger.info(f"Session '{session_name}': PTP recovered on all modules")
@@ -1160,26 +1193,28 @@ class Recording:
             return  # mount error handled elsewhere
         free = nas["free_pct"]
         if free < nas_min:
-            self.facade.send_alert(
-                key="nas_critical",
-                title="NAS critically low — recording at risk",
-                message=(
-                    f"NAS is only **{free:.1f}%** free ({nas['free_gb']:.0f} GiB). "
-                    f"New sessions will be blocked below {nas_min}%. "
-                    f"Free up space immediately."
-                ),
-                severity="error",
-            )
+            if self._notify_enabled("notify_disk_space"):
+                self.facade.send_alert(
+                    key="nas_critical",
+                    title="NAS critically low — recording at risk",
+                    message=(
+                        f"NAS is only **{free:.1f}%** free ({nas['free_gb']:.0f} GiB). "
+                        f"New sessions will be blocked below {nas_min}%. "
+                        f"Free up space immediately."
+                    ),
+                    severity="error",
+                )
         elif free < nas_warn:
-            self.facade.send_alert(
-                key="nas_low",
-                title="NAS space low",
-                message=(
-                    f"NAS is {free:.1f}% free ({nas['free_gb']:.0f} GiB). "
-                    f"At current write rates this may fill before the campaign ends."
-                ),
-                severity="warning",
-            )
+            if self._notify_enabled("notify_disk_space"):
+                self.facade.send_alert(
+                    key="nas_low",
+                    title="NAS space low",
+                    message=(
+                        f"NAS is {free:.1f}% free ({nas['free_gb']:.0f} GiB). "
+                        f"At current write rates this may fill before the campaign ends."
+                    ),
+                    severity="warning",
+                )
 
 
     def _check_export_staleness(self) -> None:
@@ -1201,17 +1236,18 @@ class Recording:
                     continue
                 last_ok = self._last_export_success.get(module_id, 0)
                 if last_ok < start_at and (now - start_at) >= stale_secs:
-                    self.facade.send_alert(
-                        key=f"export_stale_{module_id}",
-                        title=f"Export stale — {module_id}",
-                        message=(
-                            f"Module **{module_id}** in session **{session_name}** "
-                            f"has been recording for {int((now - start_at) / 60)} min "
-                            f"without a successful export. "
-                            f"Check local disk, Samba mount, and export queue."
-                        ),
-                        severity="warning",
-                    )
+                    if self._notify_enabled("notify_session_faults"):
+                        self.facade.send_alert(
+                            key=f"export_stale_{module_id}",
+                            title=f"Export stale — {module_id}",
+                            message=(
+                                f"Module **{module_id}** in session **{session_name}** "
+                                f"has been recording for {int((now - start_at) / 60)} min "
+                                f"without a successful export. "
+                                f"Check local disk, Samba mount, and export queue."
+                            ),
+                            severity="warning",
+                        )
 
 
     def _check_session_gaps(self, today: str) -> None:
@@ -1238,17 +1274,18 @@ class Recording:
             if not days_match:
                 continue
             if session.scheduled_last_start_date != yesterday:
-                self.facade.send_alert(
-                    key=f"gap_{session_name}_{today}",
-                    title=f"Scheduled session missed a run — {session_name}",
-                    message=(
-                        f"Session **{session_name}** was expected to run on {yesterday} "
-                        f"but its last recorded run was "
-                        f"**{session.scheduled_last_start_date or 'never'}**. "
-                        f"Check the controller logs for that date."
-                    ),
-                    severity="error",
-                )
+                if self._notify_enabled("notify_session_faults"):
+                    self.facade.send_alert(
+                        key=f"gap_{session_name}_{today}",
+                        title=f"Scheduled session missed a run — {session_name}",
+                        message=(
+                            f"Session **{session_name}** was expected to run on {yesterday} "
+                            f"but its last recorded run was "
+                            f"**{session.scheduled_last_start_date or 'never'}**. "
+                            f"Check the controller logs for that date."
+                        ),
+                        severity="error",
+                    )
                 self.logger.warning(
                     f"Gap detected: session '{session_name}' last ran "
                     f"{session.scheduled_last_start_date or 'never'}, "
@@ -1361,14 +1398,15 @@ class Recording:
                                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                                 session.state = SessionState.ERROR
                                 self.facade.update_sessions(self.sessions)
-                                self.facade.send_alert(
-                                    key=f"session_error_{session_name}",
-                                    title=f"Recording error — {session_name}",
-                                    message=(
-                                        f"Session **{session_name}** has entered an error state. "
-                                        f"The following modules are not recording: {', '.join(not_recording)}."
-                                    ),
-                                )
+                                if self._notify_enabled("notify_session_faults"):
+                                    self.facade.send_alert(
+                                        key=f"session_error_{session_name}",
+                                        title=f"Recording error — {session_name}",
+                                        message=(
+                                            f"Session **{session_name}** has entered an error state. "
+                                            f"The following modules are not recording: {', '.join(not_recording)}."
+                                        ),
+                                    )
                         elif session.state == SessionState.ERROR and should_be_recording:
                             # All modules we were actively checking are now recording — recover.
                             # Guard: if should_be_recording is empty (e.g. all states are "unknown"

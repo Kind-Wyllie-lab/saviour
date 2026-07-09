@@ -350,7 +350,7 @@ export default function System() {
             disabled={bugReportState === "collecting"}
             title="Collect logs and system state from all devices and download as a ZIP"
           >
-            {bugReportState === "collecting" ? "Collecting…" : "Export Bug Report"}
+            {bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}
           </button>
         </div>
       </div>
@@ -528,6 +528,13 @@ export default function System() {
           <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
             <p className="actions-modal__title">Controller</p>
             <div className="actions-modal__list">
+              <button type="button" className="actions-modal__item"
+                onClick={() => { handleBugReport(); setShowControllerActions(false); }}
+                disabled={bugReportState === "collecting"}>
+                <span>{bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}</span>
+                <span className="actions-modal__hint">Collect logs and system state from all devices</span>
+              </button>
+              <div className="actions-modal__divider" />
               <button type="button" className="actions-modal__item"
                 onClick={() => { setShowClockModal(true); setShowControllerActions(false); }}>
                 <span>Set Time</span>

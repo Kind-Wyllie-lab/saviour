@@ -231,10 +231,9 @@ def run_loom_stimulus_with_ipc(
         glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_ES_API)
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 0)
-        # Borderless window (no decorations)
+        # Borderless, always-visible window — prevent compositor auto-minimise
         glfw.window_hint(glfw.DECORATED, glfw.FALSE)
-
-        # Keep window focused on creation (optional)
+        glfw.window_hint(glfw.AUTO_ICONIFY, glfw.FALSE)
         glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
         mon = None
         monitors = glfw.get_monitors() or []
@@ -401,6 +400,8 @@ def run_loom_stimulus_with_ipc(
                         _status({"type": "start_received"})
                     elif cmd == "stop":
                         start_requested = False
+                        batch.stop_now()
+                        motion = _reset_motion()
                         _status({"type": "stop_received"})
                     elif cmd == "shutdown":
                         shutdown_requested = True

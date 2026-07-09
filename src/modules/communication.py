@@ -337,86 +337,64 @@ class Communication:
     def cleanup(self):
         """Clean up ZMQ connections"""
         self.logger.info(f"Cleaning up communication manager for module {self.facade.get_module_id()}")
-        
-        # Stop threads
+
+        # Signal the listener thread to stop
         self.command_listener_running = False
-        
-        # Give threads time to stop
-        time.sleep(0.5)
-        
-        # Clean up ZeroMQ connections - important to do this in the right order
-        try:
-            # Step 1: Set all sockets to non-blocking with zero linger time
-            if hasattr(self, 'command_socket') and self.command_socket:
-                self.logger.info("Setting command socket linger to 0")
+
+        # Close the command socket first — this unblocks recv_string() in the
+        # listener thread immediately (raises ZMQError) rather than waiting for
+        # RCVTIMEO (5 s). Without this, context.term() has to wait for the ZMQ
+        # I/O thread to release the socket, which can take ~30 s on some hosts.
+        if hasattr(self, 'command_socket') and self.command_socket:
+            self.logger.info("Setting command socket linger to 0")
+            try:
                 self.command_socket.setsockopt(zmq.LINGER, 0)
-                
-            if hasattr(self, 'status_socket') and self.status_socket:
-                self.logger.info("Setting status socket linger to 0")
-                self.status_socket.setsockopt(zmq.LINGER, 0)
-            
-            # Step 2: Close all sockets
-            if hasattr(self, 'command_socket') and self.command_socket:
                 self.logger.info("Closing command socket")
                 self.command_socket.close()
-                self.command_socket = None
-                
-            if hasattr(self, 'status_socket') and self.status_socket:
+            except Exception as e:
+                self.logger.warning(f"Error closing command socket: {e}")
+            self.command_socket = None
+
+        # Wait for the listener thread to notice the closed socket and exit
+        if hasattr(self, 'command_thread') and self.command_thread and self.command_thread.is_alive():
+            self.command_thread.join(timeout=2.0)
+            if self.command_thread.is_alive():
+                self.logger.warning("Command listener thread did not exit within 2 s after socket close")
+
+        # Close status socket
+        if hasattr(self, 'status_socket') and self.status_socket:
+            self.logger.info("Setting status socket linger to 0")
+            try:
+                self.status_socket.setsockopt(zmq.LINGER, 0)
                 self.logger.info("Closing status socket")
                 self.status_socket.close()
-                self.status_socket = None
-            
-            # Step 3: Wait a bit for ZMQ to clean up internal resources
-            time.sleep(0.1)
-            
-            # Step 4: Terminate the context. Sockets were closed with LINGER=0
-            # above, so term() returns immediately rather than hanging.
-            if hasattr(self, 'context') and self.context:
-                self.logger.info("Terminating ZMQ context")
-                try:
-                    self.context.term()
-                except Exception as e:
-                    self.logger.warning(f"ZMQ context term error (non-fatal): {e}")
-                self.context = None
-            
-            # Reset connection state
-            self.controller_ip = None
-            self.controller_port = None
-            self.connection_attempts = 0
-            
-            # Add a small delay to ensure proper cleanup
-            time.sleep(0.1)
-            
-            # Recreate sockets for future connections with error handling
-            try:
-                self.context = zmq.Context()
-                self.command_socket = self.context.socket(zmq.DEALER)
-                self.status_socket = self.context.socket(zmq.PUB)
-                self.logger.info("ZeroMQ resources cleaned up and recreated")
             except Exception as e:
-                self.logger.error(f"Error recreating ZeroMQ resources: {e}")
-                # Set to None to force recreation on next connection attempt
-                self.context = None
-                self.command_socket = None
-                self.status_socket = None
-            
-        except Exception as e:
-            self.logger.error(f"Error cleaning up ZeroMQ resources: {e}")
-            # Reset connection state
-            self.controller_ip = None
-            self.controller_port = None
-            self.connection_attempts = 0
-            
-            # Try to recreate the sockets even if cleanup fails
+                self.logger.warning(f"Error closing status socket: {e}")
+            self.status_socket = None
+
+        # Terminate context — all sockets are closed and the listener thread has
+        # exited, so term() should return almost immediately.
+        if hasattr(self, 'context') and self.context:
+            self.logger.info("Terminating ZMQ context")
             try:
-                time.sleep(0.1)  # Small delay before recreation
-                self.context = zmq.Context()
-                self.command_socket = self.context.socket(zmq.DEALER)
-                self.status_socket = self.context.socket(zmq.PUB)
-                self.logger.info("ZeroMQ resources recreated after error")
-            except Exception as e2:
-                self.logger.error(f"Failed to recreate ZeroMQ resources: {e2}")
-                # Set to None to force recreation on next connection attempt
-                self.context = None
-                self.command_socket = None
-                self.status_socket = None
+                self.context.term()
+            except Exception as e:
+                self.logger.warning(f"ZMQ context term error (non-fatal): {e}")
+            self.context = None
+
+        # Reset connection state
+        self.controller_ip = None
+        self.controller_port = None
+        self.connection_attempts = 0
+
+        # Recreate context and sockets for the next connect() call
+        try:
+            self.context = zmq.Context()
+            self.command_socket = self.context.socket(zmq.DEALER)
+            self.status_socket = self.context.socket(zmq.PUB)
+            self.logger.info("ZeroMQ resources cleaned up and recreated")
+        except Exception as e:
+            self.logger.error(f"Error recreating ZeroMQ resources: {e}")
+            self.context = None
+            self.command_socket = None
+            self.status_socket = None

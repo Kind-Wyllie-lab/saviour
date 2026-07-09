@@ -231,10 +231,9 @@ def run_loom_stimulus_with_ipc(
         glfw.window_hint(glfw.CLIENT_API, glfw.OPENGL_ES_API)
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 0)
-        # Borderless window (no decorations)
+        # Borderless, always-visible window — prevent compositor auto-minimise
         glfw.window_hint(glfw.DECORATED, glfw.FALSE)
-
-        # Keep window focused on creation (optional)
+        glfw.window_hint(glfw.AUTO_ICONIFY, glfw.FALSE)
         glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
         mon = None
         monitors = glfw.get_monitors() or []
@@ -401,6 +400,8 @@ def run_loom_stimulus_with_ipc(
                         _status({"type": "start_received"})
                     elif cmd == "stop":
                         start_requested = False
+                        batch.stop_now()
+                        motion = _reset_motion()
                         _status({"type": "stop_received"})
                     elif cmd == "shutdown":
                         shutdown_requested = True
@@ -599,35 +600,9 @@ def loom_stimulus_process_main(
     cfg : LoomStimulusConfig
         Renderer configuration.
     """
-    # Import inside process to avoid GL context issues in parent.
-    import time as _time
-
-    # --- Replace this block with your actual LoomStimulusRenderer integration ---
-    run_requested = False
-    shutdown = False
-
     status_queue.put({"type": "loom_stimulus_started"})
 
-    # Skeleton loop: you will integrate this with your renderer loop
-    while not shutdown:
-        # Non-blocking drain commands
-        try:
-            while True:
-                cmd, payload = command_queue.get_nowait()
-                if cmd == "start":
-                    run_requested = True
-                    status_queue.put({"type": "loom_stimulus_run_requested", "value": True})
-                elif cmd == "stop":
-                    run_requested = False
-                    status_queue.put({"type": "loom_stimulus_run_requested", "value": False})
-                elif cmd == "shutdown":
-                    shutdown = True
-                    status_queue.put({"type": "loom_stimulus_shutdown"})
-                elif cmd == "ping":
-                    status_queue.put({"type": "loom_stimulus_pong"})
-        except Exception:
-            pass
-
+    try:
         run_loom_stimulus_with_ipc(
             command_queue=command_queue,
             status_queue=status_queue,
@@ -641,17 +616,9 @@ def loom_stimulus_process_main(
             repetitions_per_round=stim_cfg.round_size,
             image_angle_deg=stim_cfg.image_angle_deg,
             background_rgba=stim_cfg.background_rgba,
-            # photodiode_box_px=stim_cfg.get("photodiode_box_px", 80),  # optional if you add
-            # photodiode_y_ndc=stim_cfg.get("photodiode_y_ndc", 0.0),
-            # monitor_index=stim_cfg.get("monitor_index", None),
-            # fullscreen=stim_cfg.get("fullscreen", True),
-            # window_size_px=tuple(stim_cfg.get("window_size_px", [1920, 1080])),
-            # vsync=stim_cfg.get("vsync", True),
         )
-
-        _time.sleep(0.01)
-
-    # Cleanup should happen here (terminate GLFW etc.)
+    except Exception as exc:
+        status_queue.put({"type": "loom_stimulus_error", "error": str(exc)})
 
 
 class LoomStimulusController:
@@ -678,8 +645,18 @@ class LoomStimulusController:
         if self._proc is not None and self._proc.is_alive():
             return
 
+        # X11 fallback
         os.environ.setdefault("DISPLAY", ":0")
         os.environ.setdefault("XAUTHORITY", "/home/pi/.Xauthority")
+
+        # Wayland: discover the compositor socket if we're running as root
+        # (systemd service doesn't inherit the user session environment).
+        if not os.environ.get("WAYLAND_DISPLAY"):
+            import glob
+            sockets = sorted(glob.glob("/run/user/*/wayland-0"))
+            if sockets:
+                os.environ["XDG_RUNTIME_DIR"] = os.path.dirname(sockets[0])
+                os.environ["WAYLAND_DISPLAY"] = os.path.basename(sockets[0])
 
         self._proc = mp.Process(
             target=loom_stimulus_process_main,

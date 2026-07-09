@@ -511,6 +511,12 @@ min-width: 300px;
   color: var(--accent-color);
 }
 
+.stimulus-test-row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
 /* Config sync status badge */
 .config-sync-badge {
   font-size: 0.82em;

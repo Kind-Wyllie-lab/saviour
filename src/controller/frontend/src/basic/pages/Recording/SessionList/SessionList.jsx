@@ -16,6 +16,9 @@ function levelClass(line) {
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// Sessions larger than this will have "Download all" disabled — use the NAS share instead.
+const DOWNLOAD_ALL_MAX_BYTES = 2 * 1024 ** 3; // 2 GB
+
 function copyToClipboard(text) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
@@ -62,6 +65,13 @@ function Countdown({ timedStopAt }) {
   const mm = String(m).padStart(2, "0");
   const ss = String(s).padStart(2, "0");
   return <span>{h > 0 ? `${h}h ${mm}m ${ss}s` : `${mm}m ${ss}s`}</span>;
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return "0 B";
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
 function formatDuration(minutes) {
@@ -140,6 +150,8 @@ function SessionList({ sessionList, modules = [] }) {
   const [pendingClearAll, setPendingClearAll] = useState(false);
   const [forceStartErrors, setForceStartErrors] = useState({}); // session_name → error string
   const [sessionLogs, setSessionLogs] = useState({}); // session_name → string[] | "loading"
+  const [sessionFileInfo, setSessionFileInfo] = useState({}); // session_name → info | "loading"
+  const [fileListOpen, setFileListOpen] = useState({}); // session_name → bool
 
   useEffect(() => {
     socket.emit("get_controller_samba_info");
@@ -172,6 +184,24 @@ function SessionList({ sessionList, modules = [] }) {
     socket.on("session_log_response", handler);
     return () => socket.off("session_log_response", handler);
   }, []);
+
+  useEffect(() => {
+    const handler = (data) => {
+      setSessionFileInfo(prev => ({ ...prev, [data.session_name]: data }));
+    };
+    socket.on("session_file_info_response", handler);
+    return () => socket.off("session_file_info_response", handler);
+  }, []);
+
+  // Auto-fetch file info when a stopped session is expanded for the first time
+  useEffect(() => {
+    Object.entries(expandedSessions).forEach(([name, isOpen]) => {
+      if (isOpen && !sessionFileInfo[name]) {
+        setSessionFileInfo(prev => ({ ...prev, [name]: "loading" }));
+        socket.emit("get_session_file_info", { session_name: name });
+      }
+    });
+  }, [expandedSessions]);
 
   const toggleSessionLog = (sessionName) => {
     if (sessionLogs[sessionName] !== undefined) {
@@ -388,6 +418,43 @@ function SessionList({ sessionList, modules = [] }) {
                     </p>
                   )}
 
+                  {isStopped && (() => {
+                    const fi = sessionFileInfo[session.session_name];
+                    const loading = fi === "loading";
+                    const ready = fi && fi !== "loading";
+                    const sizeLabel = loading
+                      ? "loading…"
+                      : ready
+                        ? `${fi.files.length} file${fi.files.length !== 1 ? "s" : ""}, ${formatBytes(fi.total_bytes)}`
+                        : null;
+                    return sizeLabel ? (
+                      <div className="session-meta-grid">
+                        <span className="session-meta-label">Files</span>
+                        <span className="session-files-inline">
+                          <span>{sizeLabel}</span>
+                          {ready && fi.files.length > 0 && (
+                            fi.total_bytes > DOWNLOAD_ALL_MAX_BYTES ? (
+                              <span
+                                className="session-file-dl session-file-dl--all session-file-dl--disabled"
+                                title={`Too large to download via browser (${formatBytes(fi.total_bytes)}) — use the NAS share below`}
+                              >
+                                Download all
+                              </span>
+                            ) : (
+                              <a
+                                className="session-file-dl session-file-dl--all"
+                                href={`/api/sessions/${session.session_name}/download`}
+                                download={`${session.session_name}.zip`}
+                              >
+                                Download all
+                              </a>
+                            )
+                          )}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
+
                   {isActive && session.ptp_warning && (
                     <p className="session-ptp-warning">{session.ptp_warning}</p>
                   )}
@@ -436,6 +503,38 @@ function SessionList({ sessionList, modules = [] }) {
                   {forceStartErrors[session.session_name] && (
                     <p className="session-error-message">{forceStartErrors[session.session_name]}</p>
                   )}
+
+                  {isStopped && (() => {
+                    const fi = sessionFileInfo[session.session_name];
+                    if (!fi || fi === "loading" || fi.files.length === 0) return null;
+                    const isOpen = fileListOpen[session.session_name];
+                    return (
+                      <div className="session-files-section">
+                        <button
+                          type="button"
+                          className="session-log-toggle"
+                          onClick={() => setFileListOpen(prev => ({ ...prev, [session.session_name]: !prev[session.session_name] }))}
+                        >
+                          {isOpen ? "▲ Hide files" : `▼ Browse files (${fi.files.length})`}
+                        </button>
+                        {isOpen && (
+                          <div className="session-file-list">
+                            {fi.files.map((file) => {
+                              const encodedPath = file.path.split("/").map(encodeURIComponent).join("/");
+                              const url = `/api/sessions/${session.session_name}/download/${encodedPath}`;
+                              return (
+                                <div key={file.path} className="session-file-row">
+                                  <span className="session-file-name" title={file.path}>{file.path}</span>
+                                  <span className="session-file-size">{formatBytes(file.size_bytes)}</span>
+                                  <a className="session-file-dl" href={url} download={file.name}>Download</a>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {!isScheduled && (() => {
                     const log = sessionLogs[session.session_name];

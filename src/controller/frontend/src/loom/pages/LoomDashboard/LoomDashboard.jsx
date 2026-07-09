@@ -7,9 +7,10 @@ import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/Healt
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
-const CAMERA_PORT    = 8080;
-const STALL_MS       = 8000;
-const RECONNECT_MS   = 2500;
+const CAMERA_PORT  = 8080;
+const MIC_PORT     = 8081;
+const STALL_MS     = 8000;
+const RECONNECT_MS = 2500;
 
 function StreamTile({ ip, port, label, isRecording, syncStatus }) {
   const [streamKey, setStreamKey] = useState(Date.now());
@@ -69,14 +70,43 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
   );
 }
 
+// Overlaid prev/next picker — only renders when there are multiple options.
+function TileSelector({ modules, selectedIndex, onSelect }) {
+  if (modules.length <= 1) return null;
+  const prev = () => onSelect((selectedIndex - 1 + modules.length) % modules.length);
+  const next = () => onSelect((selectedIndex + 1) % modules.length);
+  const label = modules[selectedIndex]?.name || modules[selectedIndex]?.id || "";
+  return (
+    <div className="loom-tile-selector">
+      <button className="loom-tile-selector-btn" onClick={prev} title="Previous">&#8249;</button>
+      <span className="loom-tile-selector-label">{label}</span>
+      <button className="loom-tile-selector-btn" onClick={next} title="Next">&#8250;</button>
+    </div>
+  );
+}
+
+function TilePlaceholder({ label }) {
+  return (
+    <div className="loom-tile-placeholder">
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function LoomDashboard() {
   const { moduleList } = useModules();
+  const [sideCamIdx, setSideCamIdx] = useState(0);
+  const [micIdx,     setMicIdx]     = useState(0);
 
-  const loomCameras  = moduleList.filter((m) => m.type === "loom_camera");
-  const basicCameras = moduleList.filter((m) => m.type === "camera" || m.type === "apa_camera");
+  const loomCam  = moduleList.find((m) => m.type === "loom_camera");
+  const sideCams = moduleList.filter((m) => m.type === "camera");
+  const mics     = moduleList.filter((m) => m.type === "microphone");
 
-  // Ordered: loom first (left), basic second (right)
-  const orderedCameras = [...loomCameras, ...basicCameras];
+  // Clamp stored indices when modules disconnect
+  const safeSideCamIdx = sideCams.length ? Math.min(sideCamIdx, sideCams.length - 1) : 0;
+  const safeMicIdx     = mics.length     ? Math.min(micIdx,     mics.length     - 1) : 0;
+  const sideCam = sideCams[safeSideCamIdx] ?? null;
+  const mic     = mics[safeMicIdx]         ?? null;
 
   return (
     <div className="loom-dashboard">
@@ -86,22 +116,61 @@ function LoomDashboard() {
 
       <div className="loom-dashboard-main">
         <div className="loom-dashboard-cameras">
-          {orderedCameras.length === 0 ? (
-            <div className="loom-dashboard-empty">No camera modules connected</div>
-          ) : (
-            orderedCameras.map((m) => (
-              <StreamTile
-                key={m.id}
-                ip={m.ip}
-                port={CAMERA_PORT}
-                label={m.name}
-                isRecording={m.status === "RECORDING"}
-                syncStatus={m.config_sync_status}
-              />
-            ))
-          )}
+
+          {/* Top row: loom cam (wide, left) + selectable side cam (right) */}
+          <div className="loom-cameras-top">
+            <div className="loom-tile-wrap loom-tile-main">
+              {loomCam ? (
+                <StreamTile
+                  ip={loomCam.ip}
+                  port={CAMERA_PORT}
+                  label={loomCam.name}
+                  isRecording={loomCam.status === "RECORDING"}
+                  syncStatus={loomCam.config_sync_status}
+                />
+              ) : (
+                <TilePlaceholder label="No loom camera connected" />
+              )}
+            </div>
+            <div className="loom-tile-wrap loom-tile-side">
+              <TileSelector modules={sideCams} selectedIndex={safeSideCamIdx} onSelect={setSideCamIdx} />
+              {sideCam ? (
+                <StreamTile
+                  key={sideCam.id}
+                  ip={sideCam.ip}
+                  port={CAMERA_PORT}
+                  label={sideCam.name}
+                  isRecording={sideCam.status === "RECORDING"}
+                  syncStatus={sideCam.config_sync_status}
+                />
+              ) : (
+                <TilePlaceholder label="No side camera connected" />
+              )}
+            </div>
+          </div>
+
+          {/* Bottom row: selectable microphone stream */}
+          <div className="loom-cameras-bottom">
+            <div className="loom-tile-wrap loom-tile-mic">
+              <TileSelector modules={mics} selectedIndex={safeMicIdx} onSelect={setMicIdx} />
+              {mic ? (
+                <StreamTile
+                  key={mic.id}
+                  ip={mic.ip}
+                  port={MIC_PORT}
+                  label={mic.name}
+                  isRecording={mic.status === "RECORDING"}
+                  syncStatus={mic.config_sync_status}
+                />
+              ) : (
+                <TilePlaceholder label="No microphone connected" />
+              )}
+            </div>
+          </div>
+
         </div>
 
+        {/* Right panel */}
         <div className="loom-dashboard-panel">
           <HealthSummaryWidget />
           <ModuleList modules={moduleList} />

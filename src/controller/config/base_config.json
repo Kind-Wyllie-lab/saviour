@@ -56,6 +56,14 @@
     },
     "teams": {
         "webhook_url": "",
-        "alert_cooldown_secs": 600
+        "alert_cooldown_secs": 600,
+        "notify_recording_started": true,
+        "notify_recording_stopped": false,
+        "notify_daily_summary": true,
+        "notify_session_faults": true,
+        "notify_module_offline": true,
+        "notify_module_online": false,
+        "notify_ptp_degraded": true,
+        "notify_disk_space": true
     }
 } 

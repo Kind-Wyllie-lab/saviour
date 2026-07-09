@@ -506,10 +506,23 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
 
         {/* LOOM STIMULUS */}
         {activeTab === "stimulus" && (
-          <ConfigFields
-            data={formData?.loom_stimulus}
-            handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
-          />
+          <>
+            <div className="stimulus-test-row">
+              <button type="button" className="copy-btn"
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_start", params: {} })}>
+                Fire stimulus
+              </button>
+              <button type="button" className="copy-btn"
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_stop", params: {} })}>
+                Stop stimulus
+              </button>
+            </div>
+            <div className="config-section-divider" />
+            <ConfigFields
+              data={formData?.loom_stimulus}
+              handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
+            />
+          </>
         )}
 
         {/* EXPORT */}

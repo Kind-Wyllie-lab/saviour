@@ -1518,18 +1518,18 @@ class Web(ABC):
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"bug_report_{ts}/controller/logs.txt", ctrl_logs)
+            zf.writestr(f"saviour_diagnostics_{ts}/controller/logs.txt", ctrl_logs)
 
             ctrl_config = _sanitise_config_dict(self.facade.get_config() if self.facade else {})
-            zf.writestr(f"bug_report_{ts}/controller/config.json",
+            zf.writestr(f"saviour_diagnostics_{ts}/controller/config.json",
                         json.dumps(ctrl_config, indent=2, default=str))
 
             health = self.facade.get_module_health() if self.facade else {}
-            zf.writestr(f"bug_report_{ts}/controller/health.json",
+            zf.writestr(f"saviour_diagnostics_{ts}/controller/health.json",
                         json.dumps(health, indent=2, default=str))
 
             sessions = self.facade.get_recording_sessions() if self.facade else {}
-            zf.writestr(f"bug_report_{ts}/controller/sessions.json",
+            zf.writestr(f"saviour_diagnostics_{ts}/controller/sessions.json",
                         json.dumps(sessions, indent=2, default=str))
 
             offline_ids = [mid for mid, m in modules.items() if not m.get('online')]
@@ -1537,13 +1537,13 @@ class Web(ABC):
             for mid in online_ids:
                 data = pending[mid].get('data')
                 if data:
-                    zf.writestr(f"bug_report_{ts}/modules/{mid}/logs.txt",
+                    zf.writestr(f"saviour_diagnostics_{ts}/modules/{mid}/logs.txt",
                                 data.get('logs', '(no logs)'))
                     cfg = _sanitise_config_dict(data.get('config', {}))
-                    zf.writestr(f"bug_report_{ts}/modules/{mid}/config.json",
+                    zf.writestr(f"saviour_diagnostics_{ts}/modules/{mid}/config.json",
                                 json.dumps(cfg, indent=2, default=str))
                 else:
-                    zf.writestr(f"bug_report_{ts}/modules/{mid}/logs.txt",
+                    zf.writestr(f"saviour_diagnostics_{ts}/modules/{mid}/logs.txt",
                                 "(no response within timeout)")
 
             manifest = {
@@ -1552,12 +1552,12 @@ class Web(ABC):
                 "offline_modules": offline_ids,
                 "modules_that_responded": [mid for mid in online_ids if pending[mid].get('data')],
             }
-            zf.writestr(f"bug_report_{ts}/manifest.json",
+            zf.writestr(f"saviour_diagnostics_{ts}/manifest.json",
                         json.dumps(manifest, indent=2))
 
         token = secrets.token_urlsafe(16)
-        self._bug_report_store = {token: (buf.getvalue(), f"bug_report_{ts}.zip")}
-        self.socketio.emit("bug_report_ready", {"token": token, "filename": f"bug_report_{ts}.zip"})
+        self._bug_report_store = {token: (buf.getvalue(), f"saviour_diagnostics_{ts}.zip")}
+        self.socketio.emit("bug_report_ready", {"token": token, "filename": f"saviour_diagnostics_{ts}.zip"})
 
     def _nas_monitor_loop(self):
         NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)

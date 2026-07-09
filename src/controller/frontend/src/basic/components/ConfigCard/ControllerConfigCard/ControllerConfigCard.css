@@ -19,3 +19,39 @@
   gap: 10px;
   margin-top: 8px;
 }
+
+.teams-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.teams-test-btn {
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.85em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.teams-test-btn:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.teams-test-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.teams-test-result {
+  font-size: 0.82em;
+}
+
+.teams-test-result--ok   { color: #2d9e4f; }
+.teams-test-result--fail { color: #cc3333; }

@@ -397,7 +397,7 @@ class Web(ABC):
                 params = data.get('params', {})
 
                 if command == "start_recording":
-                    params["experiment_name"] += ("-" + datetime.now().strftime("%Y%M%d_%H%m%s"))
+                    params["experiment_name"] += ("-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
 
                 # Broadcast to every connected module when module_id is "all"
                 if module_id == "all":
@@ -1511,13 +1511,6 @@ class Web(ABC):
             })
 
 
-    def broadcast_module_health(self):
-        """Push current module health to all connected frontend clients."""
-        self.socketio.emit('module_health_update', {
-            'module_health': self.facade.get_module_health()
-        })
-
-
         """ Recording """
         @self.socketio.on("get_recording_sessions")
         def handle_get_recording_sessions():
@@ -1553,7 +1546,14 @@ class Web(ABC):
         @self.socketio.on('remove_module')
         def handle_remove_module(module):
             self.logger.info(f"Received request to remove module: {module['id']}")
-            self.facade.remove_module(module['id'])        
+            self.facade.remove_module(module['id'])
+
+
+    def broadcast_module_health(self):
+        """Push current module health to all connected frontend clients."""
+        self.socketio.emit('module_health_update', {
+            'module_health': self.facade.get_module_health()
+        })
 
 
     def update_modules(self, modules: list):

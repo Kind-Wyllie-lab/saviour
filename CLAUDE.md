@@ -14,16 +14,19 @@ SAVIOUR (Synchronised Audio Video Input Output Recorder) is a modular, PoE-netwo
 # Activate the virtual environment first
 source env/bin/activate
 
-# Run tests
+# Run tests — NOTE: pyproject testpaths only covers src/controller/tests and
+# src/tests; the 50 module-side tests must be run explicitly:
 pytest
+pytest src/modules/tests/
 
 # Run a single test file
 pytest src/controller/tests/test_facade.py
 
-# Lint
+# Lint — ruff is configured in pyproject but NOT installed in env;
+# CI uses flake8 instead (toolchain drift, see TODO)
 ruff check src/
 
-# Type check
+# Type check (aspirational — strict mypy config has never passed)
 mypy src/
 ```
 
@@ -45,8 +48,9 @@ npm run lint
 ### Analysis tools
 
 ```bash
-# env2 is a second venv for analysis scripts that need pandas/numpy
-# (the main env omits these to keep module installs lightweight)
+# env2 is a second venv for analysis scripts that need pandas
+# (numpy IS in the main env — it's a core dependency in pyproject.toml;
+# only pandas is omitted to keep module installs lightweight)
 source env2/bin/activate
 
 # Framesync analysis — compare per-frame timestamp CSVs from a session directory
@@ -89,9 +93,8 @@ ZeroMQ **ROUTER/DEALER** is used for controller→module commands; modules publi
 - Controller binds a ROUTER socket (port 5555); each module connects a DEALER socket with its `module_id` as the ZMQ identity and sends a `"hello"` frame on connect to register.
 - Controller tracks connected dealers in `_connected_dealers`; heartbeat timeout evicts a module and calls `remove_dealer()`.
 - Modules publish status/heartbeats on `status/<module_id>` (PUB, port 5556); controller SUBs to all topics.
-- Message envelope (JSON): `proto`, `type`, `timestamp`, `from`, `to`, `msg_id`, `command`, `params`, `status`, `result`, `error`
-
-See `docs/PROTOCOL_V1.md` for the full spec.
+- **Actual wire format**: commands are plain strings `"{command} {json_params}"` routed to the DEALER by identity; status messages are JSON dicts with `type`, `timestamp`, `module_id`, `module_name` plus type-specific fields. There is no envelope, no `msg_id`, and no ack correlation.
+- ⚠ `docs/PROTOCOL_V1.md` is **aspirational, not descriptive** — it documents PUB/SUB `cmd/` topics and a JSON envelope with `msg_id`/ack/retry semantics that were never implemented. Do not use it as a reference for the current protocol.
 
 ### Config layering
 
@@ -128,9 +131,20 @@ The React frontend communicates with Flask exclusively via **Socket.IO** (not RE
 
 - **Conventional commits** with `feat/`, `fix/`, `refactor/` branch prefixes
 - Branch flow: `develop` → `staging` → `main`; PRs always target `develop`
-- Python line length: 88 (ruff), targeting py38 compatibility
+- Python line length: 88 (ruff). ⚠ pyproject claims py38 compatibility but the code requires **3.11+** (`match` statements, `StrEnum`, numpy ≥ 2.2); all deployed Pis run Bookworm/3.11+.
 - Systemd-aware logging: timestamps are skipped when `INVOCATION_ID` env var is set (systemd sets this)
 - PTP log parsing lives in `src/*/ptp.py`; health metrics in `src/*/health.py`
+- `src/__version__.py` is written by a **pre-commit hook** (`git describe`) so ZIP deploys carry the version. It is inherently one commit behind — never "fix" this by committing a manual bump.
+- The frontend variant (basic / loom / apa / habitat / acoustic_startle) is selected by a **hardcoded import in `src/controller/frontend/src/main.jsx`** — switching rigs requires editing that import and rebuilding.
+
+## Roadmap (2026-07-09 review)
+
+Phased plan derived from a full codebase review. Detailed items live in the TODO lists below.
+
+1. **Stabilise (days)** — fix the web.py handler-registration indentation bug, the overnight-schedule bug, and the offline-install build-isolation failure; make CI actually run (PR triggers, module tests in testpaths, ruff installed and converged).
+2. **Consolidate (weeks)** — extract a shared `CameraBase` from the three camera forks; split web.py into blueprints; dead-code sweep (database.py, broken NAS listing, fake login); rewrite PROTOCOL_V1.md to match reality.
+3. **Harden (when touching transport)** — add `msg_id` correlation to commands (the one remaining transport gap now DEALER/ROUTER is in); supervised long-lived threads; the multi-module integration test.
+4. **Strategic (only if the system outgrows one lab)** — replace Samba export with rsync/HTTP; auth on command bus and web UI; module base-class composition refactor.
 
 ## TODO
 
@@ -138,6 +152,9 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 ### High priority — silent data loss / correctness
 
+- [ ] **`web.py`: four Socket.IO handlers registered inside the wrong method** (found 2026-07-09 review) — everything from the `""" Recording """` comment at ~line 1521 (`get_recording_sessions`, `get_debug_data`, `login`, `remove_module`) is indented inside `broadcast_module_health()` instead of `_register_socketio_events()`. These handlers only register when the first health broadcast fires, and re-register on every subsequent call. Fix the indentation and delete the dead `login` handler while there.
+- [ ] **`recording.py`: scheduled sessions cannot span midnight** (found 2026-07-09 review) — start/stop use lexicographic `"HH:MM"` comparison; a window like 22:00–06:00 stops immediately after starting (`"22:00" >= "06:00"`). Dark-cycle overnight recording is a core rodent-lab use case. Fix: detect `end < start` and treat the window as crossing midnight.
+- [ ] **`pyproject.toml`: `hatchling` in build requires breaks offline module installs** (found 2026-07-09 review) — build backend is `setuptools.build_meta`, so hatchling is never used, but pip's build isolation tries to download it (and setuptools/setuptools_scm) from PyPI on every `pip install -e .`. This is the exact `ERROR: No matching distribution found for hatchling` seen in module journals. Fix: remove hatchling from requires AND use `--no-build-isolation` in mend.sh/update paths; also delete the dead `[tool.hatch.*]` sections.
 - [x] **`export.py`: Samba mount not retried** — if the mount fails at session start the entire segment is never exported; add a retry loop with backoff.
 - [x] **`export_queue.py`: failed exports dropped permanently** — `on_export_failed()` removes the module from `_active` without re-queuing; add retry logic so transient NAS outages don't silently lose data.
 - [x] **`export.py`: `PENDING_*` rename not rolled back on copy failure** — if `shutil.copy2()` fails after `os.rename()`, the source file is left in a broken state with no recovery path.
@@ -147,6 +164,10 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 ### Medium priority — reliability / UX
 
+- [ ] **CI never runs on PRs** (found 2026-07-09 review) — `.github/workflows/python-app.yml` triggers only on `main`, but the branch flow targets PRs at `develop`. Also: CI lints with flake8 while pyproject configures ruff, excludes `src/modules/examples` (where all real module code lives) from the undefined-name check, and inherits the testpaths gap so module tests never run. Fix triggers, converge on ruff, include examples, add `src/modules/tests` to testpaths.
+- [ ] **`web.py:400`: broken timestamp format in legacy `send_command start_recording` path** (found 2026-07-09 review) — `strftime("%Y%M%d_%H%m%s")` has month/minute swapped and non-portable `%s`; should be `"%Y%m%d_%H%M%S"`.
+- [ ] **`web.py`: NAS exported-recordings listing is broken** (found 2026-07-09 review) — `get_nas_recordings()` scans `/mnt/nas` but calls `mount_nas()` which mounts at `/mnt/controller_export`, so the scan never sees the mount. Also logs one INFO line per file found — a journal flood on large shares. Feature appears dead; either fix the mount point or remove it.
+- [ ] **`pyproject.toml` hygiene** (found 2026-07-09 review) — `requires-python = ">=3.8"` is false (code needs 3.11+); `pytest` is a runtime dependency (belongs in dev extras only); `[tool.ruff]` uses deprecated top-level `select`/`ignore` (modern ruff wants `[tool.ruff.lint]`).
 - [x] **`export.py` / `module.py`: blocking subprocess calls on network thread** — `_mount_share()` has no timeout and `update_saviour()` blocks ZMQ command processing; move to background threads.
 - [x] **`config.py`: `set()` fires `on_module_config_change()` even when value is unchanged** — guard with an equality check before calling `configure_module()`.
 - [x] **`config.py`: `reset_to_defaults()` doesn't purge stale keys** — keys removed from the module config file persist in `active_config.json` after a reset; rebuild from scratch rather than merging.
@@ -159,6 +180,9 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 ### Low priority — observability / maintenance
 
 - [ ] **No correlation IDs on ZMQ commands** — matching a `cmd_ack` to its originating command is impossible under concurrent load; add a `msg_id` round-trip in the command envelope.
+- [ ] **Dead code sweep** (found 2026-07-09 review) — `controller/database.py` (never instantiated), `export.py` `unmount()` (references undefined `self.current_mount`) and `_ensure_export_folder_exists()` (calls `_create_export_path()` with no args — TypeError), `web.py` hardcoded `login` handler (`admin`/`secret`), `web.py` inbound `module_status` socket event (frontend should never send module status — the TODO comment on it agrees).
+- [ ] **`module.py` logging: computed `format_string` never used** (found 2026-07-09 review) — `logging.basicConfig` at module import hardcodes the systemd format, so module logs lose timestamps when run outside systemd. `controller.py` does the same thing correctly — copy that.
+- [ ] **`docs/PROTOCOL_V1.md` is stale** (found 2026-07-09 review) — documents PUB/SUB transport + JSON envelope + msg_id ack/retry that were never built. Rewrite to describe the actual DEALER/ROUTER string protocol, or keep as the design target for the correlation-ID work and label it clearly as such. `docs/CONFIG_STRUCTURE.md` (Aug 2025) likely also needs a pass.
 - [x] **`phc2sys_offset` field had no unit suffix** — renamed to `phc2sys_offset_ns` across `src/shared/health.py`, `src/modules/ptp.py`, `src/modules/health.py`, `src/controller/health.py`, `src/controller/ptp.py`, `src/controller/recording.py`, and `src/tests/test_ptp_parsing.py`. Note: exported health CSV column name changes accordingly — update any downstream analysis scripts that reference `phc2sys_offset` by name.
 - [x] **Hardcoded IP ranges in three files** — `network._valid_ip_prefixes` added to both `base_config.json` files; `controller/network.py` reads from config; dead `valid_ips` list removed from `modules/network.py`; redundant `"10.0.0.1"` fallback removed from `export.py` (base config is the authoritative default).
 - [x] **`switch_role.sh`: `ROLE=` / `TYPE=` values written without sanitisation** — `switch_role.sh` is now a deprecated shim that execs `saviour-config`. In `saviour-config`, ROLE and TYPE values are set exclusively from fixed whiptail menu selections; there is no free-text input path to `write_config`, so injection is not possible.
@@ -173,7 +197,11 @@ These are larger structural issues that require significant refactoring. Recorde
 - [x] **Mid-recording PTP degradation undetected** — `_check_ptp_mid_recording()` runs each monitor cycle for ACTIVE sessions; fires on transitions only (newly degraded / newly recovered); surfaces amber `ptp_warning` field on the session card and sends a Teams alert (240626).
 - [x] **Session state has no durability** — already implemented: `_save_sessions()` is called at every state transition; `_load_sessions()` on startup marks interrupted ACTIVE sessions as ERROR; `module_back_online()` re-issues `start_recording` and recovers ERROR → ACTIVE when modules reconnect; `handle_module_health_response()` handles the controller-restart case by probing module state and resuming or marking stopped accordingly.
 - [x] **ZMQ PUB/SUB is the wrong transport for commands** — PUB/SUB drops messages to subscribers that haven't connected yet (slow-joiner problem). `start_recording` can silently drop and a session starts on some modules but not others, with no timeout or error surfaced. Commands requiring reliable delivery should use DEALER/ROUTER or REQ/REP. High effort — transport-layer change across every module.
-- [ ] **Module base class is a god object** — `module.py` (~1100 lines) owns config, export, PTP, recording, health, network, commands, and lifecycle. No concern can be tested in isolation; contributors must understand the entire base before writing a single sensor. High effort — requires composition refactor across all module types.
+- [ ] **Module base class is a god object** — `module.py` (~1275 lines) owns config, export, PTP, recording, health, network, commands, and lifecycle. No concern can be tested in isolation; contributors must understand the entire base before writing a single sensor. High effort — requires composition refactor across all module types.
+- [ ] **Camera module family is three parallel forks** (found 2026-07-09 review) — `camera`, `apa_camera`, and `loom_camera` each independently reimplement 25–29 identically-named methods (`_start_new_recording`, `_configure_camera`, segment rotation, timestamp CSVs, MJPEG streaming server…). Every camera fix must be hand-ported up to three times. Extract a shared `CameraBase` (or camera mixin) before adding a fourth variant.
+- [ ] **`web.py` is a 2000-line grab-bag** (found 2026-07-09 review) — sessions, config sync, chunked update uploads, deployments, bug-report collection, NAS probing (three duplicated mount/umount snippets with different mount points), time setting, and power control all live in two giant registration methods. Split into Flask blueprints / per-concern services. The indentation bug above is a direct symptom.
+- [ ] **Unsupervised threading + broad exception policy** (found 2026-07-09 review) — 59 ad-hoc `threading.Thread(daemon=True)` spawns and ~280 `except Exception` handlers. A crashed monitor/retry thread dies silently and its job simply stops happening. Consider a tiny supervised-thread helper (log-and-restart) for the long-lived loops, and narrower exceptions on the data path.
+- [ ] **Frontend variant selection is a source edit** (found 2026-07-09 review) — `main.jsx` hardcodes `import App from './loom/App'`; deploying to a different rig type silently ships the wrong UI unless the import is remembered. Make it build-time (`VITE_VARIANT` env → `import.meta.env`) or runtime (controller config → dynamic import).
 - [ ] **Samba is the wrong export transport** — designed for Windows interoperability; adds credential management, mount failure modes, and an unreliable driver stack on a homogenous Linux PoE network. `rsync` over SSH or a simple HTTP PUT endpoint would be simpler and easier to debug. The complexity of `export.py` (PENDING rename, staged lists, thread locks) partly compensates for Samba fragility. High effort — requires rewriting all export logic.
 - [x] **Health schema is duplicated** — canonical `ModuleHealthSnapshot` dataclass lives in `src/shared/health.py`; both `src/modules/health.py` and `src/controller/health.py` import from it.
 - [ ] **No authentication on the command bus** — any device on the PoE network can publish ZMQ commands. Acceptable for a closed lab network; becomes a concern if the network is ever bridged.

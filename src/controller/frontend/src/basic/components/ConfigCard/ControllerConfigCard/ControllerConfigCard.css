@@ -20,6 +20,53 @@
   margin-top: 8px;
 }
 
+.teams-fieldset {
+  margin-top: 8px;
+}
+
+/* Non-interactive legend — no collapse toggle for the teams section */
+.teams-fieldset-legend {
+  cursor: default !important;
+}
+
+.teams-notify-section {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.teams-notify-label {
+  font-size: 0.8em;
+  font-weight: 600;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.teams-notify-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.teams-notify-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.teams-notify-row input[type="checkbox"] {
+  flex-shrink: 0;
+  accent-color: var(--accent-color);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
 .teams-test-row {
   display: flex;
   align-items: center;

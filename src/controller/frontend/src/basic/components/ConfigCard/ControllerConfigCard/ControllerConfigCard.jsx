@@ -76,16 +76,27 @@ function ControllerConfigCard() {
     socket.emit("update_saviour_controller");
   };
 
-  // Settings tab: everything except controller.name and export
+  // Settings tab: everything except controller.name, export, and teams (rendered custom below)
   const settingsData = (() => {
     if (!formData) return formData;
-    const { export: _e, controller: ctrl, ...rest } = filterPrivateKeys(formData) ?? {};
+    const { export: _e, controller: ctrl, teams: _t, ...rest } = filterPrivateKeys(formData) ?? {};
     // Keep controller section only if it has fields beyond `name` (name goes in Basic)
     const { name: _n, ...ctrlRest } = ctrl ?? {};
     const result = { ...rest };
     if (Object.keys(ctrlRest).length > 0) result.controller = ctrlRest;
     return result;
   })();
+
+  const NOTIFY_TOGGLES = [
+    { key: "notify_recording_started", label: "Recording started" },
+    { key: "notify_recording_stopped", label: "Recording stopped" },
+    { key: "notify_daily_summary",     label: "Daily summary (scheduled sessions)" },
+    { key: "notify_session_faults",    label: "Session errors, missed runs & export stalls" },
+    { key: "notify_module_offline",    label: "Module goes offline" },
+    { key: "notify_module_online",     label: "Module comes back online" },
+    { key: "notify_ptp_degraded",      label: "PTP sync degrades mid-recording" },
+    { key: "notify_disk_space",        label: "Low disk space (local & NAS)" },
+  ];
 
   return (
     <div className="config-card controller-config-card">
@@ -127,26 +138,66 @@ function ControllerConfigCard() {
                 <form>
                   <ConfigFields data={settingsData} handleChange={handleChange} />
                 </form>
-                {formData?.teams?.webhook_url && (
-                  <div className="teams-test-row">
-                    <button
-                      type="button"
-                      className="teams-test-btn"
-                      disabled={teamsTestStatus === "testing"}
-                      onClick={() => {
-                        setTeamsTestStatus("testing");
-                        socket.emit("test_teams_webhook");
-                      }}
-                    >
-                      {teamsTestStatus === "testing" ? "Sending…" : "Send test Teams message"}
-                    </button>
-                    {teamsTestStatus && teamsTestStatus !== "testing" && (
-                      <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
-                        {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
-                      </span>
+
+                {/* Teams / Notifications — custom section */}
+                <fieldset className="nested-fieldset teams-fieldset">
+                  <legend className="nested-fieldset-legend teams-fieldset-legend">
+                    teams
+                  </legend>
+                  <div className="nested">
+                    <div className="form-field">
+                      <label>webhook_url:</label>
+                      <input
+                        type="text"
+                        value={formData?.teams?.webhook_url ?? ""}
+                        onChange={e => handleChange(["teams", "webhook_url"], e)}
+                      />
+                    </div>
+                    <div className="form-field">
+                      <label>alert_cooldown_secs:</label>
+                      <input
+                        type="number"
+                        value={formData?.teams?.alert_cooldown_secs ?? 600}
+                        onChange={e => handleChange(["teams", "alert_cooldown_secs"], e)}
+                      />
+                    </div>
+                    <div className="teams-notify-section">
+                      <span className="teams-notify-label">Notify on:</span>
+                      <div className="teams-notify-grid">
+                        {NOTIFY_TOGGLES.map(({ key, label }) => (
+                          <label key={key} className="teams-notify-row">
+                            <input
+                              type="checkbox"
+                              checked={formData?.teams?.[key] ?? false}
+                              onChange={e => handleChange(["teams", key], e)}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    {formData?.teams?.webhook_url && (
+                      <div className="teams-test-row">
+                        <button
+                          type="button"
+                          className="teams-test-btn"
+                          disabled={teamsTestStatus === "testing"}
+                          onClick={() => {
+                            setTeamsTestStatus("testing");
+                            socket.emit("test_teams_webhook");
+                          }}
+                        >
+                          {teamsTestStatus === "testing" ? "Sending…" : "Send test message"}
+                        </button>
+                        {teamsTestStatus && teamsTestStatus !== "testing" && (
+                          <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
+                            {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
+                </fieldset>
               </>
             )}
 

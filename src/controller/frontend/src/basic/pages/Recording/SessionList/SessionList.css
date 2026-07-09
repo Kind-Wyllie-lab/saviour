@@ -452,6 +452,19 @@
 .session-log-line.fault-alert-log-line--recovery { color: #2a7a2a; }
 .session-log-line.fault-alert-log-line--info     { opacity: 0.7; }
 
+/* ── Files inline row ─────────────────────────────────────────────────── */
+
+.session-files-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-file-dl--all {
+  font-size: 0.8rem;
+  padding: 1px 8px;
+}
+
 /* ── File browser ─────────────────────────────────────────────────────── */
 
 .session-files-section {

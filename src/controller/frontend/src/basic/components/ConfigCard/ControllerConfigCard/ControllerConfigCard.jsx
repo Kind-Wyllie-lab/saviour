@@ -20,6 +20,7 @@ function ControllerConfigCard() {
   const [controllerInfo, setControllerInfo] = useState({ ip: null, version: null });
   const [saveStatus, setSaveStatus] = useState(null);
   const [activeTab, setActiveTab] = useState("basic");
+  const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
   const saveTimerRef = useRef(null);
 
   useEffect(() => {
@@ -46,10 +47,15 @@ function ControllerConfigCard() {
       setUpdateStatus({ success: data.success, output: data.output });
     });
 
+    socket.on("teams_test_result", (data) => {
+      setTeamsTestStatus(data);
+    });
+
     return () => {
       socket.off("controller_config_response");
       socket.off("controller_info_response");
       socket.off("update_saviour_controller_result");
+      socket.off("teams_test_result");
       clearTimeout(saveTimerRef.current);
     };
   }, []);
@@ -117,9 +123,31 @@ function ControllerConfigCard() {
 
             {/* SETTINGS */}
             {activeTab === "settings" && (
-              <form>
-                <ConfigFields data={settingsData} handleChange={handleChange} />
-              </form>
+              <>
+                <form>
+                  <ConfigFields data={settingsData} handleChange={handleChange} />
+                </form>
+                {formData?.teams?.webhook_url && (
+                  <div className="teams-test-row">
+                    <button
+                      type="button"
+                      className="teams-test-btn"
+                      disabled={teamsTestStatus === "testing"}
+                      onClick={() => {
+                        setTeamsTestStatus("testing");
+                        socket.emit("test_teams_webhook");
+                      }}
+                    >
+                      {teamsTestStatus === "testing" ? "Sending…" : "Send test Teams message"}
+                    </button>
+                    {teamsTestStatus && teamsTestStatus !== "testing" && (
+                      <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
+                        {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
             )}
 
             {/* EXPORT */}

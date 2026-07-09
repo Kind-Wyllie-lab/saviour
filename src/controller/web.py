@@ -1419,6 +1419,13 @@ class Web(ABC):
             threading.Thread(target=_shutdown, daemon=True).start()
 
 
+        @self.socketio.on("test_teams_webhook")
+        def handle_test_teams_webhook(data=None):
+            def _run():
+                success, detail = self.facade.controller.notifier.send_test()
+                self.socketio.emit("teams_test_result", {"success": success, "detail": detail})
+            threading.Thread(target=_run, daemon=True, name="teams-test").start()
+
         @self.socketio.on("get_bug_report")
         def handle_get_bug_report(data=None):
             self.logger.info("Bug report requested")

@@ -256,6 +256,9 @@ class Controller(ABC):
                             module_id, bool(status_data.get("recording"))
                         )
 
+                    elif command == 'get_diagnostics':
+                        self.web.handle_diagnostics_ack(module_id, status_data)
+
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')
                     if error == "Already recording":

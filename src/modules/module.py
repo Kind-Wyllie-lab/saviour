@@ -55,6 +55,21 @@ from src.modules.export import Export
 from src.modules.recording import Recording
 from src.modules.facade import ModuleFacade
 
+_SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
+
+def _sanitise_config(cfg: dict) -> dict:
+    """Recursively redact values whose key contains a sensitive word."""
+    out = {}
+    for k, v in cfg.items():
+        if any(s in k.lower() for s in _SENSITIVE_KEY_FRAGMENTS):
+            out[k] = "***"
+        elif isinstance(v, dict):
+            out[k] = _sanitise_config(v)
+        else:
+            out[k] = v
+    return out
+
+
 def command(name=None):
     """
     Decorator to mark a method as a command.
@@ -148,6 +163,7 @@ class Module(ABC):
             "reset_config": self.reset_config,
             "start_export": self.start_export,
             "set_export_config": self.set_export_config,
+            "get_diagnostics": self.get_diagnostics,
         }
 
         # Register callbacks and facade
@@ -755,6 +771,26 @@ class Module(ABC):
         }
         self.logger.info(f"Get config called, returning config with {len(response['config'])} keys")
         return response
+
+    def get_diagnostics(self) -> dict:
+        """Collect logs and sanitised config for a controller-initiated bug report."""
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", "saviour.service", "-n", "500",
+                 "--no-pager", "--output=short-precise"],
+                capture_output=True, text=True, timeout=10,
+            )
+            logs = result.stdout if result.returncode == 0 else f"journalctl error: {result.stderr}"
+        except Exception as e:
+            logs = f"Could not collect logs: {e}"
+
+        return {
+            "result": "success",
+            "logs": logs,
+            "config": _sanitise_config(self.config.get_all()),
+            "module_type": self.module_type,
+            "version": self.version,
+        }
 
 
     @command()

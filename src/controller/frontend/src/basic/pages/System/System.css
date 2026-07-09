@@ -13,6 +13,11 @@
   margin: 0;
 }
 
+.system-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .refresh-btn {
   padding: 4px 12px;
   border-radius: 4px;
@@ -81,6 +86,17 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
   vertical-align: middle;
   white-space: nowrap;
+}
+
+.system-table__group-header td {
+  padding: 6px 12px 4px;
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  background: none;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .system-table__controller-row td {

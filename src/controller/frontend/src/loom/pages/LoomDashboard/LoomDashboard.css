@@ -26,20 +26,57 @@
   overflow: hidden;
 }
 
-/* ── Camera pair — tiled flush, no gap ───────────────────────────────────── */
+/* ── Camera + mic columns ─────────────────────────────────────────────────── */
 
 .loom-dashboard-cameras {
   flex: 2;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-radius: 8px;
 }
 
+/* Top row: loom cam (left, wide) + side cam (right) */
+.loom-cameras-top {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* Bottom row: microphone stream */
+.loom-cameras-bottom {
+  flex-shrink: 0;
+  height: 160px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+}
+
+/* Generic tile wrapper */
+.loom-tile-wrap {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Loom camera: ~62% of top row */
+.loom-tile-main { flex: 3; }
+
+/* Side camera: ~38% of top row */
+.loom-tile-side {
+  flex: 2;
+  border-left: 1px solid var(--border-color);
+}
+
+/* Microphone: full bottom row width */
+.loom-tile-mic { flex: 1; }
+
+/* Stream tile — fills its wrapper */
 .loom-stream-tile {
+  flex: 1;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -55,8 +92,58 @@
   cursor: pointer;
 }
 
-.loom-stream-tile img:hover {
-  opacity: 0.93;
+.loom-stream-tile img:hover { opacity: 0.93; }
+
+/* Empty-slot placeholder */
+.loom-tile-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.3;
+  font-style: italic;
+  font-size: 0.82em;
+}
+
+/* Module picker overlay (prev/next arrows + name) */
+.loom-tile-selector {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 0.75em;
+  pointer-events: auto;
+}
+
+.loom-tile-selector-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.2em;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.loom-tile-selector-btn:hover { opacity: 1; }
+
+.loom-tile-selector-label {
+  flex: 1;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
 }
 
 .loom-rec-dot {
@@ -93,13 +180,3 @@
   min-width: 0;
 }
 
-/* ── Empty state ─────────────────────────────────────────────────────────── */
-
-.loom-dashboard-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.4;
-  font-style: italic;
-  grid-column: 1 / -1;
-}

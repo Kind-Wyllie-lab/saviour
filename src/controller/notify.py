@@ -75,6 +75,66 @@ class Notifier:
             name=f"teams-alert-{key}",
         ).start()
 
+    def send_test(self, title: str = "SAVIOUR Test Alert", message: str = "This is a test message from the SAVIOUR controller.") -> tuple:
+        """Send a one-off test alert synchronously, bypassing cooldown.
+
+        Returns (success: bool, detail: str).
+        """
+        webhook_url = self.config.get("teams.webhook_url", "")
+        if not webhook_url:
+            return False, "No webhook URL configured (teams.webhook_url is empty)"
+        if not self.check_internet():
+            return False, "No internet access — controller cannot reach 8.8.8.8:53"
+        colour = "default"
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        payload = {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": {
+                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                        "type": "AdaptiveCard",
+                        "version": "1.2",
+                        "body": [
+                            {
+                                "type": "TextBlock",
+                                "text": title,
+                                "weight": "Bolder",
+                                "size": "Medium",
+                                "color": colour,
+                                "wrap": True,
+                            },
+                            {"type": "TextBlock", "text": message, "wrap": True},
+                            {
+                                "type": "TextBlock",
+                                "text": f"{self._controller_name()} · {timestamp}",
+                                "size": "Small",
+                                "isSubtle": True,
+                            },
+                        ],
+                    },
+                }
+            ],
+        }
+        try:
+            body = json.dumps(payload).encode()
+            req = Request(
+                webhook_url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(req, timeout=10) as resp:
+                status = resp.getcode()
+                if status in (200, 202):
+                    return True, f"Message delivered (HTTP {status})"
+                return False, f"Webhook returned HTTP {status}"
+        except URLError as e:
+            return False, f"Network error: {e}"
+        except Exception as e:
+            return False, f"Unexpected error: {e}"
+
     def check_internet(self) -> bool:
         """Return True if the controller can reach the public internet."""
         try:

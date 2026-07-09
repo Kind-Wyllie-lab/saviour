@@ -35,6 +35,23 @@ from src.controller.config import Config
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
 
+import queue as _queue
+
+class _QueueStream(io.RawIOBase):
+    """Write-only, non-seekable stream that feeds chunks into a SimpleQueue.
+    Used to stream a ZipFile to an HTTP response without buffering in RAM
+    or writing to a temp file. zipfile detects seekable()=False and switches
+    to data-descriptor mode (writes CRC/sizes after data, no back-seeking).
+    """
+    def __init__(self, q: "_queue.SimpleQueue"):
+        self._q = q
+    def write(self, b: bytes) -> int:
+        self._q.put(bytes(b))
+        return len(b)
+    def writable(self) -> bool: return True
+    def seekable(self) -> bool: return False
+    def readable(self) -> bool: return False
+
 def _sanitise_config_dict(cfg: dict) -> dict:
     """Recursively redact values whose key contains a sensitive word."""
     out = {}
@@ -380,7 +397,7 @@ class Web(ABC):
                 params = data.get('params', {})
 
                 if command == "start_recording":
-                    params["experiment_name"] += ("-" + datetime.now().strftime("%Y%M%d_%H%m%s"))
+                    params["experiment_name"] += ("-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
 
                 # Broadcast to every connected module when module_id is "all"
                 if module_id == "all":
@@ -482,6 +499,102 @@ class Web(ABC):
                 _emit('session_log_response', {'session_name': session_name, 'lines': [], 'error': str(e)})
 
         
+        @self.socketio.on("get_session_file_info")
+        def handle_get_session_file_info(data=None):
+            import re
+            from flask_socketio import emit as _emit
+            session_name = (data or {}).get("session_name", "")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                _emit("session_file_info_response", {"session_name": session_name, "error": "invalid name"})
+                return
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+            session_dir = os.path.join(share, session_name)
+            if not os.path.isdir(session_dir):
+                _emit("session_file_info_response", {
+                    "session_name": session_name,
+                    "dir": session_dir,
+                    "files": [],
+                    "total_bytes": 0,
+                })
+                return
+            files = []
+            total = 0
+            for root, dirs, filenames in os.walk(session_dir):
+                dirs.sort()
+                for fn in sorted(filenames):
+                    full = os.path.join(root, fn)
+                    try:
+                        sz = os.path.getsize(full)
+                    except OSError:
+                        sz = 0
+                    rel = os.path.relpath(full, session_dir)
+                    files.append({"name": fn, "path": rel, "size_bytes": sz})
+                    total += sz
+            _emit("session_file_info_response", {
+                "session_name": session_name,
+                "dir": session_dir,
+                "files": files,
+                "total_bytes": total,
+            })
+
+        @self.app.route("/api/sessions/<session_name>/download/<path:filename>")
+        def download_session_file(session_name, filename):
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                return "Invalid session name", 400
+            share = os.path.realpath(self.config.get("export.mount_path", "/home/pi/controller_share"))
+            session_dir = os.path.realpath(os.path.join(share, session_name))
+            if not session_dir.startswith(share + os.sep):
+                return "Forbidden", 403
+            safe_path = os.path.realpath(os.path.join(session_dir, filename))
+            if not safe_path.startswith(session_dir + os.sep):
+                return "Forbidden", 403
+            if not os.path.isfile(safe_path):
+                return "Not found", 404
+            return send_file(safe_path, as_attachment=True, download_name=os.path.basename(safe_path))
+
+        @self.app.route("/api/sessions/<session_name>/download")
+        def download_session_zip(session_name):
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                return "Invalid session name", 400
+            share = os.path.realpath(self.config.get("export.mount_path", "/home/pi/controller_share"))
+            session_dir = os.path.realpath(os.path.join(share, session_name))
+            if not session_dir.startswith(share + os.sep):
+                return "Forbidden", 403
+            if not os.path.isdir(session_dir):
+                return "Not found", 404
+
+            q = _queue.SimpleQueue()
+
+            def _build():
+                try:
+                    with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
+                        for root, dirs, filenames in os.walk(session_dir):
+                            dirs.sort()
+                            for fn in sorted(filenames):
+                                full = os.path.join(root, fn)
+                                zf.write(full, os.path.relpath(full, session_dir))
+                except Exception as e:
+                    self.logger.error(f"ZIP stream error for '{session_name}': {e}")
+                finally:
+                    q.put(None)
+
+            threading.Thread(target=_build, daemon=True).start()
+
+            def _generate():
+                while (chunk := q.get()) is not None:
+                    yield chunk
+
+            return self.app.response_class(
+                _generate(),
+                mimetype="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{session_name}.zip"',
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         @self.socketio.on("create_session")
         def handle_create_session(data):
             target = data.get("target")
@@ -1306,6 +1419,13 @@ class Web(ABC):
             threading.Thread(target=_shutdown, daemon=True).start()
 
 
+        @self.socketio.on("test_teams_webhook")
+        def handle_test_teams_webhook(data=None):
+            def _run():
+                success, detail = self.facade.controller.notifier.send_test()
+                self.socketio.emit("teams_test_result", {"success": success, "detail": detail})
+            threading.Thread(target=_run, daemon=True, name="teams-test").start()
+
         @self.socketio.on("get_bug_report")
         def handle_get_bug_report(data=None):
             self.logger.info("Bug report requested")
@@ -1391,13 +1511,6 @@ class Web(ABC):
             })
 
 
-    def broadcast_module_health(self):
-        """Push current module health to all connected frontend clients."""
-        self.socketio.emit('module_health_update', {
-            'module_health': self.facade.get_module_health()
-        })
-
-
         """ Recording """
         @self.socketio.on("get_recording_sessions")
         def handle_get_recording_sessions():
@@ -1433,7 +1546,14 @@ class Web(ABC):
         @self.socketio.on('remove_module')
         def handle_remove_module(module):
             self.logger.info(f"Received request to remove module: {module['id']}")
-            self.facade.remove_module(module['id'])        
+            self.facade.remove_module(module['id'])
+
+
+    def broadcast_module_health(self):
+        """Push current module health to all connected frontend clients."""
+        self.socketio.emit('module_health_update', {
+            'module_health': self.facade.get_module_health()
+        })
 
 
     def update_modules(self, modules: list):

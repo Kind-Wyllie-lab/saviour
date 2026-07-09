@@ -17,6 +17,11 @@
 #   - Overwrite /etc/saviour/config (role/type/IP are preserved)
 #   - Upgrade the OS (apt-get upgrade is intentionally omitted)
 
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    echo "mend.sh must not be sourced.  Run:  sudo bash mend.sh" >&2
+    return 1
+fi
+
 set -Eeuo pipefail
 trap 'echo "mend.sh failed at line $LINENO (exit $?)" >&2' ERR
 
@@ -158,7 +163,7 @@ fi
 source "$TARGET_DIR/env/bin/activate"
 
 pip install --quiet --upgrade pip >> "$LOG" 2>&1
-pip install --quiet -e "$TARGET_DIR" >> "$LOG" 2>&1
+pip install --quiet -e "$TARGET_DIR" >> "$LOG" 2>&1 || warn "pip install -e . failed (may lack build deps on offline device) — continuing"
 pip install --quiet --force-reinstall simplejpeg >> "$LOG" 2>&1
 
 ok "Python environment up to date"

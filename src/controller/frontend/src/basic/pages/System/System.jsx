@@ -125,6 +125,33 @@ export default function System() {
   }, [moduleHealth, modules]);
 
   // ── Remove module ─────────────────────────────────────────────────────────
+  // ── Bug report ────────────────────────────────────────────────────────────
+  const [bugReportState, setBugReportState] = useState(null); // null | "collecting" | "ready"
+
+  useEffect(() => {
+    const onStatus = ({ status }) => {
+      if (status === "collecting") setBugReportState("collecting");
+    };
+    const onReady = ({ token, filename }) => {
+      setBugReportState(null);
+      const a = document.createElement("a");
+      a.href = `/api/bug_report/${token}`;
+      a.download = filename;
+      a.click();
+    };
+    socket.on("bug_report_status", onStatus);
+    socket.on("bug_report_ready", onReady);
+    return () => {
+      socket.off("bug_report_status", onStatus);
+      socket.off("bug_report_ready", onReady);
+    };
+  }, []);
+
+  const handleBugReport = () => {
+    setBugReportState("collecting");
+    socket.emit("get_bug_report");
+  };
+
   const [removeTarget, setRemoveTarget] = useState(null); // { id, name, online }
 
   const handleRemoveConfirm = () => {
@@ -309,12 +336,23 @@ export default function System() {
     <main className="system-page">
       <div className="system-header">
         <h2>System Health</h2>
-        <button className="refresh-btn" type="button" onClick={() => {
-          refresh();
-          socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
-        }}>
-          Refresh
-        </button>
+        <div className="system-header-actions">
+          <button className="refresh-btn" type="button" onClick={() => {
+            refresh();
+            socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
+          }}>
+            Refresh
+          </button>
+          <button
+            className="refresh-btn"
+            type="button"
+            onClick={handleBugReport}
+            disabled={bugReportState === "collecting"}
+            title="Collect logs and system state from all devices and download as a ZIP"
+          >
+            {bugReportState === "collecting" ? "Collecting…" : "Export Bug Report"}
+          </button>
+        </div>
       </div>
 
       <div className="system-table-wrapper">

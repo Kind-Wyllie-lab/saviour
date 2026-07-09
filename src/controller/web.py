@@ -13,21 +13,39 @@ Created: ?
 """
 
 
+import io
 import logging
+import secrets
 import subprocess
 import time
+import zipfile
 from flask import Flask, render_template, jsonify, request, send_from_directory, send_file
 from flask_socketio import SocketIO
 from typing import Any
 import threading
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from abc import ABC
 from dataclasses import asdict
 
 from src.controller.config import Config
+
+
+_SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
+
+def _sanitise_config_dict(cfg: dict) -> dict:
+    """Recursively redact values whose key contains a sensitive word."""
+    out = {}
+    for k, v in cfg.items():
+        if any(s in k.lower() for s in _SENSITIVE_KEY_FRAGMENTS):
+            out[k] = "***"
+        elif isinstance(v, dict):
+            out[k] = _sanitise_config_dict(v)
+        else:
+            out[k] = v
+    return out
 
 
 def _filter_private_keys(d: dict) -> dict:
@@ -93,6 +111,11 @@ class Web(ABC):
         self._upload_chunks: dict = {}
         self._upload_meta: dict = {}
         self._upload_lock = threading.Lock()
+
+        # Bug report state
+        self._diag_pending: dict = {}   # module_id → {'event': Event, 'data': None}
+        self._diag_lock = threading.Lock()
+        self._bug_report_store: dict = {}  # token → bytes (at most one kept)
     
     
     def _generate_experiment_name(self) -> str:
@@ -1283,6 +1306,24 @@ class Web(ABC):
             threading.Thread(target=_shutdown, daemon=True).start()
 
 
+        @self.socketio.on("get_bug_report")
+        def handle_get_bug_report(data=None):
+            self.logger.info("Bug report requested")
+            threading.Thread(target=self._collect_bug_report, daemon=True).start()
+
+        @self.app.route("/api/bug_report/<token>")
+        def download_bug_report(token):
+            entry = self._bug_report_store.get(token)
+            if not entry:
+                return "Not found", 404
+            data_bytes, filename = entry
+            return send_file(
+                io.BytesIO(data_bytes),
+                mimetype="application/zip",
+                as_attachment=True,
+                download_name=filename,
+            )
+
         @self.socketio.on("set_controller_time")
         def handle_set_controller_time(data=None):
             from datetime import datetime, timezone as _tz
@@ -1423,6 +1464,100 @@ class Web(ABC):
             'error': ready_status.get('error')
         })
 
+
+    # ── Bug report ────────────────────────────────────────────────────────────
+
+    def handle_diagnostics_ack(self, module_id: str, data: dict) -> None:
+        """Called by controller when a get_diagnostics cmd_ack arrives from a module."""
+        with self._diag_lock:
+            entry = self._diag_pending.get(module_id)
+        if entry:
+            entry['data'] = data
+            entry['event'].set()
+
+    def _collect_bug_report(self) -> None:
+        """Background thread: gather logs from controller + all online modules, emit download token."""
+        self.socketio.emit("bug_report_status", {"status": "collecting"})
+
+        modules = self.facade.get_modules() if self.facade else {}
+        online_ids = [mid for mid, m in modules.items() if m.get('online')]
+
+        # Register pending entries before sending commands (avoid race)
+        pending = {}
+        for mid in online_ids:
+            entry = {'event': threading.Event(), 'data': None}
+            pending[mid] = entry
+        with self._diag_lock:
+            self._diag_pending.update(pending)
+
+        # Fire get_diagnostics to every online module
+        for mid in online_ids:
+            self.facade.send_command(mid, "get_diagnostics", {})
+
+        # Wait up to 15 s for each module
+        TIMEOUT = 15
+        for mid in online_ids:
+            pending[mid]['event'].wait(timeout=TIMEOUT)
+
+        with self._diag_lock:
+            for mid in online_ids:
+                self._diag_pending.pop(mid, None)
+
+        # Collect controller logs
+        try:
+            ctrl_log_result = subprocess.run(
+                ["journalctl", "-u", "saviour.service", "-n", "500",
+                 "--no-pager", "--output=short-precise"],
+                capture_output=True, text=True, timeout=10,
+            )
+            ctrl_logs = ctrl_log_result.stdout if ctrl_log_result.returncode == 0 else ctrl_log_result.stderr
+        except Exception as e:
+            ctrl_logs = f"Could not collect controller logs: {e}"
+
+        # Build ZIP in memory
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"bug_report_{ts}/controller/logs.txt", ctrl_logs)
+
+            ctrl_config = _sanitise_config_dict(self.facade.get_config() if self.facade else {})
+            zf.writestr(f"bug_report_{ts}/controller/config.json",
+                        json.dumps(ctrl_config, indent=2, default=str))
+
+            health = self.facade.get_module_health() if self.facade else {}
+            zf.writestr(f"bug_report_{ts}/controller/health.json",
+                        json.dumps(health, indent=2, default=str))
+
+            sessions = self.facade.get_recording_sessions() if self.facade else {}
+            zf.writestr(f"bug_report_{ts}/controller/sessions.json",
+                        json.dumps(sessions, indent=2, default=str))
+
+            offline_ids = [mid for mid, m in modules.items() if not m.get('online')]
+
+            for mid in online_ids:
+                data = pending[mid].get('data')
+                if data:
+                    zf.writestr(f"bug_report_{ts}/modules/{mid}/logs.txt",
+                                data.get('logs', '(no logs)'))
+                    cfg = _sanitise_config_dict(data.get('config', {}))
+                    zf.writestr(f"bug_report_{ts}/modules/{mid}/config.json",
+                                json.dumps(cfg, indent=2, default=str))
+                else:
+                    zf.writestr(f"bug_report_{ts}/modules/{mid}/logs.txt",
+                                "(no response within timeout)")
+
+            manifest = {
+                "generated_at": ts,
+                "online_modules": online_ids,
+                "offline_modules": offline_ids,
+                "modules_that_responded": [mid for mid in online_ids if pending[mid].get('data')],
+            }
+            zf.writestr(f"bug_report_{ts}/manifest.json",
+                        json.dumps(manifest, indent=2))
+
+        token = secrets.token_urlsafe(16)
+        self._bug_report_store = {token: (buf.getvalue(), f"bug_report_{ts}.zip")}
+        self.socketio.emit("bug_report_ready", {"token": token, "filename": f"bug_report_{ts}.zip"})
 
     def _nas_monitor_loop(self):
         NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)

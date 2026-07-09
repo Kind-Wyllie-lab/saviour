@@ -16,6 +16,9 @@ function levelClass(line) {
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// Sessions larger than this will have "Download all" disabled — use the NAS share instead.
+const DOWNLOAD_ALL_MAX_BYTES = 2 * 1024 ** 3; // 2 GB
+
 function copyToClipboard(text) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
@@ -430,13 +433,22 @@ function SessionList({ sessionList, modules = [] }) {
                         <span className="session-files-inline">
                           <span>{sizeLabel}</span>
                           {ready && fi.files.length > 0 && (
-                            <a
-                              className="session-file-dl session-file-dl--all"
-                              href={`/api/sessions/${session.session_name}/download`}
-                              download={`${session.session_name}.zip`}
-                            >
-                              Download all
-                            </a>
+                            fi.total_bytes > DOWNLOAD_ALL_MAX_BYTES ? (
+                              <span
+                                className="session-file-dl session-file-dl--all session-file-dl--disabled"
+                                title={`Too large to download via browser (${formatBytes(fi.total_bytes)}) — use the NAS share below`}
+                              >
+                                Download all
+                              </span>
+                            ) : (
+                              <a
+                                className="session-file-dl session-file-dl--all"
+                                href={`/api/sessions/${session.session_name}/download`}
+                                download={`${session.session_name}.zip`}
+                              >
+                                Download all
+                              </a>
+                            )
                           )}
                         </span>
                       </div>

@@ -465,6 +465,12 @@
   padding: 1px 8px;
 }
 
+.session-file-dl--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ── File browser ─────────────────────────────────────────────────────── */
 
 .session-files-section {

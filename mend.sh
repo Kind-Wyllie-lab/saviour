@@ -163,7 +163,7 @@ fi
 source "$TARGET_DIR/env/bin/activate"
 
 pip install --quiet --upgrade pip >> "$LOG" 2>&1
-pip install --quiet -e "$TARGET_DIR" >> "$LOG" 2>&1
+pip install --quiet -e "$TARGET_DIR" >> "$LOG" 2>&1 || warn "pip install -e . failed (may lack build deps on offline device) — continuing"
 pip install --quiet --force-reinstall simplejpeg >> "$LOG" 2>&1
 
 ok "Python environment up to date"

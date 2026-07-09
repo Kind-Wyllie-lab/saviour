@@ -60,6 +60,9 @@ class Communication:
         self.consecutive_missed_acks = 0
         self.has_received_ack = False
         self._MISSED_ACK_THRESHOLD = 2
+
+        # Prevents concurrent _force_reconnect threads from racing on cleanup()
+        self._reconnect_lock = threading.Lock()
         
 
     def connect(self, controller_ip: str, controller_port: int) -> bool:
@@ -270,26 +273,33 @@ class Communication:
     def _force_reconnect(self):
         """Tear down and recreate ZMQ sockets. Used by the ack watchdog.
         Recording, heartbeats, PTP, and Flask are unaffected."""
-        with self._ack_lock:
-            self.consecutive_missed_acks = 0
-
-        controller_ip = self.controller_ip
-        controller_port = self.controller_port
-
-        if not controller_ip:
-            self.logger.warning("Force reconnect requested but no controller IP stored — skipping")
+        if not self._reconnect_lock.acquire(blocking=False):
+            self.logger.info("Force reconnect already in progress — skipping duplicate")
             return
 
-        self.logger.info(f"Forcing ZMQ reconnect to {controller_ip}:{controller_port}")
-        self.cleanup()
+        try:
+            with self._ack_lock:
+                self.consecutive_missed_acks = 0
 
-        if self.connect(controller_ip, controller_port):
-            if self.start_command_listener():
-                self.logger.info("Force reconnect successful — command channel restored")
+            controller_ip = self.controller_ip
+            controller_port = self.controller_port
+
+            if not controller_ip:
+                self.logger.warning("Force reconnect requested but no controller IP stored — skipping")
+                return
+
+            self.logger.info(f"Forcing ZMQ reconnect to {controller_ip}:{controller_port}")
+            self.cleanup()
+
+            if self.connect(controller_ip, controller_port):
+                if self.start_command_listener():
+                    self.logger.info("Force reconnect successful — command channel restored")
+                else:
+                    self.logger.error("Force reconnect: connected but failed to restart command listener")
             else:
-                self.logger.error("Force reconnect: connected but failed to restart command listener")
-        else:
-            self.logger.error("Force reconnect: connect() failed")
+                self.logger.error("Force reconnect: connect() failed")
+        finally:
+            self._reconnect_lock.release()
 
 
     def send_status(self, status_data: Dict[str, Any]) -> None:

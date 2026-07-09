@@ -148,7 +148,7 @@ class Communication:
         """
         if self.command_listener_running:
             self.logger.info("Command listener already running")
-            return False
+            return True
         
         if not self.controller_ip:
             self.logger.error("Cannot start command listener: not connected to controller")

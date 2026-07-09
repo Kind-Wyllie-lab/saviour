@@ -22,17 +22,13 @@ class Health:
     """
     This class is responsible for monitoring module system resources and reporting status to the controller.
     """
-    def __init__(self,
-                 config=None,
-                 start_time=None):
-        
-        # Imported managers from module.py
+    def __init__(self, config=None):
         self.logger = logging.getLogger(__name__)
         self.config = config
-        if start_time is None:
-            self.start_time = time.time()
-        else:
-            self.start_time = start_time
+        # time.monotonic() is unaffected by PTP/NTP clock steps — using
+        # time.time() here would make uptime appear inflated after PTP sync
+        # steps the wall clock on first boot.
+        self._start_monotonic = time.monotonic()
 
         # Heartbeat parameters
         self.heartbeat_interval = self.config.get("module.heartbeat_interval", 30)
@@ -107,7 +103,7 @@ class Health:
             cpu_usage=psutil.cpu_percent(),
             memory_usage=mem.percent,
             memory_total_gb=round(mem.total / (1024 ** 3), 1),
-            uptime=time.time() - self.start_time if self.start_time else 0,
+            uptime=time.monotonic() - self._start_monotonic,
             disk_space=disk.percent,
             disk_used_gb=round(disk.used / (1024 ** 3), 1),
             disk_total_gb=round(disk.total / (1024 ** 3), 1),

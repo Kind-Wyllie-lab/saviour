@@ -472,8 +472,7 @@ class LoomCameraModule(Module):
 
         # --- Loom stimulus (local HDMI) ---
         self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
-        _stim_enabled_cfg = self.config.get("loom_stimulus", {}) or {}
-        self._stimulus_enabled = bool(_stim_enabled_cfg.get("enabled", True))
+        self._stimulus_enabled = bool(self.config.get("loom_stimulus.enabled", True))
         if self._stimulus_enabled:
             self._loom_stimulus.start()
             self.logger.info(
@@ -481,7 +480,7 @@ class LoomCameraModule(Module):
                 os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY"),
             )
         else:
-            self.logger.info("loom_stimulus: disabled by config (enabled=%r)", _stim_enabled_cfg.get("enabled"))
+            self.logger.info("loom_stimulus: disabled by config (enabled=%r)", self.config.get("loom_stimulus.enabled"))
 
     # ---------------------------------------------------------------------
     # Config hooks
@@ -685,18 +684,17 @@ class LoomCameraModule(Module):
             return False
 
     def _build_stimulus_config(self) -> LoomStimulusConfig:
-        stim_cfg = self.config.get("loom_stimulus", {}) or {}
         return LoomStimulusConfig(
-            texture_path=str(stim_cfg.get("texture_path", "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png")),
-            initial_size_cm=float(stim_cfg.get("initial_size_cm", 2.0)),
-            final_size_cm=float(stim_cfg.get("final_size_cm", 30.0)),
-            initial_pos_ndc=tuple(stim_cfg.get("initial_pos_ndc", [0.0, 0.0])),
-            final_pos_ndc=tuple(stim_cfg.get("final_pos_ndc", [0.0, 0.0])),
-            travel_time_s=float(stim_cfg.get("travel_time_s", 0.25)),
-            loom_wait_time_s=float(stim_cfg.get("loom_wait_time_s", 0.5)),
-            round_size=int(stim_cfg.get("round_size", 5)),
-            image_angle_deg=float(stim_cfg.get("image_angle_deg", 0.0)),
-            background_rgba=tuple(stim_cfg.get("background_rgba", [0.0, 0.0, 0.0, 1.0])),
+            texture_path=str(self.config.get("loom_stimulus.texture_path", "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png")),
+            initial_size_cm=float(self.config.get("loom_stimulus.initial_size_cm", 2.0)),
+            final_size_cm=float(self.config.get("loom_stimulus.final_size_cm", 30.0)),
+            initial_pos_ndc=tuple(self.config.get("loom_stimulus.initial_pos_ndc", [0.0, 0.0])),
+            final_pos_ndc=tuple(self.config.get("loom_stimulus.final_pos_ndc", [0.0, 0.0])),
+            travel_time_s=float(self.config.get("loom_stimulus.travel_time_s", 0.25)),
+            loom_wait_time_s=float(self.config.get("loom_stimulus.loom_wait_time_s", 0.5)),
+            round_size=int(self.config.get("loom_stimulus.round_size", 5)),
+            image_angle_deg=float(self.config.get("loom_stimulus.image_angle_deg", 0.0)),
+            background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 0.5])),
         )
 
     _STIMULUS_PARAM_KEYS = {

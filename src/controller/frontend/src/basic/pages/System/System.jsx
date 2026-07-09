@@ -117,14 +117,56 @@ export default function System() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Build sorted rows: modules sorted by name
-  const moduleRows = useMemo(() => {
-    return Object.entries(modules)
-      .map(([id, m]) => ({ id, name: m.name ?? id, ...moduleHealth[id] }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+  // Build rows grouped by group (defaults to type), then sorted by name within each group
+  const groupedModuleRows = useMemo(() => {
+    const rows = Object.entries(modules)
+      .map(([id, m]) => ({
+        id,
+        name: m.name ?? id,
+        group: m.group || m.type || id,
+        ...moduleHealth[id],
+      }))
+      .sort((a, b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
+
+    // Build [{group, rows:[]}] structure
+    const groups = [];
+    for (const row of rows) {
+      if (!groups.length || groups[groups.length - 1].group !== row.group) {
+        groups.push({ group: row.group, rows: [] });
+      }
+      groups[groups.length - 1].rows.push(row);
+    }
+    return groups;
   }, [moduleHealth, modules]);
 
   // ── Remove module ─────────────────────────────────────────────────────────
+  // ── Bug report ────────────────────────────────────────────────────────────
+  const [bugReportState, setBugReportState] = useState(null); // null | "collecting" | "ready"
+
+  useEffect(() => {
+    const onStatus = ({ status }) => {
+      if (status === "collecting") setBugReportState("collecting");
+    };
+    const onReady = ({ token, filename }) => {
+      setBugReportState(null);
+      const a = document.createElement("a");
+      a.href = `/api/bug_report/${token}`;
+      a.download = filename;
+      a.click();
+    };
+    socket.on("bug_report_status", onStatus);
+    socket.on("bug_report_ready", onReady);
+    return () => {
+      socket.off("bug_report_status", onStatus);
+      socket.off("bug_report_ready", onReady);
+    };
+  }, []);
+
+  const handleBugReport = () => {
+    setBugReportState("collecting");
+    socket.emit("get_bug_report");
+  };
+
   const [removeTarget, setRemoveTarget] = useState(null); // { id, name, online }
 
   const handleRemoveConfirm = () => {
@@ -309,12 +351,23 @@ export default function System() {
     <main className="system-page">
       <div className="system-header">
         <h2>System Health</h2>
-        <button className="refresh-btn" type="button" onClick={() => {
-          refresh();
-          socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
-        }}>
-          Refresh
-        </button>
+        <div className="system-header-actions">
+          <button className="refresh-btn" type="button" onClick={() => {
+            refresh();
+            socket.emit("send_command", { module_id: "all", type: "get_health", params: {} });
+          }}>
+            Refresh
+          </button>
+          <button
+            className="refresh-btn"
+            type="button"
+            onClick={handleBugReport}
+            disabled={bugReportState === "collecting"}
+            title="Collect logs and system state from all devices and download as a ZIP"
+          >
+            {bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}
+          </button>
+        </div>
       </div>
 
       <div className="system-table-wrapper">
@@ -395,53 +448,56 @@ export default function System() {
               </td>
             </tr>
 
-            {/* Module rows */}
-            {moduleRows.map((row) => {
-              const isOnline = modules[row.id]?.online ?? false;
-              const connStatus = isOnline ? (row.status ?? "online") : "offline";
-              const moduleStatus = modules[row.id]?.status ?? null;
-              return (
-                <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
-                  <td>
-                    <span className="device-name">{row.name}</span>
-                    <span className="device-id">{row.id}</span>
-                  </td>
-                  <td>{connectionCell(connStatus)}</td>
-                  <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
-                  <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
-                  <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
-                  <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset) : <span className="cell--muted">—</span>}</td>
-                  <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
-                  <td>
-                    {shutdownStates[row.id] ? (
-                      <span className="shutdown-progress">
-                        {shutdownStates[row.id] === "acked" ? "Powering off…" : "Shutting down…"}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="action-menu-btn"
-                        onClick={() => setActionTarget({ id: row.id, name: row.name, isOnline })}
-                      >
-                        Actions ▾
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-
-            {moduleRows.length === 0 && (
+            {/* Module rows, grouped by group (defaults to type) */}
+            {groupedModuleRows.length === 0 ? (
               <tr>
-                <td colSpan={10} className="system-table__empty">
+                <td colSpan={12} className="system-table__empty">
                   No module health data yet — waiting for first heartbeat
                 </td>
               </tr>
-            )}
+            ) : groupedModuleRows.map(({ group, rows }) => [
+              <tr key={`group-${group}`} className="system-table__group-header">
+                <td colSpan={12}>{group}</td>
+              </tr>,
+              ...rows.map((row) => {
+                const isOnline = modules[row.id]?.online ?? false;
+                const connStatus = isOnline ? (row.status ?? "online") : "offline";
+                const moduleStatus = modules[row.id]?.status ?? null;
+                return (
+                  <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
+                    <td>
+                      <span className="device-name">{row.name}</span>
+                      <span className="device-id">{row.id}</span>
+                    </td>
+                    <td>{connectionCell(connStatus)}</td>
+                    <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
+                    <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
+                    <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
+                    <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">—</span>}</td>
+                    <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
+                    <td>
+                      {shutdownStates[row.id] ? (
+                        <span className="shutdown-progress">
+                          {shutdownStates[row.id] === "acked" ? "Powering off…" : "Shutting down…"}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="action-menu-btn"
+                          onClick={() => setActionTarget({ id: row.id, name: row.name, isOnline })}
+                        >
+                          Actions ▾
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              }),
+            ])}
           </tbody>
         </table>
       </div>
@@ -490,6 +546,13 @@ export default function System() {
           <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
             <p className="actions-modal__title">Controller</p>
             <div className="actions-modal__list">
+              <button type="button" className="actions-modal__item"
+                onClick={() => { handleBugReport(); setShowControllerActions(false); }}
+                disabled={bugReportState === "collecting"}>
+                <span>{bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}</span>
+                <span className="actions-modal__hint">Collect logs and system state from all devices</span>
+              </button>
+              <div className="actions-modal__divider" />
               <button type="button" className="actions-modal__item"
                 onClick={() => { setShowClockModal(true); setShowControllerActions(false); }}>
                 <span>Set Time</span>

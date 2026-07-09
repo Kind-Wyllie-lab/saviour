@@ -1016,6 +1016,8 @@ class LoomCameraModule(Module):
 
             if self._stimulus_enabled:
                 for msg in self._loom_stimulus.poll_status(max_messages=3):
+                    if msg.get("type") == "loom_stimulus_error":
+                        self.logger.error("Loom stimulus renderer crashed: %s", msg.get("error"))
                     # forward to controller for debugging/record
                     self.communication.send_status({"type": "loom_stimulus_status", **msg})
 

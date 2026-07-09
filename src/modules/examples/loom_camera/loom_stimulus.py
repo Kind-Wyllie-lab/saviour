@@ -601,20 +601,23 @@ def loom_stimulus_process_main(
     """
     status_queue.put({"type": "loom_stimulus_started"})
 
-    run_loom_stimulus_with_ipc(
-        command_queue=command_queue,
-        status_queue=status_queue,
-        texture_path=stim_cfg.texture_path,
-        initial_size_cm=stim_cfg.initial_size_cm,
-        final_size_cm=stim_cfg.final_size_cm,
-        initial_pos_ndc=stim_cfg.initial_pos_ndc,
-        final_pos_ndc=stim_cfg.final_pos_ndc,
-        travel_time_s=stim_cfg.travel_time_s,
-        loom_wait_time_s=stim_cfg.loom_wait_time_s,
-        repetitions_per_round=stim_cfg.round_size,
-        image_angle_deg=stim_cfg.image_angle_deg,
-        background_rgba=stim_cfg.background_rgba,
-    )
+    try:
+        run_loom_stimulus_with_ipc(
+            command_queue=command_queue,
+            status_queue=status_queue,
+            texture_path=stim_cfg.texture_path,
+            initial_size_cm=stim_cfg.initial_size_cm,
+            final_size_cm=stim_cfg.final_size_cm,
+            initial_pos_ndc=stim_cfg.initial_pos_ndc,
+            final_pos_ndc=stim_cfg.final_pos_ndc,
+            travel_time_s=stim_cfg.travel_time_s,
+            loom_wait_time_s=stim_cfg.loom_wait_time_s,
+            repetitions_per_round=stim_cfg.round_size,
+            image_angle_deg=stim_cfg.image_angle_deg,
+            background_rgba=stim_cfg.background_rgba,
+        )
+    except Exception as exc:
+        status_queue.put({"type": "loom_stimulus_error", "error": str(exc)})
 
 
 class LoomStimulusController:
@@ -641,8 +644,18 @@ class LoomStimulusController:
         if self._proc is not None and self._proc.is_alive():
             return
 
+        # X11 fallback
         os.environ.setdefault("DISPLAY", ":0")
         os.environ.setdefault("XAUTHORITY", "/home/pi/.Xauthority")
+
+        # Wayland: discover the compositor socket if we're running as root
+        # (systemd service doesn't inherit the user session environment).
+        if not os.environ.get("WAYLAND_DISPLAY"):
+            import glob
+            sockets = sorted(glob.glob("/run/user/*/wayland-0"))
+            if sockets:
+                os.environ["XDG_RUNTIME_DIR"] = os.path.dirname(sockets[0])
+                os.environ["WAYLAND_DISPLAY"] = os.path.basename(sockets[0])
 
         self._proc = mp.Process(
             target=loom_stimulus_process_main,

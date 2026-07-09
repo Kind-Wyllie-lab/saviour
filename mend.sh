@@ -17,6 +17,11 @@
 #   - Overwrite /etc/saviour/config (role/type/IP are preserved)
 #   - Upgrade the OS (apt-get upgrade is intentionally omitted)
 
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    echo "mend.sh must not be sourced.  Run:  sudo bash mend.sh" >&2
+    return 1
+fi
+
 set -Eeuo pipefail
 trap 'echo "mend.sh failed at line $LINENO (exit $?)" >&2' ERR
 

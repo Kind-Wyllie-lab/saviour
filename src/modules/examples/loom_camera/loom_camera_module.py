@@ -1441,7 +1441,9 @@ class LoomCameraModule(Module):
     def loom_stimulus_start(self) -> dict:
         """Manually start the looming stimulus (debug)."""
         if not self._stimulus_enabled:
+            self.logger.info("loom_stimulus_start: stimulus disabled")
             return {"status": "disabled"}
+        self.logger.info("loom_stimulus_start: sending start to renderer")
         self._loom_stimulus.send("start")
         return {"status": "ok"}
 
@@ -1450,6 +1452,7 @@ class LoomCameraModule(Module):
         """Manually stop the looming stimulus after current round (debug)."""
         if not self._stimulus_enabled:
             return {"status": "disabled"}
+        self.logger.info("loom_stimulus_stop: sending stop to renderer")
         self._loom_stimulus.send("stop")
         return {"status": "ok"}
 

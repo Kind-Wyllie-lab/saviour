@@ -482,6 +482,60 @@ class Web(ABC):
                 _emit('session_log_response', {'session_name': session_name, 'lines': [], 'error': str(e)})
 
         
+        @self.socketio.on("get_session_file_info")
+        def handle_get_session_file_info(data=None):
+            import re
+            from flask_socketio import emit as _emit
+            session_name = (data or {}).get("session_name", "")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                _emit("session_file_info_response", {"session_name": session_name, "error": "invalid name"})
+                return
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+            session_dir = os.path.join(share, session_name)
+            if not os.path.isdir(session_dir):
+                _emit("session_file_info_response", {
+                    "session_name": session_name,
+                    "dir": session_dir,
+                    "files": [],
+                    "total_bytes": 0,
+                })
+                return
+            files = []
+            total = 0
+            for root, dirs, filenames in os.walk(session_dir):
+                dirs.sort()
+                for fn in sorted(filenames):
+                    full = os.path.join(root, fn)
+                    try:
+                        sz = os.path.getsize(full)
+                    except OSError:
+                        sz = 0
+                    rel = os.path.relpath(full, session_dir)
+                    files.append({"name": fn, "path": rel, "size_bytes": sz})
+                    total += sz
+            _emit("session_file_info_response", {
+                "session_name": session_name,
+                "dir": session_dir,
+                "files": files,
+                "total_bytes": total,
+            })
+
+        @self.app.route("/api/sessions/<session_name>/download/<path:filename>")
+        def download_session_file(session_name, filename):
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                return "Invalid session name", 400
+            share = os.path.realpath(self.config.get("export.mount_path", "/home/pi/controller_share"))
+            session_dir = os.path.realpath(os.path.join(share, session_name))
+            if not session_dir.startswith(share + os.sep):
+                return "Forbidden", 403
+            safe_path = os.path.realpath(os.path.join(session_dir, filename))
+            if not safe_path.startswith(session_dir + os.sep):
+                return "Forbidden", 403
+            if not os.path.isfile(safe_path):
+                return "Not found", 404
+            return send_file(safe_path, as_attachment=True, download_name=os.path.basename(safe_path))
+
         @self.socketio.on("create_session")
         def handle_create_session(data):
             target = data.get("target")

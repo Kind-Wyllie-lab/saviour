@@ -117,11 +117,26 @@ export default function System() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Build sorted rows: modules sorted by name
-  const moduleRows = useMemo(() => {
-    return Object.entries(modules)
-      .map(([id, m]) => ({ id, name: m.name ?? id, ...moduleHealth[id] }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+  // Build rows grouped by group (defaults to type), then sorted by name within each group
+  const groupedModuleRows = useMemo(() => {
+    const rows = Object.entries(modules)
+      .map(([id, m]) => ({
+        id,
+        name: m.name ?? id,
+        group: m.group || m.type || id,
+        ...moduleHealth[id],
+      }))
+      .sort((a, b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
+
+    // Build [{group, rows:[]}] structure
+    const groups = [];
+    for (const row of rows) {
+      if (!groups.length || groups[groups.length - 1].group !== row.group) {
+        groups.push({ group: row.group, rows: [] });
+      }
+      groups[groups.length - 1].rows.push(row);
+    }
+    return groups;
   }, [moduleHealth, modules]);
 
   // ── Remove module ─────────────────────────────────────────────────────────
@@ -433,53 +448,56 @@ export default function System() {
               </td>
             </tr>
 
-            {/* Module rows */}
-            {moduleRows.map((row) => {
-              const isOnline = modules[row.id]?.online ?? false;
-              const connStatus = isOnline ? (row.status ?? "online") : "offline";
-              const moduleStatus = modules[row.id]?.status ?? null;
-              return (
-                <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
-                  <td>
-                    <span className="device-name">{row.name}</span>
-                    <span className="device-id">{row.id}</span>
-                  </td>
-                  <td>{connectionCell(connStatus)}</td>
-                  <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
-                  <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
-                  <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
-                  <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
-                  <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">—</span>}</td>
-                  <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
-                  <td>
-                    {shutdownStates[row.id] ? (
-                      <span className="shutdown-progress">
-                        {shutdownStates[row.id] === "acked" ? "Powering off…" : "Shutting down…"}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="action-menu-btn"
-                        onClick={() => setActionTarget({ id: row.id, name: row.name, isOnline })}
-                      >
-                        Actions ▾
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-
-            {moduleRows.length === 0 && (
+            {/* Module rows, grouped by group (defaults to type) */}
+            {groupedModuleRows.length === 0 ? (
               <tr>
-                <td colSpan={10} className="system-table__empty">
+                <td colSpan={12} className="system-table__empty">
                   No module health data yet — waiting for first heartbeat
                 </td>
               </tr>
-            )}
+            ) : groupedModuleRows.map(({ group, rows }) => [
+              <tr key={`group-${group}`} className="system-table__group-header">
+                <td colSpan={12}>{group}</td>
+              </tr>,
+              ...rows.map((row) => {
+                const isOnline = modules[row.id]?.online ?? false;
+                const connStatus = isOnline ? (row.status ?? "online") : "offline";
+                const moduleStatus = modules[row.id]?.status ?? null;
+                return (
+                  <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
+                    <td>
+                      <span className="device-name">{row.name}</span>
+                      <span className="device-id">{row.id}</span>
+                    </td>
+                    <td>{connectionCell(connStatus)}</td>
+                    <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
+                    <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
+                    <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
+                    <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">—</span>}</td>
+                    <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
+                    <td>
+                      {shutdownStates[row.id] ? (
+                        <span className="shutdown-progress">
+                          {shutdownStates[row.id] === "acked" ? "Powering off…" : "Shutting down…"}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="action-menu-btn"
+                          onClick={() => setActionTarget({ id: row.id, name: row.name, isOnline })}
+                        >
+                          Actions ▾
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              }),
+            ])}
           </tbody>
         </table>
       </div>

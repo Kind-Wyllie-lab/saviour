@@ -417,15 +417,28 @@ function SessionList({ sessionList, modules = [] }) {
 
                   {isStopped && (() => {
                     const fi = sessionFileInfo[session.session_name];
-                    const sizeLabel = fi === "loading"
+                    const loading = fi === "loading";
+                    const ready = fi && fi !== "loading";
+                    const sizeLabel = loading
                       ? "loading…"
-                      : fi
+                      : ready
                         ? `${fi.files.length} file${fi.files.length !== 1 ? "s" : ""}, ${formatBytes(fi.total_bytes)}`
                         : null;
                     return sizeLabel ? (
                       <div className="session-meta-grid">
                         <span className="session-meta-label">Files</span>
-                        <span>{sizeLabel}</span>
+                        <span className="session-files-inline">
+                          <span>{sizeLabel}</span>
+                          {ready && fi.files.length > 0 && (
+                            <a
+                              className="session-file-dl session-file-dl--all"
+                              href={`/api/sessions/${session.session_name}/download`}
+                              download={`${session.session_name}.zip`}
+                            >
+                              Download all
+                            </a>
+                          )}
+                        </span>
                       </div>
                     ) : null;
                   })()}

@@ -96,13 +96,11 @@ Each system includes:
 1. Manual Install
 
 ```sh
-# Clone the repository
-$ git clone https://github.com/Kind-Wyllie-lab/saviour.git
-$ cd saviour
-$ ./setup.sh
-# Once this has completed, you can select the role of the device.
-$ ./switch_role.sh
-# Reboot the pi and setup will have completed.
+# One line install
+$ curl -fsSL https://raw.githubusercontent.com/Kind-Wyllie-lab/saviour/main/install.sh | bash
+
+# After completed, run the following and select the correct configuration (e.g. controller, APA or module, camera)
+$ sudo saviour-config
 ```
 
 2. Using a pre-baked image
@@ -114,23 +112,6 @@ Not yet available. Eventually an OS image will be available which can be copied 
 ## Usage
 Detailed usage instructions can be found in the [System Requirements Specification document](https://github.com/Kind-Wyllie-lab/habitat/SRS.md).
 
-<!-- ROADMAP -->
-## Roadmap
-- [X] Complete system architecture design
-- [X] Implement core controller functionality
-- [X] Develop sensor module interfaces
-- [X] Implement data storage and retrieval
-- [X] Add monitoring and health checks
-- [X] pyproject.toml style setup
-- [X] Graphical user interface
-- [X] Reliable PTP synchronisation
-- [ ] Pre-baked SAVIOUR distributions
-- [ ] Basler camera modules
-- [ ] MJPEG stream peak-meter for microphone modules, viewable in frontend
-- [ ] Real time rat tracking for camera modules
-- [ ] REST endpoints for synchronisation with webapp and other apps
-- [ ] Add documentation
-
 <!-- CONTRIBUTING -->
 ## Contributing
 SAVIOUR is designed to be easily extensible to new types of modules and new user interfaces to control them in experiment specific ways.
@@ -138,8 +119,7 @@ Any contributions you make are **greatly appreciated**.
 
 ### Branches
 - main - The latest release of saviour e.g. v1.2
-- staging - This branch is used for final testing of new releases and adding a descriptive tag to new releases.
-- develop - Changes are accumulated here which result in new releases.
+- staging - This branch is used for final testing of new releases
 - fix/ - Prefix for a branch in which a fix is developed
 - feat/ - Prefix for a branch in which a new feature is developed
 - refactor/ - Prefix for a branch in which a refactor is implemented

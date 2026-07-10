@@ -337,8 +337,15 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
               onChange={e => handleChange(["camera", "brightness"], e)} />
           </div>
           <div className="form-field">
+            <label>Auto gain/exposure:</label>
+            <input type="checkbox"
+              checked={cam.ae_enable ?? false}
+              onChange={e => handleChange(["camera", "ae_enable"], e)} />
+          </div>
+          <div className="form-field">
             <label>Gain:</label>
             <input type="number" min="1" step="1"
+              disabled={cam.ae_enable ?? false}
               value={cam.gain ?? ""}
               onChange={e => handleChange(["camera", "gain"], e)} />
           </div>
@@ -346,7 +353,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
             <label>Exposure time (µs):</label>
             <div className="exposure-control">
               <input type="number" min="1" step="100"
-                disabled={!cam.manual_exposure}
+                disabled={(cam.ae_enable ?? false) || !cam.manual_exposure}
                 value={cam.manual_exposure
                   ? (cam.exposure_time ?? "")
                   : (cam.fps ? Math.round(1_000_000 / cam.fps) : "")}
@@ -354,6 +361,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
               <label className="exposure-manual-label">
                 <input type="checkbox"
                   checked={cam.manual_exposure ?? false}
+                  disabled={cam.ae_enable ?? false}
                   onChange={e => handleChange(["camera", "manual_exposure"], e)} />
                 Manual
               </label>

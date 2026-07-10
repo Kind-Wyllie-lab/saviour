@@ -173,6 +173,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const isThisServer     = syncServerModule?.id === module.id;
   const otherIsServer    = syncServerModule != null && !isThisServer;
   const currentSyncMode  = cam.sync_mode ?? "none";
+  const syncExposureLocked = currentSyncMode === "client" && cam.sync_lock_exposure;
+  const aeEnabled        = (cam.ae_enable ?? false) && !syncExposureLocked;
   const serverCam        = syncServerModule?.config?.camera ?? {};
   const serverFps        = serverCam.fps != null ? Number(serverCam.fps) : null;
   const serverExposureUs = serverCam.manual_exposure
@@ -326,8 +328,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "brightness"], e)} />
             </div>
             <div className="form-field">
+              <label>Auto gain/exposure:</label>
+              <input type="checkbox"
+                checked={cam.ae_enable ?? false}
+                disabled={syncExposureLocked}
+                onChange={e => handleChange(["camera", "ae_enable"], e)} />
+            </div>
+            {syncExposureLocked && (cam.ae_enable ?? false) && (
+              <div className="sensor-mode-info">
+                Overridden by "Lock exposure" (Record tab) while frame-synced.
+              </div>
+            )}
+            <div className="form-field">
               <label>Gain:</label>
               <input type="number" min="1" step="1"
+                disabled={aeEnabled}
                 value={cam.gain ?? ""}
                 onChange={e => handleChange(["camera", "gain"], e)} />
             </div>
@@ -335,7 +350,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <label>Exposure time (µs):</label>
               <div className="exposure-control">
                 <input type="number" min="1" step="100"
-                  disabled={!cam.manual_exposure || (currentSyncMode === "client" && cam.sync_lock_exposure)}
+                  disabled={aeEnabled || !cam.manual_exposure || (currentSyncMode === "client" && cam.sync_lock_exposure)}
                   value={
                     currentSyncMode === "client" && cam.sync_lock_exposure && serverExposureUs != null
                       ? serverExposureUs
@@ -347,7 +362,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 <label className="exposure-manual-label">
                   <input type="checkbox"
                     checked={cam.manual_exposure ?? false}
-                    disabled={currentSyncMode === "client" && cam.sync_lock_exposure}
+                    disabled={aeEnabled || (currentSyncMode === "client" && cam.sync_lock_exposure)}
                     onChange={e => handleChange(["camera", "manual_exposure"], e)} />
                   Manual
                 </label>

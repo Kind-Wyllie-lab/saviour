@@ -18,15 +18,26 @@ export function useConfigForm(initialData) {
 
   const handleChange = (path, e) => {
     setFormData(prev => {
-      const cloned = structuredClone(prev);
+      const cloned = structuredClone(prev ?? {});
       let pointer = cloned;
-      for (let i = 0; i < path.length - 1; i++) pointer = pointer[path[i]];
+      for (let i = 0; i < path.length - 1; i++) {
+        // Module config may not have this section yet (e.g. a module that
+        // hasn't finished syncing has config: {}) — create it rather than
+        // crashing on undefined.
+        if (pointer[path[i]] == null) pointer[path[i]] = {};
+        pointer = pointer[path[i]];
+      }
       const lastKey = path[path.length - 1];
       const oldValue = pointer[lastKey];
 
-      if (typeof oldValue === "boolean") pointer[lastKey] = e.target.checked;
-      else if (typeof oldValue === "number") pointer[lastKey] = Number(e.target.value);
-      else pointer[lastKey] = e.target.value;
+      // Infer type from the input itself first — falling back to oldValue's
+      // type is wrong when the key is missing from config (e.g. a checkbox
+      // whose oldValue is undefined would otherwise store e.target.value,
+      // the string "on", instead of the boolean checked state).
+      if (e.target.type === "checkbox") pointer[lastKey] = e.target.checked;
+      else if (e.target.type === "number" || e.target.type === "range" || typeof oldValue === "number") {
+        pointer[lastKey] = Number(e.target.value);
+      } else pointer[lastKey] = e.target.value;
 
       return cloned;
     });

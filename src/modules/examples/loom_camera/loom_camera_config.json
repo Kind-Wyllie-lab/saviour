@@ -13,6 +13,7 @@
     "gain": 1,
     "manual_exposure": false,
     "exposure_time": 10000,
+    "ae_enable": false,
     "brightness": 0,
     "overlay_framerate_on_preview": false,
     "bitrate_mb": 2,

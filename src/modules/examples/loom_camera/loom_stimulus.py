@@ -399,9 +399,11 @@ def run_loom_stimulus_with_ipc(
                         start_requested = True
                         _status({"type": "start_received"})
                     elif cmd == "stop":
+                        # Do not hard-stop here — let the enter/leave edge
+                        # detection below call batch.on_leave(), which finishes
+                        # the current round of `round_size` looms before
+                        # stopping rather than cutting the animation off mid-batch.
                         start_requested = False
-                        batch.stop_now()
-                        motion = _reset_motion()
                         _status({"type": "stop_received"})
                     elif cmd == "shutdown":
                         shutdown_requested = True

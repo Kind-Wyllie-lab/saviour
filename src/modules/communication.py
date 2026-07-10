@@ -355,11 +355,17 @@ class Communication:
                 self.logger.warning(f"Error closing command socket: {e}")
             self.command_socket = None
 
-        # Wait for the listener thread to notice the closed socket and exit
+        # Wait for the listener thread to notice the closed socket and exit.
+        # RCVTIMEO is 5 s (see listen_for_commands), so the thread may still be
+        # blocked in recv_string() for up to 5 s even after close() — the join
+        # timeout must outlast that, or this (almost always) "times out" and we
+        # fall through to context.term() below with the thread still running.
+        thread_exited = True
         if hasattr(self, 'command_thread') and self.command_thread and self.command_thread.is_alive():
-            self.command_thread.join(timeout=2.0)
-            if self.command_thread.is_alive():
-                self.logger.warning("Command listener thread did not exit within 2 s after socket close")
+            self.command_thread.join(timeout=6.0)
+            thread_exited = not self.command_thread.is_alive()
+            if not thread_exited:
+                self.logger.warning("Command listener thread did not exit within 6 s after socket close")
 
         # Close status socket
         if hasattr(self, 'status_socket') and self.status_socket:
@@ -372,12 +378,19 @@ class Communication:
                 self.logger.warning(f"Error closing status socket: {e}")
             self.status_socket = None
 
-        # Terminate context — all sockets are closed and the listener thread has
-        # exited, so term() should return almost immediately.
+        # Terminate context. term() blocks until every socket from this context
+        # is closed — if the listener thread is somehow still stuck (the 6 s
+        # join above failed), term() would block forever, deadlocking this
+        # method while it holds _reconnect_lock and silently disabling every
+        # future reconnect attempt. destroy() forcibly closes any remaining
+        # sockets instead of waiting, so we always get unstuck.
         if hasattr(self, 'context') and self.context:
             self.logger.info("Terminating ZMQ context")
             try:
-                self.context.term()
+                if thread_exited:
+                    self.context.term()
+                else:
+                    self.context.destroy(linger=0)
             except Exception as e:
                 self.logger.warning(f"ZMQ context term error (non-fatal): {e}")
             self.context = None

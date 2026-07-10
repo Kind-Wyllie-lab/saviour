@@ -255,12 +255,20 @@ class CameraModule(Module):
                 exposure_time = self.config.get("camera.exposure_time", 10000)
             else:
                 exposure_time = int(1_000_000 / fps)
+
+            ae_enabled = bool(self.config.get("camera.ae_enable", False))
+            sync_mode_str = self.config.get("camera.sync_mode", "none")
+            if sync_mode_str in ("server", "client") and self.config.get("camera.sync_lock_exposure", False):
+                ae_enabled = False  # sync lock overrides auto-gain to keep synced cameras' brightness matched
+
             live_controls = {
-                "AnalogueGain": self.config.get("camera.gain", 1),
-                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness"),
                 "FrameRate": fps,
+                "AeEnable": ae_enabled,
             }
+            if not ae_enabled:
+                live_controls["AnalogueGain"] = self.config.get("camera.gain", 1)
+                live_controls["ExposureTime"] = exposure_time
             if self.has_autofocus:
                 _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
                 af_mode_str = self.config.get("camera.autofocus_mode", "manual")
@@ -368,12 +376,16 @@ class CameraModule(Module):
             else:
                 exposure_time = int(1_000_000 / self.fps)
 
+            ae_enabled = bool(self.config.get("camera.ae_enable", False))
+
             controls = {
                 "FrameRate": self.fps,
-                "AnalogueGain": self.config.get("camera.gain"),
-                "ExposureTime": exposure_time,
-                "Brightness": self.config.get("camera.brightness")
+                "Brightness": self.config.get("camera.brightness"),
+                "AeEnable": ae_enabled,
             } # target framerate, in reality it might be lower.
+            if not ae_enabled:
+                controls["AnalogueGain"] = self.config.get("camera.gain")
+                controls["ExposureTime"] = exposure_time
 
             if self.has_autofocus:
                 _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
@@ -394,6 +406,8 @@ class CameraModule(Module):
                 self.logger.info(f"Camera sync mode: {sync_mode_str}")
                 if self.config.get("camera.sync_lock_exposure", False):
                     controls["AeEnable"] = False
+                    controls["AnalogueGain"] = self.config.get("camera.gain")
+                    controls["ExposureTime"] = exposure_time
                     self.logger.info("AEC disabled (sync_lock_exposure)")
                 if self.config.get("camera.sync_lock_awb", False):
                     controls["AwbEnable"] = False

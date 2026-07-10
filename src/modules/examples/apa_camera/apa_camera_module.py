@@ -357,12 +357,15 @@ class APACameraModule(Module):
                 if self.config.get("camera.manual_exposure", False)
                 else int(1_000_000 / fps)
             )
+            ae_enabled = bool(self.config.get("camera.ae_enable", False))
             live_controls = {
-                "AnalogueGain": self.config.get("camera.gain", 1),
-                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness", 0),
                 "FrameRate": fps,
+                "AeEnable": ae_enabled,
             }
+            if not ae_enabled:
+                live_controls["AnalogueGain"] = self.config.get("camera.gain", 1)
+                live_controls["ExposureTime"] = exposure_time
             if self.has_autofocus:
                 _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
                 af_mode = _AF_MODE_MAP.get(self.config.get("camera.autofocus_mode", "manual"), 0)
@@ -475,16 +478,19 @@ class APACameraModule(Module):
                 if self.config.get("camera.manual_exposure", False)
                 else int(1_000_000 / self.fps)
             )
+            ae_enabled = bool(self.config.get("camera.ae_enable", False))
 
             sensor   = {"output_size": self.mode["size"], "bit_depth": self.mode["bit_depth"]}
             main     = {"size": (self.width, self.height), "format": "RGB888"}
             lores    = {"size": (self.lores_width, self.lores_height), "format": "RGB888"}
             controls = {
                 "FrameRate": self.fps,
-                "AnalogueGain": self.config.get("camera.gain", 1),
-                "ExposureTime": exposure_time,
                 "Brightness": self.config.get("camera.brightness", 0),
+                "AeEnable": ae_enabled,
             }
+            if not ae_enabled:
+                controls["AnalogueGain"] = self.config.get("camera.gain", 1)
+                controls["ExposureTime"] = exposure_time
 
             if self.has_autofocus:
                 _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}

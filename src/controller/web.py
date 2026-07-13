@@ -171,6 +171,14 @@ class Web(ABC):
         return name
 
 
+    def _write_admin_password(self, password: str) -> None:
+        """Write the admin password to disk, mode 600."""
+        os.makedirs(os.path.dirname(self._ADMIN_CREDENTIALS_FILE), exist_ok=True)
+        fd = os.open(self._ADMIN_CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(password)
+
+
     def _get_or_create_admin_password(self) -> str:
         """Return the shared admin password, generating one on first use.
         Single shared credential (no per-user accounts) -- proportionate to
@@ -184,10 +192,7 @@ class Web(ABC):
         except FileNotFoundError:
             pass
         password = secrets.token_hex(16)
-        os.makedirs(os.path.dirname(self._ADMIN_CREDENTIALS_FILE), exist_ok=True)
-        fd = os.open(self._ADMIN_CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(password)
+        self._write_admin_password(password)
         self.logger.warning(
             f"Generated new admin password at {self._ADMIN_CREDENTIALS_FILE} -- "
             f"required to log in and perform any mutating/destructive action. "
@@ -1679,6 +1684,27 @@ class Web(ABC):
                 self.socketio.emit("login_success", room=request.sid)
             else:
                 self.socketio.emit("login_error", "Wrong password", room=request.sid)
+
+
+        @self.socketio.on("change_admin_password")
+        def handle_change_admin_password(data):
+            # Requires the *current* password, not just an existing
+            # authenticated connection -- otherwise a session left logged in
+            # on a shared screen could silently lock everyone else out.
+            if not self._require_auth("change_password_error", {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            current_password = data.get("current_password")
+            new_password = data.get("new_password", "")
+            if not self._check_admin_password(current_password):
+                self.socketio.emit("change_password_error", {"error": "Current password is incorrect"}, room=request.sid)
+                return
+            if len(new_password) < 8:
+                self.socketio.emit("change_password_error", {"error": "New password must be at least 8 characters"}, room=request.sid)
+                return
+            self._write_admin_password(new_password)
+            self.logger.warning(f"Admin password changed at {self._ADMIN_CREDENTIALS_FILE}")
+            self.socketio.emit("change_password_success", room=request.sid)
 
 
         """ Commands and utility """

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink } from "react-router-dom";
 import socket from "/src/socket";
-import { getDeployToken, setDeployToken } from "/src/deployToken";
+import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
@@ -23,13 +23,10 @@ function Sidebar({ navItems }) {
   const [deployStatus, setDeployStatus]       = useState(null); // null | "deploying" | "done" | "error"
   const [deployError, setDeployError]         = useState(null);
   const [stagingCurrent, setStagingCurrent]   = useState(false);
-  const [deployToken, setDeployTokenState]    = useState(() => getDeployToken());
+  const [loggedIn, setLoggedIn]               = useState(() => isLoggedIn());
   const fileInputRef = useRef(null);
 
-  const handleTokenChange = (value) => {
-    setDeployTokenState(value);
-    setDeployToken(value);
-  };
+  useEffect(() => onAuthChange(() => setLoggedIn(isLoggedIn())), []);
 
   useEffect(() => {
     socket.emit("get_controller_info");
@@ -114,6 +111,10 @@ function Sidebar({ navItems }) {
   };
 
   const openUpdateModal = () => {
+    if (!loggedIn) {
+      window.dispatchEvent(new Event("saviour:open-login"));
+      return;
+    }
     setUpdateInfo(null);
     setStagedMeta(null);
     setUploadProgress(null);
@@ -139,7 +140,6 @@ function Sidebar({ navItems }) {
       filename:     file.name,
       total_chunks: totalChunks,
       total_bytes:  file.size,
-      token:        deployToken,
     });
 
     const sendChunks = async () => {
@@ -161,7 +161,7 @@ function Sidebar({ navItems }) {
 
   const handleDeploy = () => {
     setDeployStatus("deploying");
-    socket.emit("deploy_update", { token: deployToken });
+    socket.emit("deploy_update");
   };
 
   const handleStageCurrent = () => {
@@ -170,7 +170,7 @@ function Sidebar({ navItems }) {
     setStagedMeta(null);
     setDeployStatus(null);
     setDeployError(null);
-    socket.emit("stage_current_version", { token: deployToken });
+    socket.emit("stage_current_version");
   };
 
   const staged = stagedMeta || updateInfo?.staged;
@@ -213,12 +213,43 @@ function Sidebar({ navItems }) {
           <button
             className="footer-icon-btn footer-icon-btn--power"
             title="Reboot or shut down all devices"
-            onClick={() => setShowPowerModal(true)}
+            onClick={() => {
+              if (!loggedIn) {
+                window.dispatchEvent(new Event("saviour:open-login"));
+                return;
+              }
+              setShowPowerModal(true);
+            }}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
               <line x1="12" y1="2" x2="12" y2="12" />
             </svg>
+          </button>
+          <button
+            className="footer-icon-btn footer-icon-btn--auth"
+            title={loggedIn ? "Log out" : "Log in"}
+            onClick={() => {
+              if (loggedIn) {
+                logOut();
+              } else {
+                window.dispatchEvent(new Event("saviour:open-login"));
+              }
+            }}
+          >
+            {loggedIn ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                <polyline points="10 17 15 12 10 7" />
+                <line x1="15" y1="12" x2="3" y2="12" />
+              </svg>
+            )}
           </button>
         </div>
         <p>© SIDB 2026</p>
@@ -231,17 +262,6 @@ function Sidebar({ navItems }) {
         <div className="modal-overlay" onClick={() => setShowUpdateModal(false)}>
           <div className="modal update-modal" onClick={e => e.stopPropagation()}>
             <h3 className="modal-title">Software Update</h3>
-
-            <div className="update-version-row">
-              <span className="update-version-label update-token-label">Deploy token</span>
-              <input
-                type="password"
-                className="update-token-input"
-                placeholder="sudo cat /etc/saviour/deploy_token"
-                value={deployToken}
-                onChange={e => handleTokenChange(e.target.value)}
-              />
-            </div>
 
             <div className="update-version-row">
               <span className="update-version-label">Running</span>

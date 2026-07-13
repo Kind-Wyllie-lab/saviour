@@ -121,6 +121,10 @@
         color: var(--error-color, #e74c3c);
     }
 
+    .footer-icon-btn--auth {
+        color: var(--text-color);
+    }
+
     .footer-icon-btn:hover:not(:disabled) {
         opacity: 1;
         background: color-mix(in srgb, currentColor 12%, transparent);
@@ -177,20 +181,6 @@
 
 .update-version-staged {
     color: var(--accent-color, #3b82f6);
-}
-
-.update-token-label {
-    width: 84px;
-}
-
-.update-token-input {
-    flex: 1;
-    font-size: 13px;
-    padding: 3px 7px;
-    border-radius: 4px;
-    border: 1px solid color-mix(in srgb, var(--text-color) 25%, transparent);
-    background: color-mix(in srgb, var(--text-color) 6%, transparent);
-    color: var(--text-color);
 }
 
 .update-stage-btn {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./ControllerConfigCard.css";
 import socket from "/src/socket";
-import { getDeployToken } from "/src/deployToken";
+import { isLoggedIn } from "/src/auth";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
@@ -62,19 +62,31 @@ function ControllerConfigCard() {
   }, []);
 
   const handleSave = () => {
+    if (!isLoggedIn()) {
+      window.dispatchEvent(new Event("saviour:open-login"));
+      return;
+    }
     setSaveStatus("saving");
     socket.emit("save_controller_config", { config: filterPrivateKeys(formData) });
   };
 
   const handleRebootSaviour = () => {
+    if (!isLoggedIn()) {
+      window.dispatchEvent(new Event("saviour:open-login"));
+      return;
+    }
     socket.emit("reboot_saviour");
     setShowRebootConfirm(false);
   };
 
   const handleUpdateSaviour = () => {
+    if (!isLoggedIn()) {
+      window.dispatchEvent(new Event("saviour:open-login"));
+      return;
+    }
     setUpdateStatus("updating");
     setShowUpdateConfirm(false);
-    socket.emit("update_saviour_controller", { token: getDeployToken() });
+    socket.emit("update_saviour_controller");
   };
 
   // Settings tab: everything except controller.name, export, and teams (rendered custom below)

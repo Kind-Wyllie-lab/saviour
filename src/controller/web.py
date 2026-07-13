@@ -1595,18 +1595,6 @@ class Web(ABC):
             debug_data["module_configs"] = self.facade.get_module_configs()
             self.socketio.emit("debug_data", debug_data)
 
-        """ Login """
-        @self.socketio.on("login")
-        def handle_login(data):
-            username = data.get("username")
-            password = data.get("password")
-
-            # Replace with secure password check
-            if username == "admin" and password == "secret":
-                self.socketio.emit("login_success", room=request.sid)
-            else:
-                self.socketio.emit("login_error", "Wrong username or password", room=request.sid)
-
 
         """ Commands and utility """
         @self.socketio.on('remove_module')

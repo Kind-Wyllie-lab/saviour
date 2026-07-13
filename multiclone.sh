@@ -29,6 +29,28 @@ for d in "${DEVICES[@]}"; do
   fi
 done
 
+# Unmount any pre-existing filesystems on target devices. Factory-blank
+# SDXC cards ship pre-formatted (usually exFAT) and get auto-mounted by
+# udisks2 on insertion. Writing under a mounted partition still succeeds
+# (dd writes the raw device), but the kernel then can't re-read the new
+# partition table while the stale one is in use -- partprobe fails, and
+# under set -e the whole run aborts before the identity-fix step, leaving
+# every target device with identical PARTUUID/machine-id/ssh host keys.
+echo "=== Unmounting any existing filesystems on target devices ==="
+for d in "${DEVICES[@]}"; do
+  for part in /dev/"$d"*; do
+    [ -e "$part" ] || continue
+    mnt=$(findmnt -n -o TARGET "$part" 2>/dev/null || true)
+    if [ -n "$mnt" ]; then
+      echo "  Unmounting $part (was mounted at $mnt)"
+      if ! sudo umount "$part" 2>/dev/null && ! sudo umount -l "$part" 2>/dev/null; then
+        echo "ERROR: could not unmount $part -- refusing to write over a mounted filesystem"
+        exit 1
+      fi
+    fi
+  done
+done
+
 # Safety: refuse a source image that doesn't look like a Raspberry Pi OS
 # image (vfat boot + ext4 root). Catches the mistake of pointing this at
 # a blank/factory-formatted card or some other unrelated .img -- cheaply,
@@ -75,7 +97,12 @@ sync
 
 echo "=== Write complete. Re-reading partition tables ==="
 for d in "${DEVICES[@]}"; do
-  sudo partprobe "/dev/$d"
+  # Non-fatal: a single device's kernel failing to pick up the new
+  # partition table (e.g. something else re-mounted it) shouldn't abort
+  # the whole run and skip the identity-fix step for every other device.
+  # fix_identity mounts each partition directly and will fail cleanly,
+  # per-device, if the kernel's view is still stale.
+  sudo partprobe "/dev/$d" || echo "WARNING: partprobe failed for /dev/$d -- will retry via identity-fix step"
 done
 sleep 2   # let udev settle
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./ControllerConfigCard.css";
 import socket from "/src/socket";
+import { getDeployToken } from "/src/deployToken";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
@@ -73,7 +74,7 @@ function ControllerConfigCard() {
   const handleUpdateSaviour = () => {
     setUpdateStatus("updating");
     setShowUpdateConfirm(false);
-    socket.emit("update_saviour_controller");
+    socket.emit("update_saviour_controller", { token: getDeployToken() });
   };
 
   // Settings tab: everything except controller.name, export, and teams (rendered custom below)

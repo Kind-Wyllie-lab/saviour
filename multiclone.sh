@@ -157,7 +157,35 @@ fix_identity() {
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-01/PARTUUID=${newid_hex}-01/" "$mnt/etc/fstab"
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-02/PARTUUID=${newid_hex}-02/" "$mnt/etc/fstab"
   sudo truncate -s 0 "$mnt/etc/machine-id"
+
+  # Regenerate unique host keys now, offline. Raspberry Pi OS only
+  # auto-regenerates these via regenerate_ssh_host_keys.service, which is a
+  # one-shot that disables itself after firing -- since the master image is
+  # captured from a template that already booted once (to install SAVIOUR),
+  # that service is already spent in the image. Deleting the keys without
+  # this step leaves sshd with none to load, so it exits on boot and every
+  # clone refuses SSH connections instead of merely being slow to answer.
+  echo "Regenerating SSH host keys..."
   sudo rm -f "$mnt"/etc/ssh/ssh_host_*
+  sudo ssh-keygen -A -f "$mnt"
+
+  # A temporary, per-device hostname so each card is identifiable in DHCP
+  # leases before SAVIOUR's own provisioning assigns a real one. dhcpcd/
+  # NetworkManager both omit DHCP option 12 (hostname) when the hostname is
+  # empty/unset/"localhost", so an unset hostname shows up as "*" in the
+  # lease table -- indistinguishable from any other device on the network.
+  # Suffixed with the same per-device id already used for PARTUUID so
+  # multiple cards booting simultaneously out of the same image don't all
+  # claim the same hostname at once.
+  echo "Setting temporary hostname..."
+  TEMP_HOSTNAME="saviour-unprov-${newid_hex}"
+  echo "$TEMP_HOSTNAME" | sudo tee "$mnt/etc/hostname" > /dev/null
+  if sudo grep -q "^127\.0\.1\.1" "$mnt/etc/hosts"; then
+    sudo sed -i -E "s/^127\.0\.1\.1.*/127.0.1.1\t${TEMP_HOSTNAME}/" "$mnt/etc/hosts"
+  else
+    echo -e "127.0.1.1\t${TEMP_HOSTNAME}" | sudo tee -a "$mnt/etc/hosts" > /dev/null
+  fi
+
   sudo rm -f "$mnt/var/lib/dhcpcd/duid"
   sudo umount "$mnt"
 
@@ -191,9 +219,26 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 echo "=== All devices processed. Verifying ==="
+verify_fail=0
 for dev in "${DEVICES[@]}"; do
   echo "--- /dev/$dev ---"
   sudo blkid "/dev/${dev}1" "/dev/${dev}2"
+
+  vmnt="/mnt/card-verify-$dev"
+  sudo mkdir -p "$vmnt"
+  sudo mount "/dev/${dev}2" "$vmnt"
+  key_count=$(sudo find "$vmnt/etc/ssh" -maxdepth 1 -name 'ssh_host_*_key' 2>/dev/null | wc -l)
+  hostname_val=$(sudo cat "$vmnt/etc/hostname" 2>/dev/null || echo "MISSING")
+  sudo umount "$vmnt"
+  echo "  SSH host keys: $key_count"
+  echo "  Hostname: $hostname_val"
+  if [ "$key_count" -eq 0 ]; then
+    echo "  WARNING: no SSH host keys on /dev/$dev -- sshd will refuse to start on boot!" >&2
+    verify_fail=1
+  fi
 done
 
+if [ "$verify_fail" -ne 0 ]; then
+  echo "=== WARNING: one or more devices are missing SSH host keys -- fix before deploying ==="
+fi
 echo "=== Done. Boot-test at least one card before deploying the rest. ==="

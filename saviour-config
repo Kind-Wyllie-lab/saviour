@@ -21,6 +21,12 @@ fi
 # ── Constants ──────────────────────────────────────────────────────────────────
 DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONFIG_FILE="/etc/saviour/config"
+# Records what was actually last applied to this device, distinct from
+# CONFIG_FILE (which a user can now hand-edit over a USB mount to declare a
+# new desired state). Written only by run_configuration(); never edited by
+# a human. apply_from_config() compares the two to decide whether anything
+# needs reconfiguring.
+PROVISIONED_FILE="/etc/saviour/.provisioned"
 SHARENAME="controller_share"
 LOG="/var/log/saviour-config.log"
 W=72   # dialog width
@@ -74,11 +80,36 @@ write_config() {
     tee "$CONFIG_FILE" > /dev/null <<EOF
 ROLE=${DEVICE_ROLE}
 TYPE=${DEVICE_TYPE}
+GATEWAY_MODE=${GATEWAY_MODE}
+GATEWAY=${GATEWAY}
+WAN_INTERFACE=${WAN_INTERFACE}
+DEVICE_IP=${DEVICE_IP}
+EOF
+}
+
+# Marker of what was actually last applied -- see PROVISIONED_FILE above.
+write_provisioned_marker() {
+    mkdir -p "$(dirname "$PROVISIONED_FILE")"
+    tee "$PROVISIONED_FILE" > /dev/null <<EOF
+ROLE=${DEVICE_ROLE}
+TYPE=${DEVICE_TYPE}
+GATEWAY_MODE=${GATEWAY_MODE}
+GATEWAY=${GATEWAY}
+WAN_INTERFACE=${WAN_INTERFACE}
+DEVICE_IP=${DEVICE_IP}
 EOF
 }
 
 # ── System helpers ─────────────────────────────────────────────────────────────
 is_installed() { dpkg -s "$1" &>/dev/null; }
+
+# Reads a single KEY=value out of a saviour-style config file without
+# sourcing it (avoids clobbering this script's own globals of the same
+# name). Empty output if the file or key doesn't exist.
+read_config_value() {
+    [ -f "$1" ] || return 0
+    grep -E "^${2}=" "$1" | tail -n1 | cut -d= -f2-
+}
 
 get_mac_suffix() {
     local mac clean
@@ -779,8 +810,8 @@ configure_service() {
     tee /etc/systemd/system/saviour.service > /dev/null <<EOF
 [Unit]
 Description=Saviour Service
-After=network.target ptp4l.service phc2sys.service
-Wants=network.target ptp4l.service phc2sys.service
+After=network.target ptp4l.service phc2sys.service saviour-provision.service
+Wants=network.target ptp4l.service phc2sys.service saviour-provision.service
 
 [Service]
 Type=simple
@@ -966,10 +997,18 @@ run_configuration() {
     set -e  # Any failed command inside here is a real error
     log "Starting configuration: ${DEVICE_TYPE} ${DEVICE_ROLE}"
 
-    get_current_config
+    # Compare against what was actually last applied (PROVISIONED_FILE), not
+    # the declarative CONFIG_FILE. When called from apply_from_config() (a
+    # USB-edited config, applied automatically at boot), CONFIG_FILE already
+    # holds the new desired state by the time we get here -- comparing
+    # against it would make role_changed/type_changed always false and skip
+    # every actual setup step below.
+    local prev_role prev_type
+    prev_role=$(read_config_value "$PROVISIONED_FILE" ROLE)
+    prev_type=$(read_config_value "$PROVISIONED_FILE" TYPE)
     local role_changed=false type_changed=false
-    [ "$DEVICE_ROLE" != "$CURRENT_ROLE" ] && role_changed=true
-    [ "$DEVICE_TYPE" != "$CURRENT_TYPE" ] && type_changed=true
+    [ "$DEVICE_ROLE" != "$prev_role" ] && role_changed=true
+    [ "$DEVICE_TYPE" != "$prev_type" ] && type_changed=true
 
     if $role_changed || $type_changed; then
         for cfg in \
@@ -1016,11 +1055,75 @@ run_configuration() {
 
     progress "Writing configuration and restarting service…"
     write_config
+    write_provisioned_marker
     log "Configuration written: ${DEVICE_TYPE} ${DEVICE_ROLE}"
 
     systemctl restart saviour.service >> "$LOG" 2>&1 || true
     log "Configuration complete"
 }
 
+# ── Non-interactive apply (boot-time provisioning) ─────────────────────────────
+# Reads the declared role/type/network settings straight from CONFIG_FILE and,
+# if they differ from what was last actually applied (PROVISIONED_FILE), runs
+# the same run_configuration() the interactive TUI uses -- skipping every
+# whiptail prompt entirely. Safe to call on every boot: a no-op once nothing
+# has changed. This is what makes a card configurable purely by editing
+# CONFIG_FILE over a USB mount and booting -- see saviour-provision.service.
+apply_from_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log "apply: no $CONFIG_FILE yet -- nothing to do"
+        return 0
+    fi
+
+    local decl_role decl_type decl_gwmode decl_gw decl_wan decl_ip
+    decl_role=$(read_config_value "$CONFIG_FILE" ROLE)
+    decl_type=$(read_config_value "$CONFIG_FILE" TYPE)
+    decl_gwmode=$(read_config_value "$CONFIG_FILE" GATEWAY_MODE)
+    decl_gw=$(read_config_value "$CONFIG_FILE" GATEWAY)
+    decl_wan=$(read_config_value "$CONFIG_FILE" WAN_INTERFACE)
+    decl_ip=$(read_config_value "$CONFIG_FILE" DEVICE_IP)
+
+    if [ -z "$decl_role" ] || [ "$decl_role" = "none" ]; then
+        log "apply: ROLE is unset/none -- nothing to do"
+        return 0
+    fi
+
+    # Sensible defaults for a controller declared by hand-editing just
+    # ROLE/TYPE and leaving networking blank.
+    if [ "$decl_role" = "controller" ]; then
+        decl_gwmode="${decl_gwmode:-none}"
+        decl_ip="${decl_ip:-10.0.0.1/16}"
+    fi
+
+    local prev_role prev_type prev_gwmode prev_gw prev_wan prev_ip
+    prev_role=$(read_config_value "$PROVISIONED_FILE" ROLE)
+    prev_type=$(read_config_value "$PROVISIONED_FILE" TYPE)
+    prev_gwmode=$(read_config_value "$PROVISIONED_FILE" GATEWAY_MODE)
+    prev_gw=$(read_config_value "$PROVISIONED_FILE" GATEWAY)
+    prev_wan=$(read_config_value "$PROVISIONED_FILE" WAN_INTERFACE)
+    prev_ip=$(read_config_value "$PROVISIONED_FILE" DEVICE_IP)
+
+    if [ "$decl_role" = "$prev_role" ] && [ "$decl_type" = "$prev_type" ] \
+        && [ "$decl_gwmode" = "$prev_gwmode" ] && [ "$decl_gw" = "$prev_gw" ] \
+        && [ "$decl_wan" = "$prev_wan" ] && [ "$decl_ip" = "$prev_ip" ]; then
+        log "apply: declared config matches last-applied state -- nothing to do"
+        return 0
+    fi
+
+    log "apply: reconfiguring as ${decl_type} ${decl_role} (declared config differs from last-applied state)"
+    DEVICE_ROLE="$decl_role"
+    DEVICE_TYPE="$decl_type"
+    GATEWAY_MODE="$decl_gwmode"
+    GATEWAY="$decl_gw"
+    WAN_INTERFACE="$decl_wan"
+    DEVICE_IP="$decl_ip"
+    run_configuration
+}
+
 # ── Entry point ────────────────────────────────────────────────────────────────
+if [ "${1:-}" = "--apply" ]; then
+    apply_from_config
+    exit $?
+fi
+
 main_menu

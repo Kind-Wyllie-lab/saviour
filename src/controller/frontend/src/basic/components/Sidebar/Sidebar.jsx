@@ -24,9 +24,13 @@ function Sidebar({ navItems }) {
   const [deployError, setDeployError]         = useState(null);
   const [stagingCurrent, setStagingCurrent]   = useState(false);
   const [loggedIn, setLoggedIn]               = useState(() => isLoggedIn());
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
   const fileInputRef = useRef(null);
 
-  useEffect(() => onAuthChange(() => setLoggedIn(isLoggedIn())), []);
+  useEffect(() => onAuthChange(() => {
+    setLoggedIn(isLoggedIn());
+    setShowAccountMenu(false);
+  }), []);
 
   useEffect(() => {
     socket.emit("get_controller_info");
@@ -198,19 +202,34 @@ function Sidebar({ navItems }) {
       </div>
 
       <div className="footer">
-        <button
-          className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
-          title={loggedIn ? "Log out" : "Log in as admin"}
-          onClick={() => {
-            if (loggedIn) {
-              logOut();
-            } else {
-              window.dispatchEvent(new Event("saviour:open-login"));
-            }
-          }}
-        >
-          {loggedIn ? "Admin" : "Guest"}
-        </button>
+        <div className="footer-role-wrap">
+          <button
+            className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
+            title={loggedIn ? "Account options" : "Log in as admin"}
+            onClick={() => {
+              if (loggedIn) {
+                setShowAccountMenu(v => !v);
+              } else {
+                window.dispatchEvent(new Event("saviour:open-login"));
+              }
+            }}
+          >
+            {loggedIn ? "Admin" : "Guest"}
+          </button>
+          {showAccountMenu && (
+            <div className="footer-role-menu">
+              <button onClick={() => {
+                setShowAccountMenu(false);
+                window.dispatchEvent(new Event("saviour:open-change-password"));
+              }}>
+                Change Password
+              </button>
+              <button onClick={() => { setShowAccountMenu(false); logOut(); }}>
+                Log Out
+              </button>
+            </div>
+          )}
+        </div>
         <div className="footer-actions">
           <button
             className="footer-icon-btn footer-icon-btn--update"

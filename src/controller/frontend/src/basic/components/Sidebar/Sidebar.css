@@ -121,6 +121,11 @@
         color: var(--error-color, #e74c3c);
     }
 
+    .footer-role-wrap {
+        position: relative;
+        margin-bottom: 8px;
+    }
+
     .footer-role-btn {
         border: none;
         background: transparent;
@@ -131,8 +136,39 @@
         letter-spacing: 0.06em;
         padding: 3px 10px;
         border-radius: 10px;
-        margin-bottom: 8px;
         transition: filter 0.15s;
+    }
+
+    .footer-role-menu {
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        margin-bottom: 6px;
+        background: var(--card-bg-color);
+        border: 1px solid color-mix(in srgb, var(--text-color) 20%, transparent);
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-width: 140px;
+        z-index: 10;
+    }
+
+    .footer-role-menu button {
+        background: transparent;
+        border: none;
+        color: var(--text-color);
+        padding: 8px 12px;
+        text-align: left;
+        font-size: 12px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .footer-role-menu button:hover {
+        background: color-mix(in srgb, var(--text-color) 10%, transparent);
     }
 
     .footer-role-btn:hover {

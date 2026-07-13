@@ -121,8 +121,32 @@
         color: var(--error-color, #e74c3c);
     }
 
-    .footer-icon-btn--auth {
+    .footer-role-btn {
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 3px 10px;
+        border-radius: 10px;
+        margin-bottom: 8px;
+        transition: filter 0.15s;
+    }
+
+    .footer-role-btn:hover {
+        filter: brightness(1.15);
+    }
+
+    .footer-role-btn--guest {
         color: var(--text-color);
+        background: color-mix(in srgb, var(--text-color) 12%, transparent);
+    }
+
+    .footer-role-btn--admin {
+        color: #fff;
+        background: var(--accent-color, #3b82f6);
     }
 
     .footer-icon-btn:hover:not(:disabled) {

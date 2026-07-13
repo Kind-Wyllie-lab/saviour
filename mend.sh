@@ -104,6 +104,12 @@ section "2/8  System packages"
 
 sudo apt-get update -y -qq
 
+# Suppress iptables-persistent's interactive "save current rules?" prompts --
+# without this, a fresh install of iptables-persistent under a non-interactive
+# shell (e.g. run over the update pipeline) hangs on a prompt with no TTY.
+echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" | sudo debconf-set-selections
+echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" | sudo debconf-set-selections
+
 SYSTEM_PACKAGES=(
     linuxptp
     ffmpeg
@@ -136,7 +142,7 @@ for pkg in "${SYSTEM_PACKAGES[@]}"; do
         ok "$pkg"
     else
         fix "$pkg"
-        sudo apt-get install -y "$pkg" >> "$LOG" 2>&1
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >> "$LOG" 2>&1
     fi
 done
 
@@ -145,7 +151,7 @@ for pkg in "${OPTIONAL_PACKAGES[@]}"; do
         ok "$pkg (optional)"
     else
         fix "$pkg (optional)"
-        if ! sudo apt-get install -y "$pkg" >> "$LOG" 2>&1; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >> "$LOG" 2>&1; then
             warn "$pkg could not be installed — skipping (only needed for APA camera)"
         fi
     fi

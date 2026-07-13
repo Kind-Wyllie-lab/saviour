@@ -727,7 +727,7 @@ class LoomCameraModule(Module):
         camera_keys = {
             "camera.fps", "camera.width", "camera.height", "camera.bitrate_mb",
             "camera.gain", "camera.brightness", "camera.exposure_time",
-            "camera.manual_exposure", "camera.sensor_mode_index",
+            "camera.manual_exposure", "camera.ae_enable", "camera.sensor_mode_index",
             "camera.lens_position", "camera.autofocus_mode",
         }
         restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb"}
@@ -840,16 +840,19 @@ class LoomCameraModule(Module):
                 if bool(self.config.get("camera.manual_exposure", False))
                 else int(1_000_000 / self.fps)
             )
+            ae_enabled = bool(self.config.get("camera.ae_enable", False))
 
             sensor = {"output_size": self.mode["size"], "bit_depth": self.mode["bit_depth"]}
             main = {"size": (self.width, self.height), "format": "RGB888"}
             lores = {"size": (self.lores_width, self.lores_height), "format": "RGB888"}
             controls = {
                 "FrameRate": self.fps,
-                "AnalogueGain": float(self.config.get("camera.gain", 1.0)),
-                "ExposureTime": exposure_time,
                 "Brightness": float(self.config.get("camera.brightness", 0.0)),
+                "AeEnable": ae_enabled,
             }
+            if not ae_enabled:
+                controls["AnalogueGain"] = float(self.config.get("camera.gain", 1.0))
+                controls["ExposureTime"] = exposure_time
 
             if self.has_autofocus:
                 _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}

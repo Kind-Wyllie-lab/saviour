@@ -114,7 +114,7 @@ fix_identity() {
   # so cards come out of the hub already at full capacity -- no first-boot
   # resize step needed.
   echo "Growing root partition on /dev/$dev to fill the card..."
-  sudo parted -s "/dev/$dev" resizepart 2 100%
+  echo ",+" | sudo sfdisk --no-reread -N 2 "/dev/$dev"
   sudo partprobe "/dev/$dev"
   sleep 1
   local ec=0

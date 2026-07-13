@@ -198,6 +198,19 @@ function Sidebar({ navItems }) {
       </div>
 
       <div className="footer">
+        <button
+          className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
+          title={loggedIn ? "Log out" : "Log in as admin"}
+          onClick={() => {
+            if (loggedIn) {
+              logOut();
+            } else {
+              window.dispatchEvent(new Event("saviour:open-login"));
+            }
+          }}
+        >
+          {loggedIn ? "Admin" : "Guest"}
+        </button>
         <div className="footer-actions">
           <button
             className="footer-icon-btn footer-icon-btn--update"
@@ -225,31 +238,6 @@ function Sidebar({ navItems }) {
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
               <line x1="12" y1="2" x2="12" y2="12" />
             </svg>
-          </button>
-          <button
-            className="footer-icon-btn footer-icon-btn--auth"
-            title={loggedIn ? "Log out" : "Log in"}
-            onClick={() => {
-              if (loggedIn) {
-                logOut();
-              } else {
-                window.dispatchEvent(new Event("saviour:open-login"));
-              }
-            }}
-          >
-            {loggedIn ? (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                <polyline points="16 17 21 12 16 7" />
-                <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-                <polyline points="10 17 15 12 10 7" />
-                <line x1="15" y1="12" x2="3" y2="12" />
-              </svg>
-            )}
           </button>
         </div>
         <p>© SIDB 2026</p>

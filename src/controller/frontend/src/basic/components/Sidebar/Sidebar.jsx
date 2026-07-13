@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink } from "react-router-dom";
 import socket from "/src/socket";
+import { getDeployToken, setDeployToken } from "/src/deployToken";
 
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
@@ -22,7 +23,13 @@ function Sidebar({ navItems }) {
   const [deployStatus, setDeployStatus]       = useState(null); // null | "deploying" | "done" | "error"
   const [deployError, setDeployError]         = useState(null);
   const [stagingCurrent, setStagingCurrent]   = useState(false);
+  const [deployToken, setDeployTokenState]    = useState(() => getDeployToken());
   const fileInputRef = useRef(null);
+
+  const handleTokenChange = (value) => {
+    setDeployTokenState(value);
+    setDeployToken(value);
+  };
 
   useEffect(() => {
     socket.emit("get_controller_info");
@@ -132,6 +139,7 @@ function Sidebar({ navItems }) {
       filename:     file.name,
       total_chunks: totalChunks,
       total_bytes:  file.size,
+      token:        deployToken,
     });
 
     const sendChunks = async () => {
@@ -153,7 +161,7 @@ function Sidebar({ navItems }) {
 
   const handleDeploy = () => {
     setDeployStatus("deploying");
-    socket.emit("deploy_update");
+    socket.emit("deploy_update", { token: deployToken });
   };
 
   const handleStageCurrent = () => {
@@ -162,7 +170,7 @@ function Sidebar({ navItems }) {
     setStagedMeta(null);
     setDeployStatus(null);
     setDeployError(null);
-    socket.emit("stage_current_version");
+    socket.emit("stage_current_version", { token: deployToken });
   };
 
   const staged = stagedMeta || updateInfo?.staged;
@@ -223,6 +231,17 @@ function Sidebar({ navItems }) {
         <div className="modal-overlay" onClick={() => setShowUpdateModal(false)}>
           <div className="modal update-modal" onClick={e => e.stopPropagation()}>
             <h3 className="modal-title">Software Update</h3>
+
+            <div className="update-version-row">
+              <span className="update-version-label update-token-label">Deploy token</span>
+              <input
+                type="password"
+                className="update-token-input"
+                placeholder="sudo cat /etc/saviour/deploy_token"
+                value={deployToken}
+                onChange={e => handleTokenChange(e.target.value)}
+              />
+            </div>
 
             <div className="update-version-row">
               <span className="update-version-label">Running</span>

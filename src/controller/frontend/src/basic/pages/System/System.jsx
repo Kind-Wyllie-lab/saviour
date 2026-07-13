@@ -2,6 +2,7 @@ import { useMemo, useEffect, useState, useRef } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
+import { getDeployToken } from "/src/deployToken";
 import ClockModal from "../../components/ClockModal/ClockModal";
 import "./System.css";
 
@@ -336,7 +337,7 @@ export default function System() {
 
   const handleDeployToModule = (moduleId) => {
     setDeviceStatuses(prev => ({ ...prev, [moduleId]: "updating" }));
-    socket.emit("deploy_update_to_module", { module_id: moduleId });
+    socket.emit("deploy_update_to_module", { module_id: moduleId, token: getDeployToken() });
   };
 
   const updateDevices = useMemo(() => {

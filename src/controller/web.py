@@ -13,6 +13,7 @@ Created: ?
 """
 
 
+import hmac
 import io
 import logging
 import secrets
@@ -80,6 +81,11 @@ def _filter_private_keys(d: dict) -> dict:
 
 
 class Web(ABC):
+    # Outside the JSON config files on purpose -- those are readable/mergeable
+    # via the config-sync socket events, and a secret has no business sitting
+    # somewhere that "get_controller_config" could ever echo back.
+    _DEPLOY_TOKEN_FILE = "/etc/saviour/deploy_token"
+
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -154,6 +160,40 @@ class Web(ABC):
             name = "NO-NAME"
 
         return name
+
+
+    def _get_or_create_deploy_token(self) -> str:
+        """Return the shared secret required for update/deploy actions,
+        generating one on first use. Any device on the network can reach
+        these Socket.IO handlers with no other authentication, so this is
+        the only thing standing between "any LAN device" and pushing code
+        that runs as this (root) service."""
+        try:
+            with open(self._DEPLOY_TOKEN_FILE) as f:
+                token = f.read().strip()
+                if token:
+                    return token
+        except FileNotFoundError:
+            pass
+        token = secrets.token_hex(32)
+        os.makedirs(os.path.dirname(self._DEPLOY_TOKEN_FILE), exist_ok=True)
+        fd = os.open(self._DEPLOY_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(token)
+        self.logger.warning(
+            f"Generated new deploy token at {self._DEPLOY_TOKEN_FILE} -- "
+            f"required for update/deploy actions. Run `sudo cat "
+            f"{self._DEPLOY_TOKEN_FILE}` to retrieve it."
+        )
+        return token
+
+
+    def _check_deploy_token(self, data: "dict | None") -> bool:
+        """Constant-time check of a client-supplied token against the deploy
+        secret. Gates the update/deploy family of Socket.IO handlers."""
+        provided = (data or {}).get("token", "")
+        expected = self._get_or_create_deploy_token()
+        return hmac.compare_digest(str(provided), expected)
 
 
     def _check_nas_free_space(self) -> "str | None":
@@ -1083,12 +1123,18 @@ class Web(ABC):
         @self.socketio.on("upload_update_start")
         def handle_upload_update_start(data):
             from flask_socketio import emit as _emit
+            if not self._check_deploy_token(data):
+                _emit("upload_update_error", {"error": "Unauthorized — invalid or missing deploy token"})
+                return
             with self._upload_lock:
                 self._upload_chunks = {}
                 self._upload_meta = {
                     "filename":     data.get("filename", "saviour-update.zip"),
                     "total_chunks": int(data.get("total_chunks", 0)),
                     "total_bytes":  int(data.get("total_bytes", 0)),
+                    # Checked once here rather than re-validating the token on
+                    # every chunk (there can be thousands for a large upload).
+                    "authorized":   True,
                 }
             _emit("upload_update_ack", {"status": "ready"})
 
@@ -1101,6 +1147,9 @@ class Web(ABC):
             if chunk_data is None or chunk_index is None:
                 return
             with self._upload_lock:
+                if not self._upload_meta.get("authorized"):
+                    _emit("upload_update_error", {"error": "Unauthorized — call upload_update_start with a valid token first"})
+                    return
                 self._upload_chunks[chunk_index] = (
                     chunk_data if isinstance(chunk_data, (bytes, bytearray))
                     else bytes(chunk_data)
@@ -1167,6 +1216,9 @@ class Web(ABC):
         def handle_deploy_update(data=None):
             from flask_socketio import emit as _emit
             import zipfile, shutil, re
+            if not self._check_deploy_token(data):
+                _emit("deploy_update_error", {"error": "Unauthorized — invalid or missing deploy token"})
+                return
             if not os.path.exists(_UPDATE_ZIP):
                 _emit("deploy_update_error", {"error": "No update staged — upload a package first"})
                 return
@@ -1238,7 +1290,11 @@ class Web(ABC):
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
+            from flask_socketio import emit as _emit
             import zipfile as _zf
+            if not self._check_deploy_token(data):
+                _emit("upload_update_error", {"error": "Unauthorized — invalid or missing deploy token"})
+                return
             _SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
                           '.pytest_cache', 'dist', '.eggs'}
 
@@ -1295,6 +1351,9 @@ class Web(ABC):
         @self.socketio.on("deploy_update_to_module")
         def handle_deploy_update_to_module(data):
             from flask_socketio import emit as _emit
+            if not self._check_deploy_token(data):
+                _emit("deploy_update_error", {"error": "Unauthorized — invalid or missing deploy token"})
+                return
             module_id = data.get("module_id") if data else None
             if not module_id:
                 _emit("deploy_update_error", {"error": "module_id required"})
@@ -1316,7 +1375,14 @@ class Web(ABC):
 
         @self.socketio.on("update_saviour_controller")
         def handle_update_saviour_controller(data=None):
+            from flask_socketio import emit as _emit
             import subprocess, os
+            if not self._check_deploy_token(data):
+                _emit("update_saviour_controller_result", {
+                    "success": False,
+                    "output": "Unauthorized — invalid or missing deploy token",
+                })
+                return
             self.logger.info("Update SAVIOUR controller requested")
             def _run_update():
                 try:

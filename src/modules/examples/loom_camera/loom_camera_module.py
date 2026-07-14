@@ -1193,15 +1193,19 @@ class LoomCameraModule(Module):
                 rect_bgr = tuple(overlay_cfg.get("rect_bgr", [0, 255, 255]))
                 cv2.rectangle(m.array, (x0, y0), (x1, y1), rect_bgr, thickness, cv2.LINE_AA)
 
-        # State label — bottom-left to avoid colliding with the top timestamp overlay
+        # State label — position and size are configurable so the user can
+        # tune them across different stream resolutions
         state = self.crossing_state.state
-        state_color = (0, 0, 255) if state in ("entering", "in") else (0, 255, 0)  # red=in, green=out
+        state_color = (0, 0, 255) if state in ("entering", "in") else (0, 255, 0)
+        lx = int(float(overlay_cfg.get("zone_label_x_frac", 0.01)) * w)
+        ly = int(float(overlay_cfg.get("zone_label_y_frac", 0.95)) * h)
+        lscale = float(overlay_cfg.get("zone_label_font_scale", 1.0))
         cv2.putText(
             m.array,
             f"Zone: {state}",
-            (10, h - 10),
+            (lx, ly),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.9 * min(sx, sy),
+            lscale,
             state_color,
             2,
             cv2.LINE_AA,

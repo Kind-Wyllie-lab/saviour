@@ -42,7 +42,10 @@
       "roi_bgr": [255, 0, 255],
       "rect_bgr": [0, 255, 255],
       "dot_bgr": [0, 0, 255],
-      "thickness": 2
+      "thickness": 2,
+      "zone_label_x_frac": 0.01,
+      "zone_label_y_frac": 0.95,
+      "zone_label_font_scale": 1.0
     }
   },
   "loom_stimulus": {

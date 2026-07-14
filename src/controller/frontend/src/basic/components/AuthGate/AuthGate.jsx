@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import socket from "/src/socket";
 import { isLoggedIn, hasChosenGuest, chooseGuest, rememberLogin, onAuthChange } from "/src/auth";
 import "./AuthGate.css";
@@ -13,10 +13,12 @@ function AuthGate() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const passwordRef = useRef(password);
+  useEffect(() => { passwordRef.current = password; }, [password]);
 
   useEffect(() => {
     const onSuccess = () => {
-      rememberLogin(password);
+      rememberLogin(passwordRef.current);
       setSubmitting(false);
       setError("");
       setPassword("");
@@ -32,7 +34,7 @@ function AuthGate() {
       socket.off("login_success", onSuccess);
       socket.off("login_error", onError);
     };
-  }, [password]);
+  }, []);
 
   useEffect(() => {
     const openGate = () => setVisible(true);
@@ -85,7 +87,7 @@ function AuthGate() {
         </div>
         {error && <p className="login-error">{error}</p>}
         <div className="login-buttons">
-          <button onClick={handleGuest} className="login-guest-btn" disabled={submitting}>
+          <button onClick={handleGuest} className="login-guest-btn">
             Continue as Guest
           </button>
           <button onClick={handleLogin} disabled={submitting || !password}>

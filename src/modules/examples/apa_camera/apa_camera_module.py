@@ -787,10 +787,8 @@ class APACameraModule(Module):
                 self._prev_in_zone = in_zone
 
             # ── Lores stream (preview/MJPEG) ────────────────────────────────
+            # (rotation applied in _stream_post_callback on the free-standing array)
             with MappedArray(req, 'lores') as m:
-                if _rot:
-                    if m.array.shape[0] == m.array.shape[1] or _rot == 180:
-                        m.array[:] = np.rot90(m.array, _k)
                 if monochrome:
                     self._apply_grayscale(m)
                 self._apply_mask(m)
@@ -816,6 +814,18 @@ class APACameraModule(Module):
                 return
             self._last_stream_encode_time = now
             frame = req.make_array("lores")
+            rotation = getattr(self, "_rotation", 0)
+            if rotation:
+                k = rotation // 90
+                frame = np.rot90(frame, k)
+                if not getattr(self, "_rotation_logged", False):
+                    self.logger.info(
+                        f"Preview rotation: {rotation}° applied — "
+                        f"output {frame.shape[1]}×{frame.shape[0]}"
+                    )
+                    self._rotation_logged = True
+            else:
+                self._rotation_logged = False
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 with self.frame_lock:

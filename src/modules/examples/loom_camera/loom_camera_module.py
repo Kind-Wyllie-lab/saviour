@@ -894,9 +894,12 @@ class LoomCameraModule(Module):
             if rotation not in (0, 90, 180, 270):
                 rotation = 0
             self._rotation = rotation
+            self._rotation_logged = False  # reset so post_callback logs first rotated frame
             transform = Transform()
-            if rotation:
-                self.logger.info(f"Software rotation: {rotation}°")
+            self.logger.info(
+                f"Camera rotation config: {rotation}° "
+                f"({'software via post_callback' if rotation else 'none'})"
+            )
 
             config = self.picam2.create_video_configuration(
                 main=main,
@@ -1077,10 +1080,9 @@ class LoomCameraModule(Module):
                 self._frame_id += 1
 
             # Also apply overlays to lores for preview
+            # (rotation is applied later in _stream_post_callback on the free-standing
+            # make_array copy, which works for non-square images)
             with MappedArray(req, "lores") as m:
-                if _rot:
-                    if m.array.shape[0] == m.array.shape[1] or _rot == 180:
-                        m.array[:] = np.rot90(m.array, _k)
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m, lores=True)
 
@@ -1202,6 +1204,19 @@ class LoomCameraModule(Module):
                 return
             self._last_stream_encode_time = now
             frame = req.make_array("lores")
+            rotation = getattr(self, "_rotation", 0)
+            if rotation:
+                k = rotation // 90
+                frame = np.rot90(frame, k)
+                if not getattr(self, "_rotation_logged", False):
+                    self.logger.info(
+                        f"Preview rotation: {rotation}° applied — "
+                        f"input {frame.shape[1]}×{frame.shape[0]} "
+                        f"→ output {frame.shape[1]}×{frame.shape[0]}"
+                    )
+                    self._rotation_logged = True
+            else:
+                self._rotation_logged = False
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 with self.frame_lock:

@@ -10,18 +10,50 @@ function Settings() {
   const { modules } = useModules();
   const [selectedId, setSelectedId] = useState(getHashId);
   const [clipboard, setClipboard] = useState(null); // { label, data }
+  const [configDirty, setConfigDirty] = useState(false);
+
+  // The currently-mounted ConfigCard's useConfigForm broadcasts its dirty
+  // state here so switching modules can warn before discarding edits.
+  useEffect(() => {
+    const handler = (e) => setConfigDirty(!!e.detail?.dirty);
+    window.addEventListener("saviour:config-dirty", handler);
+    return () => window.removeEventListener("saviour:config-dirty", handler);
+  }, []);
+
+  const trySelectId = (newId) => {
+    if (newId === selectedId) return;
+    if (configDirty && !window.confirm(
+      "You have unsaved config changes that will be lost if you switch modules. Continue?"
+    )) {
+      return;
+    }
+    setConfigDirty(false);
+    setSelectedId(newId);
+  };
 
   // Write hash whenever selection changes
   useEffect(() => {
     window.location.hash = selectedId;
   }, [selectedId]);
 
-  // Sync from hash on browser back/forward
+  // Sync from hash on browser back/forward — same unsaved-changes guard,
+  // reverting the hash if the user cancels so it doesn't drift from state.
   useEffect(() => {
-    const onHashChange = () => setSelectedId(getHashId());
+    const onHashChange = () => {
+      const newId = getHashId();
+      if (newId === selectedId) return;
+      if (configDirty && !window.confirm(
+        "You have unsaved config changes that will be lost if you switch modules. Continue?"
+      )) {
+        window.location.hash = selectedId;
+        return;
+      }
+      setConfigDirty(false);
+      setSelectedId(newId);
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+  }, [selectedId, configDirty]);
 
   const moduleOptions = [
     { id: "controller", name: "Controller" },
@@ -47,7 +79,7 @@ function Settings() {
       <label className="settings-label">
         <select
           value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
+          onChange={(e) => trySelectId(e.target.value)}
         >
           {moduleOptions.map((opt) => (
             <option key={opt.id} value={opt.id}>

@@ -234,9 +234,14 @@
   width: 100%;
 }
 
-.actions-modal__item:hover {
+.actions-modal__item:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
+}
+
+.actions-modal__item:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .actions-modal__item--danger {

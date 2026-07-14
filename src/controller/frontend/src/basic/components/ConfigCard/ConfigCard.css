@@ -186,6 +186,11 @@ min-width: 300px;
   font-weight: bold;
 }
 
+.save-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .card-header {
   margin-bottom: 8px;
 }
@@ -204,58 +209,12 @@ min-width: 300px;
   flex-shrink: 0;
 }
 
-.header-action-btn {
-  padding: 3px 9px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  background: transparent;
-  color: var(--text-color);
-  cursor: pointer;
-  font-size: 0.8em;
-  white-space: nowrap;
-  opacity: 0.7;
-}
-
-.header-action-btn:hover {
-  opacity: 1;
-  border-color: var(--accent-color);
-  color: var(--accent-color);
-}
-
-.header-action-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.header-action-btn--danger:hover {
-  border-color: var(--error-color, #e74c3c);
-  color: var(--error-color, #e74c3c);
-}
-
 .device-info {
   display: flex;
   gap: 12px;
   font-size: 0.78em;
   opacity: 0.55;
   margin-top: 2px;
-}
-
-.update-button-wrapper {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.update-button {
-  padding: 6px 12px;
-  border-radius: 4px;
-  border: none;
-  background-color: var(--accent-color);
-  color: white;
-  cursor: pointer;
-  font-weight: bold;
 }
 
 .fov-label {
@@ -457,8 +416,13 @@ min-width: 300px;
   font-size: inherit;
 }
 
-.reset-button:hover {
+.reset-button:hover:not(:disabled) {
   background-color: color-mix(in srgb, red 15%, var(--card-bg-color));
+}
+
+.reset-button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Copy / paste toolbar */

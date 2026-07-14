@@ -336,7 +336,7 @@ class APACameraModule(Module):
         self._configure_mask_and_shock_zone()
         self._configure_object_detection()
 
-        restart_keys = ["camera.fps", "camera.width", "camera.height", "camera.bitrate_mb"]
+        restart_keys = ["camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.rotation"]
         needs_restart = any(k in restart_keys for k in (updated_keys or []))
 
         if self.is_streaming and needs_restart:
@@ -499,9 +499,17 @@ class APACameraModule(Module):
                 if af_mode == 0:
                     controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
+            from libcamera import Transform
+            rotation = int(self.config.get("camera.rotation", 0))
+            if rotation not in (0, 90, 180, 270):
+                rotation = 0
+            transform = Transform(rotation=rotation)
+            if rotation:
+                self.logger.info(f"Hardware transform: rotation={rotation}")
+
             config = self.picam2.create_video_configuration(
                 main=main, lores=lores, sensor=sensor,
-                controls=controls, buffer_count=16
+                controls=controls, transform=transform, buffer_count=16
             )
             self.picam2.configure(config)
             self.picam2.pre_callback  = self._apa_frame_precallback

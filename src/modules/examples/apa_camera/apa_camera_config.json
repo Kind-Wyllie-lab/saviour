@@ -4,6 +4,7 @@
     },
     "camera": {
         "monochrome": false,
+        "rotation": 0,
         "sensor_mode_index": 0,
         "width": 1080,
         "height": 1080,

@@ -220,6 +220,7 @@ class CameraModule(Module):
                 "camera.sync_lock_awb",
                 "camera.hflip",
                 "camera.vflip",
+                "camera.rotation",
             ]
             self._restarting_stream = False
             for key in updated_keys:
@@ -423,9 +424,12 @@ class CameraModule(Module):
             from libcamera import Transform
             hflip = self.config.get("camera.hflip", False) is True
             vflip = self.config.get("camera.vflip", False) is True
-            transform = Transform(hflip=hflip, vflip=vflip)
-            if hflip or vflip:
-                self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip}")
+            rotation = int(self.config.get("camera.rotation", 0))
+            if rotation not in (0, 90, 180, 270):
+                rotation = 0
+            transform = Transform(hflip=hflip, vflip=vflip, rotation=rotation)
+            if hflip or vflip or rotation:
+                self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip} rotation={rotation}")
 
             self.logger.info(f"Sensor stream set to size {self.width},{self.height} and bit depth {self.mode['bit_depth']} to target {self.fps}fps.")
 

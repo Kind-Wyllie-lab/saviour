@@ -6,6 +6,7 @@
         "monochrome": false,
         "hflip": false,
         "vflip": false,
+        "rotation": 0,
         "sensor_mode_index": 2,
         "width": 1000,
         "height": 1000,

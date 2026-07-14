@@ -266,7 +266,7 @@ export default function LoomRoiLineEditorModal({ moduleIp, moduleId, open, onClo
               Save ROI
             </button>
 
-            <button className="reset-button" type="button" onClick={onClose}>
+            <button className="save-button" type="button" onClick={onClose}>
               Close
             </button>
 

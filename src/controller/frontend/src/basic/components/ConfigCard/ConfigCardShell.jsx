@@ -1,8 +1,9 @@
 import { useState } from "react";
 import socket from "/src/socket";
-import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { filterPrivateKeys, checkClipboardCompatibility } from "./configUtils";
 import CopyActionsBar from "./CopyActionsBar";
+import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
 /**
  * ConfigCardShell — shared boilerplate wrapper for all module config cards.
@@ -20,6 +21,7 @@ import CopyActionsBar from "./CopyActionsBar";
  *   tabSectionMap   object        passed to CopyActionsBar
  *   saveDisabled    bool          optional, default false
  *   saveTransform   function      optional — (formData) => config, replaces filterPrivateKeys(formData)
+ *   markSaved       function      optional — from useConfigForm, clears the unsaved-changes flag
  *   deviceInfoExtras array        optional, extra strings/nodes for device-info row
  *   tabBadges       object        optional {tabKey: string} — text appended after tab label
  *   sidebar         node          optional — rendered beside config-form
@@ -38,13 +40,13 @@ function ConfigCardShell({
   tabSectionMap,
   saveDisabled = false,
   saveTransform,
+  markSaved,
   deviceInfoExtras = [],
   tabBadges = {},
   sidebar,
   children,
 }) {
-  const { updateStatus, handleUpdate } = useModuleUpdate(id);
-  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
+  const loggedIn = useIsLoggedIn();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [applyAllConfirm, setApplyAllConfirm] = useState(null);
   const [hasSaved, setHasSaved] = useState(false);
@@ -53,16 +55,13 @@ function ConfigCardShell({
     setHasSaved(true);
     const config = saveTransform ? saveTransform(formData) : filterPrivateKeys(formData);
     socket.emit("save_module_config", { id, config });
+    markSaved?.();
   };
 
   const handleReset = () => {
     socket.emit("reset_module_config", { module_id: id });
     setShowResetConfirm(false);
-  };
-
-  const handleReboot = () => {
-    socket.emit("send_command", { module_id: id, type: "reboot", params: {} });
-    setShowRebootConfirm(false);
+    markSaved?.();
   };
 
   const confirmApplyToAll = () => {
@@ -82,19 +81,7 @@ function ConfigCardShell({
         <div className="card-header-top">
           <h3>{module.name} ({module.id})</h3>
           <div className="card-header-actions">
-            <button className="header-action-btn" type="button"
-              onClick={handleUpdate} disabled={updateStatus === "updating"}>
-              {updateStatus === "updating" ? "Updating…" : "Update"}
-            </button>
-            {updateStatus && updateStatus !== "updating" && (
-              <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                {updateStatus.success ? `Updated: ${updateStatus.output}` : `Failed: ${updateStatus.output}`}
-              </span>
-            )}
-            <button className="header-action-btn header-action-btn--danger" type="button"
-              onClick={() => setShowRebootConfirm(true)}>
-              Reboot
-            </button>
+            <ModuleActionsMenu id={id} name={module.name} isOnline={!!module.online} />
           </div>
         </div>
         <div className="device-info">
@@ -145,10 +132,12 @@ function ConfigCardShell({
           )}
 
           <div className="config-action-buttons">
-            <button className="save-button" type="button" onClick={handleSave} disabled={saveDisabled}>
+            <button className="save-button" type="button" onClick={handleSave}
+              disabled={saveDisabled || !loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
               Save Config
             </button>
-            <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
+            <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}
+              disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
               Reset to Default
             </button>
           </div>
@@ -169,19 +158,6 @@ function ConfigCardShell({
           </div>
         )}
       </div>
-
-      {showRebootConfirm && (
-        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Reboot <strong>{module.name}</strong>?</p>
-            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleReboot}>Reboot</button>
-              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showResetConfirm && (
         <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
@@ -209,8 +185,9 @@ function ConfigCardShell({
               {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
             </p>
             <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={confirmApplyToAll}>Apply to All</button>
-              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
+              <button className="save-button" type="button" onClick={confirmApplyToAll}
+                disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>Apply to All</button>
+              <button className="save-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
             </div>
           </div>
         </div>

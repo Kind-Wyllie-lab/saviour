@@ -2,11 +2,9 @@
 import React, { useEffect, useState } from "react";
 import socket from "../../../socket";
 import "./Debug.css";
-import LoginModal from "../../components/LoginModal/LoginModal";
 
 function Debug() {
-    const [debugData, setDebugData] = useState(null);  
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [debugData, setDebugData] = useState(null);
 
     useEffect(() => {
         socket.emit("get_debug_data");
@@ -26,17 +24,13 @@ function Debug() {
 
     return (
         <main className="debug">
-            {!isAuthenticated ? (
-                <LoginModal onSuccess={() => setIsAuthenticated(true)} />
-            ) : (
-                <div className="debug-container">
-                    {debugData
-                        ? <pre className="module-information">{JSON.stringify(debugData, null, 2)}</pre>
-                        : <p>Loading debug data...</p>
-                    }
-                    <button onClick={requestDebugData}>Refresh Data</button>
-                </div>
-            )}
+            <div className="debug-container">
+                {debugData
+                    ? <pre className="module-information">{JSON.stringify(debugData, null, 2)}</pre>
+                    : <p>Loading debug data...</p>
+                }
+                <button onClick={requestDebugData}>Refresh Data</button>
+            </div>
         </main>
     );
 }

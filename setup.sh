@@ -91,15 +91,18 @@ install_system_packages() {
     echo "Installing required system packages..."
 
     # Suppress iptables-persistent's interactive "save current rules?" prompts.
-    echo "iptables-persistent iptables/autosave_v4 boolean false" | sudo debconf-set-selections
-    echo "iptables-persistent iptables/autosave_v6 boolean false" | sudo debconf-set-selections
+    # Template owner is the binary package "iptables-persistent", not "iptables" --
+    # a wrong prefix here preseeds a key debconf never reads, so the real
+    # template keeps its default (true) and still prompts on install.
+    echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" | sudo debconf-set-selections
+    echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" | sudo debconf-set-selections
 
     for pkg in "${SYSTEM_PACKAGES[@]}"; do
         if is_installed "$pkg"; then
             echo "[OK] $pkg is already installed."
         else
             echo "[INSTALLING] $pkg"
-            sudo apt-get install -y "$pkg"
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
         fi
     done
 
@@ -227,6 +230,31 @@ install_audiomoth_usb_cmd() {
     echo "[OK] AudioMoth-USB-Microphone installed at $BINARY_PATH"
 }
 
+install_provision_service() {
+    # Applies /etc/saviour/config's declared ROLE/TYPE (and, for a
+    # controller, its network settings) non-interactively before
+    # saviour.service starts -- what makes a card configurable purely by
+    # editing that file over a USB mount and booting, no console/SSH
+    # session needed. saviour-config --apply is idempotent: a no-op once
+    # the declared config matches what was last actually applied.
+    sudo tee /etc/systemd/system/saviour-provision.service > /dev/null <<EOF
+[Unit]
+Description=Apply SAVIOUR role/type from /etc/saviour/config
+Before=saviour.service
+ConditionPathExists=/etc/saviour/config
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/saviour-config --apply
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable saviour-provision.service
+}
+
 install_system_packages
 configure_ntp_for_ptp
 create_python_environment
@@ -236,6 +264,7 @@ install_audiomoth_usb_cmd
 # Install saviour-config as a system-wide command
 sudo ln -sf "$TARGET_DIR/saviour-config" /usr/local/bin/saviour-config
 sudo chmod +x "$TARGET_DIR/saviour-config"
+install_provision_service
 
 echo ""
 echo "Setup complete!"

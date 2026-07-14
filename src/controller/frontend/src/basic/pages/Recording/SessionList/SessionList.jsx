@@ -133,7 +133,7 @@ function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
           >
             Add to Session
           </button>
-          <button className="reset-button" type="button" onClick={onClose}>
+          <button className="save-button" type="button" onClick={onClose}>
             Cancel
           </button>
         </div>

@@ -130,7 +130,7 @@ The React frontend communicates with Flask exclusively via **Socket.IO** (not RE
 ## Conventions
 
 - **Conventional commits** with `feat/`, `fix/`, `refactor/` branch prefixes
-- Branch flow: `develop` → `staging` → `main`; PRs always target `develop`
+- Branch flow: PRs → `staging` → `main`
 - Python line length: 88 (ruff). ⚠ pyproject claims py38 compatibility but the code requires **3.11+** (`match` statements, `StrEnum`, numpy ≥ 2.2); all deployed Pis run Bookworm/3.11+.
 - Systemd-aware logging: timestamps are skipped when `INVOCATION_ID` env var is set (systemd sets this)
 - PTP log parsing lives in `src/*/ptp.py`; health metrics in `src/*/health.py`
@@ -152,7 +152,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 ### High priority — silent data loss / correctness
 
-- [ ] **`web.py`: four Socket.IO handlers registered inside the wrong method** (found 2026-07-09 review) — everything from the `""" Recording """` comment at ~line 1521 (`get_recording_sessions`, `get_debug_data`, `login`, `remove_module`) is indented inside `broadcast_module_health()` instead of `_register_socketio_events()`. These handlers only register when the first health broadcast fires, and re-register on every subsequent call. Fix the indentation and delete the dead `login` handler while there.
+- [x] **`web.py`: four Socket.IO handlers registered inside the wrong method** (found 2026-07-09 review) — everything from the `""" Recording """` comment at ~line 1521 (`get_recording_sessions`, `get_debug_data`, `login`, `remove_module`) is indented inside `broadcast_module_health()` instead of `_register_socketio_events()`. These handlers only register when the first health broadcast fires, and re-register on every subsequent call. Fix the indentation and delete the dead `login` handler while there.
 - [ ] **`recording.py`: scheduled sessions cannot span midnight** (found 2026-07-09 review) — start/stop use lexicographic `"HH:MM"` comparison; a window like 22:00–06:00 stops immediately after starting (`"22:00" >= "06:00"`). Dark-cycle overnight recording is a core rodent-lab use case. Fix: detect `end < start` and treat the window as crossing midnight.
 - [ ] **`pyproject.toml`: `hatchling` in build requires breaks offline module installs** (found 2026-07-09 review) — build backend is `setuptools.build_meta`, so hatchling is never used, but pip's build isolation tries to download it (and setuptools/setuptools_scm) from PyPI on every `pip install -e .`. This is the exact `ERROR: No matching distribution found for hatchling` seen in module journals. Fix: remove hatchling from requires AND use `--no-build-isolation` in mend.sh/update paths; also delete the dead `[tool.hatch.*]` sections.
 - [x] **`export.py`: Samba mount not retried** — if the mount fails at session start the entire segment is never exported; add a retry loop with backoff.
@@ -164,7 +164,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 
 ### Medium priority — reliability / UX
 
-- [ ] **CI never runs on PRs** (found 2026-07-09 review) — `.github/workflows/python-app.yml` triggers only on `main`, but the branch flow targets PRs at `develop`. Also: CI lints with flake8 while pyproject configures ruff, excludes `src/modules/examples` (where all real module code lives) from the undefined-name check, and inherits the testpaths gap so module tests never run. Fix triggers, converge on ruff, include examples, add `src/modules/tests` to testpaths.
+- [ ] **CI never runs on PRs** (found 2026-07-09 review) — `.github/workflows/python-app.yml` triggers only on `main`, but the branch flow targets PRs at `staging`. Also: CI lints with flake8 while pyproject configures ruff, excludes `src/modules/examples` (where all real module code lives) from the undefined-name check, and inherits the testpaths gap so module tests never run. Fix triggers, converge on ruff, include examples, add `src/modules/tests` to testpaths.
 - [ ] **`web.py:400`: broken timestamp format in legacy `send_command start_recording` path** (found 2026-07-09 review) — `strftime("%Y%M%d_%H%m%s")` has month/minute swapped and non-portable `%s`; should be `"%Y%m%d_%H%M%S"`.
 - [ ] **`web.py`: NAS exported-recordings listing is broken** (found 2026-07-09 review) — `get_nas_recordings()` scans `/mnt/nas` but calls `mount_nas()` which mounts at `/mnt/controller_export`, so the scan never sees the mount. Also logs one INFO line per file found — a journal flood on large shares. Feature appears dead; either fix the mount point or remove it.
 - [ ] **`pyproject.toml` hygiene** (found 2026-07-09 review) — `requires-python = ">=3.8"` is false (code needs 3.11+); `pytest` is a runtime dependency (belongs in dev extras only); `[tool.ruff]` uses deprecated top-level `select`/`ignore` (modern ruff wants `[tool.ruff.lint]`).

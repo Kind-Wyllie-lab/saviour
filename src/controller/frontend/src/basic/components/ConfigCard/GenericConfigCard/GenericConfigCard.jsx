@@ -20,7 +20,7 @@ const TABS = [
 ];
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
-  const { formData, setFormData, handleChange } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
   const [activeTab, setActiveTab] = useState("basic");
 
   useEffect(() => {
@@ -57,6 +57,7 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       activeTab={activeTab}
       onTabChange={setActiveTab}
       tabSectionMap={TAB_COPY_SECTION}
+      markSaved={markSaved}
       sidebar={module.type.includes("camera") ? <LivestreamCard module={module} /> : null}
     >
       {/* BASIC */}

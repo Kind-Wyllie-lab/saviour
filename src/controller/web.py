@@ -13,6 +13,7 @@ Created: ?
 """
 
 
+import hmac
 import io
 import logging
 import secrets
@@ -80,6 +81,11 @@ def _filter_private_keys(d: dict) -> dict:
 
 
 class Web(ABC):
+    # Outside the JSON config files on purpose -- those are readable/mergeable
+    # via the config-sync socket events, and a credential has no business
+    # sitting somewhere "get_controller_config" could ever echo back.
+    _ADMIN_CREDENTIALS_FILE = "/etc/saviour/admin_credentials"
+
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -133,6 +139,15 @@ class Web(ABC):
         self._diag_pending: dict = {}   # module_id → {'event': Event, 'data': None}
         self._diag_lock = threading.Lock()
         self._bug_report_store: dict = {}  # token → bytes (at most one kept)
+
+        # Authenticated Socket.IO connections (by request.sid). Guests can
+        # connect and read state; anything mutating/destructive requires the
+        # connection to be in this set. Membership is per-connection, not
+        # per-browser -- a reconnect must re-authenticate (the client resends
+        # stored credentials via the Socket.IO auth handshake, see
+        # handle_connect below).
+        self._authenticated_sids: set = set()
+        self._auth_lock = threading.Lock()
     
     
     def _generate_experiment_name(self) -> str:
@@ -154,6 +169,61 @@ class Web(ABC):
             name = "NO-NAME"
 
         return name
+
+
+    def _write_admin_password(self, password: str) -> None:
+        """Write the admin password to disk, mode 600."""
+        os.makedirs(os.path.dirname(self._ADMIN_CREDENTIALS_FILE), exist_ok=True)
+        fd = os.open(self._ADMIN_CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(password)
+
+
+    def _get_or_create_admin_password(self) -> str:
+        """Return the shared admin password, generating one on first use.
+        Single shared credential (no per-user accounts) -- proportionate to
+        a closed single-lab network; gates mutating/destructive actions
+        while read-only status stays open to any guest connection."""
+        try:
+            with open(self._ADMIN_CREDENTIALS_FILE) as f:
+                password = f.read().strip()
+                if password:
+                    return password
+        except FileNotFoundError:
+            pass
+        password = secrets.token_hex(16)
+        self._write_admin_password(password)
+        self.logger.warning(
+            f"Generated new admin password at {self._ADMIN_CREDENTIALS_FILE} -- "
+            f"required to log in and perform any mutating/destructive action. "
+            f"Run `sudo cat {self._ADMIN_CREDENTIALS_FILE}` to retrieve it."
+        )
+        return password
+
+
+    def _check_admin_password(self, password) -> bool:
+        """Constant-time check of a client-supplied password against the
+        admin credential."""
+        expected = self._get_or_create_admin_password()
+        return hmac.compare_digest(str(password or ""), expected)
+
+
+    def _is_authenticated(self) -> bool:
+        """Whether the current Socket.IO connection (request.sid) has logged
+        in. Gates every mutating/destructive handler."""
+        return request.sid in self._authenticated_sids
+
+
+    def _require_auth(self, error_event: str, error_payload=None) -> bool:
+        """Check auth for the current connection; emit an error and return
+        False if not logged in. Call at the top of every handler that
+        mutates state or takes a destructive/consequential action."""
+        if self._is_authenticated():
+            return True
+        from flask_socketio import emit as _emit
+        _emit(error_event, error_payload if error_payload is not None
+              else {"error": "Login required for this action"})
+        return False
 
 
     def _check_nas_free_space(self) -> "str | None":
@@ -359,11 +429,19 @@ class Web(ABC):
         # WebSocket event handlers - for use by the web interface
         @self.socketio.on('connect')
         def handle_connect(auth=None):
-            self.logger.info(f"handle_connect called with auth: {auth}")
             client_ip = request.remote_addr
             self.socketio.emit('client_ip', client_ip)
-            self.logger.info(f"Client connected")
-            
+            self.logger.info(f"Client connected from {client_ip}")
+
+            # Silently re-authenticate a returning connection that already
+            # has a remembered password (e.g. a reconnect after a network
+            # blip) -- no explicit "login" event needed for this path, since
+            # the frontend already knows it was logged in and just wants the
+            # new connection to carry the same privilege.
+            if auth and self._check_admin_password(auth.get("password")):
+                with self._auth_lock:
+                    self._authenticated_sids.add(request.sid)
+
             # Send initial module list
             modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
@@ -378,6 +456,8 @@ class Web(ABC):
         @self.socketio.on('disconnect')
         def handle_disconnect():
             self.logger.info(f"Client disconnected")
+            with self._auth_lock:
+                self._authenticated_sids.discard(request.sid)
 
 
         @self.socketio.on('send_command')
@@ -391,6 +471,8 @@ class Web(ABC):
             Args:
                 command (json): The command received from the frontend. Should contain type, module_id (may be "all" or a specific module), and params field
             """
+            if not self._require_auth("auth_required"):
+                return
             try:
                 command = data.get('type')
                 module_id = data.get('module_id')
@@ -416,7 +498,9 @@ class Web(ABC):
             """
             Start a new recording session.
 
-            """ 
+            """
+            if not self._require_auth("auth_required"):
+                return
             try:
                 self.logger.info(f"Start recording called with {data}")
                 target = data.get("target")
@@ -429,6 +513,8 @@ class Web(ABC):
 
         @self.socketio.on("stop_recording")
         def stop_recording(data):
+            if not self._require_auth("auth_required"):
+                return
             try:
                 target = data.get("target")
                 self.facade.stop_recording(target)
@@ -597,6 +683,8 @@ class Web(ABC):
 
         @self.socketio.on("create_session")
         def handle_create_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             target = data.get("target")
             session_name = data.get("session_name")
             duration_minutes = data.get("duration_minutes")  # None = infinite
@@ -616,6 +704,8 @@ class Web(ABC):
 
         @self.socketio.on("create_scheduled_session")
         def handle_create_scheduled_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             target = data.get("target")
             session_name = data.get("session_name")
             start_time = data.get("start_time")
@@ -632,6 +722,8 @@ class Web(ABC):
 
         @self.socketio.on("force_start_session")
         def handle_force_start_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             session_name = data.get("session_name")
             self.logger.info(f"Received force-start request for session '{session_name}'")
             result = self.facade.force_start_scheduled_session(session_name)
@@ -643,12 +735,16 @@ class Web(ABC):
 
         @self.socketio.on("stop_session")
         def handle_stop_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             session_name = data.get("session_name")
             self.logger.info(f"Received request to stop session {session_name}")
             self.facade.stop_session(session_name)
 
         @self.socketio.on("delete_session")
         def handle_delete_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             session_name = data.get("session_name")
             delete_files = data.get("delete_files", True)
             self.logger.info(f"Received request to delete session '{session_name}' (delete_files={delete_files})")
@@ -658,12 +754,16 @@ class Web(ABC):
 
         @self.socketio.on("clear_ended_sessions")
         def handle_clear_ended_sessions(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             delete_files = data.get("delete_files", False) if data else False
             self.logger.info(f"Received request to clear ended sessions (delete_files={delete_files})")
             self.facade.clear_ended_sessions(delete_files)
 
         @self.socketio.on("add_module_to_session")
         def handle_add_module_to_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
             session_name = data.get("session_name")
             module_id = data.get("module_id")
             self.logger.info(f"Received request to add module '{module_id}' to session '{session_name}'")
@@ -739,6 +839,8 @@ class Web(ABC):
         @self.socketio.on('update_experiment_metadata')
         def handle_update_experiment_metadata(data):
             """Handle experiment metadata updates from frontend"""
+            if not self._require_auth("auth_required"):
+                return
             # Update stored metadata
             for key in ('experimenter', 'experiment', 'rat_id', 'strain', 'batch', 'stage', 'trial'):
                 if key in data:
@@ -783,6 +885,8 @@ class Web(ABC):
         @self.socketio.on('save_module_config')
         def handle_save_module_config(data):
             """Handle save module config from frontend"""
+            if not self._require_auth("auth_required"):
+                return
             module_id = data['id']
             config = _filter_private_keys(data.get("config", {}))
             self.logger.info(f"Received request to save config to module {module_id} with data {config}")
@@ -838,6 +942,8 @@ class Web(ABC):
         @self.socketio.on('reset_module_config')
         def handle_reset_module_config(data):
             """Handle reset-to-defaults request from frontend"""
+            if not self._require_auth("auth_required"):
+                return
             module_id = data.get('module_id')
             self.logger.info(f"Received reset_module_config request for {module_id}")
             self.facade.send_command(module_id, "reset_config", {})
@@ -846,6 +952,8 @@ class Web(ABC):
         @self.socketio.on('apply_section_to_cameras')
         def handle_apply_section_to_cameras(data):
             """Apply one config section from a source camera to all camera modules."""
+            if not self._require_auth("auth_required"):
+                return
             section = data.get("section")
             section_data = data.get("data", {})
             if not section or not isinstance(section_data, dict) or not section_data:
@@ -858,6 +966,8 @@ class Web(ABC):
         def handle_apply_section_to_type(data):
             """Apply one config section to all modules of a given type.
             module_type=None targets all modules regardless of type."""
+            if not self._require_auth("auth_required"):
+                return
             module_type = data.get("module_type")  # None means all modules
             section = data.get("section")
             section_data = data.get("data", {})
@@ -871,6 +981,8 @@ class Web(ABC):
         @self.socketio.on('sync_export_credentials')
         def handle_sync_export_credentials(data):
             """Push this controller's Samba credentials to a single module's export config."""
+            if not self._require_auth("auth_required"):
+                return
             module_id = data.get("module_id")
             if not module_id:
                 return
@@ -885,6 +997,8 @@ class Web(ABC):
             in the payload, those values are used and also persisted to the controller
             config.  Otherwise falls back to the currently saved controller config.
             """
+            if not self._require_auth("auth_required"):
+                return
             data = data or {}
             if "share_ip" in data:
                 creds = {
@@ -937,6 +1051,8 @@ class Web(ABC):
 
         @self.socketio.on('save_controller_config')
         def handle_save_controller_config(data):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Saving controller config")
             self.facade.set_config(_filter_private_keys(data.get("config", {})))
             self.socketio.emit("controller_config_response", {
@@ -1083,6 +1199,8 @@ class Web(ABC):
         @self.socketio.on("upload_update_start")
         def handle_upload_update_start(data):
             from flask_socketio import emit as _emit
+            if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
+                return
             with self._upload_lock:
                 self._upload_chunks = {}
                 self._upload_meta = {
@@ -1096,6 +1214,8 @@ class Web(ABC):
         def handle_upload_update_chunk(data):
             from flask_socketio import emit as _emit
             import zipfile, io, re
+            if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
+                return
             chunk_index = data.get("index")
             chunk_data  = data.get("data")   # bytes from Socket.IO binary frame
             if chunk_data is None or chunk_index is None:
@@ -1167,6 +1287,8 @@ class Web(ABC):
         def handle_deploy_update(data=None):
             from flask_socketio import emit as _emit
             import zipfile, shutil, re
+            if not self._require_auth("deploy_update_error", {"error": "Login required for this action"}):
+                return
             if not os.path.exists(_UPDATE_ZIP):
                 _emit("deploy_update_error", {"error": "No update staged — upload a package first"})
                 return
@@ -1238,7 +1360,10 @@ class Web(ABC):
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
+            from flask_socketio import emit as _emit
             import zipfile as _zf
+            if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
+                return
             _SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
                           '.pytest_cache', 'dist', '.eggs'}
 
@@ -1295,6 +1420,8 @@ class Web(ABC):
         @self.socketio.on("deploy_update_to_module")
         def handle_deploy_update_to_module(data):
             from flask_socketio import emit as _emit
+            if not self._require_auth("deploy_update_error", {"error": "Login required for this action"}):
+                return
             module_id = data.get("module_id") if data else None
             if not module_id:
                 _emit("deploy_update_error", {"error": "module_id required"})
@@ -1314,53 +1441,10 @@ class Web(ABC):
             except Exception as e:
                 _emit("deploy_update_error", {"error": str(e)})
 
-        @self.socketio.on("update_saviour_controller")
-        def handle_update_saviour_controller(data=None):
-            import subprocess, os
-            self.logger.info("Update SAVIOUR controller requested")
-            def _run_update():
-                try:
-                    # Resolve the remote URL and convert SSH to HTTPS so the
-                    # service user (which has no SSH key) can pull without auth.
-                    # The on-disk remote stays as-is, so dev machines can still push over SSH.
-                    import re
-                    # Rewrite SSH → HTTPS inline via -c so the on-disk remote is unchanged
-                    # and a plain `git pull` (which respects tracking config) can be used.
-                    url_result = subprocess.run(
-                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                         '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
-                        capture_output=True, text=True
-                    )
-                    remote_url = url_result.stdout.strip()
-                    ssh_prefix = re.match(r'^git@([^:]+):', remote_url)
-                    url_rewrite = []
-                    if ssh_prefix:
-                        host = ssh_prefix.group(1)
-                        url_rewrite = [f'-c', f'url.https://{host}/.insteadOf=git@{host}:']
-                    git_base = ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                                '-C', '/usr/local/src/saviour'] + url_rewrite
-                    result = subprocess.run(
-                        git_base + ['pull'],
-                        capture_output=True, text=True, timeout=60
-                    )
-                    subprocess.run(
-                        git_base + ['fetch', '--tags'],
-                        capture_output=True, text=True, timeout=30
-                    )
-                    success = result.returncode == 0
-                    output = result.stdout.strip() if success else result.stderr.strip()
-                except Exception as e:
-                    success = False
-                    output = str(e)
-                self.socketio.emit("update_saviour_controller_result", {
-                    "success": success,
-                    "output": output
-                })
-            threading.Thread(target=_run_update, daemon=True).start()
-
-
         @self.socketio.on('shutdown_saviour')
         def handle_shutdown_saviour(data=None):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Shutdown SAVIOUR requested — sending shutdown to all modules then shutting down controller")
             for mid in list(self.facade.get_modules().keys()):
                 try:
@@ -1376,6 +1460,8 @@ class Web(ABC):
 
         @self.socketio.on('reboot_saviour')
         def handle_reboot_saviour(data=None):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Reboot SAVIOUR requested — sending reboot to all modules then rebooting controller")
             for mid in list(self.facade.get_modules().keys()):
                 try:
@@ -1391,6 +1477,8 @@ class Web(ABC):
 
         @self.socketio.on('restart_saviour_controller_service')
         def handle_restart_controller_service(data=None):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Controller service restart requested")
             self.socketio.emit("controller_action_ack", {"action": "restart_service"})
             def _restart():
@@ -1401,6 +1489,8 @@ class Web(ABC):
 
         @self.socketio.on('reboot_controller')
         def handle_reboot_controller(data=None):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Controller reboot requested")
             self.socketio.emit("controller_action_ack", {"action": "reboot"})
             def _reboot():
@@ -1411,6 +1501,8 @@ class Web(ABC):
 
         @self.socketio.on('shutdown_controller')
         def handle_shutdown_controller(data=None):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Controller shutdown requested")
             self.socketio.emit("controller_action_ack", {"action": "shutdown"})
             def _shutdown():
@@ -1421,6 +1513,8 @@ class Web(ABC):
 
         @self.socketio.on("test_teams_webhook")
         def handle_test_teams_webhook(data=None):
+            if not self._require_auth("auth_required"):
+                return
             def _run():
                 success, detail = self.facade.controller.notifier.send_test()
                 self.socketio.emit("teams_test_result", {"success": success, "detail": detail})
@@ -1447,6 +1541,8 @@ class Web(ABC):
         @self.socketio.on("set_controller_time")
         def handle_set_controller_time(data=None):
             from datetime import datetime, timezone as _tz
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Set controller time requested")
             ntp_was_enabled = False
             try:
@@ -1532,19 +1628,41 @@ class Web(ABC):
         """ Login """
         @self.socketio.on("login")
         def handle_login(data):
-            username = data.get("username")
-            password = data.get("password")
-
-            # Replace with secure password check
-            if username == "admin" and password == "secret":
+            password = (data or {}).get("password")
+            if self._check_admin_password(password):
+                with self._auth_lock:
+                    self._authenticated_sids.add(request.sid)
                 self.socketio.emit("login_success", room=request.sid)
             else:
-                self.socketio.emit("login_error", "Wrong username or password", room=request.sid)
+                self.socketio.emit("login_error", "Wrong password", room=request.sid)
+
+
+        @self.socketio.on("change_admin_password")
+        def handle_change_admin_password(data):
+            # Requires the *current* password, not just an existing
+            # authenticated connection -- otherwise a session left logged in
+            # on a shared screen could silently lock everyone else out.
+            if not self._require_auth("change_password_error", {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            current_password = data.get("current_password")
+            new_password = data.get("new_password", "")
+            if not self._check_admin_password(current_password):
+                self.socketio.emit("change_password_error", {"error": "Current password is incorrect"}, room=request.sid)
+                return
+            if len(new_password) < 8:
+                self.socketio.emit("change_password_error", {"error": "New password must be at least 8 characters"}, room=request.sid)
+                return
+            self._write_admin_password(new_password)
+            self.logger.warning(f"Admin password changed at {self._ADMIN_CREDENTIALS_FILE}")
+            self.socketio.emit("change_password_success", room=request.sid)
 
 
         """ Commands and utility """
         @self.socketio.on('remove_module')
         def handle_remove_module(module):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info(f"Received request to remove module: {module['id']}")
             self.facade.remove_module(module['id'])
 
@@ -1976,8 +2094,12 @@ class Web(ABC):
         @self.app.route('/facade/send_command', methods=['POST'])
         def send_command():
             """
-            Send a command to a module.
-            
+            Send a command to a module.  Requires the admin password (the
+            same shared credential used to log into the web UI) via an
+            Authorization header -- this endpoint can dispatch arbitrary
+            commands including shutdown/reboot/start_recording, and unlike
+            the Socket.IO handlers it has no browser session to check.
+
             Request format:
             {
                 "command": "string",  # The command to execute
@@ -1986,10 +2108,21 @@ class Web(ABC):
                     "key": "value"
                 }
             }
-            
+
             Example:
-            curl -X POST http://192.168.0.98:5000/facade/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
+            curl -X POST http://192.168.0.98:5000/facade/send_command \\
+                -H "Content-Type: application/json" \\
+                -H "Authorization: Bearer <admin password>" \\
+                -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
             """
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+            if not self._check_admin_password(token):
+                return jsonify({
+                    "error": "Unauthorized -- provide the admin password via "
+                             "an 'Authorization: Bearer <password>' header"
+                }), 401
+
             try:
                 if not request.is_json:
                     return jsonify({

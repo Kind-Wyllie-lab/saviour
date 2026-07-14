@@ -49,7 +49,28 @@ function ConfigFields({ data, handleChange, sectionExtras = {}, sectionOverrides
         );
       }
 
-      // Skip non-plain objects that filterPrivateKeys may not have caught
+      // Fixed-arity arrays of primitives (color tuples, NDC positions, label
+      // lists, etc.) — render one input per element rather than skipping.
+      if (Array.isArray(value)) {
+        return (
+          <div key={fieldKey} className="form-field form-field--array">
+            <label>{key}:</label>
+            <div className="array-field-inputs">
+              {value.map((item, i) => (
+                <input
+                  key={i}
+                  type={typeof item === "number" ? "number" : "text"}
+                  step={typeof item === "number" ? "any" : undefined}
+                  value={item ?? ""}
+                  onChange={(e) => handleChange([...fieldPath, i], e)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      // Skip non-plain, non-array objects that filterPrivateKeys may not have caught
       if (typeof value === "object" && value !== null) return null;
 
       return (

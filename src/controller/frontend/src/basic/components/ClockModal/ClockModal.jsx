@@ -105,7 +105,7 @@ export default function ClockModal({ driftMs, controllerTime, onClose }) {
         {status === "error" && <p className="clock-modal__msg val--danger">{error}</p>}
 
         <div className="modal-buttons" style={{marginTop: "16px"}}>
-          <button className="reset-button" onClick={onClose}>Cancel</button>
+          <button className="save-button" onClick={onClose}>Cancel</button>
         </div>
       </div>
     </div>

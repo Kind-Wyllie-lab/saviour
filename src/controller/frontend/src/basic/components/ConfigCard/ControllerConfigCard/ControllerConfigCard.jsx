@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import "./ControllerConfigCard.css";
 import socket from "/src/socket";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "./ExportConfigSection";
+import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 
 const TABS = [
   { key: "basic",    label: "Basic"    },
@@ -13,10 +15,8 @@ const TABS = [
 ];
 
 function ControllerConfigCard() {
-  const { formData, setFormData, handleChange } = useConfigForm();
-  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
-  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState(null);
+  const loggedIn = useIsLoggedIn();
+  const { formData, setFormData, handleChange, markSaved } = useConfigForm();
   const [controllerInfo, setControllerInfo] = useState({ ip: null, version: null });
   const [saveStatus, setSaveStatus] = useState(null);
   const [activeTab, setActiveTab] = useState("basic");
@@ -29,6 +29,7 @@ function ControllerConfigCard() {
 
     socket.on("controller_config_response", (data) => {
       setFormData(data.config || {});
+      markSaved(data.config || {});
       setSaveStatus(prev => {
         if (prev === "saving") {
           clearTimeout(saveTimerRef.current);
@@ -43,10 +44,6 @@ function ControllerConfigCard() {
       setControllerInfo({ ip: data.ip, version: data.version });
     });
 
-    socket.on("update_saviour_controller_result", (data) => {
-      setUpdateStatus({ success: data.success, output: data.output });
-    });
-
     socket.on("teams_test_result", (data) => {
       setTeamsTestStatus(data);
     });
@@ -54,7 +51,6 @@ function ControllerConfigCard() {
     return () => {
       socket.off("controller_config_response");
       socket.off("controller_info_response");
-      socket.off("update_saviour_controller_result");
       socket.off("teams_test_result");
       clearTimeout(saveTimerRef.current);
     };
@@ -63,17 +59,7 @@ function ControllerConfigCard() {
   const handleSave = () => {
     setSaveStatus("saving");
     socket.emit("save_controller_config", { config: filterPrivateKeys(formData) });
-  };
-
-  const handleRebootSaviour = () => {
-    socket.emit("reboot_saviour");
-    setShowRebootConfirm(false);
-  };
-
-  const handleUpdateSaviour = () => {
-    setUpdateStatus("updating");
-    setShowUpdateConfirm(false);
-    socket.emit("update_saviour_controller");
+    markSaved();
   };
 
   // Settings tab: everything except controller.name, export, and teams (rendered custom below)
@@ -101,7 +87,12 @@ function ControllerConfigCard() {
   return (
     <div className="config-card controller-config-card">
       <div className="card-header">
-        <h3>Controller Config</h3>
+        <div className="card-header-top">
+          <h3>Controller Config</h3>
+          <div className="card-header-actions">
+            <ControllerActionsMenu />
+          </div>
+        </div>
         <div className="device-info">
           {controllerInfo.ip && <span>IP: {controllerInfo.ip}</span>}
           {controllerInfo.version && <span>{controllerInfo.version}</span>}
@@ -212,7 +203,8 @@ function ControllerConfigCard() {
 
           <div className="config-section-divider" />
 
-          <button className="save-button" type="button" onClick={handleSave}>
+          <button className="save-button" type="button" onClick={handleSave}
+            disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
             Save Config
           </button>
           {saveStatus === "saving" && (
@@ -223,49 +215,6 @@ function ControllerConfigCard() {
           )}
         </div>
       </div>
-      <div className="update-button-wrapper">
-        <button className="update-button" type="button" onClick={() => { setShowUpdateConfirm(true); setUpdateStatus(null); }}>
-          Update SAVIOUR
-        </button>
-        <button className="reset-button" type="button" onClick={() => setShowRebootConfirm(true)}>
-          Reboot SAVIOUR
-        </button>
-      </div>
-
-      {updateStatus === "updating" && (
-        <p className="config-sync-badge config-sync-badge--pending" style={{ textAlign: "center" }}>Updating...</p>
-      )}
-      {updateStatus && updateStatus !== "updating" && (
-        <div className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`} style={{ textAlign: "center", padding: "6px" }}>
-          {updateStatus.success ? "Updated: " : "Update failed: "}{updateStatus.output}
-        </div>
-      )}
-
-      {showUpdateConfirm && (
-        <div className="modal-overlay" onClick={() => setShowUpdateConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Update SAVIOUR on the controller?</p>
-            <p className="modal-subtext">This will run <code>git pull</code> on the controller. Restart the service afterwards to apply changes.</p>
-            <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={handleUpdateSaviour}>Update</button>
-              <button className="reset-button" type="button" onClick={() => setShowUpdateConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showRebootConfirm && (
-        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Reboot all modules and the controller?</p>
-            <p className="modal-subtext">All active recordings will be stopped. The system will be unavailable for a short time.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleRebootSaviour}>Reboot</button>
-              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

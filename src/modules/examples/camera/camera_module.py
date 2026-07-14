@@ -835,10 +835,7 @@ class CameraModule(Module):
                 now = time.monotonic()
                 if now - self._last_stream_encode_time >= self._stream_interval_s:
                     with MappedArray(req, "lores") as m:
-                        if rotation:
-                            _rot_k = rotation // 90
-                            if m.array.shape[0] == m.array.shape[1] or rotation == 180:
-                                m.array[:] = np.rot90(m.array, _rot_k)
+                        # rotation applied in _stream_post_callback on make_array copy
                         if flip_code is not None:
                             m.array[:] = cv2.flip(m.array, flip_code)
                         if monochrome:
@@ -1009,6 +1006,18 @@ class CameraModule(Module):
             stream_name = "main" if high_quality else "lores"
             jpeg_quality = 90 if high_quality else 80
             frame = request.make_array(stream_name)
+            rotation = getattr(self, "_rotation", 0)
+            if rotation:
+                k = rotation // 90
+                frame = np.rot90(frame, k)
+                if not getattr(self, "_rotation_logged", False):
+                    self.logger.info(
+                        f"Preview rotation: {rotation}° applied — "
+                        f"output {frame.shape[1]}×{frame.shape[0]}"
+                    )
+                    self._rotation_logged = True
+            else:
+                self._rotation_logged = False
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ret:
                 return

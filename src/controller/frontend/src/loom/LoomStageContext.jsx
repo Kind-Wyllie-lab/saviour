@@ -32,9 +32,13 @@ function pushStageConfig(stage) {
   }
 }
 
+const STAGE_STORAGE_KEY = "loom_stage";
+
 export function LoomStageProvider({ children }) {
-  const [stage, setStageState] = useState("habituation");
-  const stageRef = useRef("habituation");
+  const [stage, setStageState] = useState(
+    () => localStorage.getItem(STAGE_STORAGE_KEY) || "habituation"
+  );
+  const stageRef = useRef(localStorage.getItem(STAGE_STORAGE_KEY) || "habituation");
 
   // Push the current stage config whenever the socket connects (covers both
   // initial page load and controller restarts) so modules always reflect the
@@ -49,6 +53,7 @@ export function LoomStageProvider({ children }) {
   const setStage = useCallback((newStage) => {
     stageRef.current = newStage;
     setStageState(newStage);
+    localStorage.setItem(STAGE_STORAGE_KEY, newStage);
     pushStageConfig(newStage);
   }, []);
 

@@ -452,6 +452,7 @@ class LoomCameraModule(Module):
             "set_loom_roi": self.set_loom_roi,
             "loom_stimulus_start": self.loom_stimulus_start,
             "loom_stimulus_stop": self.loom_stimulus_stop,
+            "loom_stimulus_soft_stop": self.loom_stimulus_soft_stop,
         })
 
         # Configure everything
@@ -473,6 +474,7 @@ class LoomCameraModule(Module):
         # --- Loom stimulus (local HDMI) ---
         self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
         self._stimulus_enabled = bool(self.config.get("loom_stimulus.enabled", True))
+        self._stimulus_last_restart: float = 0.0
         if self._stimulus_enabled:
             self._loom_stimulus.start()
             self.logger.info(
@@ -695,6 +697,8 @@ class LoomCameraModule(Module):
             round_size=int(self.config.get("loom_stimulus.round_size", 5)),
             image_angle_deg=float(self.config.get("loom_stimulus.image_angle_deg", 0.0)),
             background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 0.5])),
+            start_monitor_index=int(self.config.get("loom_stimulus.start_monitor_index", 0)),
+            flip_horizontal=bool(self.config.get("loom_stimulus.flip_horizontal", False)),
         )
 
     _STIMULUS_PARAM_KEYS = {
@@ -703,6 +707,8 @@ class LoomCameraModule(Module):
         "loom_stimulus.final_pos_ndc", "loom_stimulus.travel_time_s",
         "loom_stimulus.loom_wait_time_s", "loom_stimulus.round_size",
         "loom_stimulus.image_angle_deg", "loom_stimulus.background_rgba",
+        "loom_stimulus.start_monitor_index",
+        "loom_stimulus.flip_horizontal",
     }
 
     def configure_module_special(self, updated_keys: Optional[list]):
@@ -724,31 +730,53 @@ class LoomCameraModule(Module):
             else:
                 self.logger.info("loom_stimulus: renderer stopped (disabled by config)")
 
-        camera_keys = {
-            "camera.fps", "camera.width", "camera.height", "camera.bitrate_mb",
+        # Keys that require full stop/reconfigure/start.
+        restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.sensor_mode_index"}
+        # Keys that can be applied live via set_controls() without stopping.
+        controls_only_keys = {
             "camera.gain", "camera.brightness", "camera.exposure_time",
-            "camera.manual_exposure", "camera.ae_enable", "camera.sensor_mode_index",
+            "camera.manual_exposure", "camera.ae_enable",
             "camera.lens_position", "camera.autofocus_mode",
         }
-        restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb"}
+        all_camera_keys = restart_keys | controls_only_keys
 
         # No camera keys changed — nothing more to do.
-        if updated_keys is not None and not any(k in camera_keys for k in updated_keys):
+        if updated_keys is not None and not any(k in all_camera_keys for k in updated_keys):
             return
 
-        needs_restart = bool(restart_keys & set(updated_keys or []))
+        changed = set(updated_keys or [])
+        needs_restart = bool(restart_keys & changed)
+        controls_only = bool(controls_only_keys & changed) and not needs_restart
 
-        if self.is_streaming and needs_restart:
-            self.stop_streaming()
-            time.sleep(0.5)
-            self._configure_camera()
-            time.sleep(0.2)
-            self.start_streaming()
-        else:
-            was_started = self.picam2.started
-            self._configure_camera()
-            if was_started:
-                self.picam2.start()
+        if controls_only and self.picam2.started:
+            # Apply exposure/gain/AE/AF live — no stream interruption.
+            ae_enabled = bool(self.config.get("camera.ae_enable", False))
+            controls: dict = {
+                "AeEnable": ae_enabled,
+                "Brightness": float(self.config.get("camera.brightness", 0.0)),
+            }
+            if not ae_enabled:
+                controls["AnalogueGain"] = float(self.config.get("camera.gain", 1.0))
+                controls["ExposureTime"] = int(self.config.get("camera.exposure_time", 10000))
+            if self.has_autofocus:
+                _AF_MODE_MAP = {"manual": 0, "auto": 1, "continuous": 2}
+                af_mode = _AF_MODE_MAP.get(self.config.get("camera.autofocus_mode", "manual"), 0)
+                controls["AfMode"] = af_mode
+                if af_mode == 0:
+                    controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+            self.picam2.set_controls(controls)
+        elif needs_restart:
+            if self.is_streaming:
+                self.stop_streaming()
+                time.sleep(0.5)
+                self._configure_camera()
+                time.sleep(0.2)
+                self.start_streaming()
+            else:
+                was_started = self.picam2.started
+                self._configure_camera()
+                if was_started:
+                    self.picam2.start()
 
 
     def _configure_loom_tracking(self) -> None:
@@ -1042,8 +1070,16 @@ class LoomCameraModule(Module):
                 for msg in self._loom_stimulus.poll_status(max_messages=3):
                     if msg.get("type") == "loom_stimulus_error":
                         self.logger.error("Loom stimulus renderer crashed: %s", msg.get("error"))
-                    # forward to controller for debugging/record
                     self.communication.send_status({"type": "loom_stimulus_status", **msg})
+                # Auto-restart the renderer if the subprocess died unexpectedly.
+                # Minimum 5 s between restarts to avoid a crash-loop burning CPU.
+                proc = self._loom_stimulus._proc
+                if proc is not None and not proc.is_alive():
+                    now = time.monotonic()
+                    if now - self._stimulus_last_restart >= 5.0:
+                        self.logger.warning("Loom stimulus process died (exit %s) — restarting", proc.exitcode)
+                        self._stimulus_last_restart = now
+                        self._loom_stimulus.start()
 
 
         except Exception as e:
@@ -1475,10 +1511,19 @@ class LoomCameraModule(Module):
 
     @command()
     def loom_stimulus_stop(self) -> dict:
-        """Manually stop the looming stimulus after current round (debug)."""
+        """Immediately abort the stimulus mid-round (manual stop)."""
         if not self._stimulus_enabled:
             return {"status": "disabled"}
-        self.logger.info("loom_stimulus_stop: sending stop to renderer")
+        self.logger.info("loom_stimulus_stop: sending abort to renderer")
+        self._loom_stimulus.send("abort")
+        return {"status": "ok"}
+
+    @command()
+    def loom_stimulus_soft_stop(self) -> dict:
+        """Soft-stop: finish the current round of repetitions before halting."""
+        if not self._stimulus_enabled:
+            return {"status": "disabled"}
+        self.logger.info("loom_stimulus_soft_stop: sending stop to renderer")
         self._loom_stimulus.send("stop")
         return {"status": "ok"}
 

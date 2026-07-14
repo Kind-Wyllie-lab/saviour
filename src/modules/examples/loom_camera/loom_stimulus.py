@@ -58,7 +58,7 @@ from modules.examples.loom_camera.utils import framebuffer_size_callback, load_t
     scale_matrix
 
 
-LoomStimulusCommand = Literal["start", "stop", "shutdown", "ping"]
+LoomStimulusCommand = Literal["start", "stop", "abort", "shutdown", "ping"]
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,20 @@ class LoomStimulusConfig:
         Texture rotation.
     background_rgba : tuple of float
         Clear color.
+    start_monitor_index : int
+        Controls how many monitors the window spans, using monitors sorted
+        by physical X position (left to right). The window covers monitors
+        0 through start_monitor_index inclusive:
+          0 → left monitor only
+          1 → both monitors (full dual-monitor span)
+        Defaults to 0.
+    flip_horizontal : bool
+        When True, shifts all NDC x-coordinates left by one monitor-width
+        so the stimulus moves from the right-side monitor to the left-side
+        monitor in screen space. Use this when the physical monitors are
+        cabled in the opposite order from their xrandr screen-space positions.
+        Also moves the photodiode marker from the right edge to the left edge.
+        Defaults to False.
     """
     texture_path: str
     initial_size_cm: float
@@ -99,6 +113,8 @@ class LoomStimulusConfig:
     round_size: int
     image_angle_deg: float
     background_rgba: tuple[float, float, float, float]
+    start_monitor_index: int = 0
+    flip_horizontal: bool = False
 
 
 @dataclass
@@ -159,6 +175,7 @@ def run_loom_stimulus_with_ipc(
     fullscreen: bool = True,
     window_size_px: Tuple[int, int] = (1920, 1080),
     vsync: bool = True,
+    flip_horizontal: bool = False,
 ) -> None:
     """
     Run the looming stimulus controlled by IPC commands instead of GPIO TTL.
@@ -211,6 +228,22 @@ def run_loom_stimulus_with_ipc(
         except Exception:
             pass
 
+    # -------------------------------------------------------------------
+    # Force GLFW onto X11 / XWayland BEFORE glfw.init().
+    #
+    # Wayland forbids client-side window positioning (set_window_pos is a
+    # no-op) and will not let a single surface span two outputs, so the
+    # extended-desktop loom canvas collapses onto one monitor. X11/Xinerama
+    # allows both, so we drop any inherited WAYLAND_DISPLAY here.
+    # -------------------------------------------------------------------
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    os.environ.setdefault("DISPLAY", ":0")
+    try:
+        if hasattr(glfw, "PLATFORM") and hasattr(glfw, "PLATFORM_X11"):
+            glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)  # GLFW 3.4+
+    except Exception:
+        pass
+
     if not glfw.init():
         raise RuntimeError("Failed to initialize GLFW")
 
@@ -220,6 +253,10 @@ def run_loom_stimulus_with_ipc(
     vbo = None
     ebo = None
     texture = None
+
+    # Defined here so the span_debug status can reference them regardless of
+    # which branch (fullscreen / windowed) ran.
+    x0 = y0 = 0
 
     try:
         # -----------------------------
@@ -235,20 +272,45 @@ def run_loom_stimulus_with_ipc(
         glfw.window_hint(glfw.DECORATED, glfw.FALSE)
         glfw.window_hint(glfw.AUTO_ICONIFY, glfw.FALSE)
         glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
-        mon = None
         monitors = glfw.get_monitors() or []
 
         if fullscreen:
             if not monitors:
                 raise RuntimeError("No monitors detected by GLFW.")
-            if monitor_index is None:
-                mon = glfw.get_primary_monitor()
-            else:
-                mon = monitors[int(np.clip(monitor_index, 0, len(monitors) - 1))]
 
-            mode = glfw.get_video_mode(mon)
-            w, h = mode.size.width, mode.size.height
-            window = glfw.create_window(w, h, "Loom Stimulus", mon, None)
+            # Collect monitor rects and sort by X position (left to right).
+            rects = []
+            for m in monitors:
+                mx, my = glfw.get_monitor_pos(m)
+                vm = glfw.get_video_mode(m)
+                rects.append((mx, my, vm.size.width, vm.size.height))
+            rects.sort(key=lambda r: (r[0], r[1]))
+
+            # Include monitors 0 through start_monitor_index (inclusive).
+            # index=0 → left monitor only; index=1 → both monitors (span left to right).
+            start_idx = max(0, min(int(monitor_index or 0), len(rects) - 1))
+            selected = rects[0:start_idx + 1]
+
+            x0 = min(r[0] for r in selected)
+            y0 = min(r[1] for r in selected)
+            x1 = max(r[0] + r[2] for r in selected)
+            y1 = max(r[1] + r[3] for r in selected)
+            w, h = x1 - x0, y1 - y0
+
+            # One borderless window covering the selected monitors as a single surface.
+            glfw.window_hint(glfw.FLOATING, glfw.TRUE)
+            # GLFW 3.4+: set initial position as a hint so the WM cannot override
+            # placement before the window is first shown (more reliable than
+            # set_window_pos() called after creation on most X11 compositors).
+            try:
+                if hasattr(glfw, "POSITION_X"):
+                    glfw.window_hint(glfw.POSITION_X, x0)
+                    glfw.window_hint(glfw.POSITION_Y, y0)
+            except Exception:
+                pass
+            window = glfw.create_window(w, h, "Loom Stimulus", None, None)
+            if window is not None:
+                glfw.set_window_pos(window, x0, y0)
         else:
             w, h = int(window_size_px[0]), int(window_size_px[1])
             window = glfw.create_window(w, h, "Loom Stimulus", None, None)
@@ -260,9 +322,22 @@ def run_loom_stimulus_with_ipc(
         glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
         glfw.swap_interval(1 if vsync else 0)
 
-        glViewport(0, 0, w, h)
-        current_window_width = w
-        current_window_height = h
+        # Drive viewport from the FRAMEBUFFER, not the video mode.
+        current_window_width, current_window_height = glfw.get_framebuffer_size(window)
+        glViewport(0, 0, current_window_width, current_window_height)
+
+        _status({
+            "type": "span_debug",
+            "requested_wh": (w, h),
+            "fb_wh": glfw.get_framebuffer_size(window),
+            "win_wh": glfw.get_window_size(window),
+            "origin_xy": (x0, y0),
+            "n_monitors": len(monitors),
+            "monitor_rects_sorted": rects if fullscreen else [],
+            "start_monitor_index": int(monitor_index or 0),
+            "selected_rects": selected if fullscreen else [],
+            "platform": (glfw.get_platform() if hasattr(glfw, "get_platform") else "n/a"),
+        })
 
         # -----------------------------
         # Shaders + geometry + texture
@@ -343,17 +418,23 @@ def run_loom_stimulus_with_ipc(
         # -----------------------------
         # Motion params (your original)
         # -----------------------------
+        # Convert cm sizes to scale factors.
+        # screen_x scales with however many monitors the window spans.
+        n_selected = len(selected) if fullscreen else 1
+
+        # Shift x by one monitor-width in NDC when monitors are physically
+        # arranged opposite to their xrandr screen-space order.
+        # This translates (not mirrors) the stimulus to the other monitor.
+        if flip_horizontal and n_selected >= 2:
+            monitor_ndc_width = 2.0 / n_selected
+            initial_pos_ndc = (initial_pos_ndc[0] - monitor_ndc_width, initial_pos_ndc[1])
+            final_pos_ndc = (final_pos_ndc[0] - monitor_ndc_width, final_pos_ndc[1])
+
         outward_vx = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
         outward_vy = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
         return_vx = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 0)
         return_vy = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 1)
-
-        # Convert cm sizes to scale factors
-        # Keep your original calibration here if you had correction/screen_x.
-        # For now we interpret "cm" as arbitrary scale units; replace if needed.
-        # initial_scale = float(initial_size_cm)
-        # final_scale = float(final_size_cm)
-        screen_x = 105.41 * 2
+        screen_x = 105.41 * n_selected
         screen_y = 59.29
         correction = 1.125
         initial_scale = initial_size_cm / screen_x * correction
@@ -399,12 +480,17 @@ def run_loom_stimulus_with_ipc(
                         start_requested = True
                         _status({"type": "start_received"})
                     elif cmd == "stop":
-                        # Do not hard-stop here — let the enter/leave edge
-                        # detection below call batch.on_leave(), which finishes
-                        # the current round of `round_size` looms before
-                        # stopping rather than cutting the animation off mid-batch.
+                        # Soft stop: finish the current round of `round_size`
+                        # looms before halting. The enter/leave edge detection
+                        # below calls batch.on_leave() to set the flag.
                         start_requested = False
                         _status({"type": "stop_received"})
+                    elif cmd == "abort":
+                        # Hard stop: immediately halt mid-round.
+                        start_requested = False
+                        batch.stop_now()
+                        motion = _reset_motion()
+                        _status({"type": "abort_received"})
                     elif cmd == "shutdown":
                         shutdown_requested = True
                         _status({"type": "shutdown_received"})
@@ -439,8 +525,9 @@ def run_loom_stimulus_with_ipc(
 
             last_start_requested = start_requested
 
-            # framebuffer size
+            # framebuffer size (spans both monitors)
             current_window_width, current_window_height = glfw.get_framebuffer_size(window)
+            glViewport(0, 0, current_window_width, current_window_height)
 
             # Clear
             glUseProgram(shader_program)
@@ -537,7 +624,8 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                glScissor(current_window_width - box_w, y_start, box_w, box_h)
+                box_x = 0 if flip_horizontal else (current_window_width - box_w)
+                glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
@@ -618,6 +706,8 @@ def loom_stimulus_process_main(
             repetitions_per_round=stim_cfg.round_size,
             image_angle_deg=stim_cfg.image_angle_deg,
             background_rgba=stim_cfg.background_rgba,
+            monitor_index=stim_cfg.start_monitor_index,
+            flip_horizontal=stim_cfg.flip_horizontal,
         )
     except Exception as exc:
         status_queue.put({"type": "loom_stimulus_error", "error": str(exc)})
@@ -647,18 +737,12 @@ class LoomStimulusController:
         if self._proc is not None and self._proc.is_alive():
             return
 
-        # X11 fallback
+        # Force X11: the renderer needs client-side window positioning and a
+        # single surface spanning both monitors, neither of which Wayland
+        # allows. Drop any inherited WAYLAND_DISPLAY so GLFW uses X11/XWayland.
         os.environ.setdefault("DISPLAY", ":0")
         os.environ.setdefault("XAUTHORITY", "/home/pi/.Xauthority")
-
-        # Wayland: discover the compositor socket if we're running as root
-        # (systemd service doesn't inherit the user session environment).
-        if not os.environ.get("WAYLAND_DISPLAY"):
-            import glob
-            sockets = sorted(glob.glob("/run/user/*/wayland-0"))
-            if sockets:
-                os.environ["XDG_RUNTIME_DIR"] = os.path.dirname(sockets[0])
-                os.environ["WAYLAND_DISPLAY"] = os.path.basename(sockets[0])
+        os.environ.pop("WAYLAND_DISPLAY", None)
 
         self._proc = mp.Process(
             target=loom_stimulus_process_main,

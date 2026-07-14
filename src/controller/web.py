@@ -2094,8 +2094,12 @@ class Web(ABC):
         @self.app.route('/facade/send_command', methods=['POST'])
         def send_command():
             """
-            Send a command to a module.
-            
+            Send a command to a module.  Requires the admin password (the
+            same shared credential used to log into the web UI) via an
+            Authorization header -- this endpoint can dispatch arbitrary
+            commands including shutdown/reboot/start_recording, and unlike
+            the Socket.IO handlers it has no browser session to check.
+
             Request format:
             {
                 "command": "string",  # The command to execute
@@ -2104,10 +2108,21 @@ class Web(ABC):
                     "key": "value"
                 }
             }
-            
+
             Example:
-            curl -X POST http://192.168.0.98:5000/facade/send_command -H "Content-Type: application/json" -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
+            curl -X POST http://192.168.0.98:5000/facade/send_command \\
+                -H "Content-Type: application/json" \\
+                -H "Authorization: Bearer <admin password>" \\
+                -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
             """
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+            if not self._check_admin_password(token):
+                return jsonify({
+                    "error": "Unauthorized -- provide the admin password via "
+                             "an 'Authorization: Bearer <password>' header"
+                }), 401
+
             try:
                 if not request.is_json:
                     return jsonify({

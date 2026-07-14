@@ -29,6 +29,28 @@ for d in "${DEVICES[@]}"; do
   fi
 done
 
+# Unmount any pre-existing filesystems on target devices. Factory-blank
+# SDXC cards ship pre-formatted (usually exFAT) and get auto-mounted by
+# udisks2 on insertion. Writing under a mounted partition still succeeds
+# (dd writes the raw device), but the kernel then can't re-read the new
+# partition table while the stale one is in use -- partprobe fails, and
+# under set -e the whole run aborts before the identity-fix step, leaving
+# every target device with identical PARTUUID/machine-id/ssh host keys.
+echo "=== Unmounting any existing filesystems on target devices ==="
+for d in "${DEVICES[@]}"; do
+  for part in /dev/"$d"*; do
+    [ -e "$part" ] || continue
+    mnt=$(findmnt -n -o TARGET "$part" 2>/dev/null || true)
+    if [ -n "$mnt" ]; then
+      echo "  Unmounting $part (was mounted at $mnt)"
+      if ! sudo umount "$part" 2>/dev/null && ! sudo umount -l "$part" 2>/dev/null; then
+        echo "ERROR: could not unmount $part -- refusing to write over a mounted filesystem"
+        exit 1
+      fi
+    fi
+  done
+done
+
 # Safety: refuse a source image that doesn't look like a Raspberry Pi OS
 # image (vfat boot + ext4 root). Catches the mistake of pointing this at
 # a blank/factory-formatted card or some other unrelated .img -- cheaply,
@@ -75,7 +97,12 @@ sync
 
 echo "=== Write complete. Re-reading partition tables ==="
 for d in "${DEVICES[@]}"; do
-  sudo partprobe "/dev/$d"
+  # Non-fatal: a single device's kernel failing to pick up the new
+  # partition table (e.g. something else re-mounted it) shouldn't abort
+  # the whole run and skip the identity-fix step for every other device.
+  # fix_identity mounts each partition directly and will fail cleanly,
+  # per-device, if the kernel's view is still stale.
+  sudo partprobe "/dev/$d" || echo "WARNING: partprobe failed for /dev/$d -- will retry via identity-fix step"
 done
 sleep 2   # let udev settle
 
@@ -114,7 +141,7 @@ fix_identity() {
   # so cards come out of the hub already at full capacity -- no first-boot
   # resize step needed.
   echo "Growing root partition on /dev/$dev to fill the card..."
-  sudo parted -s "/dev/$dev" resizepart 2 100%
+  echo ",+" | sudo sfdisk --no-reread -N 2 "/dev/$dev"
   sudo partprobe "/dev/$dev"
   sleep 1
   local ec=0
@@ -130,7 +157,35 @@ fix_identity() {
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-01/PARTUUID=${newid_hex}-01/" "$mnt/etc/fstab"
   sudo sed -i -E "s/PARTUUID=[A-Za-z0-9]{8}-02/PARTUUID=${newid_hex}-02/" "$mnt/etc/fstab"
   sudo truncate -s 0 "$mnt/etc/machine-id"
+
+  # Regenerate unique host keys now, offline. Raspberry Pi OS only
+  # auto-regenerates these via regenerate_ssh_host_keys.service, which is a
+  # one-shot that disables itself after firing -- since the master image is
+  # captured from a template that already booted once (to install SAVIOUR),
+  # that service is already spent in the image. Deleting the keys without
+  # this step leaves sshd with none to load, so it exits on boot and every
+  # clone refuses SSH connections instead of merely being slow to answer.
+  echo "Regenerating SSH host keys..."
   sudo rm -f "$mnt"/etc/ssh/ssh_host_*
+  sudo ssh-keygen -A -f "$mnt"
+
+  # A temporary, per-device hostname so each card is identifiable in DHCP
+  # leases before SAVIOUR's own provisioning assigns a real one. dhcpcd/
+  # NetworkManager both omit DHCP option 12 (hostname) when the hostname is
+  # empty/unset/"localhost", so an unset hostname shows up as "*" in the
+  # lease table -- indistinguishable from any other device on the network.
+  # Suffixed with the same per-device id already used for PARTUUID so
+  # multiple cards booting simultaneously out of the same image don't all
+  # claim the same hostname at once.
+  echo "Setting temporary hostname..."
+  TEMP_HOSTNAME="saviour-unprov-${newid_hex}"
+  echo "$TEMP_HOSTNAME" | sudo tee "$mnt/etc/hostname" > /dev/null
+  if sudo grep -q "^127\.0\.1\.1" "$mnt/etc/hosts"; then
+    sudo sed -i -E "s/^127\.0\.1\.1.*/127.0.1.1\t${TEMP_HOSTNAME}/" "$mnt/etc/hosts"
+  else
+    echo -e "127.0.1.1\t${TEMP_HOSTNAME}" | sudo tee -a "$mnt/etc/hosts" > /dev/null
+  fi
+
   sudo rm -f "$mnt/var/lib/dhcpcd/duid"
   sudo umount "$mnt"
 
@@ -164,9 +219,26 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 echo "=== All devices processed. Verifying ==="
+verify_fail=0
 for dev in "${DEVICES[@]}"; do
   echo "--- /dev/$dev ---"
   sudo blkid "/dev/${dev}1" "/dev/${dev}2"
+
+  vmnt="/mnt/card-verify-$dev"
+  sudo mkdir -p "$vmnt"
+  sudo mount "/dev/${dev}2" "$vmnt"
+  key_count=$(sudo find "$vmnt/etc/ssh" -maxdepth 1 -name 'ssh_host_*_key' 2>/dev/null | wc -l)
+  hostname_val=$(sudo cat "$vmnt/etc/hostname" 2>/dev/null || echo "MISSING")
+  sudo umount "$vmnt"
+  echo "  SSH host keys: $key_count"
+  echo "  Hostname: $hostname_val"
+  if [ "$key_count" -eq 0 ]; then
+    echo "  WARNING: no SSH host keys on /dev/$dev -- sshd will refuse to start on boot!" >&2
+    verify_fail=1
+  fi
 done
 
+if [ "$verify_fail" -ne 0 ]; then
+  echo "=== WARNING: one or more devices are missing SSH host keys -- fix before deploying ==="
+fi
 echo "=== Done. Boot-test at least one card before deploying the rest. ==="

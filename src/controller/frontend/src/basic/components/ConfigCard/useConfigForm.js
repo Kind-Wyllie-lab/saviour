@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 /**
  * Shared form-state hook for config cards.
@@ -10,11 +10,49 @@ import { useState, useEffect } from "react";
  */
 export function useConfigForm(initialData) {
   const [formData, setFormData] = useState(initialData ?? {});
+  const [savedSnapshot, setSavedSnapshot] = useState(initialData);
+  const isDirty = JSON.stringify(formData) !== JSON.stringify(savedSnapshot ?? {});
 
-  // Sync when the parent-supplied data changes (e.g. websocket push).
+  // Read fresh inside the sync effect below without listing it as a
+  // dependency (it must not re-trigger a resync by itself).
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+
+  // Sync when the parent-supplied data changes (e.g. a periodic heartbeat's
+  // websocket push carries a brand-new module.config object every ~30s).
+  // Skipped while the form has unsaved edits — otherwise a routine status
+  // broadcast would silently discard whatever the user is mid-typing.
   useEffect(() => {
-    if (initialData !== undefined) setFormData(initialData);
+    if (initialData === undefined) return;
+    if (isDirtyRef.current) return;
+    setFormData(initialData);
+    setSavedSnapshot(initialData);
   }, [initialData]);
+
+  // Warn before the tab closes/refreshes/navigates away while there are
+  // unsaved edits — config changes here go out to live recording hardware,
+  // so a silently discarded edit is a real footgun, not just an annoyance.
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // Broadcast dirty state so pages that let the user switch between
+  // multiple config cards (e.g. Settings' module picker) can warn before
+  // switching away from one with unsaved edits.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("saviour:config-dirty", { detail: { dirty: isDirty } }));
+  }, [isDirty]);
+
+  // Call after a save/reset is dispatched so the just-sent formData becomes
+  // the new baseline — otherwise the form would (correctly, per the guard
+  // above) refuse to accept the server's own echo of what was just saved.
+  // Pass an explicit value for callers (e.g. ControllerConfigCard) that load
+  // data manually via setFormData rather than the initialData prop — the
+  // component's `formData` closure won't reflect that update synchronously.
+  const markSaved = (explicit) => setSavedSnapshot(explicit !== undefined ? explicit : formData);
 
   const handleChange = (path, e) => {
     setFormData(prev => {
@@ -43,5 +81,5 @@ export function useConfigForm(initialData) {
     });
   };
 
-  return { formData, setFormData, handleChange };
+  return { formData, setFormData, handleChange, isDirty, markSaved };
 }

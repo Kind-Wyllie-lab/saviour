@@ -91,11 +91,16 @@ NEW_END_SECTOR=$((PART2_START_SECTOR + (TARGET_FS_BYTES / 512) + 2048))
 echo "=== Shrinking partition 2 to match ==="
 sudo losetup -d "$LOOPDEV"
 trap - EXIT
-sudo parted -s "$OUT_IMG" resizepart 2 "${NEW_END_SECTOR}s"
+# parted's "shrinking a partition can cause data loss" confirmation refuses
+# outright under -s/--script regardless of what's piped to stdin -- it's
+# not a normal prompt, it's a hard no. sfdisk has no such gate and resizes
+# a single partition's size field directly.
+NEW_SIZE_SECTORS=$((NEW_END_SECTOR - PART2_START_SECTOR + 1))
+echo ",${NEW_SIZE_SECTORS}" | sudo sfdisk --no-reread -N 2 "$OUT_IMG"
 
 echo "=== Truncating image file to new size ==="
 NEW_TOTAL_BYTES=$(((NEW_END_SECTOR + 1) * 512))
-truncate -s "$NEW_TOTAL_BYTES" "$OUT_IMG"
+sudo truncate -s "$NEW_TOTAL_BYTES" "$OUT_IMG"
 
 echo "=== Re-validating shrunk image ==="
 LOOPDEV=$(sudo losetup -fP --show "$OUT_IMG")

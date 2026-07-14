@@ -5,15 +5,17 @@
 # configuration.  Safe to run on any device at any time.
 #
 # What it does:
-#   1. Pulls the latest code from the remote
-#   2. Installs any missing system packages
-#   3. Rebuilds the Python virtual environment
+#   1. Installs any missing system packages
+#   2. Rebuilds the Python virtual environment
+#   3. Rebuilds the frontend (controller only)
 #   4. Rebuilds AudioMoth-USB-Microphone if missing or binary is stale
 #   5. Installs / refreshes the saviour-config symlink
 #   6. Applies logging and NTP configuration
 #   7. Restarts the saviour service if it is running
 #
 # What it does NOT do:
+#   - Pull or otherwise change the SAVIOUR code itself -- code version is
+#     handled entirely by deploying a ZIP package via the web UI, not git
 #   - Overwrite /etc/saviour/config (role/type/IP are preserved)
 #   - Upgrade the OS (apt-get upgrade is intentionally omitted)
 
@@ -68,41 +70,19 @@ else
 fi
 echo ""
 
-# ── 1. Pull latest code ────────────────────────────────────────────────────────
-
-section "1/8  Code update"
-
 cd "$TARGET_DIR"
 
-if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
-    BEFORE=$(git -C "$TARGET_DIR" rev-parse --short HEAD)
-    # Try SSH remote first; if that fails (no key on this device), try HTTPS
-    REMOTE_URL=$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)
-    HTTPS_URL=$(echo "$REMOTE_URL" | sed 's|git@github\.com:|https://github.com/|')
-    if ! git -C "$TARGET_DIR" fetch --quiet origin 2>>"$LOG"; then
-        warn "SSH fetch failed — retrying with HTTPS"
-        if ! git -C "$TARGET_DIR" fetch --quiet "$HTTPS_URL" 2>>"$LOG"; then
-            warn "git fetch failed — continuing with current code"
-        fi
-    fi
-    git -C "$TARGET_DIR" pull --ff-only origin main 2>&1 | tee -a "$LOG" || {
-        warn "git pull failed — continuing with current code"
-    }
-    AFTER=$(git -C "$TARGET_DIR" rev-parse --short HEAD)
-    if [ "$BEFORE" != "$AFTER" ]; then
-        fix "Updated $BEFORE → $AFTER"
-    else
-        ok "Already at latest ($AFTER)"
-    fi
-else
-    warn "$TARGET_DIR is not a git repository — skipping pull"
-fi
+# ── 1. System packages ─────────────────────────────────────────────────────────
 
-# ── 2. System packages ─────────────────────────────────────────────────────────
-
-section "2/8  System packages"
+section "1/7  System packages"
 
 sudo apt-get update -y -qq
+
+# Suppress iptables-persistent's interactive "save current rules?" prompts --
+# without this, a fresh install of iptables-persistent under a non-interactive
+# shell (e.g. run over the update pipeline) hangs on a prompt with no TTY.
+echo "iptables-persistent iptables-persistent/autosave_v4 boolean false" | sudo debconf-set-selections
+echo "iptables-persistent iptables-persistent/autosave_v6 boolean false" | sudo debconf-set-selections
 
 SYSTEM_PACKAGES=(
     linuxptp
@@ -136,7 +116,7 @@ for pkg in "${SYSTEM_PACKAGES[@]}"; do
         ok "$pkg"
     else
         fix "$pkg"
-        sudo apt-get install -y "$pkg" >> "$LOG" 2>&1
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >> "$LOG" 2>&1
     fi
 done
 
@@ -145,15 +125,15 @@ for pkg in "${OPTIONAL_PACKAGES[@]}"; do
         ok "$pkg (optional)"
     else
         fix "$pkg (optional)"
-        if ! sudo apt-get install -y "$pkg" >> "$LOG" 2>&1; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >> "$LOG" 2>&1; then
             warn "$pkg could not be installed — skipping (only needed for APA camera)"
         fi
     fi
 done
 
-# ── 3. Python environment ──────────────────────────────────────────────────────
+# ── 2. Python environment ──────────────────────────────────────────────────────
 
-section "3/8  Python environment"
+section "2/7  Python environment"
 
 if [ ! -d "$TARGET_DIR/env" ]; then
     fix "Creating virtual environment"
@@ -168,9 +148,9 @@ pip install --quiet --force-reinstall simplejpeg >> "$LOG" 2>&1
 
 ok "Python environment up to date"
 
-# ── 4. Frontend build (controller only) ───────────────────────────────────────
+# ── 3. Frontend build (controller only) ───────────────────────────────────────
 
-section "4/8  Frontend build"
+section "3/7  Frontend build"
 
 # Determine role: prefer /etc/saviour/config, fall back to detecting a running controller service
 DETECTED_ROLE="none"
@@ -208,9 +188,9 @@ elif [ "$DETECTED_ROLE" != "none" ]; then
     ok "Module device — no frontend to rebuild"
 fi
 
-# ── 5. AudioMoth USB command ───────────────────────────────────────────────────
+# ── 4. AudioMoth USB command ───────────────────────────────────────────────────
 
-section "5/8  AudioMoth-USB-Microphone"
+section "4/7  AudioMoth-USB-Microphone"
 
 BINARY_PATH="/usr/local/bin/AudioMoth-USB-Microphone"
 REPO="OpenAcousticDevices/AudioMoth-USB-Microphone-Cmd"
@@ -236,7 +216,7 @@ fi
 
 # ── 5. saviour-config symlink ──────────────────────────────────────────────────
 
-section "6/8  saviour-config"
+section "5/7  saviour-config"
 
 SAVIOUR_CONFIG_SRC="$TARGET_DIR/saviour-config"
 SAVIOUR_CONFIG_LINK="/usr/local/bin/saviour-config"
@@ -255,7 +235,7 @@ fi
 
 # ── 6. Logging + NTP ──────────────────────────────────────────────────────────
 
-section "7/8  Logging + NTP"
+section "6/7  Logging + NTP"
 
 # Persistent journald logging
 if grep -q "Storage=persistent" /etc/systemd/journald.conf 2>/dev/null; then
@@ -287,7 +267,7 @@ fi
 
 # ── 7. Restart service ─────────────────────────────────────────────────────────
 
-section "8/8  Service restart"
+section "7/7  Service restart"
 
 if systemctl is-active --quiet saviour.service; then
     fix "Restarting saviour.service to pick up code changes"

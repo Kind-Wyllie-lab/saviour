@@ -137,6 +137,57 @@ detect_interface_name() {
 }
 
 # ── Menus ──────────────────────────────────────────────────────────────────────
+# Recovery path for a root-access admin who doesn't know the web UI's admin
+# password (e.g. set by a previous user and never shared). Overwrites the
+# credential file the controller checks on every login attempt -- no service
+# restart needed, and browsers already logged in stay logged in until they
+# log out (matches the in-app "Change Password" flow's behaviour).
+admin_password() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nThe web UI admin password only applies to a controller." \
+            8 $W
+        return
+    fi
+
+    local cred_file="/etc/saviour/admin_credentials"
+
+    if ! whiptail --title "Reset Admin Password" --yesno \
+        "\nThis resets the SAVIOUR web UI's admin password.\n\nUse this if an admin has root access to this device but doesn't know the current UI password. Browsers already logged in stay logged in until they log out." \
+        12 $W; then
+        return
+    fi
+
+    local new_pass confirm_pass
+    while true; do
+        new_pass=$(wt --title "New Admin Password" \
+            --passwordbox "\nEnter a new admin password (min 8 characters):" \
+            9 $W) || return
+        if [ "${#new_pass}" -lt 8 ]; then
+            whiptail --title "Too Short" --msgbox "\nPassword must be at least 8 characters." 8 $W
+            continue
+        fi
+        confirm_pass=$(wt --title "Confirm Password" \
+            --passwordbox "\nRe-enter the new password to confirm:" \
+            9 $W) || return
+        if [ "$new_pass" != "$confirm_pass" ]; then
+            whiptail --title "Mismatch" --msgbox "\nPasswords did not match -- try again." 8 $W
+            continue
+        fi
+        break
+    done
+
+    mkdir -p "$(dirname "$cred_file")"
+    printf '%s' "$new_pass" > "$cred_file"
+    chmod 600 "$cred_file"
+    log "Admin web UI password reset via saviour-config"
+
+    whiptail --title "Password Updated" \
+        --msgbox "\nThe web UI admin password has been updated.\n\nLog in with the new password at the controller's web address." \
+        10 $W
+}
+
 run_mend() {
     local mend_script="$DIR/mend.sh"
     if [ ! -f "$mend_script" ]; then
@@ -171,9 +222,10 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 6 \
+            $H $W 7 \
             "configure" "Configure this device  (role / type)" \
             "network"   "Network settings  (controller only)" \
+            "password"  "Reset web UI admin password  (controller only)" \
             "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
             "view"      "View current configuration" \
             "mend"      "Repair / update this device" \
@@ -182,6 +234,7 @@ main_menu() {
         case "$choice" in
             configure) configure_device ;;
             network)   network_settings ;;
+            password)  admin_password ;;
             refresh)   clone_fix_menu ;;
             view)      view_config ;;
             mend)      run_mend ;;

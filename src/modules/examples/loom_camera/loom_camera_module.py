@@ -731,7 +731,7 @@ class LoomCameraModule(Module):
                 self.logger.info("loom_stimulus: renderer stopped (disabled by config)")
 
         # Keys that require full stop/reconfigure/start.
-        restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.sensor_mode_index"}
+        restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.sensor_mode_index", "camera.rotation"}
         # Keys that can be applied live via set_controls() without stopping.
         controls_only_keys = {
             "camera.gain", "camera.brightness", "camera.exposure_time",
@@ -889,11 +889,20 @@ class LoomCameraModule(Module):
                 if af_mode == 0:
                     controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
+            from libcamera import Transform
+            rotation = int(self.config.get("camera.rotation", 0))
+            if rotation not in (0, 90, 180, 270):
+                rotation = 0
+            transform = Transform(rotation=rotation)
+            if rotation:
+                self.logger.info(f"Hardware transform: rotation={rotation}")
+
             config = self.picam2.create_video_configuration(
                 main=main,
                 lores=lores,
                 sensor=sensor,
                 controls=controls,
+                transform=transform,
                 buffer_count=16,
             )
             self.picam2.configure(config)

@@ -323,6 +323,16 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "vflip"], e)} />
             </div>
             <div className="form-field">
+              <label>Rotation:</label>
+              <select value={cam.rotation ?? 0}
+                onChange={e => handleChange(["camera", "rotation"], e)}>
+                <option value={0}>0°</option>
+                <option value={90}>90°</option>
+                <option value={180}>180°</option>
+                <option value={270}>270°</option>
+              </select>
+            </div>
+            <div className="form-field">
               <label>Brightness: {Number(brightness).toFixed(2)}</label>
               <input type="range" min="-1" max="1" step="0.05"
                 value={brightness} className="brightness-slider"

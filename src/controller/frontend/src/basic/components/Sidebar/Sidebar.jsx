@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import socket from "/src/socket";
 import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 
@@ -15,7 +15,9 @@ function Sidebar({ navItems }) {
   const [shutdownState, setShutdownState]     = useState(null); // null | "sent" | "acked"
   const [hostname, setHostname]               = useState(null);
   const [version, setVersion]                 = useState(null);
+  const [configDirty, setConfigDirty]         = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Update modal state
   const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged }
@@ -50,6 +52,26 @@ function Sidebar({ navItems }) {
     window.addEventListener("saviour:open-update-modal", handler);
     return () => window.removeEventListener("saviour:open-update-modal", handler);
   }, []);
+
+  // The currently-mounted ConfigCard's useConfigForm broadcasts its dirty
+  // state here so leaving the page entirely (not just switching modules
+  // within Settings, which Settings.jsx itself guards) warns first.
+  useEffect(() => {
+    const handler = (e) => setConfigDirty(!!e.detail?.dirty);
+    window.addEventListener("saviour:config-dirty", handler);
+    return () => window.removeEventListener("saviour:config-dirty", handler);
+  }, []);
+
+  const handleNavClick = (path) => (e) => {
+    if (path === location.pathname) return;
+    if (configDirty && !window.confirm(
+      "You have unsaved config changes that will be lost if you leave this page. Continue?"
+    )) {
+      e.preventDefault();
+      return;
+    }
+    setConfigDirty(false);
+  };
 
   useEffect(() => {
     const onAck = () => setShutdownState("acked");
@@ -200,7 +222,7 @@ function Sidebar({ navItems }) {
             disabled ? (
               <span key={path} className="nav-link disabled">{label}</span>
             ) : (
-              <NavLink key={path} to={path} className="nav-link">{label}</NavLink>
+              <NavLink key={path} to={path} className="nav-link" onClick={handleNavClick(path)}>{label}</NavLink>
             )
           )}
         </nav>
@@ -238,7 +260,16 @@ function Sidebar({ navItems }) {
         <button
           className="footer-version-btn"
           title="Go to System page to deploy updates"
-          onClick={() => navigate("/system")}
+          onClick={() => {
+            if ("/system" === location.pathname) return;
+            if (configDirty && !window.confirm(
+              "You have unsaved config changes that will be lost if you leave this page. Continue?"
+            )) {
+              return;
+            }
+            setConfigDirty(false);
+            navigate("/system");
+          }}
         >
           SAVIOUR {version ? `${version}` : ""}
         </button>

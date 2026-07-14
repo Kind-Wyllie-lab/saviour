@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import socket from "/src/socket";
+import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
@@ -13,6 +14,10 @@ function Sidebar({ navItems }) {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [shutdownState, setShutdownState]     = useState(null); // null | "sent" | "acked"
   const [hostname, setHostname]               = useState(null);
+  const [version, setVersion]                 = useState(null);
+  const [configDirty, setConfigDirty]         = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // Update modal state
   const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged }
@@ -22,11 +27,21 @@ function Sidebar({ navItems }) {
   const [deployStatus, setDeployStatus]       = useState(null); // null | "deploying" | "done" | "error"
   const [deployError, setDeployError]         = useState(null);
   const [stagingCurrent, setStagingCurrent]   = useState(false);
+  const [loggedIn, setLoggedIn]               = useState(() => isLoggedIn());
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
   const fileInputRef = useRef(null);
+
+  useEffect(() => onAuthChange(() => {
+    setLoggedIn(isLoggedIn());
+    setShowAccountMenu(false);
+  }), []);
 
   useEffect(() => {
     socket.emit("get_controller_info");
-    const handler = (data) => { if (data.hostname) setHostname(data.hostname); };
+    const handler = (data) => {
+      if (data.hostname) setHostname(data.hostname);
+      if (data.version) setVersion(data.version);
+    };
     socket.on("controller_info_response", handler);
     return () => socket.off("controller_info_response", handler);
   }, []);
@@ -37,6 +52,26 @@ function Sidebar({ navItems }) {
     window.addEventListener("saviour:open-update-modal", handler);
     return () => window.removeEventListener("saviour:open-update-modal", handler);
   }, []);
+
+  // The currently-mounted ConfigCard's useConfigForm broadcasts its dirty
+  // state here so leaving the page entirely (not just switching modules
+  // within Settings, which Settings.jsx itself guards) warns first.
+  useEffect(() => {
+    const handler = (e) => setConfigDirty(!!e.detail?.dirty);
+    window.addEventListener("saviour:config-dirty", handler);
+    return () => window.removeEventListener("saviour:config-dirty", handler);
+  }, []);
+
+  const handleNavClick = (path) => (e) => {
+    if (path === location.pathname) return;
+    if (configDirty && !window.confirm(
+      "You have unsaved config changes that will be lost if you leave this page. Continue?"
+    )) {
+      e.preventDefault();
+      return;
+    }
+    setConfigDirty(false);
+  };
 
   useEffect(() => {
     const onAck = () => setShutdownState("acked");
@@ -107,6 +142,10 @@ function Sidebar({ navItems }) {
   };
 
   const openUpdateModal = () => {
+    if (!loggedIn) {
+      window.dispatchEvent(new Event("saviour:open-login"));
+      return;
+    }
     setUpdateInfo(null);
     setStagedMeta(null);
     setUploadProgress(null);
@@ -183,28 +222,63 @@ function Sidebar({ navItems }) {
             disabled ? (
               <span key={path} className="nav-link disabled">{label}</span>
             ) : (
-              <NavLink key={path} to={path} className="nav-link">{label}</NavLink>
+              <NavLink key={path} to={path} className="nav-link" onClick={handleNavClick(path)}>{label}</NavLink>
             )
           )}
         </nav>
       </div>
 
       <div className="footer">
+        <div className="footer-role-wrap">
+          <button
+            className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
+            title={loggedIn ? "Account options" : "Log in as admin"}
+            onClick={() => {
+              if (loggedIn) {
+                setShowAccountMenu(v => !v);
+              } else {
+                window.dispatchEvent(new Event("saviour:open-login"));
+              }
+            }}
+          >
+            {loggedIn ? "Admin" : "Guest"}
+          </button>
+          {showAccountMenu && (
+            <div className="footer-role-menu">
+              <button onClick={() => {
+                setShowAccountMenu(false);
+                window.dispatchEvent(new Event("saviour:open-change-password"));
+              }}>
+                Change Password
+              </button>
+              <button onClick={() => { setShowAccountMenu(false); logOut(); }}>
+                Log Out
+              </button>
+            </div>
+          )}
+        </div>
+        <button
+          className="footer-version-btn"
+          title="Go to System page to deploy updates"
+          onClick={() => {
+            if ("/system" === location.pathname) return;
+            if (configDirty && !window.confirm(
+              "You have unsaved config changes that will be lost if you leave this page. Continue?"
+            )) {
+              return;
+            }
+            setConfigDirty(false);
+            navigate("/system");
+          }}
+        >
+          SAVIOUR {version ? `${version}` : ""}
+        </button>
+
         <div className="footer-actions">
           <button
-            className="footer-icon-btn footer-icon-btn--update"
-            title="Stage and deploy a software update"
-            onClick={openUpdateModal}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
-          <button
             className="footer-icon-btn footer-icon-btn--power"
-            title="Reboot or shut down all devices"
+            title={loggedIn ? "Reboot or shut down all devices" : "Login required for this action"}
+            disabled={!loggedIn}
             onClick={() => setShowPowerModal(true)}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -309,7 +383,7 @@ function Sidebar({ navItems }) {
                 </button>
               )}
               <button
-                className="reset-button"
+                className="save-button"
                 type="button"
                 onClick={() => setShowUpdateModal(false)}
               >

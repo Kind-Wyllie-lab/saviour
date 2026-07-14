@@ -32,14 +32,20 @@ export function isPlainObject(v) {
 }
 
 /**
- * Recursively removes keys prefixed with "_", non-plain-object values
- * (ArrayBuffer, Array, typed arrays, etc.) and prunes any objects that
+ * Recursively removes keys prefixed with "_", non-plain-object/non-array
+ * values (ArrayBuffer, typed arrays, etc.) and prunes any objects that
  * become empty as a result.  Returns undefined when the whole object is empty.
+ *
+ * Plain Arrays (color tuples, NDC positions, label lists, etc.) pass through
+ * unchanged rather than being dropped -- config values like loom_stimulus's
+ * background_rgba are legitimate JSON arrays of primitives, not binary
+ * buffers, and need to round-trip through save/paste like any other field.
  */
 export function filterPrivateKeys(obj) {
   // Primitives pass through as-is
   if (typeof obj !== "object" || obj === null) return obj;
-  // Non-plain objects (Array, ArrayBuffer, typed arrays, etc.) are dropped
+  if (Array.isArray(obj)) return obj;
+  // Non-plain, non-array objects (ArrayBuffer, typed arrays, Dates, etc.)
   if (!isPlainObject(obj)) return undefined;
 
   const filtered = {};
@@ -49,10 +55,12 @@ export function filterPrivateKeys(obj) {
     let filteredValue;
     if (isPlainObject(value)) {
       filteredValue = filterPrivateKeys(value);
+    } else if (Array.isArray(value)) {
+      filteredValue = value; // array of primitives — pass through unchanged
     } else if (typeof value !== "object" || value === null) {
       filteredValue = value; // primitive or null
     } else {
-      continue; // Array, ArrayBuffer, etc. — skip silently
+      continue; // ArrayBuffer, typed arrays, Dates, etc. — skip silently
     }
 
     if (

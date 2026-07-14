@@ -524,10 +524,32 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
 
         {/* LOOM TRACKING */}
         {activeTab === "tracking" && (
-          <ConfigFields
-            data={formData?.loom_tracking}
-            handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
-          />
+          <>
+            <ConfigFields
+              data={formData?.loom_tracking}
+              handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
+            />
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Zone label position &amp; size</div>
+            <div className="form-field">
+              <label>X position (0–1):</label>
+              <input type="number" min="0" max="1" step="0.01"
+                value={formData?.loom_tracking?.overlay?.zone_label_x_frac ?? 0.01}
+                onChange={e => handleChange(["loom_tracking", "overlay", "zone_label_x_frac"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Y position (0–1):</label>
+              <input type="number" min="0" max="1" step="0.01"
+                value={formData?.loom_tracking?.overlay?.zone_label_y_frac ?? 0.95}
+                onChange={e => handleChange(["loom_tracking", "overlay", "zone_label_y_frac"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Font scale:</label>
+              <input type="number" min="0.1" max="5" step="0.1"
+                value={formData?.loom_tracking?.overlay?.zone_label_font_scale ?? 1.0}
+                onChange={e => handleChange(["loom_tracking", "overlay", "zone_label_font_scale"], e)} />
+            </div>
+          </>
         )}
 
         {/* LOOM STIMULUS */}

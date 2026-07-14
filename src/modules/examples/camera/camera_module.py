@@ -298,6 +298,7 @@ class CameraModule(Module):
         # Flip is handled by the hardware Transform in _configure_camera, so no
         # per-frame cv2.flip() is needed.
         self._cb_flip_code = None
+        self._cb_rotation = getattr(self, "_rotation", 0)
         self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
         # Clear layout caches so _apply_timestamp recomputes font_scale for the new text width
         self._ts_layout_main  = None
@@ -427,9 +428,15 @@ class CameraModule(Module):
             rotation = int(self.config.get("camera.rotation", 0))
             if rotation not in (0, 90, 180, 270):
                 rotation = 0
-            transform = Transform(hflip=hflip, vflip=vflip, rotation=rotation)
-            if hflip or vflip or rotation:
-                self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip} rotation={rotation}")
+            self._rotation = rotation
+            # hflip/vflip are supported by the ISP; rotation is done in the
+            # frame callback because the ISP drops the transpose component of
+            # rot90/rot270, producing a plain flip instead of a true rotation.
+            transform = Transform(hflip=hflip, vflip=vflip)
+            if hflip or vflip:
+                self.logger.info(f"Hardware transform: hflip={hflip} vflip={vflip}")
+            if rotation:
+                self.logger.info(f"Software rotation: {rotation}°")
 
             self.logger.info(f"Sensor stream set to size {self.width},{self.height} and bit depth {self.mode['bit_depth']} to target {self.fps}fps.")
 
@@ -797,14 +804,19 @@ class CameraModule(Module):
             flip_code         = self._cb_flip_code
             monochrome        = self._cb_monochrome
             overlay_timestamp = self._cb_overlay_timestamp
+            rotation          = self._cb_rotation
             module_name       = self._cb_module_name or self.facade.get_module_name()
 
             ts_str = (f"{module_name} "
                       f"{dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}+00:00")
 
             # Main stream — only map the buffer when something will actually change it.
-            if flip_code is not None or monochrome or overlay_timestamp:
+            if flip_code is not None or monochrome or overlay_timestamp or rotation:
                 with MappedArray(req, 'main') as m:
+                    if rotation:
+                        _rot_k = rotation // 90
+                        if m.array.shape[0] == m.array.shape[1] or rotation == 180:
+                            m.array[:] = np.rot90(m.array, _rot_k)
                     if flip_code is not None:
                         m.array[:] = cv2.flip(m.array, flip_code)
                     if monochrome:
@@ -823,6 +835,10 @@ class CameraModule(Module):
                 now = time.monotonic()
                 if now - self._last_stream_encode_time >= self._stream_interval_s:
                     with MappedArray(req, "lores") as m:
+                        if rotation:
+                            _rot_k = rotation // 90
+                            if m.array.shape[0] == m.array.shape[1] or rotation == 180:
+                                m.array[:] = np.rot90(m.array, _rot_k)
                         if flip_code is not None:
                             m.array[:] = cv2.flip(m.array, flip_code)
                         if monochrome:

@@ -893,9 +893,10 @@ class LoomCameraModule(Module):
             rotation = int(self.config.get("camera.rotation", 0))
             if rotation not in (0, 90, 180, 270):
                 rotation = 0
-            transform = Transform(rotation=rotation)
+            self._rotation = rotation
+            transform = Transform()
             if rotation:
-                self.logger.info(f"Hardware transform: rotation={rotation}")
+                self.logger.info(f"Software rotation: {rotation}°")
 
             config = self.picam2.create_video_configuration(
                 main=main,
@@ -993,6 +994,11 @@ class LoomCameraModule(Module):
             event_label = ""
 
             with MappedArray(req, "main") as m:
+                _rot = getattr(self, "_rotation", 0)
+                if _rot:
+                    _k = _rot // 90
+                    if m.array.shape[0] == m.array.shape[1] or _rot == 180:
+                        m.array[:] = np.rot90(m.array, _k)
                 frame = m.array
                 if tracking_enabled and self.tracker is not None:
                     center_proc, (sx, sy), (nx, ny) = self.tracker.detect_center(frame)
@@ -1072,6 +1078,9 @@ class LoomCameraModule(Module):
 
             # Also apply overlays to lores for preview
             with MappedArray(req, "lores") as m:
+                if _rot:
+                    if m.array.shape[0] == m.array.shape[1] or _rot == 180:
+                        m.array[:] = np.rot90(m.array, _k)
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m, lores=True)
 

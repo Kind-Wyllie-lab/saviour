@@ -195,7 +195,7 @@ run_mend() {
         return
     fi
     whiptail --title "Repair / Update" \
-        --yesno "\nThis will pull the latest code, rebuild dependencies, and restart the service.\n\nThe process takes a few minutes. Continue?" \
+        --yesno "\nThis will rebuild dependencies and restart the service (code itself is not changed -- deploy a ZIP via the web UI for that).\n\nThe process takes a few minutes. Continue?" \
         10 $W || return
     tput rmcup 2>/dev/null || clear
     bash "$mend_script"

@@ -919,6 +919,11 @@ class LoomCameraModule(Module):
             self.main_encoder = H264Encoder(bitrate=bitrate)
             self.lores_encoder = H264Encoder(bitrate=max(100_000, bitrate // 10))
 
+            # Invalidate cached timestamp layout on resolution change
+            for attr in ("_ts_layout_main", "_ts_layout_lores"):
+                if hasattr(self, attr):
+                    delattr(self, attr)
+
             self.logger.info(f"Camera configured: {self.width}×{self.height} @ {self.fps}fps")
             return True
         except Exception as e:
@@ -975,7 +980,7 @@ class LoomCameraModule(Module):
         try:
             timestamp = self._get_frame_timestamp(req)
 
-            ts_utc = delta_ms = dropped = ""
+            ts_utc = delta_ms = dropped = ts_label = ""
             if timestamp is not None:
                 if self.last_frame_timestamp:
                     pass
@@ -983,6 +988,10 @@ class LoomCameraModule(Module):
 
                 dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)
                 ts_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
+                ts_label = (
+                    f"{self.facade.get_module_name()} "
+                    f"{dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}+00:00"
+                )
 
                 if self._csv_prev_ns is not None and self.fps:
                     delta_ms = round((timestamp - self._csv_prev_ns) / 1e6, 3)
@@ -991,6 +1000,7 @@ class LoomCameraModule(Module):
 
             tracking_enabled = bool(self.config.get("loom_tracking.enabled", True))
             overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
+            overlay_timestamp = bool(self.config.get("camera.overlay_timestamp", True))
 
             cx = cy = None
             zone_state = "out"
@@ -1067,6 +1077,8 @@ class LoomCameraModule(Module):
 
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m)
+                if overlay_timestamp and ts_label:
+                    self._apply_timestamp_label(m, ts_label, "main")
 
             # Write per-frame CSV with state
             if timestamp is not None and self._timestamp_csv_writer is not None:
@@ -1085,6 +1097,8 @@ class LoomCameraModule(Module):
             with MappedArray(req, "lores") as m:
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m, lores=True)
+                if overlay_timestamp and ts_label:
+                    self._apply_timestamp_label(m, ts_label, "lores")
 
             if self._stimulus_enabled:
                 for msg in self._loom_stimulus.poll_status(max_messages=3):
@@ -1192,6 +1206,33 @@ class LoomCameraModule(Module):
             2,
             cv2.LINE_AA,
         )
+
+    # ---------------------------------------------------------------------
+    # Timestamp overlay
+    # ---------------------------------------------------------------------
+
+    _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
+
+    def _apply_timestamp_label(self, m: MappedArray, timestamp: str, stream: str) -> None:
+        cache_attr = f"_ts_layout_{stream}"
+        layout = getattr(self, cache_attr, None)
+        if layout is None:
+            w = self.width  if stream == "main" else self.lores_width
+            h = self.height if stream == "main" else self.lores_height
+            font   = cv2.FONT_HERSHEY_SIMPLEX
+            preset = self.config.get("camera.text_size", "medium")
+            frac   = self._TIMESTAMP_WIDTH_FRACTIONS.get(preset, 0.72)
+            thick  = 2 if preset == "large" else 1
+            ref_w, _ = cv2.getTextSize(timestamp, font, 1.0, thick)[0]
+            scale  = max(0.3, (frac * w) / ref_w)
+            tw, th = cv2.getTextSize(timestamp, font, scale, thick)[0]
+            x = int((w - tw) / 2)
+            y = th + max(4, int(h * 0.01))
+            layout = (scale, thick, x, y)
+            setattr(self, cache_attr, layout)
+        scale, thick, x, y = layout
+        cv2.putText(m.array, timestamp, (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, (50, 255, 50), thick)
 
     # ---------------------------------------------------------------------
     # Streaming (identical pattern to APA)

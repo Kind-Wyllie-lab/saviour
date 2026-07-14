@@ -113,6 +113,18 @@ min-width: 300px;
   cursor: not-allowed;
 }
 
+.array-field-inputs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.array-field-inputs input {
+  flex: 1;
+  min-width: 0;
+}
+
 .form-field select {
   flex: 1;
   min-width: 0;

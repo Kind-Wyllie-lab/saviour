@@ -1193,15 +1193,15 @@ class LoomCameraModule(Module):
                 rect_bgr = tuple(overlay_cfg.get("rect_bgr", [0, 255, 255]))
                 cv2.rectangle(m.array, (x0, y0), (x1, y1), rect_bgr, thickness, cv2.LINE_AA)
 
-        # State label
+        # State label — bottom-left to avoid colliding with the top timestamp overlay
         state = self.crossing_state.state
         state_color = (0, 0, 255) if state in ("entering", "in") else (0, 255, 0)  # red=in, green=out
         cv2.putText(
             m.array,
             f"Zone: {state}",
-            (10, 32),
+            (10, h - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
+            0.9 * min(sx, sy),
             state_color,
             2,
             cv2.LINE_AA,

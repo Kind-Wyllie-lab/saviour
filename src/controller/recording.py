@@ -11,7 +11,7 @@ import os
 import json
 import logging
 import shutil
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import time
 from typing import Optional, Dict
 from dataclasses import dataclass, field, asdict
@@ -1257,7 +1257,6 @@ class Recording:
         detected when the session should have run yesterday but its
         scheduled_last_start_date is not yesterday.
         """
-        from datetime import timedelta
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         yesterday_weekday = (date.today() - timedelta(days=1)).weekday()
 
@@ -1293,6 +1292,46 @@ class Recording:
                 )
 
 
+    @staticmethod
+    def _scheduled_session_action(session: "RecordingSession", today: str, yesterday: str,
+                                   current_time: str, today_weekday: int) -> Optional[str]:
+        """Decide whether a scheduled session's monitor tick should start or stop it.
+
+        end < start means the window spans midnight (e.g. 22:00-06:00): the stop
+        check then looks for a session started yesterday whose end time has been
+        reached before today's start time, rather than a same-day match — a plain
+        "HH:MM" string comparison would otherwise stop the session seconds after
+        it starts.
+        """
+        days_match = (
+            not session.scheduled_days
+            or today_weekday in session.scheduled_days
+        )
+        crosses_midnight = (
+            session.scheduled_start_time is not None
+            and session.scheduled_end_time is not None
+            and session.scheduled_end_time < session.scheduled_start_time
+        )
+
+        if (session.state != SessionState.ACTIVE
+                and session.scheduled_last_start_date != today
+                and days_match
+                and current_time >= session.scheduled_start_time):
+            return "start"
+
+        if session.state == SessionState.ACTIVE:
+            if not crosses_midnight:
+                if (session.scheduled_last_start_date == today
+                        and current_time >= session.scheduled_end_time):
+                    return "stop"
+            else:
+                if (session.scheduled_last_start_date == yesterday
+                        and current_time >= session.scheduled_end_time
+                        and current_time < session.scheduled_start_time):
+                    return "stop"
+
+        return None
+
     def _monitor_sessions(self) -> None:
         """Background thread: drive scheduled timers and health-check active sessions."""
         while True:
@@ -1318,23 +1357,13 @@ class Recording:
 
                     if session.scheduled:
                         today_weekday = date.today().weekday()
-                        days_match = (
-                            not session.scheduled_days
-                            or today_weekday in session.scheduled_days
+                        yesterday = (date.today() - timedelta(days=1)).isoformat()
+                        action = self._scheduled_session_action(
+                            session, today, yesterday, current_time, today_weekday
                         )
-
-                        # Start if today matches the day filter, not already started today,
-                        # and the start time has been reached
-                        if (session.state != SessionState.ACTIVE
-                                and session.scheduled_last_start_date != today
-                                and days_match
-                                and current_time >= session.scheduled_start_time):
+                        if action == "start":
                             self._start_scheduled_session(session_name, today)
-
-                        # Stop if active, started today, and end time reached
-                        elif (session.state == SessionState.ACTIVE
-                                and session.scheduled_last_start_date == today
-                                and current_time >= session.scheduled_end_time):
+                        elif action == "stop":
                             self._stop_scheduled_session(session_name)
 
                     elif session.state in (SessionState.ACTIVE, SessionState.ERROR):

@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { useModuleUpdate } from "/src/hooks/useModuleUpdate";
 import socket from "../../../../socket";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import CopyActionsBar from "../CopyActionsBar";
+import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
 
@@ -25,16 +26,15 @@ const TABS = [
 ];
 
 function TTLConfigCard({ id, module, clipboard, onCopy }) {
-  const { formData, setFormData, handleChange } = useConfigForm(module.config);
+  const loggedIn = useIsLoggedIn();
+  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState("basic");
   const [newPin, setNewPin] = useState("");
   const [newMode, setNewMode] = useState("");
   const [hasSaved, setHasSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [showRebootConfirm, setShowRebootConfirm] = useState(false);
   const [pinTestState, setPinTestState] = useState({});
-  const { updateStatus, handleUpdate } = useModuleUpdate(id);
 
   const ttlCfg = formData?.ttl ?? {};
   const availablePins = module.config?.ttl?._available_pins ?? [];
@@ -132,11 +132,13 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const saveConfig = () => {
     socket.emit("save_module_config", { id, config: filterPrivateKeys(formData) });
     setHasSaved(true);
+    markSaved();
   };
 
   const handleReset = () => {
     socket.emit("reset_module_config", { module_id: id });
     setShowResetConfirm(false);
+    markSaved();
   };
 
   const [applyAllConfirm, setApplyAllConfirm] = useState(null);
@@ -159,19 +161,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             {module.name || id} {collapsed ? "(+)" : "(-)"}
           </h3>
           <div className="card-header-actions">
-            <button className="header-action-btn" type="button"
-              onClick={handleUpdate} disabled={updateStatus === "updating"}>
-              {updateStatus === "updating" ? "Updating…" : "Update"}
-            </button>
-            {updateStatus && updateStatus !== "updating" && (
-              <span className={`config-sync-badge ${updateStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-                {updateStatus.success ? `Updated: ${updateStatus.output}` : `Failed: ${updateStatus.output}`}
-              </span>
-            )}
-            <button className="header-action-btn header-action-btn--danger" type="button"
-              onClick={() => setShowRebootConfirm(true)}>
-              Reboot
-            </button>
+            <ModuleActionsMenu id={id} name={module.name || id} isOnline={!!module.online} />
           </div>
         </div>
         <div className="device-info">
@@ -373,10 +363,12 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             })()}
 
             <div className="ttl-action-row">
-              <button className="save-button" type="button" onClick={saveConfig}>
+              <button className="save-button" type="button" onClick={saveConfig}
+                disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
                 Save Config
               </button>
-              <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}>
+              <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}
+                disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
                 Reset to Default
               </button>
             </div>
@@ -385,22 +377,6 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           {/* ── Right column: stream ── */}
           <div className="ttl-stream-col">
             <MJPEGStreamCard ip={module.ip} port={8082} />
-          </div>
-        </div>
-      )}
-
-      {showRebootConfirm && (
-        <div className="modal-overlay" onClick={() => setShowRebootConfirm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Reboot <strong>{module.name || id}</strong>?</p>
-            <p className="modal-subtext">The module will restart and reconnect automatically.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={() => {
-                socket.emit("send_command", { module_id: id, type: "reboot", params: {} });
-                setShowRebootConfirm(false);
-              }}>Reboot</button>
-              <button className="save-button" type="button" onClick={() => setShowRebootConfirm(false)}>Cancel</button>
-            </div>
           </div>
         </div>
       )}
@@ -431,8 +407,9 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
               {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
             </p>
             <div className="modal-buttons">
-              <button className="save-button" type="button" onClick={confirmApplyToAll}>Apply to All</button>
-              <button className="reset-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
+              <button className="save-button" type="button" onClick={confirmApplyToAll}
+                disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>Apply to All</button>
+              <button className="save-button" type="button" onClick={() => setApplyAllConfirm(null)}>Cancel</button>
             </div>
           </div>
         </div>

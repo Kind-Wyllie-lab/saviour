@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import socket from "/src/socket";
 import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 
@@ -14,6 +14,8 @@ function Sidebar({ navItems }) {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [shutdownState, setShutdownState]     = useState(null); // null | "sent" | "acked"
   const [hostname, setHostname]               = useState(null);
+  const [version, setVersion]                 = useState(null);
+  const navigate = useNavigate();
 
   // Update modal state
   const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged }
@@ -34,7 +36,10 @@ function Sidebar({ navItems }) {
 
   useEffect(() => {
     socket.emit("get_controller_info");
-    const handler = (data) => { if (data.hostname) setHostname(data.hostname); };
+    const handler = (data) => {
+      if (data.hostname) setHostname(data.hostname);
+      if (data.version) setVersion(data.version);
+    };
     socket.on("controller_info_response", handler);
     return () => socket.off("controller_info_response", handler);
   }, []);
@@ -230,28 +235,20 @@ function Sidebar({ navItems }) {
             </div>
           )}
         </div>
+        <button
+          className="footer-version-btn"
+          title="Go to System page to deploy updates"
+          onClick={() => navigate("/system")}
+        >
+          SAVIOUR {version ? `${version}` : ""}
+        </button>
+
         <div className="footer-actions">
           <button
-            className="footer-icon-btn footer-icon-btn--update"
-            title="Stage and deploy a software update"
-            onClick={openUpdateModal}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
-          <button
             className="footer-icon-btn footer-icon-btn--power"
-            title="Reboot or shut down all devices"
-            onClick={() => {
-              if (!loggedIn) {
-                window.dispatchEvent(new Event("saviour:open-login"));
-                return;
-              }
-              setShowPowerModal(true);
-            }}
+            title={loggedIn ? "Reboot or shut down all devices" : "Login required for this action"}
+            disabled={!loggedIn}
+            onClick={() => setShowPowerModal(true)}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
@@ -355,7 +352,7 @@ function Sidebar({ navItems }) {
                 </button>
               )}
               <button
-                className="reset-button"
+                className="save-button"
                 type="button"
                 onClick={() => setShowUpdateModal(false)}
               >

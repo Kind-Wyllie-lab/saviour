@@ -1,9 +1,10 @@
-import { useMemo, useEffect, useState, useRef } from "react";
+import { useMemo, useEffect, useState } from "react";
 import useHealth from "/src/hooks/useHealth";
 import useModules from "/src/hooks/useModules";
 import socket from "/src/socket";
-import { isLoggedIn } from "/src/auth";
 import ClockModal from "../../components/ClockModal/ClockModal";
+import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsMenu";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./System.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -109,6 +110,7 @@ function activityCell(status) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function System() {
+  const loggedIn = useIsLoggedIn();
   const { moduleHealth, controllerHealth, refresh } = useHealth();
   const { modules, moduleList } = useModules();
 
@@ -167,79 +169,6 @@ export default function System() {
     setBugReportState("collecting");
     socket.emit("get_bug_report");
   };
-
-  const [removeTarget, setRemoveTarget] = useState(null); // { id, name, online }
-
-  const handleRemoveConfirm = () => {
-    if (!removeTarget) return;
-    socket.emit("remove_module", { id: removeTarget.id });
-    setRemoveTarget(null);
-  };
-
-  // ── Module actions modal ──────────────────────────────────────────────────
-  const [actionTarget, setActionTarget] = useState(null); // { id, name, isOnline }
-  const [rebootTarget, setRebootTarget] = useState(null);
-  const [restartTarget, setRestartTarget] = useState(null);
-
-  const handleRebootConfirm = () => {
-    if (!rebootTarget) return;
-    socket.emit("send_command", { module_id: rebootTarget.id, type: "reboot", params: {} });
-    setRebootTarget(null);
-  };
-
-  const handleRestartConfirm = () => {
-    if (!restartTarget) return;
-    socket.emit("send_command", { module_id: restartTarget.id, type: "restart_service", params: {} });
-    setRestartTarget(null);
-  };
-
-  // ── Shutdown module ───────────────────────────────────────────────────────
-  const [shutdownTarget, setShutdownTarget] = useState(null); // { id, name }
-  const [shutdownStates, setShutdownStates] = useState({}); // { module_id: "sent" | "acked" }
-  const shutdownTimers = useRef({});
-
-  const clearShutdownState = (id) => {
-    setShutdownStates(prev => { const n = { ...prev }; delete n[id]; return n; });
-    clearTimeout(shutdownTimers.current[id]);
-    delete shutdownTimers.current[id];
-  };
-
-  const handleShutdownConfirm = () => {
-    if (!shutdownTarget) return;
-    const id = shutdownTarget.id;
-    socket.emit("send_command", { module_id: id, type: "shutdown", params: {} });
-    setShutdownStates(prev => ({ ...prev, [id]: "sent" }));
-    setShutdownTarget(null);
-    // Fallback: clear after 90 s (heartbeat timeout) in case the offline
-    // transition never fires in this browser session
-    clearTimeout(shutdownTimers.current[id]);
-    shutdownTimers.current[id] = setTimeout(() => clearShutdownState(id), 90000);
-  };
-
-  useEffect(() => {
-    const onAck = ({ module_id }) => {
-      setShutdownStates(prev => ({ ...prev, [module_id]: "acked" }));
-    };
-    socket.on("module_shutdown_ack", onAck);
-    return () => socket.off("module_shutdown_ack", onAck);
-  }, []);
-
-  // Clear shutdown state once a module goes offline (shutdown complete)
-  useEffect(() => {
-    setShutdownStates(prev => {
-      const updated = { ...prev };
-      let changed = false;
-      Object.keys(updated).forEach(id => {
-        if (!modules[id]?.online) {
-          delete updated[id];
-          changed = true;
-          clearTimeout(shutdownTimers.current[id]);
-          delete shutdownTimers.current[id];
-        }
-      });
-      return changed ? updated : prev;
-    });
-  }, [modules]);
 
   // ── Controller actions ────────────────────────────────────────────────────
   const [showControllerActions, setShowControllerActions] = useState(false);
@@ -335,15 +264,6 @@ export default function System() {
     };
   }, [moduleList]);
 
-  const handleDeployToModule = (moduleId) => {
-    if (!isLoggedIn()) {
-      window.dispatchEvent(new Event("saviour:open-login"));
-      return;
-    }
-    setDeviceStatuses(prev => ({ ...prev, [moduleId]: "updating" }));
-    socket.emit("deploy_update_to_module", { module_id: moduleId });
-  };
-
   const updateDevices = useMemo(() => {
     if (Object.keys(deviceStatuses).length === 0) return [];
     const rows = [];
@@ -389,8 +309,8 @@ export default function System() {
                   className="th-update-btn"
                   type="button"
                   onClick={() => window.dispatchEvent(new CustomEvent("saviour:open-update-modal"))}
-                  disabled={Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
-                  title={stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} — click to open update panel` : "Open update panel"}
+                  disabled={!loggedIn || Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
+                  title={!loggedIn ? "Login required for this action" : stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} — click to open update panel` : "Open update panel"}
                 >
                   {Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")
                     ? "Deploying…"
@@ -485,19 +405,7 @@ export default function System() {
                     <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">—</span>}</td>
                     <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                     <td>
-                      {shutdownStates[row.id] ? (
-                        <span className="shutdown-progress">
-                          {shutdownStates[row.id] === "acked" ? "Powering off…" : "Shutting down…"}
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="action-menu-btn"
-                          onClick={() => setActionTarget({ id: row.id, name: row.name, isOnline })}
-                        >
-                          Actions ▾
-                        </button>
-                      )}
+                      <ModuleActionsMenu id={row.id} name={row.name} isOnline={isOnline} />
                     </td>
                   </tr>
                 );
@@ -558,23 +466,27 @@ export default function System() {
                 <span className="actions-modal__hint">Collect logs and system state from all devices</span>
               </button>
               <div className="actions-modal__divider" />
-              <button type="button" className="actions-modal__item"
+              <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setShowClockModal(true); setShowControllerActions(false); }}>
                 <span>Set Time</span>
                 <span className="actions-modal__hint">Manually set the controller clock</span>
               </button>
-              <button type="button" className="actions-modal__item"
+              <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
                 <span>Restart service</span>
                 <span className="actions-modal__hint">Restarts the SAVIOUR program — controller does not reboot, reconnects automatically</span>
               </button>
-              <button type="button" className="actions-modal__item"
+              <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("reboot"); setShowControllerActions(false); }}>
                 <span>Reboot</span>
                 <span className="actions-modal__hint">Reboots the controller Pi — reconnects automatically</span>
               </button>
               <div className="actions-modal__divider" />
-              <button type="button" className="actions-modal__item actions-modal__item--danger"
+              <button type="button" className="actions-modal__item actions-modal__item--danger" disabled={!loggedIn}
+                title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("shutdown"); setShowControllerActions(false); }}>
                 <span>Shutdown</span>
                 <span className="actions-modal__hint">Powers off the controller — requires manual power cycle to restart</span>
@@ -607,120 +519,6 @@ export default function System() {
                 {controllerActionTarget === "restart_service" ? "Restart" : controllerActionTarget === "reboot" ? "Reboot" : "Shutdown"}
               </button>
               <button className="save-button" type="button" onClick={() => setControllerActionTarget(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {actionTarget && (
-        <div className="modal-overlay" onClick={() => setActionTarget(null)}>
-          <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
-            <p className="actions-modal__title">{actionTarget.name}</p>
-            <div className="actions-modal__list">
-              {actionTarget.isOnline ? (<>
-                {stagedMeta && (
-                  <button type="button" className="actions-modal__item"
-                    onClick={() => { handleDeployToModule(actionTarget.id); setActionTarget(null); }}>
-                    <span>Update</span>
-                    <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to this module only</span>
-                  </button>
-                )}
-                <button type="button" className="actions-modal__item"
-                  onClick={() => { setRestartTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
-                  <span>Restart service</span>
-                  <span className="actions-modal__hint">Restarts the SAVIOUR program — module does not reboot, reconnects automatically</span>
-                </button>
-                <button type="button" className="actions-modal__item"
-                  onClick={() => { setRebootTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
-                  <span>Reboot</span>
-                  <span className="actions-modal__hint">Reboots the module — reconnects automatically</span>
-                </button>
-                <div className="actions-modal__divider" />
-                <button type="button" className="actions-modal__item actions-modal__item--danger"
-                  onClick={() => { setShutdownTarget({ id: actionTarget.id, name: actionTarget.name }); setActionTarget(null); }}>
-                  <span>Shutdown</span>
-                  <span className="actions-modal__hint">Powers off — reconnects when switched back on</span>
-                </button>
-              </>) : (
-                <button type="button" className="actions-modal__item actions-modal__item--danger"
-                  onClick={() => { setRemoveTarget({ id: actionTarget.id, name: actionTarget.name, online: false }); setActionTarget(null); }}>
-                  <span>Remove</span>
-                  <span className="actions-modal__hint">Remove offline module from tracking</span>
-                </button>
-              )}
-            </div>
-            <div className="modal-buttons" style={{ marginTop: "8px" }}>
-              <button className="save-button" type="button" onClick={() => setActionTarget(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {rebootTarget && (
-        <div className="modal-overlay" onClick={() => setRebootTarget(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Reboot <strong>{rebootTarget.name}</strong>?</p>
-            <p className="modal-subtext">The module will reboot and reconnect automatically. Any active recording will be interrupted.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleRebootConfirm}>Reboot</button>
-              <button className="save-button" type="button" onClick={() => setRebootTarget(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {restartTarget && (
-        <div className="modal-overlay" onClick={() => setRestartTarget(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Restart service on <strong>{restartTarget.name}</strong>?</p>
-            <p className="modal-subtext">The saviour service will restart. The module will briefly go offline then reconnect automatically.</p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleRestartConfirm}>Restart</button>
-              <button className="save-button" type="button" onClick={() => setRestartTarget(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {shutdownTarget && (
-        <div className="modal-overlay" onClick={() => setShutdownTarget(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Shut down <strong>{shutdownTarget.name}</strong>?</p>
-            <p className="modal-subtext">
-              The module will power off. It will be re-added automatically when it comes back online.
-            </p>
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleShutdownConfirm}>
-                Shutdown
-              </button>
-              <button className="save-button" type="button" onClick={() => setShutdownTarget(null)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {removeTarget && (
-        <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <p>Remove <strong>{removeTarget.name}</strong> from tracking?</p>
-            {removeTarget.online ? (
-              <p className="modal-subtext modal-subtext--warn">
-                This module is currently <strong>online</strong>. A shutdown command will be sent before it is removed — this will stop any active recording and power off the device. If it reconnects later it will be re-added automatically.
-              </p>
-            ) : (
-              <p className="modal-subtext">
-                This module is offline and will be removed from the system. If it comes back online it will be re-added automatically.
-              </p>
-            )}
-            <div className="modal-buttons">
-              <button className="reset-button" type="button" onClick={handleRemoveConfirm}>
-                {removeTarget.online ? "Shutdown & Remove" : "Remove"}
-              </button>
-              <button className="save-button" type="button" onClick={() => setRemoveTarget(null)}>
-                Cancel
-              </button>
             </div>
           </div>
         </div>

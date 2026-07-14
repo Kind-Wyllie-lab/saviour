@@ -18,6 +18,18 @@ body {
   box-sizing: border-box;
 }
 
+/* Form controls don't inherit font by default in any browser — without this,
+   buttons that don't set their own font-size/font-family fall back to the
+   browser's default UI-control font, which visibly mismatches sibling
+   buttons (e.g. .save-button / .reset-button) that do set one. */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;

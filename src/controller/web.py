@@ -1441,55 +1441,6 @@ class Web(ABC):
             except Exception as e:
                 _emit("deploy_update_error", {"error": str(e)})
 
-        @self.socketio.on("update_saviour_controller")
-        def handle_update_saviour_controller(data=None):
-            from flask_socketio import emit as _emit
-            import subprocess, os
-            if not self._require_auth("update_saviour_controller_result",
-                                       {"success": False, "output": "Login required for this action"}):
-                return
-            self.logger.info("Update SAVIOUR controller requested")
-            def _run_update():
-                try:
-                    # Resolve the remote URL and convert SSH to HTTPS so the
-                    # service user (which has no SSH key) can pull without auth.
-                    # The on-disk remote stays as-is, so dev machines can still push over SSH.
-                    import re
-                    # Rewrite SSH → HTTPS inline via -c so the on-disk remote is unchanged
-                    # and a plain `git pull` (which respects tracking config) can be used.
-                    url_result = subprocess.run(
-                        ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                         '-C', '/usr/local/src/saviour', 'remote', 'get-url', 'origin'],
-                        capture_output=True, text=True
-                    )
-                    remote_url = url_result.stdout.strip()
-                    ssh_prefix = re.match(r'^git@([^:]+):', remote_url)
-                    url_rewrite = []
-                    if ssh_prefix:
-                        host = ssh_prefix.group(1)
-                        url_rewrite = [f'-c', f'url.https://{host}/.insteadOf=git@{host}:']
-                    git_base = ['git', '-c', 'safe.directory=/usr/local/src/saviour',
-                                '-C', '/usr/local/src/saviour'] + url_rewrite
-                    result = subprocess.run(
-                        git_base + ['pull'],
-                        capture_output=True, text=True, timeout=60
-                    )
-                    subprocess.run(
-                        git_base + ['fetch', '--tags'],
-                        capture_output=True, text=True, timeout=30
-                    )
-                    success = result.returncode == 0
-                    output = result.stdout.strip() if success else result.stderr.strip()
-                except Exception as e:
-                    success = False
-                    output = str(e)
-                self.socketio.emit("update_saviour_controller_result", {
-                    "success": success,
-                    "output": output
-                })
-            threading.Thread(target=_run_update, daemon=True).start()
-
-
         @self.socketio.on('shutdown_saviour')
         def handle_shutdown_saviour(data=None):
             if not self._require_auth("auth_required"):

@@ -60,7 +60,7 @@
     "round_size": 5,
     "image_angle_deg": 90.0,
     "background_rgba": [0.5, 0.5, 0.5, 0.5],
-    "start_monitor_index": 0,
+    "start_monitor_index": 1,
     "flip_horizontal": false
   },
 

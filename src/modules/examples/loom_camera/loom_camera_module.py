@@ -450,9 +450,8 @@ class LoomCameraModule(Module):
             "stop_streaming": self.stop_streaming,
             "get_sensor_modes": self.get_sensor_modes,
             "set_loom_roi": self.set_loom_roi,
-            "loom_stimulus_start": self.loom_stimulus_start,
-            "loom_stimulus_stop": self.loom_stimulus_stop,
-            "loom_stimulus_soft_stop": self.loom_stimulus_soft_stop,
+            "loom_stimulus_arm": self.loom_stimulus_arm,
+            "loom_stimulus_disarm": self.loom_stimulus_disarm,
         })
 
         # Configure everything
@@ -472,17 +471,17 @@ class LoomCameraModule(Module):
         self._hold_forever_when_still: bool = bool(self.config.get("loom_tracking.hold_forever_when_still", False))
 
         # --- Loom stimulus (local HDMI) ---
+        # The renderer always runs so the grey background + photodiode box are
+        # visible during habituation.  _stimulus_armed gates whether tracking
+        # events (and the arm command) actually fire the looming animation.
         self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
-        self._stimulus_enabled = bool(self.config.get("loom_stimulus.enabled", True))
+        self._stimulus_armed: bool = False
         self._stimulus_last_restart: float = 0.0
-        if self._stimulus_enabled:
-            self._loom_stimulus.start()
-            self.logger.info(
-                "loom_stimulus: renderer spawned (WAYLAND_DISPLAY=%s, DISPLAY=%s)",
-                os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY"),
-            )
-        else:
-            self.logger.info("loom_stimulus: disabled by config (enabled=%r)", self.config.get("loom_stimulus.enabled"))
+        self._loom_stimulus.start()
+        self.logger.info(
+            "loom_stimulus: renderer spawned (WAYLAND_DISPLAY=%s, DISPLAY=%s)",
+            os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY"),
+        )
 
     # ---------------------------------------------------------------------
     # Config hooks
@@ -721,21 +720,18 @@ class LoomCameraModule(Module):
     def configure_module_special(self, updated_keys: Optional[list]):
         self._configure_loom_tracking()
 
-        new_enabled = bool(self.config.get("loom_stimulus.enabled", True))
         params_changed = updated_keys is None or bool(
             self._STIMULUS_PARAM_KEYS & set(updated_keys)
         )
 
-        if new_enabled != self._stimulus_enabled or params_changed:
-            # Shut down existing renderer (if any) and rebuild with new config.
+        if params_changed:
+            # Shut down existing renderer and rebuild with new config.
+            # Armed state resets to False on restart (safe default).
             self._loom_stimulus.shutdown()
             self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
-            self._stimulus_enabled = new_enabled
-            if new_enabled:
-                self._loom_stimulus.start()
-                self.logger.info("loom_stimulus: renderer restarted with updated config")
-            else:
-                self.logger.info("loom_stimulus: renderer stopped (disabled by config)")
+            self._stimulus_armed = False
+            self._loom_stimulus.start()
+            self.logger.info("loom_stimulus: renderer restarted with updated config (disarmed)")
 
         # Keys that require full stop/reconfigure/start.
         restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.sensor_mode_index", "camera.rotation"}
@@ -1076,7 +1072,7 @@ class LoomCameraModule(Module):
                             "cy": cy,
                         })
 
-                        if self._stimulus_enabled:
+                        if self._stimulus_armed:
                             if event_label == "enter":
                                 self._loom_stimulus.send("start")
                             elif event_label == "leave":
@@ -1107,20 +1103,20 @@ class LoomCameraModule(Module):
                 if overlay_timestamp and ts_label:
                     self._apply_timestamp_label(m, ts_label, "lores")
 
-            if self._stimulus_enabled:
-                for msg in self._loom_stimulus.poll_status(max_messages=3):
-                    if msg.get("type") == "loom_stimulus_error":
-                        self.logger.error("Loom stimulus renderer crashed: %s", msg.get("error"))
-                    self.communication.send_status({"type": "loom_stimulus_status", **msg})
-                # Auto-restart the renderer if the subprocess died unexpectedly.
-                # Minimum 5 s between restarts to avoid a crash-loop burning CPU.
-                proc = self._loom_stimulus._proc
-                if proc is not None and not proc.is_alive():
-                    now = time.monotonic()
-                    if now - self._stimulus_last_restart >= 5.0:
-                        self.logger.warning("Loom stimulus process died (exit %s) — restarting", proc.exitcode)
-                        self._stimulus_last_restart = now
-                        self._loom_stimulus.start()
+            for msg in self._loom_stimulus.poll_status(max_messages=3):
+                if msg.get("type") == "loom_stimulus_error":
+                    self.logger.error("Loom stimulus renderer crashed: %s", msg.get("error"))
+                self.communication.send_status({"type": "loom_stimulus_status", **msg})
+            # Auto-restart the renderer if the subprocess died unexpectedly.
+            # Minimum 5 s between restarts to avoid a crash-loop burning CPU.
+            proc = self._loom_stimulus._proc
+            if proc is not None and not proc.is_alive():
+                now = time.monotonic()
+                if now - self._stimulus_last_restart >= 5.0:
+                    self.logger.warning("Loom stimulus process died (exit %s) — restarting (disarmed)", proc.exitcode)
+                    self._stimulus_last_restart = now
+                    self._stimulus_armed = False
+                    self._loom_stimulus.start()
 
 
         except Exception as e:
@@ -1585,32 +1581,19 @@ class LoomCameraModule(Module):
         return True, "picam2 initialised"
 
     @command()
-    def loom_stimulus_start(self) -> dict:
-        """Manually start the looming stimulus (debug)."""
-        if not self._stimulus_enabled:
-            self.logger.info("loom_stimulus_start: stimulus disabled")
-            return {"status": "disabled"}
-        self.logger.info("loom_stimulus_start: sending start to renderer")
-        self._loom_stimulus.send("start")
-        return {"status": "ok"}
+    def loom_stimulus_arm(self) -> dict:
+        """Arm the stimulus: tracking events will now trigger the loom animation."""
+        self._stimulus_armed = True
+        self.logger.info("loom_stimulus: armed")
+        return {"status": "armed"}
 
     @command()
-    def loom_stimulus_stop(self) -> dict:
-        """Immediately abort the stimulus mid-round (manual stop)."""
-        if not self._stimulus_enabled:
-            return {"status": "disabled"}
-        self.logger.info("loom_stimulus_stop: sending abort to renderer")
+    def loom_stimulus_disarm(self) -> dict:
+        """Disarm the stimulus and abort any animation in progress."""
+        self._stimulus_armed = False
         self._loom_stimulus.send("abort")
-        return {"status": "ok"}
-
-    @command()
-    def loom_stimulus_soft_stop(self) -> dict:
-        """Soft-stop: finish the current round of repetitions before halting."""
-        if not self._stimulus_enabled:
-            return {"status": "disabled"}
-        self.logger.info("loom_stimulus_soft_stop: sending stop to renderer")
-        self._loom_stimulus.send("stop")
-        return {"status": "ok"}
+        self.logger.info("loom_stimulus: disarmed")
+        return {"status": "disarmed"}
 
     def start(self) -> bool:
         try:

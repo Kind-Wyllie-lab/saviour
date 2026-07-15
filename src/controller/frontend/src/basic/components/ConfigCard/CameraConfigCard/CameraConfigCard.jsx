@@ -557,21 +557,15 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           <>
             <div className="stimulus-test-row">
               <button type="button" className="copy-btn"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_start", params: {} })}>
-                Fire stimulus
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_arm", params: {} })}>
+                Arm stimulus
               </button>
               <button type="button" className="copy-btn"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_stop", params: {} })}>
-                Stop stimulus
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_disarm", params: {} })}>
+                Disarm stimulus
               </button>
             </div>
             <div className="config-section-divider" />
-            <div className="form-field">
-              <label>Enabled:</label>
-              <input type="checkbox"
-                checked={formData?.loom_stimulus?.enabled ?? true}
-                onChange={e => handleChange(["loom_stimulus", "enabled"], e)} />
-            </div>
             <div className="sensor-mode-info sensor-mode-info--muted">Display</div>
             <div className="form-field">
               <label>Monitors:</label>

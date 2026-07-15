@@ -76,7 +76,7 @@ cd "$TARGET_DIR"
 
 section "1/7  System packages"
 
-sudo apt-get update -y -qq
+sudo apt-get update -y -qq || warn "apt-get update had errors — some repositories may be unavailable; continuing"
 
 # Suppress iptables-persistent's interactive "save current rules?" prompts --
 # without this, a fresh install of iptables-persistent under a non-interactive

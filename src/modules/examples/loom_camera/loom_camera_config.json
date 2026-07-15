@@ -49,6 +49,7 @@
     }
   },
   "loom_stimulus": {
+    "armed": false,
     "texture_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png",
     "initial_size_cm": 6.0,
     "final_size_cm": 40.0,

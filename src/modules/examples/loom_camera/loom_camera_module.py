@@ -450,8 +450,8 @@ class LoomCameraModule(Module):
             "stop_streaming": self.stop_streaming,
             "get_sensor_modes": self.get_sensor_modes,
             "set_loom_roi": self.set_loom_roi,
-            "loom_stimulus_arm": self.loom_stimulus_arm,
-            "loom_stimulus_disarm": self.loom_stimulus_disarm,
+            "loom_stimulus_start": self.loom_stimulus_start,
+            "loom_stimulus_stop": self.loom_stimulus_stop,
         })
 
         # Configure everything
@@ -475,7 +475,6 @@ class LoomCameraModule(Module):
         # visible during habituation.  _stimulus_armed gates whether tracking
         # events (and the arm command) actually fire the looming animation.
         self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
-        self._stimulus_armed: bool = False
         self._stimulus_last_restart: float = 0.0
         self._loom_stimulus.start()
         self.logger.info(
@@ -729,9 +728,8 @@ class LoomCameraModule(Module):
             # Armed state resets to False on restart (safe default).
             self._loom_stimulus.shutdown()
             self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
-            self._stimulus_armed = False
             self._loom_stimulus.start()
-            self.logger.info("loom_stimulus: renderer restarted with updated config (disarmed)")
+            self.logger.info("loom_stimulus: renderer restarted with updated config")
 
         # Keys that require full stop/reconfigure/start.
         restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.sensor_mode_index", "camera.rotation"}
@@ -1072,7 +1070,7 @@ class LoomCameraModule(Module):
                             "cy": cy,
                         })
 
-                        if self._stimulus_armed:
+                        if self.config.get("loom_stimulus.armed", False):
                             if event_label == "enter":
                                 self._loom_stimulus.send("start")
                             elif event_label == "leave":
@@ -1581,19 +1579,18 @@ class LoomCameraModule(Module):
         return True, "picam2 initialised"
 
     @command()
-    def loom_stimulus_arm(self) -> dict:
-        """Arm the stimulus: tracking events will now trigger the loom animation."""
-        self._stimulus_armed = True
-        self.logger.info("loom_stimulus: armed")
-        return {"status": "armed"}
+    def loom_stimulus_start(self) -> dict:
+        """Manually fire the loom stimulus immediately."""
+        self._loom_stimulus.send("start")
+        self.logger.info("loom_stimulus: manual start")
+        return {"status": "started"}
 
     @command()
-    def loom_stimulus_disarm(self) -> dict:
-        """Disarm the stimulus and abort any animation in progress."""
-        self._stimulus_armed = False
+    def loom_stimulus_stop(self) -> dict:
+        """Manually abort any in-progress loom stimulus."""
         self._loom_stimulus.send("abort")
-        self.logger.info("loom_stimulus: disarmed")
-        return {"status": "disarmed"}
+        self.logger.info("loom_stimulus: manual stop")
+        return {"status": "stopped"}
 
     def start(self) -> bool:
         try:

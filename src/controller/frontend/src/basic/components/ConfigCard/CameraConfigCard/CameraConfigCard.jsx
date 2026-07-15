@@ -555,14 +555,20 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         {/* LOOM STIMULUS */}
         {activeTab === "stimulus" && (
           <>
+            <div className="form-field">
+              <label>Armed (auto-fire on tracking):</label>
+              <input type="checkbox"
+                checked={formData?.loom_stimulus?.armed ?? false}
+                onChange={e => handleChange(["loom_stimulus", "armed"], e)} />
+            </div>
             <div className="stimulus-test-row">
               <button type="button" className="copy-btn"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_arm", params: {} })}>
-                Arm stimulus
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_start", params: {} })}>
+                Fire
               </button>
               <button type="button" className="copy-btn"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_disarm", params: {} })}>
-                Disarm stimulus
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_stop", params: {} })}>
+                Stop
               </button>
             </div>
             <div className="config-section-divider" />

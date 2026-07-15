@@ -453,15 +453,6 @@ def run_loom_stimulus_with_ipc(
         return_scale_x_rate  = (final_scale_x - initial_scale_x) / float(loom_wait_time_s)
         return_scale_y_rate  = (final_scale_y - initial_scale_y) / float(loom_wait_time_s)
 
-        # Photodiode position: left edge of the monitor the stimulus is centred on.
-        # Derived from initial_pos_ndc (already adjusted for flip_horizontal above)
-        # so it always follows the stimulus regardless of monitor order.
-        if fullscreen and n_selected >= 2:
-            _mon_ndc_w = 2.0 / n_selected
-            _stim_mon_idx = int(max(0, min(int((initial_pos_ndc[0] + 1.0) / _mon_ndc_w), n_selected - 1)))
-        else:
-            _stim_mon_idx = 0
-
         def _reset_motion():
             return {
                 "x": float(initial_pos_ndc[0]),
@@ -650,9 +641,12 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                # Left edge of the monitor the stimulus is on, in pixel space.
-                # _stim_mon_idx=0 → left monitor (GL x=0), 1 → right (GL x=W/2).
-                box_x = _stim_mon_idx * (current_window_width // n_selected)
+                # Place the photodiode box on the outer edge of the canvas half
+                # containing the stimulus.  With flip_horizontal=False the
+                # stimulus is in the GL-right half so the outer edge is the
+                # right side (width−box_w).  With flip_horizontal=True the
+                # stimulus shifts to the GL-left half so the outer edge is x=0.
+                box_x = 0 if flip_horizontal else (current_window_width - box_w)
                 glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)

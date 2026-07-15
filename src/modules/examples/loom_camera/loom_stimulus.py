@@ -55,7 +55,7 @@ from OpenGL.raw.GL.VERSION.GL_3_0 import glBindVertexArray, glDeleteVertexArrays
 from OpenGL.raw.GL._types import GL_FALSE, GL_FLOAT, GL_UNSIGNED_INT
 
 from modules.examples.loom_camera.utils import framebuffer_size_callback, load_texture, vcalc, translate_matrix, \
-    scale_matrix
+    scale_matrix, scale_matrix_seperate
 
 
 LoomStimulusCommand = Literal["start", "stop", "abort", "shutdown", "ping"]
@@ -337,6 +337,8 @@ def run_loom_stimulus_with_ipc(
             "start_monitor_index": int(monitor_index or 0),
             "selected_rects": selected if fullscreen else [],
             "platform": (glfw.get_platform() if hasattr(glfw, "get_platform") else "n/a"),
+            "initial_pos_ndc": initial_pos_ndc,
+            "flip_horizontal": flip_horizontal,
         })
 
         # -----------------------------
@@ -437,20 +439,39 @@ def run_loom_stimulus_with_ipc(
         screen_x = 105.41 * n_selected
         screen_y = 59.29
         correction = 1.125
-        initial_scale = initial_size_cm / screen_x * correction
-        final_scale = final_size_cm / screen_x * correction
+        # Separate x and y scale factors so the stimulus renders as a circle,
+        # not an oval.  The combined canvas (e.g. 3840×1080 for dual 1920×1080
+        # monitors) has a much wider NDC x range than y range; applying a single
+        # uniform scale squashes the circle into a wide ellipse.
+        initial_scale_x = initial_size_cm / screen_x * correction
+        initial_scale_y = initial_size_cm / screen_y * correction
+        final_scale_x   = final_size_cm   / screen_x * correction
+        final_scale_y   = final_size_cm   / screen_y * correction
 
-        outward_scale_rate = (final_scale - initial_scale) / float(travel_time_s)
-        return_scale_rate = (final_scale - initial_scale) / float(loom_wait_time_s)
+        outward_scale_x_rate = (final_scale_x - initial_scale_x) / float(travel_time_s)
+        outward_scale_y_rate = (final_scale_y - initial_scale_y) / float(travel_time_s)
+        return_scale_x_rate  = (final_scale_x - initial_scale_x) / float(loom_wait_time_s)
+        return_scale_y_rate  = (final_scale_y - initial_scale_y) / float(loom_wait_time_s)
+
+        # Photodiode position: left edge of the monitor the stimulus is centred on.
+        # Derived from initial_pos_ndc (already adjusted for flip_horizontal above)
+        # so it always follows the stimulus regardless of monitor order.
+        if fullscreen and n_selected >= 2:
+            _mon_ndc_w = 2.0 / n_selected
+            _stim_mon_idx = int(max(0, min(int((initial_pos_ndc[0] + 1.0) / _mon_ndc_w), n_selected - 1)))
+        else:
+            _stim_mon_idx = 0
 
         def _reset_motion():
             return {
                 "x": float(initial_pos_ndc[0]),
                 "y": float(initial_pos_ndc[1]),
-                "scale": float(initial_scale),
+                "scale_x": float(initial_scale_x),
+                "scale_y": float(initial_scale_y),
                 "vx": float(outward_vx),
                 "vy": float(outward_vy),
-                "scale_rate": float(outward_scale_rate),
+                "scale_x_rate": float(outward_scale_x_rate),
+                "scale_y_rate": float(outward_scale_y_rate),
                 "destination": tuple(final_pos_ndc),
                 "travel_state_outward": True,
             }
@@ -546,13 +567,14 @@ def run_loom_stimulus_with_ipc(
 
                 motion["x"] += motion["vx"] * dt
                 motion["y"] += motion["vy"] * dt
-                motion["scale"] += motion["scale_rate"] * dt
+                motion["scale_x"] += motion["scale_x_rate"] * dt
+                motion["scale_y"] += motion["scale_y_rate"] * dt
 
                 if motion["travel_state_outward"]:
                     # Draw stimulus only outward like your original
                     transform = np.identity(4, dtype=np.float32)
                     transform = np.matmul(translate_matrix(motion["x"], motion["y"], 0.0), transform)
-                    transform = np.matmul(scale_matrix(motion["scale"]), transform)
+                    transform = np.matmul(scale_matrix_seperate(motion["scale_x"], motion["scale_y"]), transform)
 
                     loc = glGetUniformLocation(shader_program, "transform")
                     glUniformMatrix4fv(loc, 1, GL_FALSE, transform)
@@ -571,7 +593,7 @@ def run_loom_stimulus_with_ipc(
                     y_ok = (motion["vy"] < 0 and motion["y"] < motion["destination"][1]) or \
                            (motion["vy"] > 0 and motion["y"] > motion["destination"][1]) or \
                            (motion["vy"] == 0)
-                    s_ok = (motion["scale"] >= final_scale) if is_outward else (motion["scale"] <= initial_scale)
+                    s_ok = (motion["scale_x"] >= final_scale_x) if is_outward else (motion["scale_x"] <= initial_scale_x)
                     return x_ok and y_ok and s_ok
 
                 if _dest_reached(motion["travel_state_outward"]):
@@ -579,22 +601,26 @@ def run_loom_stimulus_with_ipc(
                         # outward -> return leg
                         motion["x"] = float(final_pos_ndc[0])
                         motion["y"] = float(final_pos_ndc[1])
-                        motion["scale"] = float(final_scale)
+                        motion["scale_x"] = float(final_scale_x)
+                        motion["scale_y"] = float(final_scale_y)
                         motion["destination"] = tuple(initial_pos_ndc)
                         motion["travel_state_outward"] = False
                         motion["vx"] = -float(return_vx)
                         motion["vy"] = -float(return_vy)
-                        motion["scale_rate"] = -float(return_scale_rate)
+                        motion["scale_x_rate"] = -float(return_scale_x_rate)
+                        motion["scale_y_rate"] = -float(return_scale_y_rate)
                     else:
                         # return -> outward completes one round-trip
                         motion["x"] = float(initial_pos_ndc[0])
                         motion["y"] = float(initial_pos_ndc[1])
-                        motion["scale"] = float(initial_scale)
+                        motion["scale_x"] = float(initial_scale_x)
+                        motion["scale_y"] = float(initial_scale_y)
                         motion["destination"] = tuple(final_pos_ndc)
                         motion["travel_state_outward"] = True
                         motion["vx"] = float(outward_vx)
                         motion["vy"] = float(outward_vy)
-                        motion["scale_rate"] = float(outward_scale_rate)
+                        motion["scale_x_rate"] = float(outward_scale_x_rate)
+                        motion["scale_y_rate"] = float(outward_scale_y_rate)
 
                         batch.on_completed_round_trip()
                         _status({"type": "round_trip_completed", "count_in_round": batch.round_trip_counter_in_round})
@@ -624,7 +650,9 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                box_x = 0 if flip_horizontal else (current_window_width - box_w)
+                # Left edge of the monitor the stimulus is on, in pixel space.
+                # _stim_mon_idx=0 → left monitor (GL x=0), 1 → right (GL x=W/2).
+                box_x = _stim_mon_idx * (current_window_width // n_selected)
                 glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)

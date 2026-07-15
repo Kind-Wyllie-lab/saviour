@@ -566,10 +566,65 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </button>
             </div>
             <div className="config-section-divider" />
-            <ConfigFields
-              data={formData?.loom_stimulus}
-              handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
-            />
+            <div className="form-field">
+              <label>Enabled:</label>
+              <input type="checkbox"
+                checked={formData?.loom_stimulus?.enabled ?? true}
+                onChange={e => handleChange(["loom_stimulus", "enabled"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">Display</div>
+            <div className="form-field">
+              <label>Monitors:</label>
+              <select value={formData?.loom_stimulus?.start_monitor_index ?? 1}
+                onChange={e => handleChange(["loom_stimulus", "start_monitor_index"], e)}>
+                <option value={0}>Single monitor</option>
+                <option value={1}>Dual monitor (span)</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Flip horizontal:</label>
+              <input type="checkbox"
+                checked={formData?.loom_stimulus?.flip_horizontal ?? false}
+                onChange={e => handleChange(["loom_stimulus", "flip_horizontal"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">Timing</div>
+            <div className="form-field">
+              <label>Travel time (s):</label>
+              <input type="number" min="0.1" max="60" step="0.1"
+                value={formData?.loom_stimulus?.travel_time_s ?? 5.0}
+                onChange={e => handleChange(["loom_stimulus", "travel_time_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Return time (s):</label>
+              <input type="number" min="0.05" max="10" step="0.05"
+                value={formData?.loom_stimulus?.loom_wait_time_s ?? 0.5}
+                onChange={e => handleChange(["loom_stimulus", "loom_wait_time_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Looms per round:</label>
+              <input type="number" min="1" max="100" step="1"
+                value={formData?.loom_stimulus?.round_size ?? 5}
+                onChange={e => handleChange(["loom_stimulus", "round_size"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">Size</div>
+            <div className="form-field">
+              <label>Initial size (cm):</label>
+              <input type="number" min="0" max="100" step="0.5"
+                value={formData?.loom_stimulus?.initial_size_cm ?? 6.0}
+                onChange={e => handleChange(["loom_stimulus", "initial_size_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Final size (cm):</label>
+              <input type="number" min="0" max="200" step="0.5"
+                value={formData?.loom_stimulus?.final_size_cm ?? 40.0}
+                onChange={e => handleChange(["loom_stimulus", "final_size_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Image angle (°):</label>
+              <input type="number" min="0" max="360" step="1"
+                value={formData?.loom_stimulus?.image_angle_deg ?? 90}
+                onChange={e => handleChange(["loom_stimulus", "image_angle_deg"], e)} />
+            </div>
           </>
         )}
 

@@ -686,20 +686,27 @@ class LoomCameraModule(Module):
             return False
 
     def _build_stimulus_config(self) -> LoomStimulusConfig:
-        return LoomStimulusConfig(
+        cfg = LoomStimulusConfig(
             texture_path=str(self.config.get("loom_stimulus.texture_path", "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png")),
-            initial_size_cm=float(self.config.get("loom_stimulus.initial_size_cm", 2.0)),
-            final_size_cm=float(self.config.get("loom_stimulus.final_size_cm", 30.0)),
-            initial_pos_ndc=tuple(self.config.get("loom_stimulus.initial_pos_ndc", [0.0, 0.0])),
-            final_pos_ndc=tuple(self.config.get("loom_stimulus.final_pos_ndc", [0.0, 0.0])),
-            travel_time_s=float(self.config.get("loom_stimulus.travel_time_s", 0.25)),
+            initial_size_cm=float(self.config.get("loom_stimulus.initial_size_cm", 6.0)),
+            final_size_cm=float(self.config.get("loom_stimulus.final_size_cm", 40.0)),
+            initial_pos_ndc=tuple(self.config.get("loom_stimulus.initial_pos_ndc", [0.5, 0.0])),
+            final_pos_ndc=tuple(self.config.get("loom_stimulus.final_pos_ndc", [0.5, 0.0])),
+            travel_time_s=float(self.config.get("loom_stimulus.travel_time_s", 5.0)),
             loom_wait_time_s=float(self.config.get("loom_stimulus.loom_wait_time_s", 0.5)),
             round_size=int(self.config.get("loom_stimulus.round_size", 5)),
-            image_angle_deg=float(self.config.get("loom_stimulus.image_angle_deg", 0.0)),
+            image_angle_deg=float(self.config.get("loom_stimulus.image_angle_deg", 90.0)),
             background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 0.5])),
-            start_monitor_index=int(self.config.get("loom_stimulus.start_monitor_index", 0)),
+            start_monitor_index=int(self.config.get("loom_stimulus.start_monitor_index", 1)),
             flip_horizontal=bool(self.config.get("loom_stimulus.flip_horizontal", False)),
         )
+        self.logger.info(
+            "loom_stimulus config: travel_time_s=%.2f loom_wait_time_s=%.2f "
+            "initial_size_cm=%.1f final_size_cm=%.1f start_monitor_index=%d",
+            cfg.travel_time_s, cfg.loom_wait_time_s,
+            cfg.initial_size_cm, cfg.final_size_cm, cfg.start_monitor_index,
+        )
+        return cfg
 
     _STIMULUS_PARAM_KEYS = {
         "loom_stimulus.texture_path", "loom_stimulus.initial_size_cm",

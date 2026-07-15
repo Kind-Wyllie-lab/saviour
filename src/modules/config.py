@@ -111,6 +111,13 @@ class Config:
         self.module_config_path = module_path
         module_config = self._load_json(module_path)
 
+        # Build the merged defaults snapshot used by set_all to restore keys
+        # that the stale-key pruning deletes when the controller's target_config
+        # predates a newly-added base/module config key.
+        self._combined_defaults: Dict[str, Any] = {}
+        self._merge_dicts(self._combined_defaults, self._load_json(self.base_config_path))
+        self._merge_dicts(self._combined_defaults, module_config)
+
         # Extract keys from config and flatten to dot notation for easy comparison
         self.module_config_keys = self._flatten_keys(module_config)
         
@@ -377,6 +384,11 @@ class Config:
 
         with self._lock:
             _recursive_update(self.config, updates)
+            # Re-merge base and module defaults so keys absent from the controller's
+            # push (e.g. newly-added base_config keys it hasn't seen yet) are
+            # restored rather than left deleted by the stale-key pruning above.
+            if hasattr(self, "_combined_defaults"):
+                self._merge_defaults(self.config, self._combined_defaults)
 
         self.logger.info(f"Finished updating config. Updated keys: {updated_keys}")
 

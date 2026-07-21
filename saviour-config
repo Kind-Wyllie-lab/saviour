@@ -832,8 +832,11 @@ EOF
         run_logged apt-get install -y iptables-persistent \
             -o Dpkg::Options::="--force-confdef"
     fi
+    # Drop the old unrestricted rule (pre-addrtype-fix installs) — `-D` needs an
+    # exact flag match, so the new restricted rule below can't remove it on its own.
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
-    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000
     run_logged netfilter-persistent save
 }
 
@@ -843,6 +846,7 @@ disable_mdns() {
     systemctl disable avahi-daemon 2>/dev/null || true
     systemctl stop avahi-daemon 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 5000 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -m addrtype --dst-type LOCAL -j REDIRECT --to-port 5000 2>/dev/null || true
     if is_installed "iptables-persistent"; then
         run_logged netfilter-persistent save
     fi

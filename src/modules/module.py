@@ -54,6 +54,7 @@ from src.modules.ptp import PTP, PTPRole
 from src.modules.export import Export
 from src.modules.recording import Recording
 from src.modules.facade import ModuleFacade
+from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
 
@@ -297,8 +298,7 @@ class Module(ABC):
                 extract_dir = "/tmp/saviour_update_extract"
                 shutil.rmtree(extract_dir, ignore_errors=True)
                 os.makedirs(extract_dir)
-                with zipfile.ZipFile(tmp_zip) as z:
-                    z.extractall(extract_dir)
+                extract_preserving_permissions(tmp_zip, extract_dir)
 
                 contents = os.listdir(extract_dir)
                 source = extract_dir

@@ -336,14 +336,11 @@ configure_device() {
     DEVICE_ROLE="$role"
     DEVICE_TYPE="$type"
 
-    # Step 3: check for changes
+    # Step 3: check for changes. Re-selecting the current role/type is allowed
+    # through deliberately -- it's the supported shortcut for re-applying
+    # network-level settings (mDNS/iptables/forwarding) without an actual
+    # role change, e.g. after a fix to configure_mdns() ships.
     get_current_config
-    if [ "$role" = "$CURRENT_ROLE" ] && [ "$type" = "$CURRENT_TYPE" ]; then
-        whiptail --title "No Changes" \
-            --msgbox "\nDevice is already configured as $type $role.\nNo changes made." \
-            9 $W
-        return
-    fi
 
     local new_hn
     new_hn=$(generate_hostname)
@@ -1092,15 +1089,23 @@ run_configuration() {
             detect_interface_name
             set_own_ip
             configure_dhcp_server
-            [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
-            configure_mdns
         else
             configure_ptp_timereceiver
             disable_samba_share
             detect_interface_name
             disable_dhcp_server
-            disable_mdns
         fi
+    fi
+
+    # Re-applied on every run regardless of role_changed/type_changed -- both
+    # are idempotent (delete-then-add / delete-with-fallback), so this is how
+    # a fixed implementation of either reaches an already-provisioned device
+    # without requiring an actual role flip.
+    if [ "$DEVICE_ROLE" = "controller" ]; then
+        [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
+        configure_mdns
+    else
+        disable_mdns
     fi
 
     [ "$DEVICE_ROLE" = "module" ] && create_recording_folder

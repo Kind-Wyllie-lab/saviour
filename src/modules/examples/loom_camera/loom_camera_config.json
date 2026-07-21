@@ -59,9 +59,14 @@
     "loom_wait_time_s": 0.5,
     "round_size": 5,
     "image_angle_deg": 90.0,
-    "background_rgba": [0.5, 0.5, 0.5, 0.5],
+    "background_rgba": [0.5, 0.5, 0.5, 1.0],
     "start_monitor_index": 1,
-    "flip_horizontal": false
+    "flip_horizontal": true,
+    "screen_width_cm": 105.41,
+    "screen_height_cm": 59.29,
+    "size_correction": 1.125,
+    "photodiode_box_px": 80,
+    "photodiode_y_ndc": 0.0
   },
 
   "recording": {

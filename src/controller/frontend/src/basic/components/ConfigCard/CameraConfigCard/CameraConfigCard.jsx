@@ -587,6 +587,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 checked={formData?.loom_stimulus?.flip_horizontal ?? false}
                 onChange={e => handleChange(["loom_stimulus", "flip_horizontal"], e)} />
             </div>
+            <div className="form-field">
+              <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>
+              <input type="range" min="0" max="1" step="0.01"
+                className="brightness-slider"
+                value={formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.background_rgba = [v, v, v, 1.0];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="config-section-divider" />
             <div className="sensor-mode-info sensor-mode-info--muted">Timing</div>
             <div className="form-field">
               <label>Travel time (s):</label>
@@ -606,6 +621,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.loom_stimulus?.round_size ?? 5}
                 onChange={e => handleChange(["loom_stimulus", "round_size"], e)} />
             </div>
+            <div className="config-section-divider" />
             <div className="sensor-mode-info sensor-mode-info--muted">Size</div>
             <div className="form-field">
               <label>Initial size (cm):</label>
@@ -624,6 +640,40 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <input type="number" min="0" max="360" step="1"
                 value={formData?.loom_stimulus?.image_angle_deg ?? 90}
                 onChange={e => handleChange(["loom_stimulus", "image_angle_deg"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Calibration</div>
+            <div className="form-field">
+              <label>Screen width (cm):</label>
+              <input type="number" min="10" max="500" step="0.1"
+                value={formData?.loom_stimulus?.screen_width_cm ?? 105.41}
+                onChange={e => handleChange(["loom_stimulus", "screen_width_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Screen height (cm):</label>
+              <input type="number" min="10" max="500" step="0.1"
+                value={formData?.loom_stimulus?.screen_height_cm ?? 59.29}
+                onChange={e => handleChange(["loom_stimulus", "screen_height_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Size correction:</label>
+              <input type="number" min="0.1" max="3" step="0.01"
+                value={formData?.loom_stimulus?.size_correction ?? 1.125}
+                onChange={e => handleChange(["loom_stimulus", "size_correction"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Photodiode</div>
+            <div className="form-field">
+              <label>Box size (px):</label>
+              <input type="number" min="10" max="500" step="5"
+                value={formData?.loom_stimulus?.photodiode_box_px ?? 80}
+                onChange={e => handleChange(["loom_stimulus", "photodiode_box_px"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Y position (−1 bottom, +1 top):</label>
+              <input type="number" min="-1" max="1" step="0.05"
+                value={formData?.loom_stimulus?.photodiode_y_ndc ?? 0.0}
+                onChange={e => handleChange(["loom_stimulus", "photodiode_y_ndc"], e)} />
             </div>
           </>
         )}

@@ -1,4 +1,5 @@
 import os
+import signal
 from dataclasses import dataclass
 from typing import Literal, Optional
 import multiprocessing as mp
@@ -115,6 +116,11 @@ class LoomStimulusConfig:
     background_rgba: tuple[float, float, float, float]
     start_monitor_index: int = 0
     flip_horizontal: bool = False
+    screen_width_cm: float = 105.41
+    screen_height_cm: float = 59.29
+    size_correction: float = 1.125
+    photodiode_box_px: int = 80
+    photodiode_y_ndc: float = 0.0
 
 
 @dataclass
@@ -171,6 +177,9 @@ def run_loom_stimulus_with_ipc(
     background_rgba: Tuple[float, float, float, float],
     photodiode_box_px: int = 80,
     photodiode_y_ndc: float = 0.0,
+    screen_width_cm: float = 105.41,
+    screen_height_cm: float = 59.29,
+    size_correction: float = 1.125,
     monitor_index: Optional[int] = None,
     fullscreen: bool = True,
     window_size_px: Tuple[int, int] = (1920, 1080),
@@ -328,16 +337,10 @@ def run_loom_stimulus_with_ipc(
 
         _status({
             "type": "span_debug",
-            "requested_wh": (w, h),
             "fb_wh": glfw.get_framebuffer_size(window),
             "win_wh": glfw.get_window_size(window),
-            "origin_xy": (x0, y0),
             "n_monitors": len(monitors),
-            "monitor_rects_sorted": rects if fullscreen else [],
-            "start_monitor_index": int(monitor_index or 0),
             "selected_rects": selected if fullscreen else [],
-            "platform": (glfw.get_platform() if hasattr(glfw, "get_platform") else "n/a"),
-            "initial_pos_ndc": initial_pos_ndc,
             "flip_horizontal": flip_horizontal,
         })
 
@@ -424,21 +427,28 @@ def run_loom_stimulus_with_ipc(
         # screen_x scales with however many monitors the window spans.
         n_selected = len(selected) if fullscreen else 1
 
-        # Shift x by one monitor-width in NDC when monitors are physically
-        # arranged opposite to their xrandr screen-space order.
-        # This translates (not mirrors) the stimulus to the other monitor.
-        if flip_horizontal and n_selected >= 2:
-            monitor_ndc_width = 2.0 / n_selected
-            initial_pos_ndc = (initial_pos_ndc[0] - monitor_ndc_width, initial_pos_ndc[1])
-            final_pos_ndc = (final_pos_ndc[0] - monitor_ndc_width, final_pos_ndc[1])
+        # In dual-monitor mode, flip_horizontal picks the monitor:
+        #   False → GL-right monitor (index n_selected-1)
+        #   True  → GL-left monitor  (index 0)
+        # The loom is always centred on that monitor; initial_pos_ndc[0] is
+        # ignored for X so the controller config value can't misplace it.
+        if fullscreen and n_selected >= 2:
+            _mon_ndc_w = 2.0 / n_selected
+            _stim_mon_idx = 0 if flip_horizontal else (n_selected - 1)
+            # NDC x of the selected monitor's centre
+            _centre_x = _stim_mon_idx * _mon_ndc_w + _mon_ndc_w * 0.5 - 1.0
+            initial_pos_ndc = (_centre_x, initial_pos_ndc[1])
+            final_pos_ndc   = (_centre_x, final_pos_ndc[1])
+        else:
+            _stim_mon_idx = 0
 
         outward_vx = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
         outward_vy = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
         return_vx = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 0)
         return_vy = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 1)
-        screen_x = 105.41 * n_selected
-        screen_y = 59.29
-        correction = 1.125
+        screen_x = screen_width_cm * n_selected
+        screen_y = screen_height_cm
+        correction = size_correction
         # Separate x and y scale factors so the stimulus renders as a circle,
         # not an oval.  The combined canvas (e.g. 3840×1080 for dual 1920×1080
         # monitors) has a much wider NDC x range than y range; applying a single
@@ -563,9 +573,11 @@ def run_loom_stimulus_with_ipc(
 
                 if motion["travel_state_outward"]:
                     # Draw stimulus only outward like your original
+                    # Order: scale the unit quad first, then translate to NDC centre.
+                    # (scale @ translate would shift the centre by scale*tx instead of tx.)
                     transform = np.identity(4, dtype=np.float32)
-                    transform = np.matmul(translate_matrix(motion["x"], motion["y"], 0.0), transform)
                     transform = np.matmul(scale_matrix_seperate(motion["scale_x"], motion["scale_y"]), transform)
+                    transform = np.matmul(translate_matrix(motion["x"], motion["y"], 0.0), transform)
 
                     loc = glGetUniformLocation(shader_program, "transform")
                     glUniformMatrix4fv(loc, 1, GL_FALSE, transform)
@@ -641,12 +653,10 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                # Place the photodiode box on the outer edge of the canvas half
-                # containing the stimulus.  With flip_horizontal=False the
-                # stimulus is in the GL-right half so the outer edge is the
-                # right side (width−box_w).  With flip_horizontal=True the
-                # stimulus shifts to the GL-left half so the outer edge is x=0.
-                box_x = 0 if flip_horizontal else (current_window_width - box_w)
+                # Right/outer edge of the monitor the stimulus is on.
+                # GL-right of the stimulus monitor = physical outer edge of that TV
+                # (far end of arena when the stimulus is on the far TV).
+                box_x = (_stim_mon_idx + 1) * (current_window_width // n_selected) - box_w
                 glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
@@ -712,6 +722,14 @@ def loom_stimulus_process_main(
     cfg : LoomStimulusConfig
         Renderer configuration.
     """
+    # Die immediately if the parent process is killed (even with SIGKILL).
+    # daemon=True only handles clean parent exit; prctl handles the rest.
+    try:
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _libc.prctl(1, signal.SIGKILL, 0, 0, 0)  # PR_SET_PDEATHSIG = 1
+    except Exception:
+        pass
+
     status_queue.put({"type": "loom_stimulus_started"})
 
     try:
@@ -728,6 +746,11 @@ def loom_stimulus_process_main(
             repetitions_per_round=stim_cfg.round_size,
             image_angle_deg=stim_cfg.image_angle_deg,
             background_rgba=stim_cfg.background_rgba,
+            photodiode_box_px=stim_cfg.photodiode_box_px,
+            photodiode_y_ndc=stim_cfg.photodiode_y_ndc,
+            screen_width_cm=stim_cfg.screen_width_cm,
+            screen_height_cm=stim_cfg.screen_height_cm,
+            size_correction=stim_cfg.size_correction,
             monitor_index=stim_cfg.start_monitor_index,
             flip_horizontal=stim_cfg.flip_horizontal,
         )
@@ -813,13 +836,17 @@ class LoomStimulusController:
         return out
 
     def shutdown(self, timeout_s: float = 2.0) -> None:
-        """Request shutdown and join/terminate best-effort."""
+        """Request shutdown and join/terminate/kill best-effort."""
         if self._proc is None:
             return
         try:
             self.send("shutdown")
             self._proc.join(timeout=float(timeout_s))
             if self._proc.is_alive():
-                self._proc.terminate()
+                self._proc.terminate()          # SIGTERM
+                self._proc.join(timeout=1.0)
+            if self._proc.is_alive():
+                self._proc.kill()               # SIGKILL — last resort
+                self._proc.join(timeout=1.0)
         finally:
             self._proc = None

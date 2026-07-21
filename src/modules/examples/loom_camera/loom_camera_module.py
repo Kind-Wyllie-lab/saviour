@@ -694,9 +694,14 @@ class LoomCameraModule(Module):
             loom_wait_time_s=float(self.config.get("loom_stimulus.loom_wait_time_s", 0.5)),
             round_size=int(self.config.get("loom_stimulus.round_size", 5)),
             image_angle_deg=float(self.config.get("loom_stimulus.image_angle_deg", 90.0)),
-            background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 0.5])),
+            background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 1.0])),
             start_monitor_index=int(self.config.get("loom_stimulus.start_monitor_index", 1)),
             flip_horizontal=bool(self.config.get("loom_stimulus.flip_horizontal", False)),
+            screen_width_cm=float(self.config.get("loom_stimulus.screen_width_cm", 105.41)),
+            screen_height_cm=float(self.config.get("loom_stimulus.screen_height_cm", 59.29)),
+            size_correction=float(self.config.get("loom_stimulus.size_correction", 1.125)),
+            photodiode_box_px=int(self.config.get("loom_stimulus.photodiode_box_px", 80)),
+            photodiode_y_ndc=float(self.config.get("loom_stimulus.photodiode_y_ndc", 0.0)),
         )
         self.logger.info(
             "loom_stimulus config: travel_time_s=%.2f loom_wait_time_s=%.2f "
@@ -712,8 +717,10 @@ class LoomCameraModule(Module):
         "loom_stimulus.final_pos_ndc", "loom_stimulus.travel_time_s",
         "loom_stimulus.loom_wait_time_s", "loom_stimulus.round_size",
         "loom_stimulus.image_angle_deg", "loom_stimulus.background_rgba",
-        "loom_stimulus.start_monitor_index",
-        "loom_stimulus.flip_horizontal",
+        "loom_stimulus.start_monitor_index", "loom_stimulus.flip_horizontal",
+        "loom_stimulus.screen_width_cm", "loom_stimulus.screen_height_cm",
+        "loom_stimulus.size_correction", "loom_stimulus.photodiode_box_px",
+        "loom_stimulus.photodiode_y_ndc",
     }
 
     def configure_module_special(self, updated_keys: Optional[list]):

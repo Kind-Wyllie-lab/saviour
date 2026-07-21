@@ -32,6 +32,7 @@ from abc import ABC
 from dataclasses import asdict
 
 from src.controller.config import Config
+from src.shared.zip_extract import extract_preserving_permissions
 
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -1319,8 +1320,7 @@ class Web(ABC):
                     extract_dir = "/tmp/saviour_update"
                     shutil.rmtree(extract_dir, ignore_errors=True)
                     os.makedirs(extract_dir)
-                    with zipfile.ZipFile(_UPDATE_ZIP) as z:
-                        z.extractall(extract_dir)
+                    extract_preserving_permissions(_UPDATE_ZIP, extract_dir)
                     contents = os.listdir(extract_dir)
                     source = extract_dir
                     if (len(contents) == 1

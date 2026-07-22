@@ -121,7 +121,8 @@ class LoomStimulusConfig:
     size_correction: float = 1.125
     photodiode_box_px: int = 80
     photodiode_y_ndc: float = 0.0
-    keepalive_interval_s: float = 30.0
+    keepalive_interval_s: float = 10.0
+    keepalive_mode: str = "corner"
     x_offset_ndc: float = 0.0
 
 
@@ -182,7 +183,8 @@ def run_loom_stimulus_with_ipc(
     screen_width_cm: float = 105.41,
     screen_height_cm: float = 59.29,
     size_correction: float = 1.125,
-    keepalive_interval_s: float = 30.0,
+    keepalive_interval_s: float = 10.0,
+    keepalive_mode: str = "corner",
     x_offset_ndc: float = 0.0,
     monitor_index: Optional[int] = None,
     fullscreen: bool = True,
@@ -555,6 +557,7 @@ def run_loom_stimulus_with_ipc(
                         loom_wait_time_s     = float(p.get("loom_wait_time_s", loom_wait_time_s))
                         batch.round_size     = int(p.get("round_size", batch.round_size))
                         keepalive_interval_s = float(p.get("keepalive_interval_s", keepalive_interval_s))
+                        keepalive_mode       = str(p.get("keepalive_mode", keepalive_mode))
                         x_offset_ndc         = float(p.get("x_offset_ndc", x_offset_ndc))
                         _ini = p.get("initial_pos_ndc")
                         _fin = p.get("final_pos_ndc")
@@ -755,19 +758,44 @@ def run_loom_stimulus_with_ipc(
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
 
-            # Keep-alive: write one imperceptible pixel in the bottom corner of the
-            # near TV at the configured interval to prevent OLED auto-dimming.
-            # The pixel alternates between bg±(1/255) — invisible to eye and camera.
+            # Keep-alive: periodic update on the near TV to prevent OLED auto-dimming.
+            # Three modes selectable via keepalive_mode:
+            #   "corner"      — 16×16 patch in the bottom-left corner, ±8/255 delta.
+            #                   Least intrusive; may not register on all TVs.
+            #   "distributed" — same patch drawn at 5 positions across the near TV,
+            #                   ±5/255. Covers more of the panel.
+            #   "pulse"       — full near TV alternates ±3/255. Most effective; the
+            #                   very subtle grey shift is imperceptible to the eye.
             if _near_mon_idx >= 0 and keepalive_interval_s > 0:
                 if _now - _keepalive_t0 >= keepalive_interval_s:
                     _keepalive_phase ^= 1
                     _keepalive_t0 = _now
                     _bg = background_rgba[0]
-                    _kv = min(1.0, _bg + 1/255) if _keepalive_phase else max(0.0, _bg - 1/255)
                     glEnable(GL_SCISSOR_TEST)
-                    glClearColor(_kv, _kv, _kv, 1.0)
-                    glScissor(_near_x, 0, 1, 1)
-                    glClear(GL_COLOR_BUFFER_BIT)
+                    if keepalive_mode == "pulse":
+                        _kv = min(1.0, _bg + 3/255) if _keepalive_phase else max(0.0, _bg - 3/255)
+                        glClearColor(_kv, _kv, _kv, 1.0)
+                        glScissor(_near_x, 0, _mon_w_px, current_window_height)
+                        glClear(GL_COLOR_BUFFER_BIT)
+                    elif keepalive_mode == "distributed":
+                        _kv = min(1.0, _bg + 5/255) if _keepalive_phase else max(0.0, _bg - 5/255)
+                        glClearColor(_kv, _kv, _kv, 1.0)
+                        _hw = current_window_height
+                        _mw = _mon_w_px
+                        for _px, _py in [
+                            (_near_x,              0),
+                            (_near_x + _mw - 16,   0),
+                            (_near_x,              _hw - 16),
+                            (_near_x + _mw - 16,  _hw - 16),
+                            (_near_x + _mw//2 - 8, _hw//2 - 8),
+                        ]:
+                            glScissor(_px, _py, 16, 16)
+                            glClear(GL_COLOR_BUFFER_BIT)
+                    else:  # "corner" (default)
+                        _kv = min(1.0, _bg + 8/255) if _keepalive_phase else max(0.0, _bg - 8/255)
+                        glClearColor(_kv, _kv, _kv, 1.0)
+                        glScissor(_near_x, 0, 16, 16)
+                        glClear(GL_COLOR_BUFFER_BIT)
                     glDisable(GL_SCISSOR_TEST)
                     glClearColor(*background_rgba)
 
@@ -863,6 +891,7 @@ def loom_stimulus_process_main(
             monitor_index=stim_cfg.start_monitor_index,
             flip_horizontal=stim_cfg.flip_horizontal,
             keepalive_interval_s=stim_cfg.keepalive_interval_s,
+            keepalive_mode=stim_cfg.keepalive_mode,
             x_offset_ndc=stim_cfg.x_offset_ndc,
         )
     except Exception as exc:

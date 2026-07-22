@@ -362,10 +362,18 @@ class Communication:
         # fall through to context.term() below with the thread still running.
         thread_exited = True
         if hasattr(self, 'command_thread') and self.command_thread and self.command_thread.is_alive():
-            self.command_thread.join(timeout=6.0)
-            thread_exited = not self.command_thread.is_alive()
-            if not thread_exited:
-                self.logger.warning("Command listener thread did not exit within 6 s after socket close")
+            if threading.current_thread() is self.command_thread:
+                # cleanup() was triggered by a command handler (e.g. "shutdown")
+                # running inside the listener thread itself — joining here would
+                # raise RuntimeError: cannot join current thread. The socket is
+                # already closed above, so the thread will exit on its own once
+                # this handler returns; nothing left to wait for.
+                thread_exited = False
+            else:
+                self.command_thread.join(timeout=6.0)
+                thread_exited = not self.command_thread.is_alive()
+                if not thread_exited:
+                    self.logger.warning("Command listener thread did not exit within 6 s after socket close")
 
         # Close status socket
         if hasattr(self, 'status_socket') and self.status_socket:

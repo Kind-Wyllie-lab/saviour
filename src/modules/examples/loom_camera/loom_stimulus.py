@@ -645,11 +645,13 @@ def run_loom_stimulus_with_ipc(
 
                 if motion["travel_state_outward"]:
                     # Draw stimulus only outward like your original
-                    # Order: scale the unit quad first, then translate to NDC centre.
-                    # (scale @ translate would shift the centre by scale*tx instead of tx.)
+                    # numpy is row-major; OpenGL reads flat data as column-major (GL_FALSE),
+                    # so numpy A@B becomes B@A in OpenGL's column-vector convention.
+                    # We want OpenGL to do: translate(centre) @ scale(radius).
+                    # Therefore in numpy we must write: scale @ translate (reversed).
                     transform = np.identity(4, dtype=np.float32)
-                    transform = np.matmul(scale_matrix_seperate(motion["scale_x"], motion["scale_y"]), transform)
                     transform = np.matmul(translate_matrix(motion["x"], motion["y"], 0.0), transform)
+                    transform = np.matmul(scale_matrix_seperate(motion["scale_x"], motion["scale_y"]), transform)
 
                     loc = glGetUniformLocation(shader_program, "transform")
                     glUniformMatrix4fv(loc, 1, GL_FALSE, transform)

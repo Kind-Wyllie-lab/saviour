@@ -66,7 +66,8 @@
     "screen_height_cm": 59.29,
     "size_correction": 1.125,
     "photodiode_box_px": 80,
-    "photodiode_y_ndc": 0.0
+    "photodiode_y_ndc": 0.0,
+    "keepalive_interval_s": 30
   },
 
   "recording": {

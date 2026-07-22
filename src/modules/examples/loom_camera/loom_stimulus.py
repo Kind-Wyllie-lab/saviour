@@ -121,6 +121,7 @@ class LoomStimulusConfig:
     size_correction: float = 1.125
     photodiode_box_px: int = 80
     photodiode_y_ndc: float = 0.0
+    keepalive_interval_s: float = 30.0
 
 
 @dataclass
@@ -180,6 +181,7 @@ def run_loom_stimulus_with_ipc(
     screen_width_cm: float = 105.41,
     screen_height_cm: float = 59.29,
     size_correction: float = 1.125,
+    keepalive_interval_s: float = 30.0,
     monitor_index: Optional[int] = None,
     fullscreen: bool = True,
     window_size_px: Tuple[int, int] = (1920, 1080),
@@ -487,6 +489,17 @@ def run_loom_stimulus_with_ipc(
         animation_t0 = time.time()
         prev_elapsed = 0.0
 
+        # Keep-alive: prevent TV auto-dimming by drawing one imperceptible pixel
+        # on the near TV at the configured interval.
+        _keepalive_t0    = time.time()
+        _keepalive_phase = 0  # toggles between two visually identical grey values
+
+        # Near screen test flash (from "test_near_screen" command).
+        _near_test_until = 0.0
+
+        # Pre-compute which X column the near TV starts at (opposite of stimulus).
+        _mon_w_px = 0  # set each frame from framebuffer width
+
         _status({"type": "stimulus_ready"})
 
         # -----------------------------
@@ -518,6 +531,9 @@ def run_loom_stimulus_with_ipc(
                         _status({"type": "shutdown_received"})
                     elif cmd == "ping":
                         _status({"type": "pong"})
+                    elif cmd == "test_near_screen":
+                        _near_test_until = time.time() + float(payload.get("duration_s", 2.0))
+                        _status({"type": "near_screen_test_started"})
                     elif cmd == "reconfigure":
                         # Hot-patch stimulus params without restarting the GL window.
                         # Window-dependent params (start_monitor_index, flip_horizontal)
@@ -534,6 +550,7 @@ def run_loom_stimulus_with_ipc(
                         travel_time_s        = float(p.get("travel_time_s", travel_time_s))
                         loom_wait_time_s     = float(p.get("loom_wait_time_s", loom_wait_time_s))
                         batch.round_size     = int(p.get("round_size", batch.round_size))
+                        keepalive_interval_s = float(p.get("keepalive_interval_s", keepalive_interval_s))
                         _ini = p.get("initial_pos_ndc")
                         _fin = p.get("final_pos_ndc")
                         _ini_ndc = tuple(_ini) if _ini is not None else initial_pos_ndc
@@ -717,6 +734,37 @@ def run_loom_stimulus_with_ipc(
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
 
+            _mon_w_px = current_window_width // n_selected
+            _near_mon_idx = (n_selected - 1 - _stim_mon_idx) if n_selected >= 2 else -1
+            _near_x = _near_mon_idx * _mon_w_px
+
+            # Test flash: briefly show a visible grey on the near TV so the user
+            # can confirm the GL canvas is reaching that monitor.
+            _now = time.time()
+            if _near_mon_idx >= 0 and _now < _near_test_until:
+                glEnable(GL_SCISSOR_TEST)
+                glClearColor(0.85, 0.85, 0.85, 1.0)
+                glScissor(_near_x, 0, _mon_w_px, current_window_height)
+                glClear(GL_COLOR_BUFFER_BIT)
+                glDisable(GL_SCISSOR_TEST)
+                glClearColor(*background_rgba)
+
+            # Keep-alive: write one imperceptible pixel in the bottom corner of the
+            # near TV at the configured interval to prevent OLED auto-dimming.
+            # The pixel alternates between bg±(1/255) — invisible to eye and camera.
+            if _near_mon_idx >= 0 and keepalive_interval_s > 0:
+                if _now - _keepalive_t0 >= keepalive_interval_s:
+                    _keepalive_phase ^= 1
+                    _keepalive_t0 = _now
+                    _bg = background_rgba[0]
+                    _kv = min(1.0, _bg + 1/255) if _keepalive_phase else max(0.0, _bg - 1/255)
+                    glEnable(GL_SCISSOR_TEST)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    glScissor(_near_x, 0, 1, 1)
+                    glClear(GL_COLOR_BUFFER_BIT)
+                    glDisable(GL_SCISSOR_TEST)
+                    glClearColor(*background_rgba)
+
             glfw.swap_buffers(window)
             glfw.poll_events()
 
@@ -808,6 +856,7 @@ def loom_stimulus_process_main(
             size_correction=stim_cfg.size_correction,
             monitor_index=stim_cfg.start_monitor_index,
             flip_horizontal=stim_cfg.flip_horizontal,
+            keepalive_interval_s=stim_cfg.keepalive_interval_s,
         )
     except Exception as exc:
         status_queue.put({"type": "loom_stimulus_error", "error": str(exc)})

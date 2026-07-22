@@ -675,6 +675,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.loom_stimulus?.photodiode_y_ndc ?? 0.0}
                 onChange={e => handleChange(["loom_stimulus", "photodiode_y_ndc"], e)} />
             </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Near screen</div>
+            <div className="form-field">
+              <label>Keep-alive interval (s, 0 = off):</label>
+              <input type="number" min="0" max="3600" step="5"
+                value={formData?.loom_stimulus?.keepalive_interval_s ?? 30}
+                onChange={e => handleChange(["loom_stimulus", "keepalive_interval_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Near screen:</label>
+              <button className="btn btn--small"
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_near_screen", params: { duration_s: 2.0 } })}>
+                Test (2 s flash)
+              </button>
+            </div>
           </>
         )}
 

@@ -452,6 +452,7 @@ class LoomCameraModule(Module):
             "set_loom_roi": self.set_loom_roi,
             "loom_stimulus_start": self.loom_stimulus_start,
             "loom_stimulus_stop": self.loom_stimulus_stop,
+            "loom_stimulus_test_near_screen": self.loom_stimulus_test_near_screen,
         })
 
         # Configure everything
@@ -702,6 +703,7 @@ class LoomCameraModule(Module):
             size_correction=float(self.config.get("loom_stimulus.size_correction", 1.125)),
             photodiode_box_px=int(self.config.get("loom_stimulus.photodiode_box_px", 80)),
             photodiode_y_ndc=float(self.config.get("loom_stimulus.photodiode_y_ndc", 0.0)),
+            keepalive_interval_s=float(self.config.get("loom_stimulus.keepalive_interval_s", 30.0)),
         )
         self.logger.info(
             "loom_stimulus config: travel_time_s=%.2f loom_wait_time_s=%.2f "
@@ -726,7 +728,7 @@ class LoomCameraModule(Module):
         "loom_stimulus.image_angle_deg", "loom_stimulus.background_rgba",
         "loom_stimulus.screen_width_cm", "loom_stimulus.screen_height_cm",
         "loom_stimulus.size_correction", "loom_stimulus.photodiode_box_px",
-        "loom_stimulus.photodiode_y_ndc",
+        "loom_stimulus.photodiode_y_ndc", "loom_stimulus.keepalive_interval_s",
     }
 
     def _build_reconfigure_payload(self) -> dict:
@@ -747,6 +749,7 @@ class LoomCameraModule(Module):
             "texture_path":     cfg.texture_path,
             "photodiode_box_px": cfg.photodiode_box_px,
             "photodiode_y_ndc": cfg.photodiode_y_ndc,
+            "keepalive_interval_s": cfg.keepalive_interval_s,
         }
 
     def configure_module_special(self, updated_keys: Optional[list]):
@@ -1652,6 +1655,13 @@ class LoomCameraModule(Module):
         self._loom_stimulus.send("abort")
         self.logger.info("loom_stimulus: manual stop")
         return {"status": "stopped"}
+
+    @command()
+    def loom_stimulus_test_near_screen(self, duration_s: float = 2.0) -> dict:
+        """Flash the near TV briefly so the user can confirm GL reaches it."""
+        self._loom_stimulus._cmd_q.put(("test_near_screen", {"duration_s": duration_s}))
+        self.logger.info("loom_stimulus: near screen test (duration=%.1fs)", duration_s)
+        return {"status": "test_started", "duration_s": duration_s}
 
     def start(self) -> bool:
         try:

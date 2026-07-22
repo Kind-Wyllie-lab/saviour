@@ -441,7 +441,8 @@ def run_loom_stimulus_with_ipc(
             _mon_ndc_w = 2.0 / n_selected
             _stim_mon_idx = 0 if flip_horizontal else (n_selected - 1)
             _centre_x = _stim_mon_idx * _mon_ndc_w + _mon_ndc_w * 0.5 - 1.0
-            _cx = _centre_x + x_offset_ndc
+            _half_w = _mon_ndc_w * 0.5
+            _cx = _centre_x + max(-_half_w, min(_half_w, x_offset_ndc))
             initial_pos_ndc = (_cx, initial_pos_ndc[1])
             final_pos_ndc   = (_cx, final_pos_ndc[1])
         else:
@@ -561,7 +562,8 @@ def run_loom_stimulus_with_ipc(
                         _fin_ndc = tuple(_fin) if _fin is not None else final_pos_ndc
                         # Re-apply monitor-centre + offset (uses _centre_x from startup).
                         if fullscreen and n_selected >= 2:
-                            _cx = _centre_x + x_offset_ndc
+                            _half_w = (2.0 / n_selected) * 0.5
+                            _cx = _centre_x + max(-_half_w, min(_half_w, x_offset_ndc))
                             _ini_ndc = (_cx, _ini_ndc[1])
                             _fin_ndc = (_cx, _fin_ndc[1])
                         initial_pos_ndc = _ini_ndc

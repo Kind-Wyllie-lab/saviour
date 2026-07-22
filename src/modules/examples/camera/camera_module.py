@@ -823,7 +823,7 @@ class CameraModule(Module):
                         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                         m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                     if overlay_timestamp:
-                        self._apply_timestamp(m, ts_str, "main")
+                        self._apply_timestamp(m.array, ts_str, "main")
 
             # Lores stream — only process frames that will actually be JPEG-encoded.
             # _stream_post_callback throttles encoding to _STREAM_FPS (24 fps). At
@@ -831,20 +831,23 @@ class CameraModule(Module):
             # then discarded.  By mirroring the same time check here we do cv2 work
             # only on frames that the post_callback will encode.  Both callbacks run
             # on the same capture thread so sharing _last_stream_encode_time is safe.
+            #
+            # Timestamp/framerate text is NOT stamped here: rotation for this stream
+            # happens later in _stream_post_callback (out-of-place, on a make_array
+            # copy — see comment there for why). Stamping before that rotation would
+            # bake the text in at the wrong orientation/edge once the frame is
+            # rotated, so the strings are cached and stamped after rotation instead.
             if self.is_streaming:
                 now = time.monotonic()
                 if now - self._last_stream_encode_time >= self._stream_interval_s:
                     with MappedArray(req, "lores") as m:
-                        # rotation applied in _stream_post_callback on make_array copy
                         if flip_code is not None:
                             m.array[:] = cv2.flip(m.array, flip_code)
                         if monochrome:
                             gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
                             m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                        if overlay_timestamp:
-                            self._apply_timestamp(m, ts_str, "lores")
-                        if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
-                            self._apply_framerate(m, str(actual_fps), "lores")
+                    self._preview_ts_str = ts_str if overlay_timestamp else None
+                    self._preview_actual_fps = actual_fps
 
         except Exception as e:
             self.logger.error(f"Error capturing frame metadata: {e}")
@@ -853,11 +856,14 @@ class CameraModule(Module):
     # Target fraction of image width the timestamp string should occupy per size preset.
     _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
 
-    def _apply_framerate(self, m: MappedArray, framerate: str, stream: str = "main") -> None:
-        """Apply the framerate to the image. Size is fixed and independent of text_size config."""
+    def _apply_framerate(self, arr, framerate: str, stream: str = "main") -> None:
+        """Apply the framerate to the image. Size is fixed and independent of text_size config.
+
+        Uses the array's actual (post-rotation) shape rather than the
+        configured stream dimensions, so placement stays correct at 90/270°.
+        """
         framerate = f"{framerate}fps"
-        width  = self.width  if stream == "main" else self.lores_width
-        height = self.height if stream == "main" else self.lores_height
+        height, width = arr.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
         thickness = 1
         # Fixed small size: target ~3% of image height.
@@ -870,7 +876,7 @@ class CameraModule(Module):
         y = height - max(4, int(height * 0.01))
 
         cv2.putText(
-            img=m.array,
+            img=arr,
             text=framerate,
             org=(x, y),
             fontFace=font,
@@ -879,17 +885,18 @@ class CameraModule(Module):
             thickness=thickness,
         )
 
-    def _apply_timestamp(self, m: MappedArray, timestamp: str, stream: str = "main") -> None:
+    def _apply_timestamp(self, arr, timestamp: str, stream: str = "main") -> None:
         """Apply the frame timestamp to the image.
 
         Layout is cached per (stream, size_preset) and recomputed whenever the
         text_size config changes or the actual frame dimensions differ from the cache.
+        `arr` must already be in its final (post-rotation) orientation.
         """
         size_preset = self.config.get("camera.text_size", "medium")
         cache_attr = f"_ts_layout_{stream}"
         cached = getattr(self, cache_attr, None)  # (preset, height, width, textlen, font_scale, thickness, x, y)
 
-        actual_height, actual_width = m.array.shape[:2]
+        actual_height, actual_width = arr.shape[:2]
         text_len = len(timestamp)
 
         if (cached is None or cached[0] != size_preset or cached[1] != actual_height
@@ -908,7 +915,7 @@ class CameraModule(Module):
 
         _, _, _, _, font_scale, thickness, x, y = cached
         cv2.putText(
-            img=m.array,
+            img=arr,
             text=timestamp,
             org=(x, y),
             fontFace=cv2.FONT_HERSHEY_SIMPLEX,
@@ -1009,7 +1016,9 @@ class CameraModule(Module):
             rotation = getattr(self, "_rotation", 0)
             if rotation:
                 k = rotation // 90
-                frame = np.rot90(frame, k)
+                # rot90 returns a non-contiguous view; putText below needs a
+                # contiguous buffer, so make the copy once here.
+                frame = np.ascontiguousarray(np.rot90(frame, k))
                 if not getattr(self, "_rotation_logged", False):
                     self.logger.info(
                         f"Preview rotation: {rotation}° applied — "
@@ -1018,6 +1027,20 @@ class CameraModule(Module):
                     self._rotation_logged = True
             else:
                 self._rotation_logged = False
+
+            # Timestamp/framerate for the lores stream are stamped here, after
+            # rotation, so they land on the correctly-oriented final frame (see
+            # comment in _get_and_apply_frame_timestamp). The "main"/high-quality
+            # path is already stamped pre-rotation upstream, so skip it here.
+            if stream_name == "lores":
+                ts_str = getattr(self, "_preview_ts_str", None)
+                if ts_str:
+                    self._apply_timestamp(frame, ts_str, "lores")
+                if self.config.get("camera.overlay_framerate_on_preview", False):
+                    actual_fps = getattr(self, "_preview_actual_fps", None)
+                    if actual_fps:
+                        self._apply_framerate(frame, str(actual_fps), "lores")
+
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ret:
                 return

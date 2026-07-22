@@ -758,7 +758,7 @@ class APACameraModule(Module):
                     self._apply_grayscale(m)
                 self._apply_mask(m)
                 if overlay_timestamp and ts_label:
-                    self._apply_timestamp_label(m, ts_label, "main")
+                    self._apply_timestamp_label(m.array, ts_label, "main")
                 if detection_enabled:
                     self._detect_objects(m)
                     if self._last_known_det is not None:
@@ -787,19 +787,19 @@ class APACameraModule(Module):
                 self._prev_in_zone = in_zone
 
             # ── Lores stream (preview/MJPEG) ────────────────────────────────
-            # (rotation applied in _stream_post_callback on the free-standing array)
+            # Rotation happens later in _stream_post_callback (out-of-place, on a
+            # make_array copy). Timestamp/framerate are stamped there too, after
+            # rotation, so the text lands on the correctly-oriented final frame
+            # instead of being baked in at the wrong edge/orientation.
             with MappedArray(req, 'lores') as m:
                 if monochrome:
                     self._apply_grayscale(m)
                 self._apply_mask(m)
                 self._apply_shock_zone(m)
-                if overlay_timestamp and ts_label:
-                    self._apply_timestamp_label(m, ts_label, "lores")
-                if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
-                    stream_fps = self._STREAM_FPS if self._stream_interval_s > 0 else None
-                    self._apply_framerate_label(m, str(actual_fps), stream_fps)
                 if detection_enabled:
                     self._draw_detections(m)
+            self._preview_ts_label = ts_label if overlay_timestamp else None
+            self._preview_actual_fps = actual_fps
 
         except Exception as e:
             self.logger.error(f"Error in _apa_frame_precallback: {e}")
@@ -817,7 +817,9 @@ class APACameraModule(Module):
             rotation = getattr(self, "_rotation", 0)
             if rotation:
                 k = rotation // 90
-                frame = np.rot90(frame, k)
+                # rot90 returns a non-contiguous view; putText below needs a
+                # contiguous buffer, so make the copy once here.
+                frame = np.ascontiguousarray(np.rot90(frame, k))
                 if not getattr(self, "_rotation_logged", False):
                     self.logger.info(
                         f"Preview rotation: {rotation}° applied — "
@@ -826,6 +828,18 @@ class APACameraModule(Module):
                     self._rotation_logged = True
             else:
                 self._rotation_logged = False
+
+            # Timestamp/framerate are stamped here, after rotation, so they
+            # land on the correctly-oriented final frame (see comment in
+            # _apa_frame_precallback).
+            ts_label = getattr(self, "_preview_ts_label", None)
+            if ts_label:
+                self._apply_timestamp_label(frame, ts_label, "lores")
+            actual_fps = getattr(self, "_preview_actual_fps", None)
+            if actual_fps and self.config.get("camera.overlay_framerate_on_preview", False):
+                stream_fps = self._STREAM_FPS if self._stream_interval_s > 0 else None
+                self._apply_framerate_label(frame, str(actual_fps), stream_fps)
+
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 with self.frame_lock:
@@ -945,12 +959,12 @@ class APACameraModule(Module):
 
     _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
 
-    def _apply_timestamp_label(self, m: MappedArray, timestamp: str, stream: str) -> None:
+    def _apply_timestamp_label(self, arr, timestamp: str, stream: str) -> None:
+        """`arr` must already be in its final (post-rotation) orientation."""
         cache_attr = f"_ts_layout_{stream}"
         layout = getattr(self, cache_attr, None)
         if layout is None:
-            w = self.width  if stream == "main" else self.lores_width
-            h = self.height if stream == "main" else self.lores_height
+            h, w = arr.shape[:2]
             font    = cv2.FONT_HERSHEY_SIMPLEX
             preset  = self.config.get("camera.text_size", "medium")
             frac    = self._TIMESTAMP_WIDTH_FRACTIONS.get(preset, 0.72)
@@ -963,14 +977,16 @@ class APACameraModule(Module):
             layout = (scale, thick, x, y)
             setattr(self, cache_attr, layout)
         scale, thick, x, y = layout
-        cv2.putText(m.array, timestamp, (x, y),
+        cv2.putText(arr, timestamp, (x, y),
                     cv2.FONT_HERSHEY_SIMPLEX, scale, (50, 255, 50), thick)
 
 
-    def _apply_framerate_label(self, m: MappedArray, fps_str: str, stream_fps: int | None = None) -> None:
+    def _apply_framerate_label(self, arr, fps_str: str, stream_fps: int | None = None) -> None:
+        """`arr` must already be in its final (post-rotation) orientation."""
+        height, width = arr.shape[:2]
         font   = cv2.FONT_HERSHEY_SIMPLEX
-        scale  = max(0.2, self.lores_height * 0.02 / 18)
-        margin = max(4, int(self.lores_height * 0.01))
+        scale  = max(0.2, height * 0.02 / 18)
+        margin = max(4, int(height * 0.01))
         color  = (50, 255, 50)
 
         if stream_fps is not None:
@@ -980,11 +996,11 @@ class APACameraModule(Module):
 
         _, th = cv2.getTextSize(lines[0], font, scale, 1)[0]
         line_h = th + margin
-        y = self.lores_height - margin
+        y = height - margin
         for line in reversed(lines):
             tw, _ = cv2.getTextSize(line, font, scale, 1)[0]
-            x = int((self.lores_width - tw) / 2)
-            cv2.putText(m.array, line, (x, y), font, scale, color, 1)
+            x = int((width - tw) / 2)
+            cv2.putText(arr, line, (x, y), font, scale, color, 1)
             y -= line_h
 
 

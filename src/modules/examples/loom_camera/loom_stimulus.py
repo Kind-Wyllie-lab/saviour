@@ -518,6 +518,61 @@ def run_loom_stimulus_with_ipc(
                         _status({"type": "shutdown_received"})
                     elif cmd == "ping":
                         _status({"type": "pong"})
+                    elif cmd == "reconfigure":
+                        # Hot-patch stimulus params without restarting the GL window.
+                        # Window-dependent params (start_monitor_index, flip_horizontal)
+                        # are intentionally excluded — those require a full restart.
+                        p = payload
+                        background_rgba      = tuple(p.get("background_rgba", background_rgba))
+                        photodiode_box_px    = int(p.get("photodiode_box_px", photodiode_box_px))
+                        photodiode_y_ndc     = float(p.get("photodiode_y_ndc", photodiode_y_ndc))
+                        initial_size_cm      = float(p.get("initial_size_cm", initial_size_cm))
+                        final_size_cm        = float(p.get("final_size_cm", final_size_cm))
+                        screen_width_cm      = float(p.get("screen_width_cm", screen_width_cm))
+                        screen_height_cm     = float(p.get("screen_height_cm", screen_height_cm))
+                        size_correction      = float(p.get("size_correction", size_correction))
+                        travel_time_s        = float(p.get("travel_time_s", travel_time_s))
+                        loom_wait_time_s     = float(p.get("loom_wait_time_s", loom_wait_time_s))
+                        batch.round_size     = int(p.get("round_size", batch.round_size))
+                        _ini = p.get("initial_pos_ndc")
+                        _fin = p.get("final_pos_ndc")
+                        _ini_ndc = tuple(_ini) if _ini is not None else initial_pos_ndc
+                        _fin_ndc = tuple(_fin) if _fin is not None else final_pos_ndc
+                        # Re-apply geometric centering (same logic as at startup).
+                        if fullscreen and n_selected >= 2:
+                            _mnw = 2.0 / n_selected
+                            _sidx = 0 if flip_horizontal else (n_selected - 1)
+                            _cx = _sidx * _mnw + _mnw * 0.5 - 1.0
+                            _ini_ndc = (_cx, _ini_ndc[1])
+                            _fin_ndc = (_cx, _fin_ndc[1])
+                        initial_pos_ndc = _ini_ndc
+                        final_pos_ndc   = _fin_ndc
+                        # Recompute all derived motion params (take effect on next _reset_motion()).
+                        _sx = screen_width_cm * n_selected
+                        initial_scale_x      = initial_size_cm / _sx * size_correction
+                        initial_scale_y      = initial_size_cm / screen_height_cm * size_correction
+                        final_scale_x        = final_size_cm   / _sx * size_correction
+                        final_scale_y        = final_size_cm   / screen_height_cm * size_correction
+                        outward_vx           = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
+                        outward_vy           = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
+                        return_vx            = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 0)
+                        return_vy            = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 1)
+                        outward_scale_x_rate = (final_scale_x - initial_scale_x) / float(travel_time_s)
+                        outward_scale_y_rate = (final_scale_y - initial_scale_y) / float(travel_time_s)
+                        return_scale_x_rate  = (final_scale_x - initial_scale_x) / float(loom_wait_time_s)
+                        return_scale_y_rate  = (final_scale_y - initial_scale_y) / float(loom_wait_time_s)
+                        # Reload texture if path or angle changed.
+                        _new_path  = p.get("texture_path")
+                        _new_angle = p.get("image_angle_deg")
+                        if _new_path is not None or _new_angle is not None:
+                            texture_path    = str(_new_path)  if _new_path  is not None else texture_path
+                            image_angle_deg = float(_new_angle) if _new_angle is not None else image_angle_deg
+                            try:
+                                OpenGL.GL.glDeleteTextures(1, [texture])
+                            except Exception:
+                                pass
+                            texture = load_texture(texture_path, image_angle_deg)
+                        _status({"type": "reconfigure_applied"})
             except Exception:
                 pass
 
@@ -812,6 +867,12 @@ class LoomStimulusController:
             payload = {}
         self.start()
         self._cmd_q.put((str(cmd), payload))
+
+    def reconfigure(self, payload: dict) -> None:
+        """Hot-patch stimulus params into the running renderer without restarting the GL window."""
+        if self._proc is None or not self._proc.is_alive():
+            return
+        self._cmd_q.put(("reconfigure", payload))
 
     def poll_status(self, max_messages: int = 10) -> list[dict]:
         """

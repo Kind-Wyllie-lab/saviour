@@ -711,32 +711,67 @@ class LoomCameraModule(Module):
         )
         return cfg
 
-    _STIMULUS_PARAM_KEYS = {
+    # Keys that require destroying and recreating the GL window (monitor layout changes).
+    _STIMULUS_RESTART_KEYS = {
+        "loom_stimulus.start_monitor_index",
+        "loom_stimulus.flip_horizontal",
+    }
+
+    # Keys that can be hot-patched into the running renderer via "reconfigure" IPC.
+    _STIMULUS_RECONFIGURE_KEYS = {
         "loom_stimulus.texture_path", "loom_stimulus.initial_size_cm",
         "loom_stimulus.final_size_cm", "loom_stimulus.initial_pos_ndc",
         "loom_stimulus.final_pos_ndc", "loom_stimulus.travel_time_s",
         "loom_stimulus.loom_wait_time_s", "loom_stimulus.round_size",
         "loom_stimulus.image_angle_deg", "loom_stimulus.background_rgba",
-        "loom_stimulus.start_monitor_index", "loom_stimulus.flip_horizontal",
         "loom_stimulus.screen_width_cm", "loom_stimulus.screen_height_cm",
         "loom_stimulus.size_correction", "loom_stimulus.photodiode_box_px",
         "loom_stimulus.photodiode_y_ndc",
     }
 
+    def _build_reconfigure_payload(self) -> dict:
+        cfg = self._build_stimulus_config()
+        return {
+            "background_rgba":  list(cfg.background_rgba),
+            "screen_width_cm":  cfg.screen_width_cm,
+            "screen_height_cm": cfg.screen_height_cm,
+            "size_correction":  cfg.size_correction,
+            "initial_size_cm":  cfg.initial_size_cm,
+            "final_size_cm":    cfg.final_size_cm,
+            "initial_pos_ndc":  list(cfg.initial_pos_ndc),
+            "final_pos_ndc":    list(cfg.final_pos_ndc),
+            "travel_time_s":    cfg.travel_time_s,
+            "loom_wait_time_s": cfg.loom_wait_time_s,
+            "round_size":       cfg.round_size,
+            "image_angle_deg":  cfg.image_angle_deg,
+            "texture_path":     cfg.texture_path,
+            "photodiode_box_px": cfg.photodiode_box_px,
+            "photodiode_y_ndc": cfg.photodiode_y_ndc,
+        }
+
     def configure_module_special(self, updated_keys: Optional[list]):
         self._configure_loom_tracking()
 
-        params_changed = updated_keys is None or bool(
-            self._STIMULUS_PARAM_KEYS & set(updated_keys)
+        all_stimulus_keys = self._STIMULUS_RESTART_KEYS | self._STIMULUS_RECONFIGURE_KEYS
+        any_stimulus_changed = updated_keys is None or bool(
+            all_stimulus_keys & set(updated_keys)
         )
 
-        if params_changed:
-            # Shut down existing renderer and rebuild with new config.
-            # Armed state resets to False on restart (safe default).
-            self._loom_stimulus.shutdown()
-            self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
-            self._loom_stimulus.start()
-            self.logger.info("loom_stimulus: renderer restarted with updated config")
+        if any_stimulus_changed:
+            needs_restart = updated_keys is None or bool(
+                self._STIMULUS_RESTART_KEYS & set(updated_keys)
+            )
+            if needs_restart:
+                # Monitor layout changed — must destroy and recreate the GL window.
+                # Armed state resets to False on restart (safe default).
+                self._loom_stimulus.shutdown()
+                self._loom_stimulus = LoomStimulusController(self._build_stimulus_config())
+                self._loom_stimulus.start()
+                self.logger.info("loom_stimulus: renderer restarted (monitor layout changed)")
+            else:
+                # All other param changes are hot-patched without touching the window.
+                self._loom_stimulus.reconfigure(self._build_reconfigure_payload())
+                self.logger.info("loom_stimulus: config hot-patched (no window restart)")
 
         # Keys that require full stop/reconfigure/start.
         restart_keys = {"camera.fps", "camera.width", "camera.height", "camera.bitrate_mb", "camera.sensor_mode_index", "camera.rotation"}

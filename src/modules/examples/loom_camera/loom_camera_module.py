@@ -704,6 +704,7 @@ class LoomCameraModule(Module):
             photodiode_box_px=int(self.config.get("loom_stimulus.photodiode_box_px", 80)),
             photodiode_y_ndc=float(self.config.get("loom_stimulus.photodiode_y_ndc", 0.0)),
             keepalive_interval_s=float(self.config.get("loom_stimulus.keepalive_interval_s", 30.0)),
+            x_offset_ndc=float(self.config.get("loom_stimulus.x_offset_ndc", 0.0)),
         )
         self.logger.info(
             "loom_stimulus config: travel_time_s=%.2f loom_wait_time_s=%.2f "
@@ -729,6 +730,7 @@ class LoomCameraModule(Module):
         "loom_stimulus.screen_width_cm", "loom_stimulus.screen_height_cm",
         "loom_stimulus.size_correction", "loom_stimulus.photodiode_box_px",
         "loom_stimulus.photodiode_y_ndc", "loom_stimulus.keepalive_interval_s",
+        "loom_stimulus.x_offset_ndc",
     }
 
     def _build_reconfigure_payload(self) -> dict:
@@ -750,6 +752,7 @@ class LoomCameraModule(Module):
             "photodiode_box_px": cfg.photodiode_box_px,
             "photodiode_y_ndc": cfg.photodiode_y_ndc,
             "keepalive_interval_s": cfg.keepalive_interval_s,
+            "x_offset_ndc":         cfg.x_offset_ndc,
         }
 
     def configure_module_special(self, updated_keys: Optional[list]):

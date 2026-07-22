@@ -122,6 +122,7 @@ class LoomStimulusConfig:
     photodiode_box_px: int = 80
     photodiode_y_ndc: float = 0.0
     keepalive_interval_s: float = 30.0
+    x_offset_ndc: float = 0.0
 
 
 @dataclass
@@ -182,6 +183,7 @@ def run_loom_stimulus_with_ipc(
     screen_height_cm: float = 59.29,
     size_correction: float = 1.125,
     keepalive_interval_s: float = 30.0,
+    x_offset_ndc: float = 0.0,
     monitor_index: Optional[int] = None,
     fullscreen: bool = True,
     window_size_px: Tuple[int, int] = (1920, 1080),
@@ -432,15 +434,16 @@ def run_loom_stimulus_with_ipc(
         # In dual-monitor mode, flip_horizontal picks the monitor:
         #   False → GL-right monitor (index n_selected-1)
         #   True  → GL-left monitor  (index 0)
-        # The loom is always centred on that monitor; initial_pos_ndc[0] is
-        # ignored for X so the controller config value can't misplace it.
+        # X is locked to the stimulus monitor centre + a configurable offset.
+        # x_offset_ndc=0 (default) always keeps the loom safely on the right TV.
+        _centre_x = 0.0
         if fullscreen and n_selected >= 2:
             _mon_ndc_w = 2.0 / n_selected
             _stim_mon_idx = 0 if flip_horizontal else (n_selected - 1)
-            # NDC x of the selected monitor's centre
             _centre_x = _stim_mon_idx * _mon_ndc_w + _mon_ndc_w * 0.5 - 1.0
-            initial_pos_ndc = (_centre_x, initial_pos_ndc[1])
-            final_pos_ndc   = (_centre_x, final_pos_ndc[1])
+            _cx = _centre_x + x_offset_ndc
+            initial_pos_ndc = (_cx, initial_pos_ndc[1])
+            final_pos_ndc   = (_cx, final_pos_ndc[1])
         else:
             _stim_mon_idx = 0
 
@@ -551,15 +554,14 @@ def run_loom_stimulus_with_ipc(
                         loom_wait_time_s     = float(p.get("loom_wait_time_s", loom_wait_time_s))
                         batch.round_size     = int(p.get("round_size", batch.round_size))
                         keepalive_interval_s = float(p.get("keepalive_interval_s", keepalive_interval_s))
+                        x_offset_ndc         = float(p.get("x_offset_ndc", x_offset_ndc))
                         _ini = p.get("initial_pos_ndc")
                         _fin = p.get("final_pos_ndc")
                         _ini_ndc = tuple(_ini) if _ini is not None else initial_pos_ndc
                         _fin_ndc = tuple(_fin) if _fin is not None else final_pos_ndc
-                        # Re-apply geometric centering (same logic as at startup).
+                        # Re-apply monitor-centre + offset (uses _centre_x from startup).
                         if fullscreen and n_selected >= 2:
-                            _mnw = 2.0 / n_selected
-                            _sidx = 0 if flip_horizontal else (n_selected - 1)
-                            _cx = _sidx * _mnw + _mnw * 0.5 - 1.0
+                            _cx = _centre_x + x_offset_ndc
                             _ini_ndc = (_cx, _ini_ndc[1])
                             _fin_ndc = (_cx, _fin_ndc[1])
                         initial_pos_ndc = _ini_ndc
@@ -859,6 +861,7 @@ def loom_stimulus_process_main(
             monitor_index=stim_cfg.start_monitor_index,
             flip_horizontal=stim_cfg.flip_horizontal,
             keepalive_interval_s=stim_cfg.keepalive_interval_s,
+            x_offset_ndc=stim_cfg.x_offset_ndc,
         )
     except Exception as exc:
         status_queue.put({"type": "loom_stimulus_error", "error": str(exc)})

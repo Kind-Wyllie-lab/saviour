@@ -16,6 +16,7 @@ import threading
 import logging
 import time
 from typing import Callable, Dict, Any, Optional
+from zmq.utils.monitor import recv_monitor_message
 
 class Communication:
     def __init__(self,
@@ -63,7 +64,19 @@ class Communication:
 
         # Prevents concurrent _force_reconnect threads from racing on cleanup()
         self._reconnect_lock = threading.Lock()
-        
+
+        # Guards command_socket.send() — the initial hello (connect()) and
+        # monitor-triggered re-hello (_watch_dealer_monitor()) run on different
+        # threads and must not write to the DEALER socket at the same time.
+        self._send_lock = threading.Lock()
+
+        # ZMQ-level reconnect watchdog: fires immediately when the DEALER's
+        # underlying TCP session re-establishes (e.g. controller process
+        # restarted), instead of waiting for the next heartbeat-ack cycle.
+        self._monitor_socket = None
+        self._monitor_thread = None
+        self._monitor_running = False
+
 
     def connect(self, controller_ip: str, controller_port: int) -> bool:
         """Connect to the controller's ZMQ sockets
@@ -105,6 +118,11 @@ class Communication:
             module_id = self.facade.get_module_id()
             self.command_socket.setsockopt(zmq.IDENTITY, module_id.encode())
 
+            # Attach the ZMQ reconnect monitor before connecting so it can't
+            # race the initial EVENT_CONNECTED — _watch_dealer_monitor()
+            # skips that first event since the explicit hello below covers it.
+            self._start_dealer_monitor()
+
             # Connect sockets
             self.logger.info(f"Attempting to connect command socket to tcp://{controller_ip}:{command_port}")
             self.command_socket.connect(f"tcp://{controller_ip}:{command_port}")
@@ -114,7 +132,7 @@ class Communication:
             # Register with the controller's ROUTER by sending a hello frame.
             # The ROUTER sees our identity (set above) in the envelope and adds
             # us to its routing table so it can send commands back to us.
-            self.command_socket.send(b"hello")
+            self._send_hello()
             self.logger.info(f"Connected to controller command socket at {controller_ip}:{command_port}, status socket at {controller_ip}:{status_port}")
             
             # Reset connection tracking on successful connection
@@ -127,7 +145,82 @@ class Communication:
             self.connection_attempts += 1
             return False
 
-        
+
+    def _send_hello(self):
+        """Send (or re-send) the DEALER registration frame. Safe to call from
+        any thread — guarded by _send_lock since the initial connect() and
+        the monitor watchdog thread can both call this."""
+        with self._send_lock:
+            try:
+                if self.command_socket:
+                    self.command_socket.send(b"hello")
+                    self.logger.info("Hello sent to controller ROUTER")
+            except Exception as e:
+                self.logger.error(f"Error sending hello: {e}")
+
+
+    def _start_dealer_monitor(self):
+        """Attach a ZMQ monitor to the command socket so a transport-level
+        reconnect (e.g. the controller process restarted and our DEALER's TCP
+        session re-established) is detected immediately, instead of waiting
+        up to _MISSED_ACK_THRESHOLD heartbeat cycles for the ack watchdog to
+        notice. Only EVENT_CONNECTED is requested — that's the only event we
+        act on."""
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            # Already watching this socket (e.g. re-entered via _attempt_reconnection
+            # without an intervening cleanup()) — nothing to do.
+            return
+        try:
+            self._monitor_socket = self.command_socket.get_monitor_socket(zmq.EVENT_CONNECTED)
+        except Exception as e:
+            self.logger.warning(f"Could not attach command socket monitor: {e}")
+            self._monitor_socket = None
+            return
+
+        self._monitor_running = True
+        self._monitor_thread = threading.Thread(
+            target=self._watch_dealer_monitor, daemon=True, name="dealer-monitor"
+        )
+        self._monitor_thread.start()
+
+
+    def _watch_dealer_monitor(self):
+        """Background loop: re-send hello the instant the command socket's
+        underlying TCP connection re-establishes. The first EVENT_CONNECTED
+        corresponds to the connect() call that started this monitor (hello
+        already sent explicitly there) — only later ones mean a reconnect."""
+        monitor = self._monitor_socket
+        if monitor is None:
+            return
+        monitor.setsockopt(zmq.RCVTIMEO, 1000)
+
+        seen_first_connect = False
+        while self._monitor_running:
+            try:
+                event = recv_monitor_message(monitor)
+            except zmq.Again:
+                continue
+            except (zmq.ZMQError, zmq.error.ContextTerminated):
+                break
+            except Exception as e:
+                if self._monitor_running:
+                    self.logger.debug(f"Dealer monitor stopped: {e}")
+                break
+
+            if event.get("event") != zmq.EVENT_CONNECTED:
+                continue
+
+            if not seen_first_connect:
+                seen_first_connect = True
+                continue
+
+            self.logger.warning(
+                "Command socket reconnected at the ZMQ transport layer "
+                "(controller likely restarted) — re-sending hello immediately"
+            )
+            self._send_hello()
+
+
     def group_changed(self):
         # Group routing is now handled server-side by the controller's ROUTER.
         # The module just needs to stay connected — no subscription changes needed.
@@ -340,6 +433,21 @@ class Communication:
 
         # Signal the listener thread to stop
         self.command_listener_running = False
+
+        # Stop the dealer reconnect monitor before tearing down the command
+        # socket it watches. Bounded by the monitor's 1 s RCVTIMEO poll.
+        self._monitor_running = False
+        if self._monitor_socket:
+            try:
+                self._monitor_socket.setsockopt(zmq.LINGER, 0)
+                self._monitor_socket.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing dealer monitor socket: {e}")
+            self._monitor_socket = None
+        if (self._monitor_thread and self._monitor_thread.is_alive()
+                and threading.current_thread() is not self._monitor_thread):
+            self._monitor_thread.join(timeout=2.0)
+        self._monitor_thread = None
 
         # Close the command socket first — this unblocks recv_string() in the
         # listener thread immediately (raises ZMQError) rather than waiting for

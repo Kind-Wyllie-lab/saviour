@@ -1124,7 +1124,7 @@ class LoomCameraModule(Module):
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m)
                 if overlay_timestamp and ts_label:
-                    self._apply_timestamp_label(m, ts_label, "main")
+                    self._apply_timestamp_label(m.array, ts_label, "main")
 
             # Write per-frame CSV with state
             if timestamp is not None and self._timestamp_csv_writer is not None:
@@ -1139,14 +1139,15 @@ class LoomCameraModule(Module):
 
             # Also apply overlays to lores for preview
             # (rotation is applied later in _stream_post_callback on the free-standing
-            # make_array copy, which works for non-square images)
+            # make_array copy, which works for non-square images). The timestamp is
+            # stamped there too, after rotation, so it lands on the correctly
+            # -oriented final frame rather than being baked in at the wrong edge.
             with MappedArray(req, "lores") as m:
                 if monochrome:
                     self._apply_grayscale(m)
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m, lores=True)
-                if overlay_timestamp and ts_label:
-                    self._apply_timestamp_label(m, ts_label, "lores")
+            self._preview_ts_label = ts_label if overlay_timestamp else None
 
             for msg in self._loom_stimulus.poll_status(max_messages=3):
                 if msg.get("type") == "loom_stimulus_error":
@@ -1269,12 +1270,12 @@ class LoomCameraModule(Module):
 
     _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
 
-    def _apply_timestamp_label(self, m: MappedArray, timestamp: str, stream: str) -> None:
+    def _apply_timestamp_label(self, arr, timestamp: str, stream: str) -> None:
+        """`arr` must already be in its final (post-rotation) orientation."""
         cache_attr = f"_ts_layout_{stream}"
         layout = getattr(self, cache_attr, None)
         if layout is None:
-            w = self.width  if stream == "main" else self.lores_width
-            h = self.height if stream == "main" else self.lores_height
+            h, w = arr.shape[:2]
             font   = cv2.FONT_HERSHEY_SIMPLEX
             preset = self.config.get("camera.text_size", "medium")
             frac   = self._TIMESTAMP_WIDTH_FRACTIONS.get(preset, 0.72)
@@ -1287,7 +1288,7 @@ class LoomCameraModule(Module):
             layout = (scale, thick, x, y)
             setattr(self, cache_attr, layout)
         scale, thick, x, y = layout
-        cv2.putText(m.array, timestamp, (x, y),
+        cv2.putText(arr, timestamp, (x, y),
                     cv2.FONT_HERSHEY_SIMPLEX, scale, (50, 255, 50), thick)
 
     # ---------------------------------------------------------------------
@@ -1304,7 +1305,9 @@ class LoomCameraModule(Module):
             rotation = getattr(self, "_rotation", 0)
             if rotation:
                 k = rotation // 90
-                frame = np.rot90(frame, k)
+                # rot90 returns a non-contiguous view; putText below needs a
+                # contiguous buffer, so make the copy once here.
+                frame = np.ascontiguousarray(np.rot90(frame, k))
                 if not getattr(self, "_rotation_logged", False):
                     self.logger.info(
                         f"Preview rotation: {rotation}° applied — "
@@ -1314,6 +1317,13 @@ class LoomCameraModule(Module):
                     self._rotation_logged = True
             else:
                 self._rotation_logged = False
+
+            # Timestamp is stamped here, after rotation, so it lands on the
+            # correctly-oriented final frame (see comment in _loom_frame_precallback).
+            ts_label = getattr(self, "_preview_ts_label", None)
+            if ts_label:
+                self._apply_timestamp_label(frame, ts_label, "lores")
+
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
                 with self.frame_lock:

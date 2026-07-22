@@ -6,6 +6,7 @@ import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVid
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
+import LoomStimulusControl from "/src/loom/components/LoomStimulusControl/LoomStimulusControl";
 import { StageToggle } from "/src/loom/LoomStageContext";
 
 const CAMERA_PORT  = 8080;
@@ -176,6 +177,7 @@ function LoomDashboard() {
         <div className="loom-dashboard-panel">
           <HealthSummaryWidget />
           <ModuleList modules={moduleList} />
+          <LoomStimulusControl />
         </div>
       </div>
     </div>

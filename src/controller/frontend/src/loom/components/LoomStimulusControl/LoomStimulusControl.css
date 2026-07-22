@@ -1,0 +1,18 @@
+.loom-stimulus-control h3 {
+  margin: 0 0 8px;
+}
+
+.loom-stimulus-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.loom-stimulus-status {
+  margin: 8px 0 0;
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.loom-stimulus-status--muted {
+  font-style: italic;
+}

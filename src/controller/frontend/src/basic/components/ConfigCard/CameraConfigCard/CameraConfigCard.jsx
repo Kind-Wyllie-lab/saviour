@@ -642,6 +642,60 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["loom_stimulus", "image_angle_deg"], e)} />
             </div>
             <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Position</div>
+            <div className="form-field">
+              <label>Initial X (NDC, −1 left, +1 right):</label>
+              <input type="number" min="-1" max="1" step="0.05"
+                value={formData?.loom_stimulus?.initial_pos_ndc?.[0] ?? 0.5}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.initial_pos_ndc = [v, cloned.loom_stimulus.initial_pos_ndc?.[1] ?? 0.0];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="form-field">
+              <label>Initial Y (NDC, −1 bottom, +1 top):</label>
+              <input type="number" min="-1" max="1" step="0.05"
+                value={formData?.loom_stimulus?.initial_pos_ndc?.[1] ?? 0.0}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.initial_pos_ndc = [cloned.loom_stimulus.initial_pos_ndc?.[0] ?? 0.5, v];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="form-field">
+              <label>Final X (NDC, −1 left, +1 right):</label>
+              <input type="number" min="-1" max="1" step="0.05"
+                value={formData?.loom_stimulus?.final_pos_ndc?.[0] ?? 0.5}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.final_pos_ndc = [v, cloned.loom_stimulus.final_pos_ndc?.[1] ?? 0.0];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="form-field">
+              <label>Final Y (NDC, −1 bottom, +1 top):</label>
+              <input type="number" min="-1" max="1" step="0.05"
+                value={formData?.loom_stimulus?.final_pos_ndc?.[1] ?? 0.0}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.final_pos_ndc = [cloned.loom_stimulus.final_pos_ndc?.[0] ?? 0.5, v];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="config-section-divider" />
             <div className="sensor-mode-info sensor-mode-info--muted">Calibration</div>
             <div className="form-field">
               <label>Screen width (cm):</label>

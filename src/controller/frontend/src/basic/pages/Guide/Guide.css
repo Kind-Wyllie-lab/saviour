@@ -1,0 +1,68 @@
+.guide-page {
+  padding: 16px 24px;
+}
+
+.guide-header {
+  margin-bottom: 16px;
+}
+
+.guide-header h2 {
+  margin: 0 0 4px;
+}
+
+.guide-intro {
+  color: var(--secondary-text-color);
+  margin: 0;
+}
+
+.guide-topics {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.guide-topic {
+  min-width: 0;
+  max-width: 720px;
+}
+
+.guide-topic h3 {
+  margin-top: 0;
+}
+
+.guide-video-wrap {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 */
+  margin-bottom: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-color);
+}
+
+.guide-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.guide-video-placeholder {
+  color: var(--secondary-text-color);
+  font-style: italic;
+  margin: 0 0 12px;
+}
+
+.guide-steps {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.guide-steps li {
+  margin-bottom: 6px;
+}
+
+.guide-steps li:last-child {
+  margin-bottom: 0;
+}

@@ -644,14 +644,16 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="config-section-divider" />
             <div className="sensor-mode-info sensor-mode-info--muted">Position</div>
             <div className="form-field">
-              <label>X offset (0 = monitor centre):</label>
-              <input type="number" min="-0.5" max="0.5" step="0.05"
+              <label>X offset: {Number(formData?.loom_stimulus?.x_offset_ndc ?? 0.0).toFixed(2)} (0 = centre)</label>
+              <input type="range" min="-0.5" max="0.5" step="0.01"
+                className="brightness-slider"
                 value={formData?.loom_stimulus?.x_offset_ndc ?? 0.0}
                 onChange={e => handleChange(["loom_stimulus", "x_offset_ndc"], e)} />
             </div>
             <div className="form-field">
-              <label>Initial Y (−1 bottom, 0 centre, +1 top):</label>
-              <input type="number" min="-1" max="1" step="0.05"
+              <label>Initial Y: {Number(formData?.loom_stimulus?.initial_pos_ndc?.[1] ?? 0.0).toFixed(2)} (0 = centre)</label>
+              <input type="range" min="-1" max="1" step="0.01"
+                className="brightness-slider"
                 value={formData?.loom_stimulus?.initial_pos_ndc?.[1] ?? 0.0}
                 onChange={e => {
                   const v = parseFloat(e.target.value);
@@ -663,8 +665,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 }} />
             </div>
             <div className="form-field">
-              <label>Final Y (−1 bottom, 0 centre, +1 top):</label>
-              <input type="number" min="-1" max="1" step="0.05"
+              <label>Final Y: {Number(formData?.loom_stimulus?.final_pos_ndc?.[1] ?? 0.0).toFixed(2)} (0 = centre)</label>
+              <input type="range" min="-1" max="1" step="0.01"
+                className="brightness-slider"
                 value={formData?.loom_stimulus?.final_pos_ndc?.[1] ?? 0.0}
                 onChange={e => {
                   const v = parseFloat(e.target.value);

@@ -1009,6 +1009,7 @@ class LoomCameraModule(Module):
             tracking_enabled = bool(self.config.get("loom_tracking.enabled", True))
             overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
             overlay_timestamp = bool(self.config.get("camera.overlay_timestamp", True))
+            monochrome = self.config.get("camera.monochrome") is True
 
             cx = cy = None
             zone_state = "out"
@@ -1020,6 +1021,8 @@ class LoomCameraModule(Module):
                     _k = _rot // 90
                     if m.array.shape[0] == m.array.shape[1] or _rot == 180:
                         m.array[:] = np.rot90(m.array, _k)
+                if monochrome:
+                    self._apply_grayscale(m)
                 frame = m.array
                 if tracking_enabled and self.tracker is not None:
                     center_proc, (sx, sy), (nx, ny) = self.tracker.detect_center(frame)
@@ -1103,6 +1106,8 @@ class LoomCameraModule(Module):
             # (rotation is applied later in _stream_post_callback on the free-standing
             # make_array copy, which works for non-square images)
             with MappedArray(req, "lores") as m:
+                if monochrome:
+                    self._apply_grayscale(m)
                 if overlay_enabled:
                     self._loom_draw_overlays_on_frame(m, lores=True)
                 if overlay_timestamp and ts_label:
@@ -1218,6 +1223,10 @@ class LoomCameraModule(Module):
             2,
             cv2.LINE_AA,
         )
+
+    def _apply_grayscale(self, m: MappedArray) -> None:
+        gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
+        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
     # ---------------------------------------------------------------------
     # Timestamp overlay

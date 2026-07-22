@@ -645,7 +645,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="sensor-mode-info sensor-mode-info--muted">Position</div>
             <div className="form-field">
               <label>X offset (0 = monitor centre):</label>
-              <input type="number" min="-1" max="1" step="0.05"
+              <input type="number" min="-0.5" max="0.5" step="0.05"
                 value={formData?.loom_stimulus?.x_offset_ndc ?? 0.0}
                 onChange={e => handleChange(["loom_stimulus", "x_offset_ndc"], e)} />
             </div>

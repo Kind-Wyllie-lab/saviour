@@ -7,6 +7,7 @@ import Dashboard from "/src/loom/pages/LoomDashboard/LoomDashboard";
 import Settings from "/src/basic/pages/Settings/Settings";
 import LoomRecording from "/src/loom/pages/LoomRecording/LoomRecording";
 import System from "/src/basic/pages/System/System";
+import Guide from "/src/basic/pages/Guide/Guide";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useSessions from "/src/hooks/useSessions";
@@ -20,6 +21,7 @@ const pages = [
   { label: "Settings",  path: "/settings" },
   { label: "Recording", path: "/recording" },
   { label: "System",    path: "/system" },
+  { label: "Guide",     path: "/guide" },
 ];
 
 function faultKey(session) {
@@ -69,6 +71,7 @@ function App() {
             <Route path="/settings"  element={<Settings />} />
             <Route path="/recording" element={<LoomRecording />} />
             <Route path="/system"    element={<System />} />
+            <Route path="/guide"     element={<Guide />} />
           </Routes>
         </div>
 

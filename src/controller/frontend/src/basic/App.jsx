@@ -10,6 +10,7 @@ import Settings from "./pages/Settings/Settings";
 import Recording from "./pages/Recording/Recording";
 import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
+import Guide from "./pages/Guide/Guide";
 import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "./components/ConnectionOverlay/ConnectionOverlay";
@@ -26,6 +27,7 @@ const pages = [
   { label: "Settings", path: "/settings" },
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
+  { label: "Guide", path: "/guide" },
 ];
 
 
@@ -120,6 +122,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/recording" element={<Recording />} />
           <Route path="/system" element={<System />} />
+          <Route path="/guide" element={<Guide />} />
         </Routes>
       </div>
       {showClockModal && (

@@ -8,6 +8,7 @@ import Recording from "../basic/pages/Recording/Recording";
 import Settings from "../basic/pages/Settings/Settings";
 import System from "../basic/pages/System/System";
 import Debug from "../basic/pages/Debug/Debug";
+import Guide from "../basic/pages/Guide/Guide";
 import ConnectionOverlay from "../basic/components/ConnectionOverlay/ConnectionOverlay";
 
 document.title = "APA";
@@ -17,6 +18,7 @@ const pages = [
   { label: "Recording", path: "/recording" },
   { label: "Settings", path: "/settings" },
   { label: "System", path: "/system" },
+  { label: "Guide", path: "/guide" },
 ];
 
 function App() {
@@ -47,6 +49,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/system" element={<System />} />
           <Route path="/debug" element={<Debug />} />
+          <Route path="/guide" element={<Guide />} />
         </Routes>
       </div>
       <ConnectionOverlay />

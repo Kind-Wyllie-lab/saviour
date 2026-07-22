@@ -6,6 +6,7 @@ import Sidebar from '../basic/components/Sidebar/Sidebar';
 import Settings from "../basic/pages/Settings/Settings";
 import System from "../basic/pages/System/System";
 import Recording from '../basic/pages/Recording/Recording';
+import Guide from '../basic/pages/Guide/Guide';
 
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Monitor from "./pages/Monitor/Monitor";
@@ -23,6 +24,7 @@ const pages = [
   { label: "Monitor", path: "/monitor" },
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
+  { label: "Guide", path: "/guide" },
 ];
 
 // Key used to track which faults have been acknowledged this browser session.
@@ -72,6 +74,7 @@ function App() {
           <Route path="/monitor" element={<Monitor />} />
           <Route path="/recording" element={<Recording />} />
           <Route path="/system" element={<System />} />
+          <Route path="/guide" element={<Guide />} />
         </Routes>
       </div>
 

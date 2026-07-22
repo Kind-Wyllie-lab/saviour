@@ -715,9 +715,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="config-section-divider" />
             <div className="sensor-mode-info sensor-mode-info--muted">Near screen</div>
             <div className="form-field">
+              <label>Keep-alive mode:</label>
+              <select value={formData?.loom_stimulus?.keepalive_mode ?? "corner"}
+                onChange={e => handleChange(["loom_stimulus", "keepalive_mode"], e)}>
+                <option value="corner">Corner patch (least intrusive)</option>
+                <option value="distributed">Distributed patches (5 positions)</option>
+                <option value="pulse">Full-screen pulse (most effective)</option>
+              </select>
+            </div>
+            <div className="form-field">
               <label>Keep-alive interval (s, 0 = off):</label>
-              <input type="number" min="0" max="3600" step="5"
-                value={formData?.loom_stimulus?.keepalive_interval_s ?? 30}
+              <input type="number" min="0" max="120" step="1"
+                value={formData?.loom_stimulus?.keepalive_interval_s ?? 10}
                 onChange={e => handleChange(["loom_stimulus", "keepalive_interval_s"], e)} />
             </div>
             <div className="form-field">

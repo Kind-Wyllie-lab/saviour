@@ -437,10 +437,6 @@ def run_loom_stimulus_with_ipc(
         if fullscreen and n_selected >= 2:
             _mon_ndc_w = 2.0 / n_selected
             _stim_mon_idx = 0 if flip_horizontal else (n_selected - 1)
-            # NDC x of the selected monitor's centre
-            _centre_x = _stim_mon_idx * _mon_ndc_w + _mon_ndc_w * 0.5 - 1.0
-            initial_pos_ndc = (_centre_x, initial_pos_ndc[1])
-            final_pos_ndc   = (_centre_x, final_pos_ndc[1])
         else:
             _stim_mon_idx = 0
 
@@ -555,13 +551,6 @@ def run_loom_stimulus_with_ipc(
                         _fin = p.get("final_pos_ndc")
                         _ini_ndc = tuple(_ini) if _ini is not None else initial_pos_ndc
                         _fin_ndc = tuple(_fin) if _fin is not None else final_pos_ndc
-                        # Re-apply geometric centering (same logic as at startup).
-                        if fullscreen and n_selected >= 2:
-                            _mnw = 2.0 / n_selected
-                            _sidx = 0 if flip_horizontal else (n_selected - 1)
-                            _cx = _sidx * _mnw + _mnw * 0.5 - 1.0
-                            _ini_ndc = (_cx, _ini_ndc[1])
-                            _fin_ndc = (_cx, _fin_ndc[1])
                         initial_pos_ndc = _ini_ndc
                         final_pos_ndc   = _fin_ndc
                         # Recompute all derived motion params (take effect on next _reset_motion()).

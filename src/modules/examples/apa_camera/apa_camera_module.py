@@ -288,11 +288,6 @@ class APACameraModule(Module):
         })
 
         # ── Segmented recording ─────────────────────────────────────────────
-        self.monitor_recording_segments_stop_flag = threading.Event()
-        self.monitor_recording_segments_thread = None
-        self.segment_id = 0
-        self.segment_start_time = None
-        self.segment_files = []
         self.current_video_segment = None
         self.last_video_segment = None
 
@@ -574,23 +569,6 @@ class APACameraModule(Module):
     # Recording — abstract method implementations
     # -----------------------------------------------------------------------
 
-    def _start_recording(self):
-        try:
-            self._create_initial_recording_segment()
-            self._start_recording_segment_monitoring()
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_started",
-                    "filename": self.current_video_segment,
-                    "recording": True,
-                    "session_id": self.recording_session_id,
-                })
-            return True
-        except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
-            return False
-
-
     def _start_new_recording(self) -> None:
         filename = self._get_video_filename()
         self.logger.info(f"Starting recording: {filename}")
@@ -640,16 +618,6 @@ class APACameraModule(Module):
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             return False
-
-
-    def _start_recording_segment_monitoring(self):
-        self.monitor_recording_segments_stop_flag.clear()
-        self.segment_start_time = self.recording_start_time
-        self.segment_id = 0
-        self.monitor_recording_segments_thread = threading.Thread(
-            target=self._monitor_recording_length, daemon=True
-        )
-        self.monitor_recording_segments_thread.start()
 
 
     def _get_video_filename(self) -> str:

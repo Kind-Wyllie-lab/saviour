@@ -15,7 +15,7 @@ import logging
 import threading
 import json
 from typing import Dict, Any, Optional, Callable
-from config import Config
+from src.modules.config import Config
 
 class Command:
     """

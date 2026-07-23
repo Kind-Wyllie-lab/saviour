@@ -891,6 +891,7 @@ class CameraModule(Module):
 
 
     """Video streaming"""
+    @command()
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         """Start streaming video to the specified receiver using Flask to send MJPEG"""
         try:
@@ -1062,6 +1063,7 @@ class CameraModule(Module):
             return 'Server shutting down...'
 
 
+    @command()
     def stop_streaming(self) -> bool:
         """Stop streaming video"""
         try:

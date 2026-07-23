@@ -95,3 +95,24 @@ def test_manual_and_auto_registered_commands_merge():
 
     assert "manual_one" in cmd.commands
     assert "do_thing" in cmd.commands
+
+
+def test_manual_registration_wins_over_auto_discovered_same_name():
+    """Regression test: a manually-registered handler for a name must survive
+    _finalize_command_registration() even though a @command()-decorated method
+    of the same name also exists (e.g. 'set_config' -> _handle_set_config, which
+    wraps the separately @command()-decorated set_config() it calls internally —
+    auto-discovery previously clobbered the manual wrapper because it ran second
+    and did an unconditional dict update)."""
+    from src.modules.command import Command
+
+    instance = _bare_instance(_DummyModule)
+    instance.command = Command()
+
+    manual_handler = lambda **kwargs: {"result": "manual", "kwargs": kwargs}
+    instance.command.set_commands({"do_thing": manual_handler})
+
+    instance._finalize_command_registration()
+
+    assert instance.command.commands["do_thing"] is manual_handler
+    assert instance.command.commands["do_thing"](x=1) == {"result": "manual", "kwargs": {"x": 1}}

@@ -222,12 +222,9 @@ class Module(ABC):
 
         # Auto-discover any @command()/@check()-decorated methods anywhere in this
         # class's MRO — a module author only needs to decorate a method, no manual
-        # dict/list registration required. Commands merge harmlessly with any
-        # additional manual `self.command.set_commands(...)` call a subclass still
-        # makes (dict update); module_checks may still be overridden by a subclass
-        # assigning `self.module_checks = [...]` after `super().__init__()`.
-        auto_commands, self.module_checks = self._auto_register_decorated_methods()
-        self.command.set_commands(auto_commands)
+        # dict/list registration required. module_checks may still be overridden by
+        # a subclass assigning `self.module_checks = [...]` after `super().__init__()`.
+        self._finalize_command_registration()
 
         self.logger.info(f"Registered these readiness checks: {self.checks}")
 
@@ -264,6 +261,23 @@ class Module(ABC):
             elif getattr(member, "_is_check", False) and name not in self._BASE_CHECK_NAMES:
                 module_checks.append(getattr(self, name))
         return commands, module_checks
+
+
+    def _finalize_command_registration(self) -> None:
+        """Merge auto-discovered @command() methods into the command router.
+
+        A manually-registered name always wins on collision — e.g. 'set_config'
+        is deliberately wired to the kwargs-wrapping _handle_set_config, not the
+        same-named @command()-decorated set_config() it wraps internally.
+        Auto-discovery must not clobber that, so already-registered names are
+        skipped rather than overwritten.
+        """
+        auto_commands, self.module_checks = self._auto_register_decorated_methods()
+        auto_commands = {
+            name: fn for name, fn in auto_commands.items()
+            if name not in self.command.commands
+        }
+        self.command.set_commands(auto_commands)
 
 
     def get_module_name(self) -> str:

@@ -111,6 +111,13 @@ class Module(ABC):
         config (dict): Configuration parameters for the module
 
     """
+    # Names of the built-in checks in `self.checks` — excluded from the
+    # auto-discovered `module_checks` list since they're already run unconditionally.
+    _BASE_CHECK_NAMES = {
+        "_check_running", "_check_readwrite", "_check_diskspace",
+        "_check_ptp", "_check_recording", "_check_export",
+    }
+
     def __init__(self, module_type: str):
         # Setup logging first
         self.logger = logging.getLogger(__name__)
@@ -213,8 +220,14 @@ class Module(ABC):
             self._check_export,
         ]
 
-        # To be overriden by module?
-        self.module_checks = []
+        # Auto-discover any @command()/@check()-decorated methods anywhere in this
+        # class's MRO — a module author only needs to decorate a method, no manual
+        # dict/list registration required. Commands merge harmlessly with any
+        # additional manual `self.command.set_commands(...)` call a subclass still
+        # makes (dict update); module_checks may still be overridden by a subclass
+        # assigning `self.module_checks = [...]` after `super().__init__()`.
+        auto_commands, self.module_checks = self._auto_register_decorated_methods()
+        self.command.set_commands(auto_commands)
 
         self.logger.info(f"Registered these readiness checks: {self.checks}")
 
@@ -227,6 +240,30 @@ class Module(ABC):
 
         
         # self.check_interrupted_recordings()
+
+
+    def _auto_register_decorated_methods(self) -> tuple[Dict[str, Any], list]:
+        """Scan this instance's full class hierarchy for @command()/@check()
+        methods and return (commands, module_checks) ready to register.
+
+        `dir(type(self))` walks the MRO de-duplicated, with the most-derived
+        override winning, so this picks up decorated methods defined anywhere
+        from `Module` down through the concrete module class — even though this
+        runs during `Module.__init__`, before the subclass's own `__init__` body
+        has executed (methods are class attributes, so they already exist).
+        """
+        commands: Dict[str, Any] = {}
+        module_checks = []
+        for name in dir(type(self)):
+            member = getattr(type(self), name, None)
+            if not callable(member):
+                continue
+            if getattr(member, "_is_command", False):
+                cmd_name = getattr(member, "_cmd_name", name)
+                commands[cmd_name] = getattr(self, name)
+            elif getattr(member, "_is_check", False) and name not in self._BASE_CHECK_NAMES:
+                module_checks.append(getattr(self, name))
+        return commands, module_checks
 
 
     def get_module_name(self) -> str:
@@ -594,11 +631,9 @@ class Module(ABC):
 
     def list_commands(self):
         """
-        Return a dict of zmq commands that the module understands.
+        Return the names of zmq commands that the module understands.
         """
-        commands = {
-            
-        }
+        return list(self.command.commands.keys())
 
 
     # Start and stop functions

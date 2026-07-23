@@ -1024,6 +1024,7 @@ class APACameraModule(Module):
     # Streaming
     # -----------------------------------------------------------------------
 
+    @command()
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         if self.is_streaming:
             self.logger.warning("Already streaming")
@@ -1072,6 +1073,7 @@ class APACameraModule(Module):
             yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
 
 
+    @command()
     def stop_streaming(self) -> bool:
         if not self.is_streaming:
             return False

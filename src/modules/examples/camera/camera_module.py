@@ -108,13 +108,6 @@ class CameraModule(Module):
         self.logger.info(f"Command handler callbacks: {self.command.commands}")
 
         # Segment based recording
-        self.monitor_recording_segments_stop_flag = threading.Event()
-        self.monitor_recording_segments_thread = None 
-        self.segment_id = 0
-        self.segment_start_time = None
-        self.segment_files = []
-
-
         self.current_video_segment = None
         self.last_video_segment = None
 
@@ -651,36 +644,6 @@ class CameraModule(Module):
 
 
     """Recording"""
-    # Instead of abstract methods _start_recording and _stop_recording, I need:
-    # Abstract methods _start_recording, _next_recording_segment, and _stop_recoriding?
-    # Perhaps _start_new_recording, _start_next_recording_segment, and _stop_recording?
-    def _start_recording(self):
-        """Implement camera-specific recording functionality"""
-        self.logger.info("Executing camera specific recording functionality...")
-
-        # New approach
-        try:
-            self._create_initial_recording_segment()
-            self._start_recording_segment_monitoring()
-            # Send status response after successful recording start
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_started",
-                    "filename": self.current_video_segment,
-                    "recording": True,
-                    "session_id": self.recording_session_id
-                })
-            return True
-        except Exception as e:
-            self.logger.error(f"Error starting recording: {e}")
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    "type": "recording_start_failed",
-                    "error": str(e)
-                })
-            return False
-
-
     def _stop_recording_video(self):
         """Stop recording current segment"""
         self.picam2.stop_encoder(self.main_encoder)
@@ -709,19 +672,6 @@ class CameraModule(Module):
             self.logger.error(f"Error stopping recording: {e}")
             return False
                 
-
-    def _start_recording_segment_monitoring(self):
-        self.monitor_recording_segments_stop_flag.clear()
-        self.segment_start_time = self.recording_start_time 
-        self.segment_id = 0
-        self.monitor_recording_segments_thread = threading.Thread(target=self._monitor_recording_length, daemon=True)
-        self.monitor_recording_segments_thread.start()
-
-
-    def _stop_recording_segment_monitoring(self): 
-        self.monitor_recording_segments_stop_flag.set()
-        self.monitor_recording_segments_thread.join(timeout=5)
-
 
     """Timestamping frames"""
     # Cached wall-clock minus monotonic offset in nanoseconds.

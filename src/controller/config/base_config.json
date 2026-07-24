@@ -65,5 +65,8 @@
         "notify_module_online": false,
         "notify_ptp_degraded": true,
         "notify_disk_space": true
+    },
+    "frontend": {
+        "accent_color": "#6495ed"
     }
 } 

@@ -12,7 +12,10 @@ const TABS = [
   { key: "basic",    label: "Basic"    },
   { key: "settings", label: "Settings" },
   { key: "export",   label: "Export"   },
+  { key: "frontend", label: "Frontend" },
 ];
+
+const DEFAULT_ACCENT_COLOR = "#6495ed"; // matches index.css's static fallback (cornflowerblue)
 
 function ControllerConfigCard() {
   const loggedIn = useIsLoggedIn();
@@ -27,7 +30,12 @@ function ControllerConfigCard() {
     socket.emit("get_controller_config");
     socket.emit("get_controller_info");
 
-    socket.on("controller_config_response", (data) => {
+    // Named handlers so cleanup removes exactly these listeners (socket.off(event)
+    // with no handler removes *every* listener for that event — since other
+    // things also listen on "controller_config_response" (e.g. useControllerTheme,
+    // mounted for the lifetime of the app), the bare form would silently kill
+    // their listeners too the moment this component unmounts.
+    const handleConfigResponse = (data) => {
       setFormData(data.config || {});
       markSaved(data.config || {});
       setSaveStatus(prev => {
@@ -38,20 +46,22 @@ function ControllerConfigCard() {
         }
         return prev;
       });
-    });
-
-    socket.on("controller_info_response", (data) => {
+    };
+    const handleInfoResponse = (data) => {
       setControllerInfo({ ip: data.ip, version: data.version });
-    });
-
-    socket.on("teams_test_result", (data) => {
+    };
+    const handleTeamsTestResult = (data) => {
       setTeamsTestStatus(data);
-    });
+    };
+
+    socket.on("controller_config_response", handleConfigResponse);
+    socket.on("controller_info_response", handleInfoResponse);
+    socket.on("teams_test_result", handleTeamsTestResult);
 
     return () => {
-      socket.off("controller_config_response");
-      socket.off("controller_info_response");
-      socket.off("teams_test_result");
+      socket.off("controller_config_response", handleConfigResponse);
+      socket.off("controller_info_response", handleInfoResponse);
+      socket.off("teams_test_result", handleTeamsTestResult);
       clearTimeout(saveTimerRef.current);
     };
   }, []);
@@ -198,6 +208,21 @@ function ControllerConfigCard() {
                 exportConfig={formData?.export}
                 handleChange={handleChange}
               />
+            )}
+
+            {/* FRONTEND */}
+            {activeTab === "frontend" && (
+              <div className="form-field">
+                <label>Accent color:</label>
+                <input
+                  type="color"
+                  value={formData?.frontend?.accent_color || DEFAULT_ACCENT_COLOR}
+                  onChange={e => handleChange(["frontend", "accent_color"], e)}
+                />
+                <span className="frontend-accent-hint">
+                  Applied live across every dashboard variant on save — buttons, links, and highlights.
+                </span>
+              </div>
             )}
           </div>
 

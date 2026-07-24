@@ -34,6 +34,7 @@
     "min_area_px": 50,
     "patience_frames": 1000,
     "hold_forever_when_still": true,
+    "enter_confirm_frames": 3,
     "smoothing_alpha": 0.3,
     "track_square_size_src": 150,
     "draw_track_square": true,

@@ -42,15 +42,23 @@ class LoomCrossingState:
     Parameters
     ----------
     in_zone_prev : bool
-        Previous boolean zone occupancy.
+        Confirmed zone occupancy as of the previous frame (post-debounce —
+        see `pending_frames`).
     state : str
         One of {'out', 'entering', 'in', 'leaving'}.
     last_event : str or None
         One of {'enter', 'leave'} when an event occurred, else None.
+    pending_frames : int
+        Consecutive frames the raw (unconfirmed) centroid has sat on the
+        'in' side of the line while not yet confirmed. Resets to 0 the
+        moment the raw position leaves the 'in' side, so a transient blob
+        (a hand, a shadow, a lighting flicker) that crosses the line for
+        only a frame or two never accumulates enough to confirm.
     """
     in_zone_prev: bool = False
     state: str = "out"
     last_event: Optional[str] = None
+    pending_frames: int = 0
 
 class LoomBlobDiffTracker:
     """
@@ -326,11 +334,16 @@ def loom_update_crossing_state(
     center_src: Optional[Tuple[float, float]],
     prev: LoomCrossingState,
     track_valid: bool,
+    enter_confirm_frames: int = 1,
 ) -> LoomCrossingState:
     """
     Update enter/in/leave/out state relative to a crossing line.
 
-    This version matches the Basler behavior:
+    This version matches the Basler behavior, with one addition: entering
+    the zone is debounced (see `enter_confirm_frames`), while leaving is
+    not — an animal that has already been confirmed present should be
+    treated as gone the instant it's no longer detected on the 'in' side.
+
     - If tracking is currently invalid (lost beyond patience), state is forced to 'out'
       and in_zone_prev becomes False.
     - If tracking is valid but center is None (should not happen often), preserve previous state.
@@ -345,6 +358,16 @@ def loom_update_crossing_state(
         Previous state.
     track_valid : bool
         Whether we currently consider the track valid (held or detected).
+    enter_confirm_frames : int, default=1
+        Number of consecutive frames the raw centroid must sit on the 'in'
+        side of the line before an 'enter' event actually fires. This is
+        the guard against single-frame false positives from motion that
+        isn't the animal — a hand withdrawing from the arena, a passing
+        shadow, an exposure/IR-flicker step — which briefly moves the
+        largest diff-blob across the line but doesn't sustain. A value of
+        1 reproduces the original (undebounced) behavior. Has no effect on
+        leaving, which always fires on the first frame the animal is no
+        longer detected in zone.
 
     Returns
     -------
@@ -352,34 +375,42 @@ def loom_update_crossing_state(
         Updated state with transition event labels.
     """
     if not track_valid or crossing_line_src is None:
-        return LoomCrossingState(in_zone_prev=False, state="out", last_event=None)
+        return LoomCrossingState(in_zone_prev=False, state="out", last_event=None, pending_frames=0)
 
     if center_src is None:
         # Preserve previous state (hold) if somehow center isn't available.
-        return LoomCrossingState(in_zone_prev=prev.in_zone_prev, state=prev.state, last_event=None)
+        return LoomCrossingState(
+            in_zone_prev=prev.in_zone_prev, state=prev.state, last_event=None,
+            pending_frames=prev.pending_frames,
+        )
 
     if crossing_line_src.get("kind") != "vertical":
-        return LoomCrossingState(in_zone_prev=prev.in_zone_prev, state=prev.state, last_event=None)
+        return LoomCrossingState(
+            in_zone_prev=prev.in_zone_prev, state=prev.state, last_event=None,
+            pending_frames=prev.pending_frames,
+        )
 
     x_line = float(crossing_line_src["x"])
     direction = str(crossing_line_src.get("direction", "left_is_in")).lower()
 
     cx, cy = center_src
-    in_zone = (cx > x_line) if direction == "right_is_in" else (cx < x_line)
+    raw_in_zone = (cx > x_line) if direction == "right_is_in" else (cx < x_line)
+    n_confirm = max(1, int(enter_confirm_frames))
 
-    last_event = None
-    if (not prev.in_zone_prev) and in_zone:
-        state = "entering"
-        last_event = "enter"
-    elif prev.in_zone_prev and in_zone:
-        state = "in"
-    elif prev.in_zone_prev and (not in_zone):
-        state = "leaving"
-        last_event = "leave"
-    else:
-        state = "out"
+    if prev.in_zone_prev:
+        # Already confirmed present — leaving fires immediately, no debounce.
+        if raw_in_zone:
+            return LoomCrossingState(in_zone_prev=True, state="in", last_event=None, pending_frames=0)
+        return LoomCrossingState(in_zone_prev=False, state="leaving", last_event="leave", pending_frames=0)
 
-    return LoomCrossingState(in_zone_prev=in_zone, state=state, last_event=last_event)
+    if not raw_in_zone:
+        return LoomCrossingState(in_zone_prev=False, state="out", last_event=None, pending_frames=0)
+
+    # Raw centroid is on the 'in' side but not yet confirmed — accumulate.
+    pending = prev.pending_frames + 1
+    if pending >= n_confirm:
+        return LoomCrossingState(in_zone_prev=True, state="entering", last_event="enter", pending_frames=0)
+    return LoomCrossingState(in_zone_prev=False, state="entering", last_event=None, pending_frames=pending)
 
 
 class LoomCameraModule(CameraBase):
@@ -414,6 +445,7 @@ class LoomCameraModule(CameraBase):
         self._hold_patience_frames: int = int(self.config.get("loom_tracking.patience_frames", 10))
         self._track_valid: bool = False
         self._hold_forever_when_still: bool = bool(self.config.get("loom_tracking.hold_forever_when_still", False))
+        self._enter_confirm_frames: int = int(self.config.get("loom_tracking.enter_confirm_frames", 3))
 
         # Tracking-rate decimation: detect_center() is the expensive part of the
         # per-frame pipeline (downsample + morphology + connected components).
@@ -700,6 +732,7 @@ class LoomCameraModule(CameraBase):
         self._hold_miss_count = 0
         self._track_valid = False
         self._hold_forever_when_still = bool(lt.get("hold_forever_when_still", False))
+        self._enter_confirm_frames = int(lt.get("enter_confirm_frames", 3))
 
         self.tracker = LoomBlobDiffTracker(
             process_width=int(lt.get("process_width", 256)),
@@ -786,6 +819,7 @@ class LoomCameraModule(CameraBase):
                     center_src=self.last_center_src,
                     prev=self.crossing_state,
                     track_valid=self._track_valid,
+                    enter_confirm_frames=self._enter_confirm_frames,
                 )
 
                 self.crossing_state = next_state

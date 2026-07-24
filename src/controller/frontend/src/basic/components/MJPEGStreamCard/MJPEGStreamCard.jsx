@@ -18,19 +18,22 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
 
   const bump = () => setStreamKey(Date.now());
 
-  const resetStallTimer = () => {
-    clearTimeout(stallTimer.current);
-    stallTimer.current = setTimeout(bump, STALL_TIMEOUT_MS);
-  };
-
   useEffect(() => {
-    resetStallTimer();
+    stallTimer.current = setTimeout(bump, STALL_TIMEOUT_MS);
     return () => {
       clearTimeout(stallTimer.current);
       clearTimeout(reconnectTimer.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamKey]);
+
+  // Clear only, don't re-arm — Chrome fires onLoad once for a
+  // multipart/x-mixed-replace (MJPEG) stream, on the first frame only, and
+  // never again for subsequent frames. Rescheduling here would fire the
+  // timer forever every STALL_TIMEOUT_MS regardless of stream health,
+  // forcing a full reconnect (and killing the live video) on a healthy
+  // stream. Recovery from a stream that actually dies is handled by onError.
+  const handleLoad = () => clearTimeout(stallTimer.current);
 
   const handleError = () => {
     clearTimeout(stallTimer.current);
@@ -51,7 +54,7 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
             key={streamKey}
             src={`http://${ip}:${port}/video_feed`}
             alt={label || "stream"}
-            onLoad={resetStallTimer}
+            onLoad={handleLoad}
             onError={handleError}
             onClick={() => setFullscreen(true)}
           />

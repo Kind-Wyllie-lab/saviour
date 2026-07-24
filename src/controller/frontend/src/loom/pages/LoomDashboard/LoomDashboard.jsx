@@ -43,14 +43,13 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus]);
 
-  // Must re-arm, not just clear — a successful frame load means the stream
-  // is alive *right now*, not that it can never stall again. Clearing only
-  // (the previous behavior) permanently disarmed stall detection after the
-  // first frame, since nothing else ever re-scheduled the timer.
-  const resetStall = () => {
-    clearTimeout(stallTimer.current);
-    stallTimer.current = setTimeout(bump, STALL_MS);
-  };
+  // Clear only, don't re-arm — Chrome fires onLoad once for a
+  // multipart/x-mixed-replace (MJPEG) stream, on the first frame only, and
+  // never again for subsequent frames. Rescheduling here would fire the
+  // timer forever every STALL_MS regardless of stream health, forcing a
+  // full reconnect (and killing the live video) on a healthy stream.
+  // Recovery from a stream that actually dies is handled by onError.
+  const resetStall = () => clearTimeout(stallTimer.current);
 
   const handleError = () => {
     clearTimeout(stallTimer.current);

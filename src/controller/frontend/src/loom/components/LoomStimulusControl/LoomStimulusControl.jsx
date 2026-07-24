@@ -26,8 +26,12 @@ function LoomStimulusControl() {
       {loomCam ? (
         <>
           <div className="loom-stimulus-buttons">
-            <button type="button" className="save-button" onClick={fire}>Fire</button>
-            <button type="button" className="reset-button" onClick={stop}>Stop</button>
+            <button type="button" className="loom-fire-button" onClick={fire}>
+              <span className="loom-stimulus-icon">▶</span> Fire
+            </button>
+            <button type="button" className="loom-stop-button" onClick={stop}>
+              <span className="loom-stimulus-icon">■</span> Stop
+            </button>
           </div>
           {lastAction && (
             <p className="loom-stimulus-status">

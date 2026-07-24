@@ -4,7 +4,56 @@
 
 .loom-stimulus-buttons {
   display: flex;
+  gap: 12px;
+}
+
+.loom-stimulus-icon {
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+.loom-fire-button,
+.loom-stop-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
+  padding: 14px 12px;
+  border-radius: 10px;
+  font-size: 1.05em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.loom-fire-button:active,
+.loom-stop-button:active {
+  transform: scale(0.97);
+}
+
+.loom-fire-button {
+  border: none;
+  background-color: var(--recording-color);
+  color: white;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--recording-color) 45%, transparent);
+}
+
+.loom-fire-button:hover {
+  background-color: color-mix(in srgb, var(--recording-color) 85%, black);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--recording-color) 55%, transparent);
+}
+
+.loom-stop-button {
+  border: 1.5px solid var(--border-color);
+  background-color: var(--card-bg-color);
+  color: var(--text-color);
+}
+
+.loom-stop-button:hover {
+  background-color: color-mix(in srgb, var(--text-color) 8%, var(--card-bg-color));
+  border-color: color-mix(in srgb, var(--text-color) 30%, var(--border-color));
 }
 
 .loom-stimulus-status {

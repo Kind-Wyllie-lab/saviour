@@ -3,13 +3,14 @@
   user-select: none;
 }
 
-/* ── Full-width bar look, near-black ──────────────────────────────────────
+/* ── Full-width bar look, dark slate blue-grey ────────────────────────────
    Overrides the shared .card (rounded corners, all-round border, box-shadow,
    min-width, light/dark-mode background+text) and .hrc (left-accent stripe)
    classes with higher-specificity rules scoped to this widget only — .card/
    .hrc themselves are untouched, so ConfigCard/HabitatRecordingControl/etc.
-   keep their current look in both themes. #0d0d0d rather than pure #000 —
-   same read as black, slightly softer. Fixed regardless of light/dark mode. */
+   keep their current look in both themes. #252b33 — mostly grey, dark, with
+   just a cool undertone; not saturated enough to read as blue, not neutral
+   enough to read as flat black. Fixed regardless of light/dark mode. */
 .recording-status-widget.card {
   display: flex;
   min-width: 0;
@@ -17,10 +18,10 @@
   margin: 0;
   padding: 8px 20px;
   border: none;
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid color-mix(in srgb, #252b33 60%, black);
   border-radius: 0;
   box-shadow: none;
-  background-color: #0d0d0d;
+  background-color: #252b33;
   color: #e8e8e8;
 }
 
@@ -29,22 +30,22 @@
 }
 
 .recording-status-widget:hover {
-  background: color-mix(in srgb, #0d0d0d 85%, white);
+  background: color-mix(in srgb, #252b33 85%, white);
 }
 
 .recording-status-widget.hrc--recording {
-  background-color: color-mix(in srgb, #2e7d32 20%, #0d0d0d);
-  border-bottom-color: color-mix(in srgb, #2e7d32 55%, #0d0d0d);
+  background-color: color-mix(in srgb, #2e7d32 20%, #252b33);
+  border-bottom-color: color-mix(in srgb, #2e7d32 55%, #252b33);
 }
 
 .recording-status-widget.hrc--starting {
-  background-color: color-mix(in srgb, #e8a020 20%, #0d0d0d);
-  border-bottom-color: color-mix(in srgb, #e8a020 55%, #0d0d0d);
+  background-color: color-mix(in srgb, #e8a020 20%, #252b33);
+  border-bottom-color: color-mix(in srgb, #e8a020 55%, #252b33);
 }
 
 .recording-status-widget.hrc--fault {
-  background-color: color-mix(in srgb, #c62828 20%, #0d0d0d);
-  border-bottom-color: color-mix(in srgb, #c62828 55%, #0d0d0d);
+  background-color: color-mix(in srgb, #c62828 20%, #252b33);
+  border-bottom-color: color-mix(in srgb, #c62828 55%, #252b33);
 }
 
 .recording-status-widget.hrc--ready {
@@ -52,7 +53,7 @@
 }
 
 /* Muted/secondary text (module names, separators, stats) is tuned for a
-   light card background elsewhere — bump it up so it stays legible on black. */
+   light card background elsewhere — bump it up so it stays legible here. */
 .recording-status-widget .hrc-stat,
 .recording-status-widget .hrc-sep,
 .recording-status-widget .hrc-since,

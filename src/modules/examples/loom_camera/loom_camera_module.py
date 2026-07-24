@@ -9,7 +9,7 @@ sidecar. This file adds live abs-diff blob tracking within an arena ROI,
 enter/in/leave/out crossing-line state, and a local HDMI looming-stimulus
 display driven by a separate GL rendering subprocess (loom_stimulus.py).
 
-Author: Andrew SG
+Author: Paul Rignanese / Andrew SG
 """
 
 import json

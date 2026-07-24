@@ -34,6 +34,15 @@ class Communication:
         self._connected_dealers: Set[str] = set()
         self._dealers_lock = threading.Lock()
 
+        # ZMQ sockets are not thread-safe: send_command() can be called from any
+        # thread (Socket.IO handlers, scheduled recordings, health checks, ...)
+        # while listener_thread concurrently calls recv_multipart() on the same
+        # command_socket. Without serializing all access to it, concurrent
+        # send/recv corrupts the ROUTER socket's internal state and crashes the
+        # whole process with a native "Assertion failed: !_current_out
+        # (src/router.cpp:...)" SIGABRT — this lock is what prevents that.
+        self._command_socket_lock = threading.Lock()
+
         # ZeroMQ setup
         self.context = zmq.Context()
 
@@ -87,10 +96,11 @@ class Communication:
                 self.logger.warning(f"Cannot send to {module_id}: not in connected dealers")
                 return
         try:
-            self.command_socket.send_multipart([
-                module_id.encode(),
-                payload.encode(),
-            ])
+            with self._command_socket_lock:
+                self.command_socket.send_multipart([
+                    module_id.encode(),
+                    payload.encode(),
+                ])
             self.logger.info(f"Command sent to {module_id}: {payload} at {time.time()}")
         except Exception as e:
             self.logger.error(f"Error sending command to {module_id}: {e}")
@@ -131,7 +141,8 @@ class Communication:
         Currently the only message modules send is the 'hello' registration frame.
         """
         try:
-            frames = self.command_socket.recv_multipart()
+            with self._command_socket_lock:
+                frames = self.command_socket.recv_multipart()
             if len(frames) < 2:
                 self.logger.warning(f"Unexpected ROUTER frame count: {len(frames)}")
                 return

@@ -1,7 +1,5 @@
-import logging
 import os
 import signal
-import subprocess
 from dataclasses import dataclass
 from typing import Literal, Optional
 import multiprocessing as mp
@@ -63,16 +61,6 @@ from modules.examples.loom_camera.utils import framebuffer_size_callback, load_t
 
 LoomStimulusCommand = Literal["start", "stop", "abort", "shutdown", "ping"]
 
-_logger = logging.getLogger(__name__)
-
-# The Raspberry Pi 5's two physical micro-HDMI ports, as named by xrandr
-# (verified via `DISPLAY=:0 xrandr --query` on the loom rig). Which of these
-# two is "left" (position 0x0) vs "right" in screen space is decided by the
-# desktop session at startup and is tied to the HDMI *port*, not to which
-# monitor is physically plugged into it — see xrandr_reverse_outputs on
-# LoomStimulusConfig.
-_HDMI_OUTPUTS = ("HDMI-A-1", "HDMI-A-2")
-
 
 @dataclass(frozen=True)
 class LoomStimulusConfig:
@@ -101,49 +89,15 @@ class LoomStimulusConfig:
         Texture rotation.
     background_rgba : tuple of float
         Clear color.
-    start_monitor_index : int
-        Controls how many monitors the window spans, using monitors sorted
-        by physical X position (left to right). The window covers monitors
-        0 through start_monitor_index inclusive:
-          0 → left monitor only
-          1 → both monitors (full dual-monitor span)
-        Defaults to 0.
-    flip_horizontal : bool
-        Chooses which monitor of the spanned canvas the stimulus *content*
-        (loom circle + photodiode marker) is drawn on: False -> the GL-right
-        monitor, True -> the GL-left monitor, where "GL-left"/"GL-right" are
-        whichever two outputs xrandr currently reports at the lowest/highest
-        X position. This does not change which physical output is left or
-        right in screen space — see `xrandr_reverse_outputs` for that.
-        Defaults to False.
-    xrandr_reverse_outputs : bool
-        Pins the physical left/right monitor assignment by HDMI connector
-        name via an explicit `xrandr` call before the renderer starts,
-        instead of relying on however the desktop session happened to
-        auto-arrange the two outputs (which is tied to which physical HDMI
-        port each cable is in, not to which monitor is plugged into it —
-        swapping monitor cables between the *same* two ports changes
-        nothing). False leaves the current session layout untouched; True
-        swaps it. This is the reliable way to "reverse monitor order" —
-        flip_horizontal only reassigns which monitor gets drawn on, it does
-        not touch physical layout, and both markers move together with it.
-        Defaults to False.
-    dual_window_mode : bool
-        Alternative to the single spanning window: opens one real fullscreen
-        GLFW window per physical monitor, addressed by GLFW's raw
-        enumeration order (glfw.get_monitors(), unsorted) rather than by
-        X-position sort — so this mode has no dependency on xrandr layout at
-        all, and start_monitor_index/flip_horizontal/xrandr_reverse_outputs
-        are ignored. `stimulus_monitor_index` picks which window gets the
-        loom circle + photodiode; if a second monitor is detected it
-        automatically gets its own window for the keepalive/near-test flash.
-        Defaults to False (use the existing spanning-window behavior).
     stimulus_monitor_index : int
-        Which monitor (0 or 1, in raw glfw.get_monitors() order) shows the
-        stimulus when dual_window_mode is True. There's no way to know in
-        advance which raw index corresponds to which physical screen — use
-        the near-screen test flash to check, and flip this if it's backwards.
-        Ignored unless dual_window_mode is True. Defaults to 0.
+        Which monitor (0 or 1, in raw glfw.get_monitors() order — not sorted
+        by X position, so no dependency on xrandr/cable layout) gets a
+        window showing the loom circle + photodiode. If a second monitor is
+        detected it automatically gets its own window for the
+        keepalive/near-test flash. There's no way to know in advance which
+        raw index corresponds to which physical screen — use the
+        near-screen test flash to check, and flip this if it's backwards.
+        Defaults to 0.
     """
     texture_path: str
     initial_size_cm: float
@@ -155,10 +109,6 @@ class LoomStimulusConfig:
     round_size: int
     image_angle_deg: float
     background_rgba: tuple[float, float, float, float]
-    start_monitor_index: int = 0
-    flip_horizontal: bool = False
-    xrandr_reverse_outputs: bool = False
-    dual_window_mode: bool = False
     stimulus_monitor_index: int = 0
     screen_width_cm: float = 105.41
     screen_height_cm: float = 59.29
@@ -230,12 +180,9 @@ def run_loom_stimulus_with_ipc(
     keepalive_interval_s: float = 10.0,
     keepalive_mode: str = "corner",
     x_offset_ndc: float = 0.0,
-    monitor_index: Optional[int] = None,
     fullscreen: bool = True,
     window_size_px: Tuple[int, int] = (1920, 1080),
     vsync: bool = True,
-    flip_horizontal: bool = False,
-    dual_window_mode: bool = False,
     stimulus_monitor_index: int = 0,
 ) -> None:
     """
@@ -267,14 +214,15 @@ def run_loom_stimulus_with_ipc(
         Photodiode marker square size in pixels.
     photodiode_y_ndc : float
         Y position for photodiode marker in NDC.
-    monitor_index : int or None
-        Which monitor to use for fullscreen (None -> primary).
     fullscreen : bool
-        Whether to open fullscreen on a monitor.
+        Whether to open fullscreen windows on the monitors (see
+        stimulus_monitor_index) rather than a single windowed-mode window.
     window_size_px : tuple
-        Windowed mode size.
+        Windowed mode size (fullscreen=False only — debug/testing use).
     vsync : bool
         Enable vsync.
+    stimulus_monitor_index : int
+        See LoomStimulusConfig.
 
     Notes
     -----
@@ -293,9 +241,8 @@ def run_loom_stimulus_with_ipc(
     # Force GLFW onto X11 / XWayland BEFORE glfw.init().
     #
     # Wayland forbids client-side window positioning (set_window_pos is a
-    # no-op) and will not let a single surface span two outputs, so the
-    # extended-desktop loom canvas collapses onto one monitor. X11/Xinerama
-    # allows both, so we drop any inherited WAYLAND_DISPLAY here.
+    # no-op), which the positioned-window technique below depends on. X11/
+    # XWayland allows it, so we drop any inherited WAYLAND_DISPLAY here.
     # -------------------------------------------------------------------
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ.setdefault("DISPLAY", ":0")
@@ -309,7 +256,7 @@ def run_loom_stimulus_with_ipc(
         raise RuntimeError("Failed to initialize GLFW")
 
     window = None
-    near_window = None  # only created in dual_window_mode, when a 2nd monitor exists
+    near_window = None  # only created when a 2nd monitor exists
     shader_program = None
     vao = None
     vbo = None
@@ -336,10 +283,10 @@ def run_loom_stimulus_with_ipc(
         glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
         monitors = glfw.get_monitors() or []
 
-        if dual_window_mode and fullscreen:
+        if fullscreen:
             # One borderless window per physical screen, addressed by raw
             # glfw.get_monitors() order — no xrandr/X-position dependency at
-            # all, unlike the spanning-window branch below.
+            # all.
             #
             # NOTE: this deliberately does NOT use GLFW's native
             # fullscreen-on-monitor window creation (passing a monitor to
@@ -348,14 +295,11 @@ def run_loom_stimulus_with_ipc(
             # Xorg server), the first such window created renders nothing at
             # all — black, regardless of which monitor it targets — while
             # the second one only ever shows its background clear. Since the
-            # failure tracks *creation order*, not *which monitor*, this is a
-            # WM/compositor-level fullscreen-request problem, not a
-            # monitor-selection bug. The spanning-window path below never hit
-            # this because it never asks for monitor-fullscreen — it uses a
-            # plain floating window manually positioned with set_window_pos,
-            # which is already proven to work on this exact stack. Reusing
-            # that same technique here, just sized to one monitor instead of
-            # spanning both.
+            # failure tracked *creation order*, not *which monitor*, that was
+            # a WM/compositor-level fullscreen-request problem, not a
+            # monitor-selection bug. A plain floating window manually
+            # positioned with set_window_pos doesn't hit it and is proven to
+            # work on this exact stack, so that's the technique used here.
             if not monitors:
                 raise RuntimeError("No monitors detected by GLFW.")
 
@@ -392,45 +336,7 @@ def run_loom_stimulus_with_ipc(
                 near_window, _ = _create_positioned_window(near_monitor, "Loom Stimulus (near)")
                 if near_window is None:
                     _status({"type": "loom_stimulus_error",
-                             "error": "Failed to create near-monitor window (dual_window_mode) — keepalive/near-test disabled"})
-
-        elif fullscreen:
-            if not monitors:
-                raise RuntimeError("No monitors detected by GLFW.")
-
-            # Collect monitor rects and sort by X position (left to right).
-            rects = []
-            for m in monitors:
-                mx, my = glfw.get_monitor_pos(m)
-                vm = glfw.get_video_mode(m)
-                rects.append((mx, my, vm.size.width, vm.size.height))
-            rects.sort(key=lambda r: (r[0], r[1]))
-
-            # Include monitors 0 through start_monitor_index (inclusive).
-            # index=0 → left monitor only; index=1 → both monitors (span left to right).
-            start_idx = max(0, min(int(monitor_index or 0), len(rects) - 1))
-            selected = rects[0:start_idx + 1]
-
-            x0 = min(r[0] for r in selected)
-            y0 = min(r[1] for r in selected)
-            x1 = max(r[0] + r[2] for r in selected)
-            y1 = max(r[1] + r[3] for r in selected)
-            w, h = x1 - x0, y1 - y0
-
-            # One borderless window covering the selected monitors as a single surface.
-            glfw.window_hint(glfw.FLOATING, glfw.TRUE)
-            # GLFW 3.4+: set initial position as a hint so the WM cannot override
-            # placement before the window is first shown (more reliable than
-            # set_window_pos() called after creation on most X11 compositors).
-            try:
-                if hasattr(glfw, "POSITION_X"):
-                    glfw.window_hint(glfw.POSITION_X, x0)
-                    glfw.window_hint(glfw.POSITION_Y, y0)
-            except Exception:
-                pass
-            window = glfw.create_window(w, h, "Loom Stimulus", None, None)
-            if window is not None:
-                glfw.set_window_pos(window, x0, y0)
+                             "error": "Failed to create near-monitor window — keepalive/near-test disabled"})
         else:
             w, h = int(window_size_px[0]), int(window_size_px[1])
             window = glfw.create_window(w, h, "Loom Stimulus", None, None)
@@ -452,8 +358,6 @@ def run_loom_stimulus_with_ipc(
             "win_wh": glfw.get_window_size(window),
             "n_monitors": len(monitors),
             "selected_rects": selected if fullscreen else [],
-            "flip_horizontal": flip_horizontal,
-            "dual_window_mode": dual_window_mode,
             "has_near_window": near_window is not None,
         })
 
@@ -534,40 +438,26 @@ def run_loom_stimulus_with_ipc(
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
         # -----------------------------
-        # Motion params (your original)
+        # Motion params
         # -----------------------------
-        # Convert cm sizes to scale factors.
-        # screen_x scales with however many monitors the window spans.
-        n_selected = len(selected) if fullscreen else 1
-
-        # In dual-monitor mode, flip_horizontal picks the monitor:
-        #   False → GL-right monitor (index n_selected-1)
-        #   True  → GL-left monitor  (index 0)
-        # X is locked to the stimulus monitor centre + a configurable offset.
-        # x_offset_ndc=0 (default) always keeps the loom safely on the right TV.
-        _centre_x = 0.0
-        if fullscreen and n_selected >= 2:
-            _mon_ndc_w = 2.0 / n_selected
-            _stim_mon_idx = 0 if flip_horizontal else (n_selected - 1)
-            _centre_x = _stim_mon_idx * _mon_ndc_w + _mon_ndc_w * 0.5 - 1.0
-            _half_w = _mon_ndc_w * 0.5
-            _cx = _centre_x + max(-_half_w, min(_half_w, x_offset_ndc))
-            initial_pos_ndc = (_cx, initial_pos_ndc[1])
-            final_pos_ndc   = (_cx, final_pos_ndc[1])
-        else:
-            _stim_mon_idx = 0
+        # Each window is exactly one monitor now, so NDC 0.0 is that
+        # monitor's centre — x_offset_ndc nudges the stimulus left/right
+        # from there directly, no multi-monitor centre-pinning needed.
+        _cx = float(x_offset_ndc)
+        initial_pos_ndc = (_cx, initial_pos_ndc[1])
+        final_pos_ndc   = (_cx, final_pos_ndc[1])
 
         outward_vx = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
         outward_vy = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
         return_vx = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 0)
         return_vy = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 1)
-        screen_x = screen_width_cm * n_selected
+        screen_x = screen_width_cm
         screen_y = screen_height_cm
         correction = size_correction
         # Separate x and y scale factors so the stimulus renders as a circle,
-        # not an oval.  The combined canvas (e.g. 3840×1080 for dual 1920×1080
-        # monitors) has a much wider NDC x range than y range; applying a single
-        # uniform scale squashes the circle into a wide ellipse.
+        # not an oval — screen_width_cm/screen_height_cm (this monitor's
+        # physical size) aren't usually equal, so a single uniform NDC scale
+        # would squash the circle into an ellipse.
         initial_scale_x = initial_size_cm / screen_x * correction
         initial_scale_y = initial_size_cm / screen_y * correction
         final_scale_x   = final_size_cm   / screen_x * correction
@@ -610,20 +500,14 @@ def run_loom_stimulus_with_ipc(
         # Near screen test flash (from "test_near_screen" command).
         _near_test_until = 0.0
 
-        # Pre-compute which X column the near TV starts at (opposite of stimulus).
-        _mon_w_px = 0  # set each frame from framebuffer width
-
-        def _draw_near_monitor_effects(mon_w_px: int, mon_h_px: int, near_x: int, now: float) -> None:
-            """Test-flash + keep-alive drawing against whatever GL context is
-            currently bound, at the given rect. Shared by the legacy
-            in-canvas near-monitor path (a scissored region of the spanning
-            window) and the dual_window_mode near_window path (its own full
-            framebuffer, near_x=0) — same visual behavior, different target."""
+        def _draw_near_monitor_effects(mon_w_px: int, mon_h_px: int, now: float) -> None:
+            """Test-flash + keep-alive drawing into the near_window's own
+            framebuffer (whatever GL context is currently bound)."""
             nonlocal _keepalive_t0, _keepalive_phase
             if now < _near_test_until:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(0.85, 0.85, 0.85, 1.0)
-                glScissor(near_x, 0, mon_w_px, mon_h_px)
+                glScissor(0, 0, mon_w_px, mon_h_px)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
@@ -636,24 +520,24 @@ def run_loom_stimulus_with_ipc(
                 if keepalive_mode == "pulse":
                     _kv = min(1.0, _bg + 3/255) if _keepalive_phase else max(0.0, _bg - 3/255)
                     glClearColor(_kv, _kv, _kv, 1.0)
-                    glScissor(near_x, 0, mon_w_px, mon_h_px)
+                    glScissor(0, 0, mon_w_px, mon_h_px)
                     glClear(GL_COLOR_BUFFER_BIT)
                 elif keepalive_mode == "distributed":
                     _kv = min(1.0, _bg + 5/255) if _keepalive_phase else max(0.0, _bg - 5/255)
                     glClearColor(_kv, _kv, _kv, 1.0)
                     for _px, _py in [
-                        (near_x,                  0),
-                        (near_x + mon_w_px - 16,  0),
-                        (near_x,                  mon_h_px - 16),
-                        (near_x + mon_w_px - 16,  mon_h_px - 16),
-                        (near_x + mon_w_px // 2 - 8, mon_h_px // 2 - 8),
+                        (0,                  0),
+                        (mon_w_px - 16,      0),
+                        (0,                  mon_h_px - 16),
+                        (mon_w_px - 16,      mon_h_px - 16),
+                        (mon_w_px // 2 - 8,  mon_h_px // 2 - 8),
                     ]:
                         glScissor(_px, _py, 16, 16)
                         glClear(GL_COLOR_BUFFER_BIT)
                 else:  # "corner" (default)
                     _kv = min(1.0, _bg + 8/255) if _keepalive_phase else max(0.0, _bg - 8/255)
                     glClearColor(_kv, _kv, _kv, 1.0)
-                    glScissor(near_x, 0, 16, 16)
+                    glScissor(0, 0, 16, 16)
                     glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
@@ -694,8 +578,8 @@ def run_loom_stimulus_with_ipc(
                         _status({"type": "near_screen_test_started"})
                     elif cmd == "reconfigure":
                         # Hot-patch stimulus params without restarting the GL window.
-                        # Window-dependent params (start_monitor_index, flip_horizontal)
-                        # are intentionally excluded — those require a full restart.
+                        # stimulus_monitor_index is intentionally excluded — that
+                        # requires a full restart (different window/monitor).
                         p = payload
                         background_rgba      = tuple(p.get("background_rgba", background_rgba))
                         photodiode_box_px    = int(p.get("photodiode_box_px", photodiode_box_px))
@@ -715,19 +599,16 @@ def run_loom_stimulus_with_ipc(
                         _fin = p.get("final_pos_ndc")
                         _ini_ndc = tuple(_ini) if _ini is not None else initial_pos_ndc
                         _fin_ndc = tuple(_fin) if _fin is not None else final_pos_ndc
-                        # Re-apply monitor-centre + offset (uses _centre_x from startup).
-                        if fullscreen and n_selected >= 2:
-                            _half_w = (2.0 / n_selected) * 0.5
-                            _cx = _centre_x + max(-_half_w, min(_half_w, x_offset_ndc))
-                            _ini_ndc = (_cx, _ini_ndc[1])
-                            _fin_ndc = (_cx, _fin_ndc[1])
+                        # Re-apply the offset from this monitor's centre (NDC 0.0).
+                        _cx = float(x_offset_ndc)
+                        _ini_ndc = (_cx, _ini_ndc[1])
+                        _fin_ndc = (_cx, _fin_ndc[1])
                         initial_pos_ndc = _ini_ndc
                         final_pos_ndc   = _fin_ndc
                         # Recompute all derived motion params (take effect on next _reset_motion()).
-                        _sx = screen_width_cm * n_selected
-                        initial_scale_x      = initial_size_cm / _sx * size_correction
+                        initial_scale_x      = initial_size_cm / screen_width_cm * size_correction
                         initial_scale_y      = initial_size_cm / screen_height_cm * size_correction
-                        final_scale_x        = final_size_cm   / _sx * size_correction
+                        final_scale_x        = final_size_cm   / screen_width_cm * size_correction
                         final_scale_y        = final_size_cm   / screen_height_cm * size_correction
                         outward_vx           = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
                         outward_vy           = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
@@ -886,38 +767,20 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                # Outer edge of the monitor the stimulus is on — the edge away
-                # from the other monitor (far end of arena when the stimulus
-                # is on the far TV). For the last (rightmost) monitor that's
-                # its right edge; for the first (leftmost, only reachable via
-                # flip_horizontal=True) it's the left edge, not the right —
-                # the single "(idx+1)*width - box_w" formula only gives the
-                # right edge, which is the *inner*/seam edge when idx==0.
-                _mon_w = current_window_width // n_selected
-                if n_selected >= 2 and _stim_mon_idx == 0:
-                    box_x = 0
-                else:
-                    box_x = (_stim_mon_idx + 1) * _mon_w - box_w
+                # Right edge of the stim window — its own monitor's outer/far
+                # edge relative to the arena.
+                box_x = current_window_width - box_w
                 glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
 
-            _mon_w_px = current_window_width // n_selected
-            _near_mon_idx = (n_selected - 1 - _stim_mon_idx) if n_selected >= 2 else -1
-            _near_x = _near_mon_idx * _mon_w_px
             _now = time.time()
-
-            # Legacy in-canvas near-monitor drawing (spanning-window mode only —
-            # always skipped in dual_window_mode, where n_selected is always 1
-            # so _near_mon_idx is always -1; see near_window handling below).
-            if _near_mon_idx >= 0:
-                _draw_near_monitor_effects(_mon_w_px, current_window_height, _near_x, _now)
 
             glfw.swap_buffers(window)
 
-            # dual_window_mode: the near monitor is a separate real window, not
-            # a scissored region of this one — draw into it on its own context.
+            # The near monitor is a separate real window, not a scissored
+            # region of this one — draw into it on its own context.
             if near_window is not None:
                 glfw.make_context_current(near_window)
                 glfw.swap_interval(1 if vsync else 0)  # separate context, own swap-interval state
@@ -925,7 +788,7 @@ def run_loom_stimulus_with_ipc(
                 glViewport(0, 0, _near_w, _near_h)
                 glClearColor(*background_rgba)
                 glClear(GL_COLOR_BUFFER_BIT)
-                _draw_near_monitor_effects(_near_w, _near_h, 0, _now)
+                _draw_near_monitor_effects(_near_w, _near_h, _now)
                 glfw.swap_buffers(near_window)
                 glfw.make_context_current(window)  # restore for next frame's drawing
 
@@ -1022,9 +885,6 @@ def loom_stimulus_process_main(
             screen_width_cm=stim_cfg.screen_width_cm,
             screen_height_cm=stim_cfg.screen_height_cm,
             size_correction=stim_cfg.size_correction,
-            monitor_index=stim_cfg.start_monitor_index,
-            flip_horizontal=stim_cfg.flip_horizontal,
-            dual_window_mode=stim_cfg.dual_window_mode,
             stimulus_monitor_index=stim_cfg.stimulus_monitor_index,
             keepalive_interval_s=stim_cfg.keepalive_interval_s,
             keepalive_mode=stim_cfg.keepalive_mode,
@@ -1058,15 +918,12 @@ class LoomStimulusController:
         if self._proc is not None and self._proc.is_alive():
             return
 
-        # Force X11: the renderer needs client-side window positioning and a
-        # single surface spanning both monitors, neither of which Wayland
-        # allows. Drop any inherited WAYLAND_DISPLAY so GLFW uses X11/XWayland.
+        # Force X11: the renderer needs client-side window positioning
+        # (set_window_pos), which Wayland doesn't allow. Drop any inherited
+        # WAYLAND_DISPLAY so GLFW uses X11/XWayland.
         os.environ.setdefault("DISPLAY", ":0")
         os.environ.setdefault("XAUTHORITY", "/home/pi/.Xauthority")
         os.environ.pop("WAYLAND_DISPLAY", None)
-
-        if self.cfg.xrandr_reverse_outputs:
-            self._apply_xrandr_layout()
 
         self._proc = mp.Process(
             target=loom_stimulus_process_main,
@@ -1075,30 +932,6 @@ class LoomStimulusController:
             daemon=True,
         )
         self._proc.start()
-
-    def _apply_xrandr_layout(self) -> None:
-        """Pin HDMI-A-1/HDMI-A-2 left-right order via xrandr before the
-        renderer starts, so which physical monitor is "left" no longer
-        depends on which port each cable happens to be plugged into.
-
-        Reversed order puts HDMI-A-1 at the left (0x0) and HDMI-A-2 to its
-        right. Fails soft (logged, not raised) — a stuck/absent X session
-        shouldn't block the renderer from starting; worst case the physical
-        layout is whatever the desktop session already had.
-        """
-        left, right = _HDMI_OUTPUTS[0], _HDMI_OUTPUTS[1]
-        env = dict(os.environ)
-        try:
-            subprocess.run(
-                ["xrandr", "--output", left, "--pos", "0x0",
-                 "--output", right, "--right-of", left],
-                env=env, timeout=5, check=True,
-                capture_output=True, text=True,
-            )
-            _logger.info("loom_stimulus: xrandr layout reversed (%s left of %s)", left, right)
-        except Exception as e:
-            detail = e.stderr if isinstance(e, subprocess.CalledProcessError) else str(e)
-            _logger.warning("loom_stimulus: xrandr layout reversal failed (%s) — leaving session layout as-is", detail)
 
     def send(self, cmd: LoomStimulusCommand, payload: Optional[dict] = None) -> None:
         """

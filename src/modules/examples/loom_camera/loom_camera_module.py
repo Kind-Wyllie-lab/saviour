@@ -584,10 +584,6 @@ class LoomCameraModule(CameraBase):
             round_size=int(self.config.get("loom_stimulus.round_size", 5)),
             image_angle_deg=float(self.config.get("loom_stimulus.image_angle_deg", 90.0)),
             background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 1.0])),
-            start_monitor_index=int(self.config.get("loom_stimulus.start_monitor_index", 1)),
-            flip_horizontal=bool(self.config.get("loom_stimulus.flip_horizontal", False)),
-            xrandr_reverse_outputs=bool(self.config.get("loom_stimulus.xrandr_reverse_outputs", False)),
-            dual_window_mode=bool(self.config.get("loom_stimulus.dual_window_mode", False)),
             stimulus_monitor_index=int(self.config.get("loom_stimulus.stimulus_monitor_index", 0)),
             screen_width_cm=float(self.config.get("loom_stimulus.screen_width_cm", 105.41)),
             screen_height_cm=float(self.config.get("loom_stimulus.screen_height_cm", 59.29)),
@@ -600,18 +596,14 @@ class LoomCameraModule(CameraBase):
         )
         self.logger.info(
             "loom_stimulus config: travel_time_s=%.2f loom_wait_time_s=%.2f "
-            "initial_size_cm=%.1f final_size_cm=%.1f start_monitor_index=%d",
+            "initial_size_cm=%.1f final_size_cm=%.1f stimulus_monitor_index=%d",
             cfg.travel_time_s, cfg.loom_wait_time_s,
-            cfg.initial_size_cm, cfg.final_size_cm, cfg.start_monitor_index,
+            cfg.initial_size_cm, cfg.final_size_cm, cfg.stimulus_monitor_index,
         )
         return cfg
 
     # Keys that require destroying and recreating the GL window (monitor layout changes).
     _STIMULUS_RESTART_KEYS = {
-        "loom_stimulus.start_monitor_index",
-        "loom_stimulus.flip_horizontal",
-        "loom_stimulus.xrandr_reverse_outputs",
-        "loom_stimulus.dual_window_mode",
         "loom_stimulus.stimulus_monitor_index",
     }
 

@@ -580,56 +580,19 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="config-section-divider" />
             <div className="sensor-mode-info sensor-mode-info--muted">Display</div>
             <div className="form-field">
-              <label>Monitors:</label>
-              <select value={formData?.loom_stimulus?.start_monitor_index ?? 1}
-                onChange={e => handleChange(["loom_stimulus", "start_monitor_index"], e)}>
-                <option value={0}>Single monitor</option>
-                <option value={1}>Dual monitor (span)</option>
-              </select>
-            </div>
-            <div className="form-field">
-              <label>Flip horizontal:</label>
-              <input type="checkbox"
-                checked={formData?.loom_stimulus?.flip_horizontal ?? false}
-                onChange={e => handleChange(["loom_stimulus", "flip_horizontal"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Reverse monitor order (xrandr):</label>
-              <input type="checkbox"
-                checked={formData?.loom_stimulus?.xrandr_reverse_outputs ?? false}
-                onChange={e => handleChange(["loom_stimulus", "xrandr_reverse_outputs"], e)} />
-            </div>
-            <div className="sensor-mode-info sensor-mode-info--muted">
-              Swaps which physical HDMI port is "left" at the X11 layout level —
-              use this if the stimulus is on the wrong physical monitor. Leave
-              "Flip horizontal" off unless you also need to move the stimulus
-              content to the other half of the canvas independently of layout.
-            </div>
-            <div className="config-section-divider" />
-            <div className="form-field">
-              <label>Dual window mode:</label>
-              <input type="checkbox"
-                checked={formData?.loom_stimulus?.dual_window_mode ?? false}
-                onChange={e => handleChange(["loom_stimulus", "dual_window_mode"], e)} />
-            </div>
-            <div className="form-field">
               <label>Stimulus monitor:</label>
               <select value={formData?.loom_stimulus?.stimulus_monitor_index ?? 0}
-                disabled={!(formData?.loom_stimulus?.dual_window_mode ?? false)}
                 onChange={e => handleChange(["loom_stimulus", "stimulus_monitor_index"], e)}>
                 <option value={0}>Monitor 0</option>
                 <option value={1}>Monitor 1</option>
               </select>
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Alternative to spanning one window across both monitors: opens a
-              real fullscreen window on each physical monitor instead, picked
-              by GLFW's raw detection order — independent of xrandr/cabling, so
-              "Monitors", "Flip horizontal", and "Reverse monitor order" above
-              are all ignored while this is on. There's no way to know in
-              advance which is Monitor 0 vs 1 — use the "Near screen" test
-              flash button below to check, and switch "Stimulus monitor" if
-              it's backwards.
+              Opens a window on each detected physical monitor, picked by GLFW's
+              raw detection order. There's no way to know in advance which is
+              Monitor 0 vs 1 — use the "Near screen" test flash button below to
+              check, and switch this if it's backwards. If a second monitor is
+              detected it automatically gets the keepalive/near-test display.
             </div>
             <div className="form-field">
               <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>

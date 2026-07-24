@@ -3,8 +3,49 @@
   user-select: none;
 }
 
+/* ── Full-width bar look (restored) ──────────────────────────────────────
+   Overrides the shared .card (rounded corners, all-round border, box-shadow,
+   min-width) and .hrc (left-accent stripe) classes with higher-specificity
+   rules scoped to this widget only — .card/.hrc themselves are untouched,
+   so ConfigCard/HabitatRecordingControl/etc. keep their own look. */
+.recording-status-widget.card {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 8px 20px;
+  border: none;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  box-shadow: none;
+  background-color: var(--card-bg-color);
+}
+
+.recording-status-widget.hrc {
+  border-left: none;
+}
+
 .recording-status-widget:hover {
   background: color-mix(in srgb, var(--card-bg-color, #fff) 90%, var(--accent-color, #3b82f6));
+}
+
+.recording-status-widget.hrc--recording {
+  background-color: color-mix(in srgb, #2e7d32 6%, var(--card-bg-color));
+  border-bottom-color: color-mix(in srgb, #2e7d32 35%, var(--border-color));
+}
+
+.recording-status-widget.hrc--starting {
+  background-color: color-mix(in srgb, #e8a020 6%, var(--card-bg-color));
+  border-bottom-color: color-mix(in srgb, #e8a020 35%, var(--border-color));
+}
+
+.recording-status-widget.hrc--fault {
+  background-color: color-mix(in srgb, #c62828 6%, var(--card-bg-color));
+  border-bottom-color: color-mix(in srgb, #c62828 35%, var(--border-color));
+}
+
+.recording-status-widget.hrc--ready {
+  opacity: 0.8;
 }
 
 /* ── Session details (inline after state label) ─────────────────────────── */

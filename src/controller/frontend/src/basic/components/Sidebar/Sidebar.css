@@ -18,7 +18,7 @@
         margin: 0 auto;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
+        justify-content: flex-start;
         align-items: center;
     }
 
@@ -45,13 +45,24 @@
         font-size: 36px;
         font-weight: bold;
         text-align: center;
+        /* Explicit margins rather than the <h1> UA-stylesheet default
+           (~0.67em top/bottom) — that default was most of why the hostname
+           below read as closer to the nav than to this title: with
+           .header-content's old justify-content: space-between removed,
+           the browser's own h1 margin would otherwise still dominate. */
+        margin: 12px 0 2px;
     }
 
     .sidebar-hostname {
         font-size: 16px;
         text-align: center;
         opacity: 0.65;
-        margin: -10px 0 6px;
+        /* Tight against the title above (subtitle-like) via the title's own
+           2px bottom margin — flex children's margins don't collapse, so
+           this stays exactly 2px, not added to. Bottom margin is deliberately
+           larger than .main-nav's own 10px inter-link gap, so the nav reads
+           as its own group rather than an extension of the title block. */
+        margin: 0 0 20px;
         word-break: break-all;
         padding: 0 8px;
     }

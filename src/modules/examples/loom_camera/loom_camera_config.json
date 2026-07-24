@@ -16,6 +16,7 @@
     "exposure_time": 10000,
     "ae_enable": false,
     "brightness": 0,
+    "contrast": 1.0,
     "overlay_framerate_on_preview": false,
     "bitrate_mb": 2,
     "autofocus_mode": "manual",

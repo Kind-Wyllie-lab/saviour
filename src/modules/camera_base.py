@@ -84,7 +84,7 @@ class CameraBase(Module):
     }
     # Config keys that can be applied live via set_controls() without stopping.
     _CAMERA_CONTROLS_ONLY_KEYS = {
-        "camera.gain", "camera.brightness", "camera.exposure_time",
+        "camera.gain", "camera.brightness", "camera.contrast", "camera.exposure_time",
         "camera.manual_exposure", "camera.ae_enable",
         "camera.lens_position", "camera.autofocus_mode",
     }
@@ -283,6 +283,7 @@ class CameraBase(Module):
 
             live_controls = {
                 "Brightness": self.config.get("camera.brightness"),
+                "Contrast": self.config.get("camera.contrast", 1.0),
                 "FrameRate": fps,
                 "AeEnable": ae_enabled,
             }
@@ -398,6 +399,7 @@ class CameraBase(Module):
             controls = {
                 "FrameRate": self.fps,
                 "Brightness": self.config.get("camera.brightness"),
+                "Contrast": self.config.get("camera.contrast", 1.0),
                 "AeEnable": ae_enabled,
             }
             if not ae_enabled:

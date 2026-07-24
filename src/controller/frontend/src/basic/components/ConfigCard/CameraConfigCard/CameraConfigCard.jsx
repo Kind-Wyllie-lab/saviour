@@ -339,6 +339,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "brightness"], e)} />
             </div>
             <div className="form-field">
+              <label>Contrast: {Number(cam.contrast ?? 1.0).toFixed(2)}</label>
+              <input type="range" min="0" max="4" step="0.05"
+                value={cam.contrast ?? 1.0} className="brightness-slider"
+                onChange={e => handleChange(["camera", "contrast"], e)} />
+            </div>
+            <div className="form-field">
               <label>Auto gain/exposure:</label>
               <input type="checkbox"
                 checked={cam.ae_enable ?? false}

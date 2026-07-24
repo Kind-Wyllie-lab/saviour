@@ -413,6 +413,15 @@ class LoomCameraModule(CameraBase):
         self._track_valid: bool = False
         self._hold_forever_when_still: bool = bool(self.config.get("loom_tracking.hold_forever_when_still", False))
 
+        # Tracking-rate decimation: detect_center() is the expensive part of the
+        # per-frame pipeline (downsample + morphology + connected components).
+        # At high recording fps it doesn't fit the per-frame time budget, so
+        # above max_full_rate_fps it only runs every Nth frame — the video and
+        # overlay still render every frame, using the held last-known position
+        # between tracked frames via the existing hold/patience mechanism.
+        self._tracking_frame_counter: int = 0
+        self._tracking_decimation_n: int = 1
+
         self._configure_loom_tracking()
 
         # --- Loom stimulus (local HDMI) ---
@@ -643,6 +652,16 @@ class LoomCameraModule(CameraBase):
         loom_tracking.gap_h_px, gap_v_px, close_px, open_px, min_area_px, patience_frames, smoothing_alpha
         loom_tracking.overlay : dict (colors, thickness)
         """
+        max_full_rate_fps = float(self.config.get("loom_tracking.max_full_rate_fps", 60))
+        fps = float(self.fps) if self.fps else max_full_rate_fps
+        self._tracking_decimation_n = max(1, round(fps / max_full_rate_fps)) if max_full_rate_fps > 0 else 1
+        self._tracking_frame_counter = 0
+        if self._tracking_decimation_n > 1:
+            self.logger.info(
+                f"loom_tracking: {fps:.0f}fps exceeds max_full_rate_fps={max_full_rate_fps:.0f} — "
+                f"tracking will run every {self._tracking_decimation_n} frames"
+            )
+
         enabled = bool(self.config.get("loom_tracking.enabled", True))
         if not enabled:
             self.tracker = None
@@ -691,71 +710,82 @@ class LoomCameraModule(CameraBase):
         overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
 
         cx = cy = None
-        zone_state = "out"
+        zone_state = self.crossing_state.state
         event_label = ""
 
         frame = m.array
         if tracking_enabled and self.tracker is not None:
-            center_proc, (sx, sy), (nx, ny) = self.tracker.detect_center(frame)
-            # Lazy-load ROI + line from JSON (or default full ROI) once we know frame + proc sizes
-            if self.roi_mask_proc is None:
-                self._reload_roi_for_current_geometry(
-                    src_w=frame.shape[1],
-                    src_h=frame.shape[0],
-                    proc_w=nx,
-                    proc_h=ny,
+            self._tracking_frame_counter += 1
+            # Above loom_tracking.max_full_rate_fps, detect_center() (downsample +
+            # morphology + connected components) doesn't fit the per-frame time
+            # budget, so it only runs every Nth frame. Skipped frames simply keep
+            # last_center_src/crossing_state from the last tracked frame — the
+            # same "hold" behavior already used when a frame has no detection.
+            if self._tracking_decimation_n <= 1 or self._tracking_frame_counter % self._tracking_decimation_n == 0:
+                center_proc, (sx, sy), (nx, ny) = self.tracker.detect_center(frame)
+                # Lazy-load ROI + line from JSON (or default full ROI) once we know frame + proc sizes
+                if self.roi_mask_proc is None:
+                    self._reload_roi_for_current_geometry(
+                        src_w=frame.shape[1],
+                        src_h=frame.shape[0],
+                        proc_w=nx,
+                        proc_h=ny,
+                    )
+
+                # If tracker reports a center: update last_center_src and reset hold counter.
+                if center_proc is not None:
+                    cx = float(center_proc[0] * sx)
+                    cy = float(center_proc[1] * sy)
+                    self.last_center_src = (cx, cy)
+                    self._hold_miss_count = 0
+                    self._track_valid = True
+                else:
+                    # No new detection: HOLD last_center_src.
+                    if self.last_center_src is not None:
+                        self._hold_miss_count += 1
+
+                        if self._hold_forever_when_still:
+                            # Never declare lost due to stillness
+                            self._track_valid = True
+                        elif self._hold_miss_count <= self._hold_patience_frames:
+                            self._track_valid = True
+                        else:
+                            # Track lost beyond patience
+                            self.last_center_src = None
+                            self._hold_miss_count = 0
+                            self._track_valid = False
+                    else:
+                        self._track_valid = False
+
+                next_state = loom_update_crossing_state(
+                    crossing_line_src=self.crossing_line_src,
+                    center_src=self.last_center_src,
+                    prev=self.crossing_state,
+                    track_valid=self._track_valid,
                 )
 
-            # If tracker reports a center: update last_center_src and reset hold counter.
-            if center_proc is not None:
-                cx = float(center_proc[0] * sx)
-                cy = float(center_proc[1] * sy)
-                self.last_center_src = (cx, cy)
-                self._hold_miss_count = 0
-                self._track_valid = True
-            else:
-                # No new detection: HOLD last_center_src.
-                if self.last_center_src is not None:
-                    self._hold_miss_count += 1
+                self.crossing_state = next_state
+                zone_state = next_state.state
+                event_label = next_state.last_event or ""
 
-                    if self._hold_forever_when_still:
-                        # Never declare lost due to stillness
-                        self._track_valid = True
-                    elif self._hold_miss_count <= self._hold_patience_frames:
-                        self._track_valid = True
-                    else:
-                        # Track lost beyond patience
-                        self.last_center_src = None
-                        self._hold_miss_count = 0
-                        self._track_valid = False
-                else:
-                    self._track_valid = False
+                if event_label:
+                    self.communication.send_status({
+                        "type": f"loom_{event_label}",  # loom_enter / loom_leave
+                        "timestamp_ns": timing.timestamp_ns,
+                        "zone_state": zone_state,
+                        "cx": cx,
+                        "cy": cy,
+                    })
 
-            next_state = loom_update_crossing_state(
-                crossing_line_src=self.crossing_line_src,
-                center_src=self.last_center_src,
-                prev=self.crossing_state,
-                track_valid=self._track_valid,
-            )
-
-            self.crossing_state = next_state
-            zone_state = next_state.state
-            event_label = next_state.last_event or ""
-
-            if event_label:
-                self.communication.send_status({
-                    "type": f"loom_{event_label}",  # loom_enter / loom_leave
-                    "timestamp_ns": timing.timestamp_ns,
-                    "zone_state": zone_state,
-                    "cx": cx,
-                    "cy": cy,
-                })
-
-                if self.config.get("loom_stimulus.armed", False):
-                    if event_label == "enter":
-                        self._loom_stimulus.send("start")
-                    elif event_label == "leave":
-                        self._loom_stimulus.send("stop")
+                    if self.config.get("loom_stimulus.armed", False):
+                        if event_label == "enter":
+                            self._loom_stimulus.send("start")
+                        elif event_label == "leave":
+                            self._loom_stimulus.send("stop")
+            elif self.last_center_src is not None:
+                # Skipped (undecimated) frame — report the held position so the
+                # overlay/CSV stay populated between tracked frames.
+                cx, cy = self.last_center_src
 
         if overlay_enabled:
             self._loom_draw_overlays_on_frame(m)

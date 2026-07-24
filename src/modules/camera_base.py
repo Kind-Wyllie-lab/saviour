@@ -260,6 +260,11 @@ class CameraBase(Module):
                 self._cache_frame_config()
 
             fps = self.config.get("camera.fps", 25)
+            # Keep self.fps current even though fps is applied live via set_controls
+            # below rather than through a full _configure_camera() restart — other
+            # code (dropped-frame CSV math, subclass tracking-rate decimation) reads
+            # self.fps and would otherwise see a stale value from the last restart.
+            self.fps = fps
             if self.config.get("camera.manual_exposure", False):
                 exposure_time = self.config.get("camera.exposure_time", 10000)
             else:

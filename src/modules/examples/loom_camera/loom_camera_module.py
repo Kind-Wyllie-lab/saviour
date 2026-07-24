@@ -653,7 +653,12 @@ class LoomCameraModule(CameraBase):
         loom_tracking.overlay : dict (colors, thickness)
         """
         max_full_rate_fps = float(self.config.get("loom_tracking.max_full_rate_fps", 60))
-        fps = float(self.fps) if self.fps else max_full_rate_fps
+        # Read camera.fps directly from config rather than self.fps: this method
+        # (via _configure_module_extra) runs before CameraBase.configure_module_special's
+        # live-controls block, which is what updates self.fps when fps changes without
+        # a full camera restart — depending on self.fps here would use a stale value
+        # on the very config push that changes fps.
+        fps = float(self.config.get("camera.fps", max_full_rate_fps))
         self._tracking_decimation_n = max(1, round(fps / max_full_rate_fps)) if max_full_rate_fps > 0 else 1
         self._tracking_frame_counter = 0
         if self._tracking_decimation_n > 1:

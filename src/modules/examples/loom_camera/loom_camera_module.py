@@ -586,6 +586,7 @@ class LoomCameraModule(CameraBase):
             background_rgba=tuple(self.config.get("loom_stimulus.background_rgba", [0.5, 0.5, 0.5, 1.0])),
             start_monitor_index=int(self.config.get("loom_stimulus.start_monitor_index", 1)),
             flip_horizontal=bool(self.config.get("loom_stimulus.flip_horizontal", False)),
+            xrandr_reverse_outputs=bool(self.config.get("loom_stimulus.xrandr_reverse_outputs", False)),
             screen_width_cm=float(self.config.get("loom_stimulus.screen_width_cm", 105.41)),
             screen_height_cm=float(self.config.get("loom_stimulus.screen_height_cm", 59.29)),
             size_correction=float(self.config.get("loom_stimulus.size_correction", 1.125)),
@@ -607,6 +608,7 @@ class LoomCameraModule(CameraBase):
     _STIMULUS_RESTART_KEYS = {
         "loom_stimulus.start_monitor_index",
         "loom_stimulus.flip_horizontal",
+        "loom_stimulus.xrandr_reverse_outputs",
     }
 
     # Keys that can be hot-patched into the running renderer via "reconfigure" IPC.

@@ -594,6 +594,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["loom_stimulus", "flip_horizontal"], e)} />
             </div>
             <div className="form-field">
+              <label>Reverse monitor order (xrandr):</label>
+              <input type="checkbox"
+                checked={formData?.loom_stimulus?.xrandr_reverse_outputs ?? false}
+                onChange={e => handleChange(["loom_stimulus", "xrandr_reverse_outputs"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Swaps which physical HDMI port is "left" at the X11 layout level —
+              use this if the stimulus is on the wrong physical monitor. Leave
+              "Flip horizontal" off unless you also need to move the stimulus
+              content to the other half of the canvas independently of layout.
+            </div>
+            <div className="form-field">
               <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>
               <input type="range" min="0" max="1" step="0.01"
                 className="brightness-slider"

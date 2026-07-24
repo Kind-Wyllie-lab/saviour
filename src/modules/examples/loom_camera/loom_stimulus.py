@@ -1,5 +1,7 @@
+import logging
 import os
 import signal
+import subprocess
 from dataclasses import dataclass
 from typing import Literal, Optional
 import multiprocessing as mp
@@ -61,6 +63,16 @@ from modules.examples.loom_camera.utils import framebuffer_size_callback, load_t
 
 LoomStimulusCommand = Literal["start", "stop", "abort", "shutdown", "ping"]
 
+_logger = logging.getLogger(__name__)
+
+# The Raspberry Pi 5's two physical micro-HDMI ports, as named by xrandr
+# (verified via `DISPLAY=:0 xrandr --query` on the loom rig). Which of these
+# two is "left" (position 0x0) vs "right" in screen space is decided by the
+# desktop session at startup and is tied to the HDMI *port*, not to which
+# monitor is physically plugged into it — see xrandr_reverse_outputs on
+# LoomStimulusConfig.
+_HDMI_OUTPUTS = ("HDMI-A-1", "HDMI-A-2")
+
 
 @dataclass(frozen=True)
 class LoomStimulusConfig:
@@ -97,11 +109,24 @@ class LoomStimulusConfig:
           1 → both monitors (full dual-monitor span)
         Defaults to 0.
     flip_horizontal : bool
-        When True, shifts all NDC x-coordinates left by one monitor-width
-        so the stimulus moves from the right-side monitor to the left-side
-        monitor in screen space. Use this when the physical monitors are
-        cabled in the opposite order from their xrandr screen-space positions.
-        Also moves the photodiode marker from the right edge to the left edge.
+        Chooses which monitor of the spanned canvas the stimulus *content*
+        (loom circle + photodiode marker) is drawn on: False -> the GL-right
+        monitor, True -> the GL-left monitor, where "GL-left"/"GL-right" are
+        whichever two outputs xrandr currently reports at the lowest/highest
+        X position. This does not change which physical output is left or
+        right in screen space — see `xrandr_reverse_outputs` for that.
+        Defaults to False.
+    xrandr_reverse_outputs : bool
+        Pins the physical left/right monitor assignment by HDMI connector
+        name via an explicit `xrandr` call before the renderer starts,
+        instead of relying on however the desktop session happened to
+        auto-arrange the two outputs (which is tied to which physical HDMI
+        port each cable is in, not to which monitor is plugged into it —
+        swapping monitor cables between the *same* two ports changes
+        nothing). False leaves the current session layout untouched; True
+        swaps it. This is the reliable way to "reverse monitor order" —
+        flip_horizontal only reassigns which monitor gets drawn on, it does
+        not touch physical layout, and both markers move together with it.
         Defaults to False.
     """
     texture_path: str
@@ -116,6 +141,7 @@ class LoomStimulusConfig:
     background_rgba: tuple[float, float, float, float]
     start_monitor_index: int = 0
     flip_horizontal: bool = False
+    xrandr_reverse_outputs: bool = False
     screen_width_cm: float = 105.41
     screen_height_cm: float = 59.29
     size_correction: float = 1.125
@@ -734,10 +760,18 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                # Right/outer edge of the monitor the stimulus is on.
-                # GL-right of the stimulus monitor = physical outer edge of that TV
-                # (far end of arena when the stimulus is on the far TV).
-                box_x = (_stim_mon_idx + 1) * (current_window_width // n_selected) - box_w
+                # Outer edge of the monitor the stimulus is on — the edge away
+                # from the other monitor (far end of arena when the stimulus
+                # is on the far TV). For the last (rightmost) monitor that's
+                # its right edge; for the first (leftmost, only reachable via
+                # flip_horizontal=True) it's the left edge, not the right —
+                # the single "(idx+1)*width - box_w" formula only gives the
+                # right edge, which is the *inner*/seam edge when idx==0.
+                _mon_w = current_window_width // n_selected
+                if n_selected >= 2 and _stim_mon_idx == 0:
+                    box_x = 0
+                else:
+                    box_x = (_stim_mon_idx + 1) * _mon_w - box_w
                 glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
@@ -929,6 +963,9 @@ class LoomStimulusController:
         os.environ.setdefault("XAUTHORITY", "/home/pi/.Xauthority")
         os.environ.pop("WAYLAND_DISPLAY", None)
 
+        if self.cfg.xrandr_reverse_outputs:
+            self._apply_xrandr_layout()
+
         self._proc = mp.Process(
             target=loom_stimulus_process_main,
             args=(self._cmd_q, self._status_q, self.cfg),
@@ -936,6 +973,30 @@ class LoomStimulusController:
             daemon=True,
         )
         self._proc.start()
+
+    def _apply_xrandr_layout(self) -> None:
+        """Pin HDMI-A-1/HDMI-A-2 left-right order via xrandr before the
+        renderer starts, so which physical monitor is "left" no longer
+        depends on which port each cable happens to be plugged into.
+
+        Reversed order puts HDMI-A-1 at the left (0x0) and HDMI-A-2 to its
+        right. Fails soft (logged, not raised) — a stuck/absent X session
+        shouldn't block the renderer from starting; worst case the physical
+        layout is whatever the desktop session already had.
+        """
+        left, right = _HDMI_OUTPUTS[1], _HDMI_OUTPUTS[0]
+        env = dict(os.environ)
+        try:
+            subprocess.run(
+                ["xrandr", "--output", left, "--pos", "0x0",
+                 "--output", right, "--right-of", left],
+                env=env, timeout=5, check=True,
+                capture_output=True, text=True,
+            )
+            _logger.info("loom_stimulus: xrandr layout reversed (%s left of %s)", left, right)
+        except Exception as e:
+            detail = e.stderr if isinstance(e, subprocess.CalledProcessError) else str(e)
+            _logger.warning("loom_stimulus: xrandr layout reversal failed (%s) — leaving session layout as-is", detail)
 
     def send(self, cmd: LoomStimulusCommand, payload: Optional[dict] = None) -> None:
         """

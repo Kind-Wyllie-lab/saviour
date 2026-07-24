@@ -104,8 +104,6 @@ export default function RecordingStatusWidget() {
   const { moduleHealth } = useHealth();
 
   const moduleList = useMemo(() => Object.values(modules), [modules]);
-  const cameras    = moduleList.filter(m => m.type?.includes("camera"));
-  const mics       = moduleList.filter(m => m.type === "microphone");
 
   const visibleSessions = useMemo(
     () => sessionList.filter(s => s.state === "active" || s.state === "error"),
@@ -132,17 +130,28 @@ export default function RecordingStatusWidget() {
     stateClass = "hrc--ready";   stateLabel = "Idle";      dotVariant = "ready";
   }
 
-  const cameraRecording = cameras.filter(m => m.status === "RECORDING").length;
-  const micRecording    = mics.filter(m => m.status === "RECORDING").length;
-  const cameraOnline    = cameras.filter(m => m.online !== false).length;
-  const micOnline       = mics.filter(m => m.online !== false).length;
-
-  const cameraStr = hasActive
-    ? `${cameraRecording}/${cameras.length} cameras`
-    : `${cameraOnline} cameras`;
-  const audioStr = hasActive
-    ? `${micRecording}/${mics.length} audio`
-    : `${micOnline} audio`;
+  // Break down by whatever module types are actually connected, rather than
+  // hardcoding "cameras"/"audio" — a module.type of "ttl" or "sound" is no
+  // less worth showing a count for than "camera"/"microphone" are.
+  const typeStats = useMemo(() => {
+    const byType = new Map();
+    for (const m of moduleList) {
+      const type = m.type || "unknown";
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(m);
+    }
+    return [...byType.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, mods]) => {
+        const label = type.replace(/_/g, " ");
+        const online = mods.filter(m => m.online !== false).length;
+        const recording = mods.filter(m => m.status === "RECORDING").length;
+        return {
+          type,
+          text: hasActive ? `${recording}/${mods.length} ${label}` : `${online} ${label}`,
+        };
+      });
+  }, [moduleList, hasActive]);
 
   return (
     <div
@@ -169,9 +178,12 @@ export default function RecordingStatusWidget() {
         )}
 
         <span className="hrc-spacer" />
-        <span className="hrc-stat">{cameraStr}</span>
-        <span className="hrc-sep">·</span>
-        <span className="hrc-stat">{audioStr}</span>
+        {typeStats.map(({ type, text }, i) => (
+          <React.Fragment key={type}>
+            {i > 0 && <span className="hrc-sep">·</span>}
+            <span className="hrc-stat">{text}</span>
+          </React.Fragment>
+        ))}
       </div>
     </div>
   );

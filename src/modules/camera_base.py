@@ -297,7 +297,10 @@ class CameraBase(Module):
                 live_controls["AfMode"] = af_mode
                 if af_mode == 0:
                     live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
-            self.picam2.set_controls(live_controls)
+            try:
+                self.picam2.set_controls(live_controls)
+            except Exception as e:
+                self.logger.error(f"Error applying live camera controls {live_controls}: {e}")
 
         elif not self.is_streaming:
             try:

@@ -128,6 +128,22 @@ class LoomStimulusConfig:
         flip_horizontal only reassigns which monitor gets drawn on, it does
         not touch physical layout, and both markers move together with it.
         Defaults to False.
+    dual_window_mode : bool
+        Alternative to the single spanning window: opens one real fullscreen
+        GLFW window per physical monitor, addressed by GLFW's raw
+        enumeration order (glfw.get_monitors(), unsorted) rather than by
+        X-position sort — so this mode has no dependency on xrandr layout at
+        all, and start_monitor_index/flip_horizontal/xrandr_reverse_outputs
+        are ignored. `stimulus_monitor_index` picks which window gets the
+        loom circle + photodiode; if a second monitor is detected it
+        automatically gets its own window for the keepalive/near-test flash.
+        Defaults to False (use the existing spanning-window behavior).
+    stimulus_monitor_index : int
+        Which monitor (0 or 1, in raw glfw.get_monitors() order) shows the
+        stimulus when dual_window_mode is True. There's no way to know in
+        advance which raw index corresponds to which physical screen — use
+        the near-screen test flash to check, and flip this if it's backwards.
+        Ignored unless dual_window_mode is True. Defaults to 0.
     """
     texture_path: str
     initial_size_cm: float
@@ -142,6 +158,8 @@ class LoomStimulusConfig:
     start_monitor_index: int = 0
     flip_horizontal: bool = False
     xrandr_reverse_outputs: bool = False
+    dual_window_mode: bool = False
+    stimulus_monitor_index: int = 0
     screen_width_cm: float = 105.41
     screen_height_cm: float = 59.29
     size_correction: float = 1.125
@@ -217,6 +235,8 @@ def run_loom_stimulus_with_ipc(
     window_size_px: Tuple[int, int] = (1920, 1080),
     vsync: bool = True,
     flip_horizontal: bool = False,
+    dual_window_mode: bool = False,
+    stimulus_monitor_index: int = 0,
 ) -> None:
     """
     Run the looming stimulus controlled by IPC commands instead of GPIO TTL.
@@ -289,6 +309,7 @@ def run_loom_stimulus_with_ipc(
         raise RuntimeError("Failed to initialize GLFW")
 
     window = None
+    near_window = None  # only created in dual_window_mode, when a 2nd monitor exists
     shader_program = None
     vao = None
     vbo = None
@@ -315,7 +336,39 @@ def run_loom_stimulus_with_ipc(
         glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
         monitors = glfw.get_monitors() or []
 
-        if fullscreen:
+        if dual_window_mode and fullscreen:
+            # One real GLFW fullscreen-on-monitor window per physical screen,
+            # addressed by raw glfw.get_monitors() order — no xrandr/X-position
+            # dependency at all, unlike the spanning-window branch below.
+            if not monitors:
+                raise RuntimeError("No monitors detected by GLFW.")
+
+            stim_idx = max(0, min(int(stimulus_monitor_index), len(monitors) - 1))
+            stim_monitor = monitors[stim_idx]
+            stim_vm = glfw.get_video_mode(stim_monitor)
+            x0, y0 = glfw.get_monitor_pos(stim_monitor)
+            w, h = stim_vm.size.width, stim_vm.size.height
+            selected = [(x0, y0, w, h)]
+
+            # GLFW handles fullscreen placement natively when given a monitor —
+            # no borderless/position-hint workaround needed (that trick exists
+            # only to fake a single surface spanning two separate monitors).
+            window = glfw.create_window(w, h, "Loom Stimulus", stim_monitor, None)
+
+            if len(monitors) >= 2:
+                near_idx = (stim_idx + 1) % len(monitors)
+                near_monitor = monitors[near_idx]
+                near_vm = glfw.get_video_mode(near_monitor)
+                # share=window: same GL objects (shader/VBO/texture) usable in both contexts.
+                near_window = glfw.create_window(
+                    near_vm.size.width, near_vm.size.height,
+                    "Loom Stimulus (near)", near_monitor, window,
+                )
+                if near_window is None:
+                    _status({"type": "loom_stimulus_error",
+                             "error": "Failed to create near-monitor window (dual_window_mode) — keepalive/near-test disabled"})
+
+        elif fullscreen:
             if not monitors:
                 raise RuntimeError("No monitors detected by GLFW.")
 
@@ -374,6 +427,8 @@ def run_loom_stimulus_with_ipc(
             "n_monitors": len(monitors),
             "selected_rects": selected if fullscreen else [],
             "flip_horizontal": flip_horizontal,
+            "dual_window_mode": dual_window_mode,
+            "has_near_window": near_window is not None,
         })
 
         # -----------------------------
@@ -531,6 +586,51 @@ def run_loom_stimulus_with_ipc(
 
         # Pre-compute which X column the near TV starts at (opposite of stimulus).
         _mon_w_px = 0  # set each frame from framebuffer width
+
+        def _draw_near_monitor_effects(mon_w_px: int, mon_h_px: int, near_x: int, now: float) -> None:
+            """Test-flash + keep-alive drawing against whatever GL context is
+            currently bound, at the given rect. Shared by the legacy
+            in-canvas near-monitor path (a scissored region of the spanning
+            window) and the dual_window_mode near_window path (its own full
+            framebuffer, near_x=0) — same visual behavior, different target."""
+            nonlocal _keepalive_t0, _keepalive_phase
+            if now < _near_test_until:
+                glEnable(GL_SCISSOR_TEST)
+                glClearColor(0.85, 0.85, 0.85, 1.0)
+                glScissor(near_x, 0, mon_w_px, mon_h_px)
+                glClear(GL_COLOR_BUFFER_BIT)
+                glDisable(GL_SCISSOR_TEST)
+                glClearColor(*background_rgba)
+
+            if keepalive_interval_s > 0 and now - _keepalive_t0 >= keepalive_interval_s:
+                _keepalive_phase ^= 1
+                _keepalive_t0 = now
+                _bg = background_rgba[0]
+                glEnable(GL_SCISSOR_TEST)
+                if keepalive_mode == "pulse":
+                    _kv = min(1.0, _bg + 3/255) if _keepalive_phase else max(0.0, _bg - 3/255)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    glScissor(near_x, 0, mon_w_px, mon_h_px)
+                    glClear(GL_COLOR_BUFFER_BIT)
+                elif keepalive_mode == "distributed":
+                    _kv = min(1.0, _bg + 5/255) if _keepalive_phase else max(0.0, _bg - 5/255)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    for _px, _py in [
+                        (near_x,                  0),
+                        (near_x + mon_w_px - 16,  0),
+                        (near_x,                  mon_h_px - 16),
+                        (near_x + mon_w_px - 16,  mon_h_px - 16),
+                        (near_x + mon_w_px // 2 - 8, mon_h_px // 2 - 8),
+                    ]:
+                        glScissor(_px, _py, 16, 16)
+                        glClear(GL_COLOR_BUFFER_BIT)
+                else:  # "corner" (default)
+                    _kv = min(1.0, _bg + 8/255) if _keepalive_phase else max(0.0, _bg - 8/255)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    glScissor(near_x, 0, 16, 16)
+                    glClear(GL_COLOR_BUFFER_BIT)
+                glDisable(GL_SCISSOR_TEST)
+                glClearColor(*background_rgba)
 
         _status({"type": "stimulus_ready"})
 
@@ -780,60 +880,28 @@ def run_loom_stimulus_with_ipc(
             _mon_w_px = current_window_width // n_selected
             _near_mon_idx = (n_selected - 1 - _stim_mon_idx) if n_selected >= 2 else -1
             _near_x = _near_mon_idx * _mon_w_px
-
-            # Test flash: briefly show a visible grey on the near TV so the user
-            # can confirm the GL canvas is reaching that monitor.
             _now = time.time()
-            if _near_mon_idx >= 0 and _now < _near_test_until:
-                glEnable(GL_SCISSOR_TEST)
-                glClearColor(0.85, 0.85, 0.85, 1.0)
-                glScissor(_near_x, 0, _mon_w_px, current_window_height)
-                glClear(GL_COLOR_BUFFER_BIT)
-                glDisable(GL_SCISSOR_TEST)
-                glClearColor(*background_rgba)
 
-            # Keep-alive: periodic update on the near TV to prevent OLED auto-dimming.
-            # Three modes selectable via keepalive_mode:
-            #   "corner"      — 16×16 patch in the bottom-left corner, ±8/255 delta.
-            #                   Least intrusive; may not register on all TVs.
-            #   "distributed" — same patch drawn at 5 positions across the near TV,
-            #                   ±5/255. Covers more of the panel.
-            #   "pulse"       — full near TV alternates ±3/255. Most effective; the
-            #                   very subtle grey shift is imperceptible to the eye.
-            if _near_mon_idx >= 0 and keepalive_interval_s > 0:
-                if _now - _keepalive_t0 >= keepalive_interval_s:
-                    _keepalive_phase ^= 1
-                    _keepalive_t0 = _now
-                    _bg = background_rgba[0]
-                    glEnable(GL_SCISSOR_TEST)
-                    if keepalive_mode == "pulse":
-                        _kv = min(1.0, _bg + 3/255) if _keepalive_phase else max(0.0, _bg - 3/255)
-                        glClearColor(_kv, _kv, _kv, 1.0)
-                        glScissor(_near_x, 0, _mon_w_px, current_window_height)
-                        glClear(GL_COLOR_BUFFER_BIT)
-                    elif keepalive_mode == "distributed":
-                        _kv = min(1.0, _bg + 5/255) if _keepalive_phase else max(0.0, _bg - 5/255)
-                        glClearColor(_kv, _kv, _kv, 1.0)
-                        _hw = current_window_height
-                        _mw = _mon_w_px
-                        for _px, _py in [
-                            (_near_x,              0),
-                            (_near_x + _mw - 16,   0),
-                            (_near_x,              _hw - 16),
-                            (_near_x + _mw - 16,  _hw - 16),
-                            (_near_x + _mw//2 - 8, _hw//2 - 8),
-                        ]:
-                            glScissor(_px, _py, 16, 16)
-                            glClear(GL_COLOR_BUFFER_BIT)
-                    else:  # "corner" (default)
-                        _kv = min(1.0, _bg + 8/255) if _keepalive_phase else max(0.0, _bg - 8/255)
-                        glClearColor(_kv, _kv, _kv, 1.0)
-                        glScissor(_near_x, 0, 16, 16)
-                        glClear(GL_COLOR_BUFFER_BIT)
-                    glDisable(GL_SCISSOR_TEST)
-                    glClearColor(*background_rgba)
+            # Legacy in-canvas near-monitor drawing (spanning-window mode only —
+            # always skipped in dual_window_mode, where n_selected is always 1
+            # so _near_mon_idx is always -1; see near_window handling below).
+            if _near_mon_idx >= 0:
+                _draw_near_monitor_effects(_mon_w_px, current_window_height, _near_x, _now)
 
             glfw.swap_buffers(window)
+
+            # dual_window_mode: the near monitor is a separate real window, not
+            # a scissored region of this one — draw into it on its own context.
+            if near_window is not None:
+                glfw.make_context_current(near_window)
+                _near_w, _near_h = glfw.get_framebuffer_size(near_window)
+                glViewport(0, 0, _near_w, _near_h)
+                glClearColor(*background_rgba)
+                glClear(GL_COLOR_BUFFER_BIT)
+                _draw_near_monitor_effects(_near_w, _near_h, 0, _now)
+                glfw.swap_buffers(near_window)
+                glfw.make_context_current(window)  # restore for next frame's drawing
+
             glfw.poll_events()
 
         _status({"type": "stimulus_exited"})
@@ -863,6 +931,11 @@ def run_loom_stimulus_with_ipc(
         try:
             if window is not None:
                 glfw.destroy_window(window)
+        except Exception:
+            pass
+        try:
+            if near_window is not None:
+                glfw.destroy_window(near_window)
         except Exception:
             pass
         glfw.terminate()
@@ -924,6 +997,8 @@ def loom_stimulus_process_main(
             size_correction=stim_cfg.size_correction,
             monitor_index=stim_cfg.start_monitor_index,
             flip_horizontal=stim_cfg.flip_horizontal,
+            dual_window_mode=stim_cfg.dual_window_mode,
+            stimulus_monitor_index=stim_cfg.stimulus_monitor_index,
             keepalive_interval_s=stim_cfg.keepalive_interval_s,
             keepalive_mode=stim_cfg.keepalive_mode,
             x_offset_ndc=stim_cfg.x_offset_ndc,
@@ -984,7 +1059,7 @@ class LoomStimulusController:
         shouldn't block the renderer from starting; worst case the physical
         layout is whatever the desktop session already had.
         """
-        left, right = _HDMI_OUTPUTS[1], _HDMI_OUTPUTS[0]
+        left, right = _HDMI_OUTPUTS[0], _HDMI_OUTPUTS[1]
         env = dict(os.environ)
         try:
             subprocess.run(

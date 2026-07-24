@@ -66,6 +66,8 @@
     "start_monitor_index": 1,
     "flip_horizontal": false,
     "xrandr_reverse_outputs": false,
+    "dual_window_mode": false,
+    "stimulus_monitor_index": 0,
     "screen_width_cm": 105.41,
     "screen_height_cm": 59.29,
     "size_correction": 1.125,

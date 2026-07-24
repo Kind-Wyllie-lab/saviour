@@ -605,6 +605,32 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               "Flip horizontal" off unless you also need to move the stimulus
               content to the other half of the canvas independently of layout.
             </div>
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Dual window mode:</label>
+              <input type="checkbox"
+                checked={formData?.loom_stimulus?.dual_window_mode ?? false}
+                onChange={e => handleChange(["loom_stimulus", "dual_window_mode"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Stimulus monitor:</label>
+              <select value={formData?.loom_stimulus?.stimulus_monitor_index ?? 0}
+                disabled={!(formData?.loom_stimulus?.dual_window_mode ?? false)}
+                onChange={e => handleChange(["loom_stimulus", "stimulus_monitor_index"], e)}>
+                <option value={0}>Monitor 0</option>
+                <option value={1}>Monitor 1</option>
+              </select>
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Alternative to spanning one window across both monitors: opens a
+              real fullscreen window on each physical monitor instead, picked
+              by GLFW's raw detection order — independent of xrandr/cabling, so
+              "Monitors", "Flip horizontal", and "Reverse monitor order" above
+              are all ignored while this is on. There's no way to know in
+              advance which is Monitor 0 vs 1 — use the "Near screen" test
+              flash button below to check, and switch "Stimulus monitor" if
+              it's backwards.
+            </div>
             <div className="form-field">
               <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>
               <input type="range" min="0" max="1" step="0.01"

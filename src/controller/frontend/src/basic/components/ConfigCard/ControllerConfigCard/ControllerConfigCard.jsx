@@ -72,12 +72,12 @@ function ControllerConfigCard() {
     markSaved();
   };
 
-  // Settings tab: everything except controller.name, export, and teams (rendered custom below)
+  // Settings tab: everything except controller.name/location, export, and teams (rendered custom below)
   const settingsData = (() => {
     if (!formData) return formData;
     const { export: _e, controller: ctrl, teams: _t, ...rest } = filterPrivateKeys(formData) ?? {};
-    // Keep controller section only if it has fields beyond `name` (name goes in Basic)
-    const { name: _n, ...ctrlRest } = ctrl ?? {};
+    // Keep controller section only if it has fields beyond `name`/`location` (those go in Basic)
+    const { name: _n, location: _l, ...ctrlRest } = ctrl ?? {};
     const result = { ...rest };
     if (Object.keys(ctrlRest).length > 0) result.controller = ctrlRest;
     return result;
@@ -125,12 +125,21 @@ function ControllerConfigCard() {
 
             {/* BASIC */}
             {activeTab === "basic" && (
-              <div className="form-field">
-                <label>Name:</label>
-                <input type="text"
-                  value={formData?.controller?.name ?? ""}
-                  onChange={e => handleChange(["controller", "name"], e)} />
-              </div>
+              <>
+                <div className="form-field">
+                  <label>Name:</label>
+                  <input type="text"
+                    value={formData?.controller?.name ?? ""}
+                    onChange={e => handleChange(["controller", "name"], e)} />
+                </div>
+                <div className="form-field">
+                  <label>Location:</label>
+                  <input type="text"
+                    placeholder="e.g. Room 204"
+                    value={formData?.controller?.location ?? ""}
+                    onChange={e => handleChange(["controller", "location"], e)} />
+                </div>
+              </>
             )}
 
             {/* SETTINGS */}

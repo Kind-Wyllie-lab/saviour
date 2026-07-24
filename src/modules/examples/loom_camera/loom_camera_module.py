@@ -159,10 +159,12 @@ class LoomBlobDiffTracker:
             # No detection on first frame; return current held display center if any
             return self.last_display_center_proc, (sx, sy), (nx, ny)
 
-        diff = np.abs(proc.astype(np.float32) - self._prev_gray.astype(np.float32))
+        # diff = np.abs(proc.astype(np.float32) - self._prev_gray.astype(np.float32))
+        diff = cv2.absdiff(proc, self._prev_gray)
         self._prev_gray = proc
 
-        mask = (diff >= self.thr_hi).astype(np.uint8)
+        # mask = (diff >= self.thr_hi).astype(np.uint8)
+        mask = (diff >= int(self.thr_hi)).view(np.uint8)  # or just threshold directly
         if self._roi_mask_proc is not None and self._roi_mask_proc.shape == mask.shape:
             mask = (mask.astype(bool) & self._roi_mask_proc).astype(np.uint8)
 
@@ -705,6 +707,17 @@ class LoomCameraModule(CameraBase):
         self.last_center_src = None
         self.crossing_state = LoomCrossingState()
 
+        ov = self.config.get("loom_tracking_overlay", {})
+        self._overlay_line_bgr = tuple(ov.get("line_bgr", [0, 255, 0]))
+        self._overlay_roi_bgr = tuple(ov.get("roi_bgr", [255, 0, 255]))
+        self._overlay_dot_bgr = tuple(ov.get("dot_bgr", [0, 0, 255]))
+        self._overlay_thickness = int(ov.get("thickness", 2))
+        self._overlay_rect_bgr = tuple(ov.get("rect_bgr", [0, 255, 255]))
+        self._overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
+        self._overlay_zone_label_x_frac = float(ov.get("zone_label_x_frac", 0.01))
+        self._overlay_zone_label_y_frac = float(ov.get("zone_label_y_frac", 0.95))
+        self._overlay_zone_label_font_scale = float(ov.get("zone_label_font_scale", 1.0))
+
 
     # ---------------------------------------------------------------------
     # Per-frame hooks: tracking + crossing events + overlays
@@ -846,32 +859,26 @@ class LoomCameraModule(CameraBase):
         sx = w / float(self.width)
         sy = h / float(self.height)
 
-        overlay_cfg = self.config.get("loom_tracking.overlay", {})
-        line_bgr = tuple(overlay_cfg.get("line_bgr", [0, 255, 0]))
-        roi_bgr = tuple(overlay_cfg.get("roi_bgr", [255, 0, 255]))
-        dot_bgr = tuple(overlay_cfg.get("dot_bgr", [0, 0, 255]))
-        thickness = int(overlay_cfg.get("thickness", 2))
-
         # ROI outline
         if self.arena_poly_src is not None and len(self.arena_poly_src) >= 3:
             pts = self.arena_poly_src.copy()
             pts[:, 0] *= sx
             pts[:, 1] *= sy
             pts_i = np.round(pts).astype(np.int32).reshape((-1, 1, 2))
-            cv2.polylines(m.array, [pts_i], True, roi_bgr, thickness, cv2.LINE_AA)
+            cv2.polylines(m.array, [pts_i], True, self._overlay_roi_bgr, self._overlay_thickness, cv2.LINE_AA)
 
         # Line
         if self.crossing_line_src is not None and self.crossing_line_src.get("kind") == "vertical":
             x_line = int(round(float(self.crossing_line_src["x"]) * sx))
             x_line = int(np.clip(x_line, 0, w - 1))
-            cv2.line(m.array, (x_line, 0), (x_line, h - 1), line_bgr, thickness, cv2.LINE_AA)
+            cv2.line(m.array, (x_line, 0), (x_line, h - 1), self._overlay_line_bgr, self._overlay_thickness, cv2.LINE_AA)
 
         # Centroid
         if self.last_center_src is not None:
             cx, cy = self.last_center_src
             px = int(round(cx * sx))
             py = int(round(cy * sy))
-            cv2.circle(m.array, (px, py), 5, dot_bgr, -1, cv2.LINE_AA)
+            cv2.circle(m.array, (px, py), 5, self._overlay_dot_bgr, -1, cv2.LINE_AA)
 
             # Track square
             draw_square = bool(self.config.get("loom_tracking.draw_track_square", True))
@@ -898,16 +905,15 @@ class LoomCameraModule(CameraBase):
                 x1 = int(np.clip(x1, 0, w - 1))
                 y1 = int(np.clip(y1, 0, h - 1))
 
-                rect_bgr = tuple(overlay_cfg.get("rect_bgr", [0, 255, 255]))
-                cv2.rectangle(m.array, (x0, y0), (x1, y1), rect_bgr, thickness, cv2.LINE_AA)
+                cv2.rectangle(m.array, (x0, y0), (x1, y1), self._overlay_rect_bgr, self._overlay_thickness, cv2.LINE_AA)
 
         # State label — position and size are configurable so the user can
         # tune them across different stream resolutions
         state = self.crossing_state.state
         state_color = (0, 0, 255) if state in ("entering", "in") else (0, 255, 0)
-        lx = int(float(overlay_cfg.get("zone_label_x_frac", 0.01)) * w)
-        ly = int(float(overlay_cfg.get("zone_label_y_frac", 0.95)) * h)
-        lscale = float(overlay_cfg.get("zone_label_font_scale", 1.0))
+        lx = int(self._overlay_zone_label_x_frac * w)
+        ly = int(self._overlay_zone_label_y_frac * h)
+        lscale = self._overlay_zone_label_font_scale
         cv2.putText(
             m.array,
             f"Zone: {state}",

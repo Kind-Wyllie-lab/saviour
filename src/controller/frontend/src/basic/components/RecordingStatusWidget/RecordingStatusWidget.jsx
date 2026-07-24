@@ -124,7 +124,12 @@ export default function RecordingStatusWidget() {
   } else if (hasActive) {
     stateClass = "hrc--recording"; stateLabel = "Recording"; dotVariant = "recording";
   } else {
-    stateClass = "hrc--ready";   stateLabel = "Ready";     dotVariant = "ready";
+    // "Idle", not "Ready" — module.status === "READY" is a separate, per-module
+    // concept (passed the PTP-sync/disk-space pre-flight checks via "Check
+    // Ready"); this state just means no session is active/faulted right now,
+    // and reusing the word implied modules were confirmed ready when they
+    // might not have been checked at all.
+    stateClass = "hrc--ready";   stateLabel = "Idle";      dotVariant = "ready";
   }
 
   const cameraRecording = cameras.filter(m => m.status === "RECORDING").length;

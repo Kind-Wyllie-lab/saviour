@@ -809,8 +809,14 @@ class CameraBase(Module):
 
 
     def _apply_grayscale(self, m: MappedArray) -> None:
+        # Broadcasting the single channel back into all three via numpy slicing
+        # avoids a second full-frame cv2.cvtColor call (GRAY2BGR is just channel
+        # replication) — profiled to meaningfully cut cost on full-resolution
+        # main-stream frames at high fps, where this is called every frame.
         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
-        m.array[:] = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        m.array[..., 0] = gray
+        m.array[..., 1] = gray
+        m.array[..., 2] = gray
 
 
     # Target fraction of image width the timestamp string should occupy per size preset.

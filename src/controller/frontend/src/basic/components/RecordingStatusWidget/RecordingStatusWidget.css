@@ -8,7 +8,7 @@
    min-width, light/dark-mode background+text) and .hrc (left-accent stripe)
    classes with higher-specificity rules scoped to this widget only — .card/
    .hrc themselves are untouched, so ConfigCard/HabitatRecordingControl/etc.
-   keep their current look in both themes. #252b33 — mostly grey, dark, with
+   keep their current look in both themes. #161a1f — mostly grey, dark, with
    just a cool undertone; not saturated enough to read as blue, not neutral
    enough to read as flat black. Fixed regardless of light/dark mode. */
 .recording-status-widget.card {
@@ -18,10 +18,10 @@
   margin: 0;
   padding: 8px 20px;
   border: none;
-  border-bottom: 1px solid color-mix(in srgb, #252b33 60%, black);
+  border-bottom: 1px solid color-mix(in srgb, #161a1f 60%, black);
   border-radius: 0;
   box-shadow: none;
-  background-color: #252b33;
+  background-color: #161a1f;
   color: #e8e8e8;
 }
 
@@ -30,22 +30,22 @@
 }
 
 .recording-status-widget:hover {
-  background: color-mix(in srgb, #252b33 85%, white);
+  background: color-mix(in srgb, #161a1f 85%, white);
 }
 
 .recording-status-widget.hrc--recording {
-  background-color: color-mix(in srgb, #2e7d32 20%, #252b33);
-  border-bottom-color: color-mix(in srgb, #2e7d32 55%, #252b33);
+  background-color: color-mix(in srgb, #2e7d32 20%, #161a1f);
+  border-bottom-color: color-mix(in srgb, #2e7d32 55%, #161a1f);
 }
 
 .recording-status-widget.hrc--starting {
-  background-color: color-mix(in srgb, #e8a020 20%, #252b33);
-  border-bottom-color: color-mix(in srgb, #e8a020 55%, #252b33);
+  background-color: color-mix(in srgb, #e8a020 20%, #161a1f);
+  border-bottom-color: color-mix(in srgb, #e8a020 55%, #161a1f);
 }
 
 .recording-status-widget.hrc--fault {
-  background-color: color-mix(in srgb, #c62828 20%, #252b33);
-  border-bottom-color: color-mix(in srgb, #c62828 55%, #252b33);
+  background-color: color-mix(in srgb, #c62828 20%, #161a1f);
+  border-bottom-color: color-mix(in srgb, #c62828 55%, #161a1f);
 }
 
 .recording-status-widget.hrc--ready {

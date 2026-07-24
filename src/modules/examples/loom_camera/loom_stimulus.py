@@ -359,10 +359,17 @@ def run_loom_stimulus_with_ipc(
                 near_idx = (stim_idx + 1) % len(monitors)
                 near_monitor = monitors[near_idx]
                 near_vm = glfw.get_video_mode(near_monitor)
-                # share=window: same GL objects (shader/VBO/texture) usable in both contexts.
+                # Independent context (no share) — near_window only ever does
+                # raw glClearColor/glScissor/glClear (see
+                # _draw_near_monitor_effects), never a shader/VAO/texture
+                # draw call, so it has no need of the stim window's shared
+                # GL object namespace. Sharing two fullscreen contexts across
+                # separate physical outputs at once may not be reliably
+                # supported by this Pi's V3D/Mesa driver at 2x4K — dropping
+                # the share removes that as a variable.
                 near_window = glfw.create_window(
                     near_vm.size.width, near_vm.size.height,
-                    "Loom Stimulus (near)", near_monitor, window,
+                    "Loom Stimulus (near)", near_monitor, None,
                 )
                 if near_window is None:
                     _status({"type": "loom_stimulus_error",
@@ -894,6 +901,7 @@ def run_loom_stimulus_with_ipc(
             # a scissored region of this one — draw into it on its own context.
             if near_window is not None:
                 glfw.make_context_current(near_window)
+                glfw.swap_interval(1 if vsync else 0)  # separate context, own swap-interval state
                 _near_w, _near_h = glfw.get_framebuffer_size(near_window)
                 glViewport(0, 0, _near_w, _near_h)
                 glClearColor(*background_rgba)

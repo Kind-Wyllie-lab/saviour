@@ -33,10 +33,11 @@ import cv2
 from picamera2 import Picamera2, MappedArray
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import PyavOutput, SplittableOutput
-from flask import Flask, Response, request
+from flask import request
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, command, check
+from modules.mjpeg_stream import MJPEGStreamServer
 
 
 @dataclass
@@ -100,15 +101,10 @@ class CameraBase(Module):
         time.sleep(0.1)
 
         # Streaming variables
-        self.streaming_app = Flask(__name__)
-        self.streaming_server_thread = None
-        self.streaming_server = None
-        self.should_stop_streaming = False
+        self.monitor_stream = MJPEGStreamServer(logger=self.logger, name="Camera")
         self.register_routes()
 
-        self.latest_frame = None
         self.last_frame_timestamp = None
-        self.frame_lock = threading.Lock()
         self._last_stream_encode_time = 0.0
         self._stream_interval_s = 0.0
 
@@ -341,8 +337,7 @@ class CameraBase(Module):
 
             # Clear stale frame so reconnecting clients wait for fresh data
             # rather than receiving the last frame from the old configuration.
-            with self.frame_lock:
-                self.latest_frame = None
+            self.monitor_stream.clear_frame()
 
             self.fps = self.config.get("camera.fps", 25)
             self.width = self.config.get("camera.width", 1280)
@@ -895,13 +890,9 @@ class CameraBase(Module):
                 self.picam2.start()
                 time.sleep(0.1)
 
-            self.should_stop_streaming = False
-
-            self.streaming_server_thread = threading.Thread(target=self.run_streaming_server, args=(port,))
-            self.streaming_server_thread.daemon = True
-            self.streaming_server_thread.start()
-
-            self.is_streaming = True
+            self.is_streaming = self.monitor_stream.start(port)
+            if not self.is_streaming:
+                return False
 
             self.communication.send_status({
                 'type': 'streaming_started',
@@ -973,63 +964,18 @@ class CameraBase(Module):
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ret:
                 return
-            with self.frame_lock:
-                self.latest_frame = jpeg.tobytes()
+            self.monitor_stream.push_frame(jpeg.tobytes())
 
         except Exception as e:
             self.logger.error(f"Capture error: {e}")
 
 
-    def generate_streaming_frames(self):
-        """Generate streaming frames for MJPEG stream.
-
-        Yields each encoded frame exactly once by comparing object identity
-        against the last yielded frame. Rate is naturally limited by
-        _stream_post_callback which encodes at _STREAM_FPS.
-        """
-        last_frame = None
-        while not self.should_stop_streaming:
-            with self.frame_lock:
-                frame = self.latest_frame
-
-            if frame is None or frame is last_frame:
-                time.sleep(0.005)
-                continue
-
-            last_frame = frame
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" +
-                frame +
-                b"\r\n"
-            )
-
-    def run_streaming_server(self, port=8080):
-        """Run the flask server to stream upon"""
-        try:
-            from werkzeug.serving import make_server
-            self.streaming_server = make_server('0.0.0.0', port, self.streaming_app, threaded=True)
-            self.logger.info(f"Starting Flask server on port {port}")
-            self.streaming_server.serve_forever()
-        except Exception as e:
-            self.logger.error(f"Error running streaming server: {e}")
-            self.is_streaming = False
-            self.streaming_server = None
-
     def register_routes(self):
-        """Register Flask routes"""
-        @self.streaming_app.route('/')
-        def index():
-            return "Camera Streaming Server"
-
-        @self.streaming_app.route('/video_feed')
-        def video_feed():
-            return Response(
-                self.generate_streaming_frames(),
-                mimetype='multipart/x-mixed-replace; boundary=frame'
-            )
-
-        @self.streaming_app.route('/shutdown')
+        """Register any extra Flask routes beyond the base '/' and
+        '/video_feed', which MJPEGStreamServer already provides. Subclasses
+        (e.g. loom's /roi endpoints) should call super().register_routes()
+        and add their own routes on self.monitor_stream.app."""
+        @self.monitor_stream.app.route('/shutdown')
         def shutdown():
             func = request.environ.get('werkzeug.server.shutdown')
             if func is None:
@@ -1045,20 +991,7 @@ class CameraBase(Module):
                 self.logger.warning("Not currently streaming")
                 return False
 
-            self.should_stop_streaming = True
-
-            if self.streaming_server:
-                self.streaming_server.shutdown()
-                self.streaming_server = None
-
-            if self.streaming_server_thread and self.streaming_server_thread.is_alive():
-                self.streaming_server_thread.join(timeout=1.0)
-
-            try:
-                os.system("pkill -f 'python.*flask'")
-            except Exception:
-                pass
-
+            self.monitor_stream.stop()
             self.is_streaming = False
 
             self.communication.send_status({

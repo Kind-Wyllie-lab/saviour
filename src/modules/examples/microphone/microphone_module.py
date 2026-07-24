@@ -23,13 +23,13 @@ import soundfile
 import soundcard
 import re
 import cv2
-from flask import Flask, Response, request
 
 AUDIOMOTH_CMD = "/usr/local/bin/AudioMoth-USB-Microphone"
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, command
+from modules.mjpeg_stream import MJPEGStreamServer
 
 
 class AudiomothModule(Module):
@@ -54,16 +54,18 @@ class AudiomothModule(Module):
         self.recording_start_time = None
 
         # Monitoring stream state
-        self.monitoring_app = Flask(__name__)
-        self.monitoring_server = None
-        self.monitoring_server_thread = None
+        self.monitor_stream = MJPEGStreamServer(
+            render_fn=self._next_monitor_frame,
+            interval=0.1,
+            logger=self.logger,
+            name="Audiomoth",
+        )
         self.should_stop_monitoring_stream = False
         self.monitor_threads = []
         # {serial: {'level_db': float, 'peak_db': float, 'spectrum_db': ndarray, 'freqs': ndarray}}
         self.monitor_data = {}
         self.monitor_data_lock = threading.Lock()
         self.peak_hold_data = {}  # {serial: {'value_db': float, 'time': float}}
-        self._register_monitoring_routes()
 
         # Update config
         self.config.load_module_config("microphone_config.json")
@@ -982,49 +984,14 @@ class AudiomothModule(Module):
             time.sleep(0.1)
 
 
-    def _generate_monitor_frames(self):
-        """MJPEG generator — yields frames at ~10 fps.
-        Mode, range, and layout are read from config each frame so changes
-        take effect immediately after a config save without reconnecting."""
-        while not self.should_stop_monitoring_stream:
-            mode       = self.config.get("monitoring.plot_mode",  "spectrogram")
-            freq_range = self.config.get("monitoring.freq_range", "band")
-            layout     = self.config.get("monitoring.layout",     "stacked")
-            frame = self._render_monitor_frame(mode, freq_range, layout)
-            if frame is not None:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" +
-                    frame +
-                    b"\r\n"
-                )
-            time.sleep(0.1)
-
-
-    def _register_monitoring_routes(self):
-        @self.monitoring_app.route('/')
-        def index():
-            return "Audiomoth Monitoring Server"
-
-        @self.monitoring_app.route('/video_feed')
-        def video_feed():
-            return Response(
-                self._generate_monitor_frames(),
-                mimetype='multipart/x-mixed-replace; boundary=frame'
-            )
-
-
-
-    def run_monitoring_server(self, port: int = 8081) -> None:
-        try:
-            from werkzeug.serving import make_server
-            self.monitoring_server = make_server('0.0.0.0', port, self.monitoring_app, threaded=True)
-            self.logger.info(f"Monitoring server listening on port {port}")
-            self.monitoring_server.serve_forever()
-        except Exception as e:
-            self.logger.error(f"Monitoring server error: {e}")
-            self.monitoring_server = None
-            self.is_streaming = False
+    def _next_monitor_frame(self):
+        """render_fn for MJPEGStreamServer. Mode, range, and layout are read
+        from config on each call so changes take effect immediately after a
+        config save without reconnecting."""
+        mode       = self.config.get("monitoring.plot_mode",  "spectrogram")
+        freq_range = self.config.get("monitoring.freq_range", "band")
+        layout     = self.config.get("monitoring.layout",     "stacked")
+        return self._render_monitor_frame(mode, freq_range, layout)
 
 
     def start_streaming(self) -> bool:
@@ -1053,26 +1020,18 @@ class AudiomothModule(Module):
                 self.monitor_threads.append(t)
                 t.start()
 
-            # Flask server thread
-            self.monitoring_server_thread = threading.Thread(
-                target=self.run_monitoring_server,
-                args=(port,),
-                daemon=True,
-                name="monitoring-server"
-            )
-            self.monitoring_server_thread.start()
+            self.is_streaming = self.monitor_stream.start(port)
+            if self.is_streaming:
+                self.logger.info(f"Monitoring stream started — http://{getattr(self.network, 'ip', '?')}:{port}/video_feed")
 
-            self.is_streaming = True
-            self.logger.info(f"Monitoring stream started — http://{getattr(self.network, 'ip', '?')}:{port}/video_feed")
+                if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
+                    self.communication.send_status({
+                        'type': 'streaming_started',
+                        'port': port,
+                        'status': 'success',
+                    })
 
-            if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
-                self.communication.send_status({
-                    'type': 'streaming_started',
-                    'port': port,
-                    'status': 'success',
-                })
-
-            return True
+            return self.is_streaming
 
         except Exception as e:
             self.logger.error(f"Error starting monitoring stream: {e}")
@@ -1092,10 +1051,7 @@ class AudiomothModule(Module):
                 t.join(timeout=3)
             self.monitor_threads = []
 
-            # Stop Flask server
-            if self.monitoring_server:
-                self.monitoring_server.shutdown()
-                self.monitoring_server = None
+            self.monitor_stream.stop()
 
             self.is_streaming = False
             self.logger.info("Monitoring stream stopped")

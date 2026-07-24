@@ -991,7 +991,7 @@ class LoomCameraModule(CameraBase):
     def register_routes(self) -> None:
         super().register_routes()
 
-        @self.streaming_app.route("/roi", methods=["GET"])
+        @self.monitor_stream.app.route("/roi", methods=["GET"])
         def roi_get():
             """Get current ROI/line JSON from disk."""
             roi_path = self._resolve_roi_json_path()
@@ -1006,7 +1006,7 @@ class LoomCameraModule(CameraBase):
             except Exception as e:
                 return jsonify({"error": f"Failed reading ROI JSON: {e}"}), 500
 
-        @self.streaming_app.route("/roi", methods=["POST"])
+        @self.monitor_stream.app.route("/roi", methods=["POST"])
         def roi_post():
             """Save ROI/line JSON to disk and hot-reload on next frame.
 
@@ -1027,14 +1027,13 @@ class LoomCameraModule(CameraBase):
                 return jsonify({"error": result["error"]}), status
             return jsonify(result), 200
 
-        @self.streaming_app.route("/roi/snapshot.jpg", methods=["GET"])
+        @self.monitor_stream.app.route("/roi/snapshot.jpg", methods=["GET"])
         def roi_snapshot():
             """Return a single JPEG snapshot from the latest preview frame.
 
             Uses the same bytes as the MJPEG stream producer. Useful for ROI editor.
             """
-            with self.frame_lock:
-                jpeg = self.latest_frame
+            jpeg = self.monitor_stream.get_latest_frame()
             if jpeg is None:
                 return ("No frame available", 503)
             return (jpeg, 200, {"Content-Type": "image/jpeg"})

@@ -337,40 +337,59 @@ def run_loom_stimulus_with_ipc(
         monitors = glfw.get_monitors() or []
 
         if dual_window_mode and fullscreen:
-            # One real GLFW fullscreen-on-monitor window per physical screen,
-            # addressed by raw glfw.get_monitors() order — no xrandr/X-position
-            # dependency at all, unlike the spanning-window branch below.
+            # One borderless window per physical screen, addressed by raw
+            # glfw.get_monitors() order — no xrandr/X-position dependency at
+            # all, unlike the spanning-window branch below.
+            #
+            # NOTE: this deliberately does NOT use GLFW's native
+            # fullscreen-on-monitor window creation (passing a monitor to
+            # create_window). Confirmed on hardware: under this rig's
+            # compositor stack (labwc + Xwayland-rootless, not a standalone
+            # Xorg server), the first such window created renders nothing at
+            # all — black, regardless of which monitor it targets — while
+            # the second one only ever shows its background clear. Since the
+            # failure tracks *creation order*, not *which monitor*, this is a
+            # WM/compositor-level fullscreen-request problem, not a
+            # monitor-selection bug. The spanning-window path below never hit
+            # this because it never asks for monitor-fullscreen — it uses a
+            # plain floating window manually positioned with set_window_pos,
+            # which is already proven to work on this exact stack. Reusing
+            # that same technique here, just sized to one monitor instead of
+            # spanning both.
             if not monitors:
                 raise RuntimeError("No monitors detected by GLFW.")
 
+            def _create_positioned_window(monitor, title: str):
+                vm = glfw.get_video_mode(monitor)
+                mx, my = glfw.get_monitor_pos(monitor)
+                mw, mh = vm.size.width, vm.size.height
+                glfw.window_hint(glfw.FLOATING, glfw.TRUE)
+                try:
+                    if hasattr(glfw, "POSITION_X"):
+                        glfw.window_hint(glfw.POSITION_X, mx)
+                        glfw.window_hint(glfw.POSITION_Y, my)
+                except Exception:
+                    pass
+                win = glfw.create_window(mw, mh, title, None, None)
+                if win is not None:
+                    glfw.set_window_pos(win, mx, my)
+                return win, (mx, my, mw, mh)
+
             stim_idx = max(0, min(int(stimulus_monitor_index), len(monitors) - 1))
             stim_monitor = monitors[stim_idx]
-            stim_vm = glfw.get_video_mode(stim_monitor)
-            x0, y0 = glfw.get_monitor_pos(stim_monitor)
-            w, h = stim_vm.size.width, stim_vm.size.height
-            selected = [(x0, y0, w, h)]
-
-            # GLFW handles fullscreen placement natively when given a monitor —
-            # no borderless/position-hint workaround needed (that trick exists
-            # only to fake a single surface spanning two separate monitors).
-            window = glfw.create_window(w, h, "Loom Stimulus", stim_monitor, None)
+            window, stim_rect = _create_positioned_window(stim_monitor, "Loom Stimulus")
+            x0, y0, w, h = stim_rect
+            selected = [stim_rect]
 
             if len(monitors) >= 2:
                 near_idx = (stim_idx + 1) % len(monitors)
                 near_monitor = monitors[near_idx]
-                near_vm = glfw.get_video_mode(near_monitor)
                 # Independent context (no share) — near_window only ever does
                 # raw glClearColor/glScissor/glClear (see
                 # _draw_near_monitor_effects), never a shader/VAO/texture
                 # draw call, so it has no need of the stim window's shared
-                # GL object namespace. Sharing two fullscreen contexts across
-                # separate physical outputs at once may not be reliably
-                # supported by this Pi's V3D/Mesa driver at 2x4K — dropping
-                # the share removes that as a variable.
-                near_window = glfw.create_window(
-                    near_vm.size.width, near_vm.size.height,
-                    "Loom Stimulus (near)", near_monitor, None,
-                )
+                # GL object namespace.
+                near_window, _ = _create_positioned_window(near_monitor, "Loom Stimulus (near)")
                 if near_window is None:
                     _status({"type": "loom_stimulus_error",
                              "error": "Failed to create near-monitor window (dual_window_mode) — keepalive/near-test disabled"})

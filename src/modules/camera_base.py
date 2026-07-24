@@ -51,6 +51,14 @@ class FrameTiming:
     dropped_before: Any      # int or ""
 
 
+class _FrameShim:
+    """Adapts a plain ndarray to the MappedArray.array interface used by
+    _process_lores_frame hooks, without any DMA buffer involvement."""
+    __slots__ = ("array",)
+    def __init__(self, arr: np.ndarray) -> None:
+        self.array = arr
+
+
 class CameraBase(Module):
     """Shared Picamera2 module base. Directly instantiable — a camera variant
     with no unique logic (e.g. plain CameraModule) needs only to set
@@ -144,6 +152,8 @@ class CameraBase(Module):
         self._current_csv_path = None
         self._frame_id = 0
         self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
+
+        self._preview_timing: Optional[FrameTiming] = None
 
 
     """Self Check"""
@@ -785,17 +795,13 @@ class CameraBase(Module):
             # copy — see comment there for why). Stamping before that rotation would
             # bake the text in at the wrong orientation/edge once the frame is
             # rotated, so the strings are cached and stamped after rotation instead.
+
             if self.is_streaming:
                 now = time.monotonic()
                 if now - self._last_stream_encode_time >= self._stream_interval_s:
-                    with MappedArray(req, "lores") as m:
-                        if self._cb_flip_code is not None:
-                            m.array[:] = cv2.flip(m.array, self._cb_flip_code)
-                        if monochrome:
-                            self._apply_grayscale(m)
-                        self._process_lores_frame(m, timing)
                     self._preview_ts_str = ts_label if overlay_timestamp else None
                     self._preview_actual_fps = actual_fps
+                    self._preview_timing = timing
 
             self._after_frame_hook(timing)
 
@@ -948,6 +954,19 @@ class CameraBase(Module):
             # comment in _frame_precallback). The "main"/high-quality path is
             # already stamped pre-rotation upstream, so skip it here.
             if stream_name == "lores":
+                # Monochrome — on the copy, no DMA involved
+                if self._cb_monochrome:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR, dst=frame)
+
+                # Subclass overlays (arena polygon, centroid, etc.) via shim
+                timing = getattr(self, "_preview_timing", None)
+                if timing is not None:
+                    shim = _FrameShim(frame)
+                    self._process_lores_frame(shim, timing)
+                    # shim.array is the same ndarray — cv2 draws in-place, no rebind needed
+
+                # Timestamp — already here, now just comes last
                 ts_str = getattr(self, "_preview_ts_str", None)
                 if ts_str:
                     self._apply_timestamp(frame, ts_str, "lores")

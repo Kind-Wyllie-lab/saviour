@@ -669,8 +669,21 @@ class LoomCameraModule(CameraBase):
                 f"tracking will run every {self._tracking_decimation_n} frames"
             )
 
-        enabled = bool(self.config.get("loom_tracking.enabled", True))
-        if not enabled:
+        ov = self.config.get("loom_tracking.overlay", {})
+        self._overlay_line_bgr = tuple(ov.get("line_bgr", [0, 255, 0]))
+        self._overlay_roi_bgr = tuple(ov.get("roi_bgr", [255, 0, 255]))
+        self._overlay_dot_bgr = tuple(ov.get("dot_bgr", [0, 0, 255]))
+        self._overlay_thickness = int(ov.get("thickness", 2))
+        self._overlay_rect_bgr = tuple(ov.get("rect_bgr", [0, 255, 255]))
+        self._overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
+        self._overlay_zone_label_x_frac = float(ov.get("zone_label_x_frac", 0.01))
+        self._overlay_zone_label_y_frac = float(ov.get("zone_label_y_frac", 0.95))
+        self._overlay_zone_label_font_scale = float(ov.get("zone_label_font_scale", 1.0))
+
+        self._tracking_enabled = bool(self.config.get("loom_tracking.enabled", True))
+        self._stimulus_armed = bool(self.config.get("loom_stimulus.armed", False))
+
+        if not self._tracking_enabled:
             self.tracker = None
             self.roi_json_path = None
             self.roi_mask_proc = None
@@ -707,16 +720,9 @@ class LoomCameraModule(CameraBase):
         self.last_center_src = None
         self.crossing_state = LoomCrossingState()
 
-        ov = self.config.get("loom_tracking_overlay", {})
-        self._overlay_line_bgr = tuple(ov.get("line_bgr", [0, 255, 0]))
-        self._overlay_roi_bgr = tuple(ov.get("roi_bgr", [255, 0, 255]))
-        self._overlay_dot_bgr = tuple(ov.get("dot_bgr", [0, 0, 255]))
-        self._overlay_thickness = int(ov.get("thickness", 2))
-        self._overlay_rect_bgr = tuple(ov.get("rect_bgr", [0, 255, 255]))
-        self._overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
-        self._overlay_zone_label_x_frac = float(ov.get("zone_label_x_frac", 0.01))
-        self._overlay_zone_label_y_frac = float(ov.get("zone_label_y_frac", 0.95))
-        self._overlay_zone_label_font_scale = float(ov.get("zone_label_font_scale", 1.0))
+        # Tracked square
+        self._draw_square = bool(self.config.get("loom_tracking.draw_track_square", True))
+        self._square_size_src = int(self.config.get("loom_tracking.track_square_size_src", 150))
 
 
     # ---------------------------------------------------------------------
@@ -724,8 +730,8 @@ class LoomCameraModule(CameraBase):
     # ---------------------------------------------------------------------
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
-        tracking_enabled = bool(self.config.get("loom_tracking.enabled", True))
-        overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
+        tracking_enabled = self._tracking_enabled
+        overlay_enabled = self._overlay_enabled
 
         cx = cy = None
         zone_state = self.crossing_state.state
@@ -795,7 +801,7 @@ class LoomCameraModule(CameraBase):
                         "cy": cy,
                     })
 
-                    if self.config.get("loom_stimulus.armed", False):
+                    if self._stimulus_armed:
                         if event_label == "enter":
                             self._loom_stimulus.send("start")
                         elif event_label == "leave":
@@ -881,13 +887,10 @@ class LoomCameraModule(CameraBase):
             cv2.circle(m.array, (px, py), 5, self._overlay_dot_bgr, -1, cv2.LINE_AA)
 
             # Track square
-            draw_square = bool(self.config.get("loom_tracking.draw_track_square", True))
-            square_size_src = int(self.config.get("loom_tracking.track_square_size_src", 150))
-
-            if draw_square and self.last_center_src is not None and square_size_src > 0:
+            if self._draw_square and self.last_center_src is not None and self._square_size_src > 0:
                 cx_src, cy_src = self.last_center_src
 
-                half = square_size_src / 2.0
+                half = self._square_size_src / 2.0
                 x0 = int(round(cx_src - half))
                 y0 = int(round(cy_src - half))
                 x1 = int(round(cx_src + half))

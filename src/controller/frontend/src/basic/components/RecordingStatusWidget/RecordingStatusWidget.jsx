@@ -3,6 +3,11 @@ import { useNavigate } from "react-router-dom";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
 import useHealth from "/src/hooks/useHealth";
+// This widget's markup uses .hrc/.hrc-bar/.hrc-dot/etc., defined in
+// HabitatRecordingControl.css — without this import those classes don't
+// exist in the bundle at all unless the active variant happens to be
+// habitat, so the bar renders as unstyled, unspaced text.
+import "/src/habitat/components/HabitatRecordingControl/HabitatRecordingControl.css";
 import "./RecordingStatusWidget.css";
 
 function parseTimestamp(str) {

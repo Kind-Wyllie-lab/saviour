@@ -85,7 +85,7 @@ function ModuleList({ modules }) {
               )}
               <div className="module-list-item">
                 <div className="module-list-item-start">
-                  <div className={`status-icon ${module.status.toLowerCase()}`} />
+                  <div className={`status-icon ${module.status?.toLowerCase()}`} />
                   <span>{module.name} ({module.type})</span>
                 </div>
                 <span>{module.status}</span>

@@ -43,7 +43,14 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus]);
 
-  const resetStall = () => clearTimeout(stallTimer.current);
+  // Must re-arm, not just clear — a successful frame load means the stream
+  // is alive *right now*, not that it can never stall again. Clearing only
+  // (the previous behavior) permanently disarmed stall detection after the
+  // first frame, since nothing else ever re-scheduled the timer.
+  const resetStall = () => {
+    clearTimeout(stallTimer.current);
+    stallTimer.current = setTimeout(bump, STALL_MS);
+  };
 
   const handleError = () => {
     clearTimeout(stallTimer.current);

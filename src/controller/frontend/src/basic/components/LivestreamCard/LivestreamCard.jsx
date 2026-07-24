@@ -4,6 +4,14 @@ import "./LivestreamCard.css";
 
 const STALL_TIMEOUT_MS = 8000;  // reconnect if no frame arrives within this window
 const RECONNECT_DELAY_MS = 2500; // wait after an error before retrying (stream needs time to restart)
+// Floor between actual reconnects, regardless of how many things ask for one.
+// Each bump() fully unmounts/remounts the <img>, opening a fresh long-lived
+// MJPEG connection — a burst of triggers (e.g. several rapid config saves,
+// each restarting the camera and separately tripping the stall/error/config-
+// sync handlers) can otherwise open more concurrent connections to the same
+// host than the browser allows, leaving the newest one stuck pending forever
+// with neither onLoad nor onError ever firing to recover it.
+const MIN_RECONNECT_MS = 3000;
 
 function LivestreamCard({ module }) {
   const [fullscreen, setFullscreen] = useState(false);
@@ -13,8 +21,23 @@ function LivestreamCard({ module }) {
   const reconnectTimer = useRef(null);
   const configTimer    = useRef(null);
   const prevStatus     = useRef(module?.config_sync_status);
+  const lastBumpAt       = useRef(0);
+  const pendingBumpTimer = useRef(null);
 
-  const bump = () => setStreamKey(Date.now());
+  const bump = () => {
+    const now = Date.now();
+    const elapsed = now - lastBumpAt.current;
+    if (elapsed >= MIN_RECONNECT_MS) {
+      lastBumpAt.current = now;
+      setStreamKey(now);
+    } else {
+      clearTimeout(pendingBumpTimer.current);
+      pendingBumpTimer.current = setTimeout(() => {
+        lastBumpAt.current = Date.now();
+        setStreamKey(Date.now());
+      }, MIN_RECONNECT_MS - elapsed);
+    }
+  };
 
   // Show overlay on save (→ PENDING); bump stream on SYNCED so onLoad fires on the fresh connection.
   const syncStatus = module?.config_sync_status;
@@ -40,6 +63,7 @@ function LivestreamCard({ module }) {
     return () => {
       clearTimeout(stallTimer.current);
       clearTimeout(reconnectTimer.current);
+      clearTimeout(pendingBumpTimer.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamKey]);

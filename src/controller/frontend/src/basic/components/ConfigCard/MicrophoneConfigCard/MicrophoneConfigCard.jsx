@@ -8,13 +8,36 @@ import ConfigCardShell from "../ConfigCardShell";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
+// Floor between actual reconnects, regardless of how many things ask for one.
+// Each bump() fully unmounts/remounts the <img>, opening a fresh long-lived
+// MJPEG connection — a burst of triggers in quick succession can otherwise
+// open more concurrent connections to the same host than the browser
+// allows, leaving the newest one stuck pending forever with neither onLoad
+// nor onError ever firing to recover it.
+const MIN_RECONNECT_MS = 3000;
 
 function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
   const [bumpKey, setBumpKey] = useState(Date.now());
   const [fullscreen, setFullscreen]   = useState(false);
   const stallTimer     = useRef(null);
   const reconnectTimer = useRef(null);
-  const bump = () => setBumpKey(Date.now());
+  const lastBumpAt       = useRef(0);
+  const pendingBumpTimer = useRef(null);
+
+  const bump = () => {
+    const now = Date.now();
+    const elapsed = now - lastBumpAt.current;
+    if (elapsed >= MIN_RECONNECT_MS) {
+      lastBumpAt.current = now;
+      setBumpKey(now);
+    } else {
+      clearTimeout(pendingBumpTimer.current);
+      pendingBumpTimer.current = setTimeout(() => {
+        lastBumpAt.current = Date.now();
+        setBumpKey(Date.now());
+      }, MIN_RECONNECT_MS - elapsed);
+    }
+  };
 
   const imgKey = `${bumpKey}`;
 
@@ -23,6 +46,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
     return () => {
       clearTimeout(stallTimer.current);
       clearTimeout(reconnectTimer.current);
+      clearTimeout(pendingBumpTimer.current);
     };
   }, [imgKey]);
 

@@ -408,15 +408,6 @@ class LoomCameraModule(CameraBase):
         self.last_center_src: Optional[Tuple[float, float]] = None  # (cx, cy) source pixels
         self.crossing_state = LoomCrossingState()
 
-        # Zone-crossing event log: a lightweight per-session CSV of just the
-        # enter/leave transitions, timestamped — the per-frame timestamp CSV
-        # already carries cx/cy/zone_state/event columns (see CSV_EXTRA_COLUMNS)
-        # but a transition is a non-empty cell on one row out of thousands, which
-        # makes "when did the animal enter/leave" analysis painful. This gives
-        # that same information as a small, purpose-built event log instead.
-        self._zone_events_file_handle = None
-        self.current_zone_events_filename: Optional[str] = None
-
         self._hold_miss_count: int = 0
         self._hold_patience_frames: int = int(self.config.get("loom_tracking.patience_frames", 10))
         self._track_valid: bool = False
@@ -540,65 +531,7 @@ class LoomCameraModule(CameraBase):
             self.tracker.reset()
         self.last_center_src = None
         self.crossing_state = LoomCrossingState()
-        self._open_zone_events_file(self._get_zone_events_filename())
         return result
-
-    def _start_next_recording_segment(self) -> bool:
-        result = super()._start_next_recording_segment()
-        self.facade.stage_file_for_export(self.current_zone_events_filename)
-        self._close_zone_events_file()
-        self._open_zone_events_file(self._get_zone_events_filename())
-        return result
-
-    def _stop_recording(self) -> bool:
-        result = super()._stop_recording()
-        self._close_zone_events_file()
-        if self.current_zone_events_filename:
-            self.facade.stage_file_for_export(self.current_zone_events_filename)
-        return result
-
-    # ---------------------------------------------------------------------
-    # Zone-crossing event log
-    # ---------------------------------------------------------------------
-
-    def _get_zone_events_filename(self) -> str:
-        """Build the CSV filename for the current recording segment's zone-events log."""
-        strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
-        return f"{self.facade.get_filename_prefix()}_zone_events_({self.facade.get_segment_id()}_{strtime}).csv"
-
-    def _open_zone_events_file(self, filename: str) -> None:
-        """Open a zone-events CSV for writing and write the column header."""
-        self.logger.info(f"Opening zone events file: {filename}")
-        try:
-            self._zone_events_file_handle = open(filename, "w", buffering=1)  # line-buffered
-            self._zone_events_file_handle.write("timestamp_ns,timestamp_utc,event,zone_state,cx,cy\n")
-            self.current_zone_events_filename = filename
-            self.facade.add_session_file(filename)
-        except Exception as e:
-            self.logger.error(f"Failed to open zone events file {filename}: {e}")
-            self._zone_events_file_handle = None
-
-    def _write_zone_event(self, timestamp_ns: int, timestamp_utc: str, event: str,
-                           zone_state: str, cx: Optional[float], cy: Optional[float]) -> None:
-        """Append one enter/leave transition to the zone-events CSV."""
-        if self._zone_events_file_handle:
-            cx_str = "" if cx is None else f"{cx:.2f}"
-            cy_str = "" if cy is None else f"{cy:.2f}"
-            self._zone_events_file_handle.write(
-                f"{timestamp_ns},{timestamp_utc},{event},{zone_state},{cx_str},{cy_str}\n"
-            )
-
-    def _close_zone_events_file(self) -> None:
-        """Flush and close the current zone-events file."""
-        try:
-            if self._zone_events_file_handle:
-                self._zone_events_file_handle.flush()
-                self._zone_events_file_handle.close()
-                self._zone_events_file_handle = None
-                self.logger.info(f"Closed zone events file: {self.current_zone_events_filename}")
-        except Exception as e:
-            self.logger.warning(f"Error closing zone events file: {e}")
-            self._zone_events_file_handle = None
 
 
     # ---------------------------------------------------------------------
@@ -848,9 +781,6 @@ class LoomCameraModule(CameraBase):
                         "cx": cx,
                         "cy": cy,
                     })
-                    self._write_zone_event(
-                        timing.timestamp_ns, timing.timestamp_utc, event_label, zone_state, cx, cy
-                    )
 
                     if self.config.get("loom_stimulus.armed", False):
                         if event_label == "enter":

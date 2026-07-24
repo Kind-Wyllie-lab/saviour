@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
-import App from './loom/App';
+import App from 'virtual:active-app';
 import AuthGate from './basic/components/AuthGate/AuthGate';
 import ChangePasswordModal from './basic/components/ChangePasswordModal/ChangePasswordModal';
 import { BrowserRouter } from "react-router-dom";

@@ -928,21 +928,13 @@ build_frontend() {
     # shellcheck source=/dev/null
     [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
 
-    tee "${DIR}/src/controller/frontend/src/main.jsx" > /dev/null <<EOF
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './${DEVICE_TYPE}/App';
-import { BrowserRouter } from "react-router-dom";
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>
-);
+    # Which variant's App renders is a build-time env var, not a source edit —
+    # main.jsx is a tracked, never-changing file that reads this at build time.
+    # .env.local is gitignored (frontend's own *.local rule), so this never
+    # creates commit noise or gets clobbered on pull the way overwriting
+    # main.jsx directly used to.
+    tee "${DIR}/src/controller/frontend/.env.local" > /dev/null <<EOF
+VITE_VARIANT=${DEVICE_TYPE}
 EOF
 
     cd "${DIR}/src/controller/frontend"

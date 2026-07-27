@@ -4,9 +4,16 @@ import socket from "../socket";
 const STYLE_TAG_ID = "controller-theme-override";
 
 /**
- * Applies controller-configured theme values (currently just accent color)
- * as CSS custom-property overrides. Mounted once from main.jsx, so it runs
- * regardless of which frontend variant is active.
+ * Applies controller-configured theme values — accent color and dark/light
+ * mode — mounted once from main.jsx, so it runs regardless of which
+ * frontend variant is active. Both fields live under config.frontend and
+ * are edited via the Frontend tab in Controller Settings, so every browser
+ * viewing this controller shows the same theme rather than a per-browser
+ * preference.
+ *
+ * dark_mode defaults to true (dark) if the field is absent from the config
+ * response at all (e.g. an active_config.json saved before this field
+ * existed) — matches base_config.json's own default.
  *
  * Injects a <style> tag rather than setting the property directly on
  * document.documentElement — index.css declares --accent-color on *both*
@@ -35,15 +42,18 @@ export default function useControllerTheme() {
 
     const handleConfig = (data) => {
       const accentColor = data?.config?.frontend?.accent_color;
-      if (!accentColor) return;
-
-      let styleTag = document.getElementById(STYLE_TAG_ID);
-      if (!styleTag) {
-        styleTag = document.createElement("style");
-        styleTag.id = STYLE_TAG_ID;
-        document.head.appendChild(styleTag);
+      if (accentColor) {
+        let styleTag = document.getElementById(STYLE_TAG_ID);
+        if (!styleTag) {
+          styleTag = document.createElement("style");
+          styleTag.id = STYLE_TAG_ID;
+          document.head.appendChild(styleTag);
+        }
+        styleTag.textContent = `:root, body.dark-mode { --accent-color: ${accentColor}; }`;
       }
-      styleTag.textContent = `:root, body.dark-mode { --accent-color: ${accentColor}; }`;
+
+      const darkMode = data?.config?.frontend?.dark_mode ?? true;
+      document.body.classList.toggle("dark-mode", darkMode);
     };
 
     socket.on("controller_config_response", handleConfig);

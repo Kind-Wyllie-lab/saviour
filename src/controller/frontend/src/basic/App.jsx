@@ -39,7 +39,6 @@ function faultKey(session) {
 }
 
 function App() {
-  const [darkMode, setDarkMode] = useState(false);
   const clockInfo = useClockOnce();
   const { sessionList } = useSessions();
   const [pendingFaults, setPendingFaults] = useState([]);
@@ -86,26 +85,6 @@ function App() {
     socket.on("nas_health_update", setNasHealth);
     return () => socket.off("nas_health_update", setNasHealth);
   }, []);
-
-  useEffect(() => {
-    // Check if user prefers dark mode
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    setDarkMode(prefersDark);
-
-    // Optional: listen for changes in system preference
-    const listener = (e) => setDarkMode(e.matches);
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", listener);
-
-    return () => {
-      window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", listener);
-    };
-  }, []);
-
-  useEffect(() => {
-    // Apply the theme by toggling a class on body
-    if (darkMode) document.body.classList.add("dark-mode");
-    else document.body.classList.remove("dark-mode");
-  }, [darkMode]);
 
   return (
     <div className="app">

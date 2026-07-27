@@ -34,7 +34,6 @@ function faultKey(session) {
 }
 
 function App() {
-  const [darkMode, setDarkMode] = useState(false);
   const { sessionList } = useSessions();
   const [pendingFaults, setPendingFaults] = useState([]);
 
@@ -50,19 +49,6 @@ function App() {
     pendingFaults.forEach((s) => sessionStorage.setItem(faultKey(s), "1"));
     setPendingFaults([]);
   };
-
-  useEffect(() => {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    setDarkMode(prefersDark);
-    const listener = (e) => setDarkMode(e.matches);
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", listener);
-    return () => window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", listener);
-  }, []);
-
-  useEffect(() => {
-    if (darkMode) document.body.classList.add("dark-mode");
-    else document.body.classList.remove("dark-mode");
-  }, [darkMode]);
 
   return (
     <div className="app">

@@ -1,7 +1,6 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Routes, Route } from "react-router-dom";
 import "./App.css";
-import { usePrefersDarkMode } from "/src/hooks/usePrefersDarkMode";
 
 
 import Sidebar from "/src/basic/components/Sidebar/Sidebar";
@@ -26,13 +25,6 @@ const pages = [
 
 
 function App() {
-    const darkMode = usePrefersDarkMode();
-
-    useEffect(() => {
-        document.body.classList.toggle("dark-mode", darkMode);
-    }, [darkMode]);
-
-
     return (
         <div className="app">
             <Sidebar navItems={pages} />
@@ -45,8 +37,8 @@ function App() {
                 <Route path="/guide" element={<Guide />} />
             </Routes>
             </div>
+            <ConnectionOverlay />
         </div>
-      <ConnectionOverlay />
     )
 }
 

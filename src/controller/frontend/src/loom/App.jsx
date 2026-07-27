@@ -11,7 +11,6 @@ import Guide from "/src/basic/pages/Guide/Guide";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useSessions from "/src/hooks/useSessions";
-import { usePrefersDarkMode } from "/src/hooks/usePrefersDarkMode";
 import { LoomStageProvider } from "/src/loom/LoomStageContext";
 
 document.title = "Loom";
@@ -29,14 +28,9 @@ function faultKey(session) {
 }
 
 function App() {
-  const darkMode = usePrefersDarkMode();
   const { sessionList } = useSessions();
   const [pendingFaults, setPendingFaults] = useState([]);
   const location = useLocation();
-
-  useEffect(() => {
-    document.body.classList.toggle("dark-mode", darkMode);
-  }, [darkMode]);
 
   useEffect(() => {
     const unacked = sessionList.filter(

@@ -1,5 +1,5 @@
 import '../basic/App.css';
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Routes, Route } from "react-router-dom";
 
 import Sidebar from "../basic/components/Sidebar/Sidebar";
@@ -22,23 +22,6 @@ const pages = [
 ];
 
 function App() {
-  const [darkMode, setDarkMode] = useState(false);
-
-  useEffect(() => {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    setDarkMode(prefersDark);
-    const listener = (e) => setDarkMode(e.matches);
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", listener);
-    return () => {
-      window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", listener);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (darkMode) document.body.classList.add("dark-mode");
-    else document.body.classList.remove("dark-mode");
-  }, [darkMode]);
-
   return (
     <div className="app">
       <Sidebar navItems={pages} />

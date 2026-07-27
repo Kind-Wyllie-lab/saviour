@@ -3,7 +3,8 @@
         "_max_buffer_size": 2000,
         "_manual_control": true,
         "_print_received_data": false,
-        "name": ""
+        "name": "",
+        "location": ""
     },
     "zeroconf": {
         "_port": 5353,
@@ -65,5 +66,8 @@
         "notify_module_online": false,
         "notify_ptp_degraded": true,
         "notify_disk_space": true
+    },
+    "frontend": {
+        "accent_color": "#6495ed"
     }
 } 

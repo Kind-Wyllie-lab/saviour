@@ -4,6 +4,7 @@
   },
   "camera": {
     "monochrome": false,
+    "rotation": 0,
     "sensor_mode_index": 0,
     "width": 1080,
     "height": 1080,
@@ -15,6 +16,7 @@
     "exposure_time": 10000,
     "ae_enable": false,
     "brightness": 0,
+    "contrast": 1.0,
     "overlay_framerate_on_preview": false,
     "bitrate_mb": 2,
     "autofocus_mode": "manual",
@@ -23,6 +25,7 @@
   "loom_tracking": {
     "enabled": true,
     "roi_json_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_roi_and_line.json",
+    "max_full_rate_fps": 60,
     "process_width": 256,
     "thr_hi": 10.0,
     "gap_h_px": 15,
@@ -32,6 +35,7 @@
     "min_area_px": 50,
     "patience_frames": 1000,
     "hold_forever_when_still": true,
+    "enter_confirm_frames": 3,
     "smoothing_alpha": 0.3,
     "track_square_size_src": 150,
     "draw_track_square": true,
@@ -41,21 +45,33 @@
       "roi_bgr": [255, 0, 255],
       "rect_bgr": [0, 255, 255],
       "dot_bgr": [0, 0, 255],
-      "thickness": 2
+      "thickness": 2,
+      "zone_label_x_frac": 0.01,
+      "zone_label_y_frac": 0.95,
+      "zone_label_font_scale": 1.0
     }
   },
   "loom_stimulus": {
-  "enabled": true,
-  "texture_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png",
-  "initial_size_cm": 6.0,
-  "final_size_cm": 40.0,
-  "initial_pos_ndc": [0.5, 0.0],
-  "final_pos_ndc": [0.5, 0.0],
-  "travel_time_s": 5.0,
-  "loom_wait_time_s": 0.5,
-  "round_size": 5,
-  "image_angle_deg": 90.0,
-  "background_rgba": [0.5, 0.5, 0.5, 0.5]
+    "armed": false,
+    "texture_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png",
+    "initial_size_cm": 6.0,
+    "final_size_cm": 40.0,
+    "initial_pos_ndc": [0.5, 0.0],
+    "final_pos_ndc": [0.5, 0.0],
+    "travel_time_s": 5.0,
+    "loom_wait_time_s": 0.5,
+    "round_size": 5,
+    "image_angle_deg": 90.0,
+    "background_rgba": [0.5, 0.5, 0.5, 1.0],
+    "stimulus_monitor_index": 0,
+    "screen_width_cm": 105.41,
+    "screen_height_cm": 59.29,
+    "size_correction": 1.125,
+    "photodiode_box_px": 80,
+    "photodiode_y_ndc": 0.0,
+    "keepalive_interval_s": 10,
+    "keepalive_mode": "corner",
+    "x_offset_ndc": 0.0
   },
 
   "recording": {

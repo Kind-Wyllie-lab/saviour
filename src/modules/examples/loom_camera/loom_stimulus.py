@@ -1,4 +1,5 @@
 import os
+import signal
 from dataclasses import dataclass
 from typing import Literal, Optional
 import multiprocessing as mp
@@ -55,10 +56,10 @@ from OpenGL.raw.GL.VERSION.GL_3_0 import glBindVertexArray, glDeleteVertexArrays
 from OpenGL.raw.GL._types import GL_FALSE, GL_FLOAT, GL_UNSIGNED_INT
 
 from modules.examples.loom_camera.utils import framebuffer_size_callback, load_texture, vcalc, translate_matrix, \
-    scale_matrix
+    scale_matrix, scale_matrix_seperate
 
 
-LoomStimulusCommand = Literal["start", "stop", "shutdown", "ping"]
+LoomStimulusCommand = Literal["start", "stop", "abort", "shutdown", "ping"]
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,15 @@ class LoomStimulusConfig:
         Texture rotation.
     background_rgba : tuple of float
         Clear color.
+    stimulus_monitor_index : int
+        Which monitor (0 or 1, in raw glfw.get_monitors() order — not sorted
+        by X position, so no dependency on xrandr/cable layout) gets a
+        window showing the loom circle + photodiode. If a second monitor is
+        detected it automatically gets its own window for the
+        keepalive/near-test flash. There's no way to know in advance which
+        raw index corresponds to which physical screen — use the
+        near-screen test flash to check, and flip this if it's backwards.
+        Defaults to 0.
     """
     texture_path: str
     initial_size_cm: float
@@ -99,6 +109,15 @@ class LoomStimulusConfig:
     round_size: int
     image_angle_deg: float
     background_rgba: tuple[float, float, float, float]
+    stimulus_monitor_index: int = 0
+    screen_width_cm: float = 105.41
+    screen_height_cm: float = 59.29
+    size_correction: float = 1.125
+    photodiode_box_px: int = 80
+    photodiode_y_ndc: float = 0.0
+    keepalive_interval_s: float = 10.0
+    keepalive_mode: str = "corner"
+    x_offset_ndc: float = 0.0
 
 
 @dataclass
@@ -155,10 +174,16 @@ def run_loom_stimulus_with_ipc(
     background_rgba: Tuple[float, float, float, float],
     photodiode_box_px: int = 80,
     photodiode_y_ndc: float = 0.0,
-    monitor_index: Optional[int] = None,
+    screen_width_cm: float = 105.41,
+    screen_height_cm: float = 59.29,
+    size_correction: float = 1.125,
+    keepalive_interval_s: float = 10.0,
+    keepalive_mode: str = "corner",
+    x_offset_ndc: float = 0.0,
     fullscreen: bool = True,
     window_size_px: Tuple[int, int] = (1920, 1080),
     vsync: bool = True,
+    stimulus_monitor_index: int = 0,
 ) -> None:
     """
     Run the looming stimulus controlled by IPC commands instead of GPIO TTL.
@@ -189,14 +214,15 @@ def run_loom_stimulus_with_ipc(
         Photodiode marker square size in pixels.
     photodiode_y_ndc : float
         Y position for photodiode marker in NDC.
-    monitor_index : int or None
-        Which monitor to use for fullscreen (None -> primary).
     fullscreen : bool
-        Whether to open fullscreen on a monitor.
+        Whether to open fullscreen windows on the monitors (see
+        stimulus_monitor_index) rather than a single windowed-mode window.
     window_size_px : tuple
-        Windowed mode size.
+        Windowed mode size (fullscreen=False only — debug/testing use).
     vsync : bool
         Enable vsync.
+    stimulus_monitor_index : int
+        See LoomStimulusConfig.
 
     Notes
     -----
@@ -211,15 +237,35 @@ def run_loom_stimulus_with_ipc(
         except Exception:
             pass
 
+    # -------------------------------------------------------------------
+    # Force GLFW onto X11 / XWayland BEFORE glfw.init().
+    #
+    # Wayland forbids client-side window positioning (set_window_pos is a
+    # no-op), which the positioned-window technique below depends on. X11/
+    # XWayland allows it, so we drop any inherited WAYLAND_DISPLAY here.
+    # -------------------------------------------------------------------
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    os.environ.setdefault("DISPLAY", ":0")
+    try:
+        if hasattr(glfw, "PLATFORM") and hasattr(glfw, "PLATFORM_X11"):
+            glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)  # GLFW 3.4+
+    except Exception:
+        pass
+
     if not glfw.init():
         raise RuntimeError("Failed to initialize GLFW")
 
     window = None
+    near_window = None  # only created when a 2nd monitor exists
     shader_program = None
     vao = None
     vbo = None
     ebo = None
     texture = None
+
+    # Defined here so the span_debug status can reference them regardless of
+    # which branch (fullscreen / windowed) ran.
+    x0 = y0 = 0
 
     try:
         # -----------------------------
@@ -235,20 +281,62 @@ def run_loom_stimulus_with_ipc(
         glfw.window_hint(glfw.DECORATED, glfw.FALSE)
         glfw.window_hint(glfw.AUTO_ICONIFY, glfw.FALSE)
         glfw.window_hint(glfw.FOCUSED, glfw.TRUE)
-        mon = None
         monitors = glfw.get_monitors() or []
 
         if fullscreen:
+            # One borderless window per physical screen, addressed by raw
+            # glfw.get_monitors() order — no xrandr/X-position dependency at
+            # all.
+            #
+            # NOTE: this deliberately does NOT use GLFW's native
+            # fullscreen-on-monitor window creation (passing a monitor to
+            # create_window). Confirmed on hardware: under this rig's
+            # compositor stack (labwc + Xwayland-rootless, not a standalone
+            # Xorg server), the first such window created renders nothing at
+            # all — black, regardless of which monitor it targets — while
+            # the second one only ever shows its background clear. Since the
+            # failure tracked *creation order*, not *which monitor*, that was
+            # a WM/compositor-level fullscreen-request problem, not a
+            # monitor-selection bug. A plain floating window manually
+            # positioned with set_window_pos doesn't hit it and is proven to
+            # work on this exact stack, so that's the technique used here.
             if not monitors:
                 raise RuntimeError("No monitors detected by GLFW.")
-            if monitor_index is None:
-                mon = glfw.get_primary_monitor()
-            else:
-                mon = monitors[int(np.clip(monitor_index, 0, len(monitors) - 1))]
 
-            mode = glfw.get_video_mode(mon)
-            w, h = mode.size.width, mode.size.height
-            window = glfw.create_window(w, h, "Loom Stimulus", mon, None)
+            def _create_positioned_window(monitor, title: str):
+                vm = glfw.get_video_mode(monitor)
+                mx, my = glfw.get_monitor_pos(monitor)
+                mw, mh = vm.size.width, vm.size.height
+                glfw.window_hint(glfw.FLOATING, glfw.TRUE)
+                try:
+                    if hasattr(glfw, "POSITION_X"):
+                        glfw.window_hint(glfw.POSITION_X, mx)
+                        glfw.window_hint(glfw.POSITION_Y, my)
+                except Exception:
+                    pass
+                win = glfw.create_window(mw, mh, title, None, None)
+                if win is not None:
+                    glfw.set_window_pos(win, mx, my)
+                return win, (mx, my, mw, mh)
+
+            stim_idx = max(0, min(int(stimulus_monitor_index), len(monitors) - 1))
+            stim_monitor = monitors[stim_idx]
+            window, stim_rect = _create_positioned_window(stim_monitor, "Loom Stimulus")
+            x0, y0, w, h = stim_rect
+            selected = [stim_rect]
+
+            if len(monitors) >= 2:
+                near_idx = (stim_idx + 1) % len(monitors)
+                near_monitor = monitors[near_idx]
+                # Independent context (no share) — near_window only ever does
+                # raw glClearColor/glScissor/glClear (see
+                # _draw_near_monitor_effects), never a shader/VAO/texture
+                # draw call, so it has no need of the stim window's shared
+                # GL object namespace.
+                near_window, _ = _create_positioned_window(near_monitor, "Loom Stimulus (near)")
+                if near_window is None:
+                    _status({"type": "loom_stimulus_error",
+                             "error": "Failed to create near-monitor window — keepalive/near-test disabled"})
         else:
             w, h = int(window_size_px[0]), int(window_size_px[1])
             window = glfw.create_window(w, h, "Loom Stimulus", None, None)
@@ -260,9 +348,18 @@ def run_loom_stimulus_with_ipc(
         glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
         glfw.swap_interval(1 if vsync else 0)
 
-        glViewport(0, 0, w, h)
-        current_window_width = w
-        current_window_height = h
+        # Drive viewport from the FRAMEBUFFER, not the video mode.
+        current_window_width, current_window_height = glfw.get_framebuffer_size(window)
+        glViewport(0, 0, current_window_width, current_window_height)
+
+        _status({
+            "type": "span_debug",
+            "fb_wh": glfw.get_framebuffer_size(window),
+            "win_wh": glfw.get_window_size(window),
+            "n_monitors": len(monitors),
+            "selected_rects": selected if fullscreen else [],
+            "has_near_window": near_window is not None,
+        })
 
         # -----------------------------
         # Shaders + geometry + texture
@@ -341,35 +438,46 @@ def run_loom_stimulus_with_ipc(
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
         # -----------------------------
-        # Motion params (your original)
+        # Motion params
         # -----------------------------
+        # Each window is exactly one monitor now, so NDC 0.0 is that
+        # monitor's centre — x_offset_ndc nudges the stimulus left/right
+        # from there directly, no multi-monitor centre-pinning needed.
+        _cx = float(x_offset_ndc)
+        initial_pos_ndc = (_cx, initial_pos_ndc[1])
+        final_pos_ndc   = (_cx, final_pos_ndc[1])
+
         outward_vx = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
         outward_vy = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
         return_vx = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 0)
         return_vy = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 1)
+        screen_x = screen_width_cm
+        screen_y = screen_height_cm
+        correction = size_correction
+        # Separate x and y scale factors so the stimulus renders as a circle,
+        # not an oval — screen_width_cm/screen_height_cm (this monitor's
+        # physical size) aren't usually equal, so a single uniform NDC scale
+        # would squash the circle into an ellipse.
+        initial_scale_x = initial_size_cm / screen_x * correction
+        initial_scale_y = initial_size_cm / screen_y * correction
+        final_scale_x   = final_size_cm   / screen_x * correction
+        final_scale_y   = final_size_cm   / screen_y * correction
 
-        # Convert cm sizes to scale factors
-        # Keep your original calibration here if you had correction/screen_x.
-        # For now we interpret "cm" as arbitrary scale units; replace if needed.
-        # initial_scale = float(initial_size_cm)
-        # final_scale = float(final_size_cm)
-        screen_x = 105.41 * 2
-        screen_y = 59.29
-        correction = 1.125
-        initial_scale = initial_size_cm / screen_x * correction
-        final_scale = final_size_cm / screen_x * correction
-
-        outward_scale_rate = (final_scale - initial_scale) / float(travel_time_s)
-        return_scale_rate = (final_scale - initial_scale) / float(loom_wait_time_s)
+        outward_scale_x_rate = (final_scale_x - initial_scale_x) / float(travel_time_s)
+        outward_scale_y_rate = (final_scale_y - initial_scale_y) / float(travel_time_s)
+        return_scale_x_rate  = (final_scale_x - initial_scale_x) / float(loom_wait_time_s)
+        return_scale_y_rate  = (final_scale_y - initial_scale_y) / float(loom_wait_time_s)
 
         def _reset_motion():
             return {
                 "x": float(initial_pos_ndc[0]),
                 "y": float(initial_pos_ndc[1]),
-                "scale": float(initial_scale),
+                "scale_x": float(initial_scale_x),
+                "scale_y": float(initial_scale_y),
                 "vx": float(outward_vx),
                 "vy": float(outward_vy),
-                "scale_rate": float(outward_scale_rate),
+                "scale_x_rate": float(outward_scale_x_rate),
+                "scale_y_rate": float(outward_scale_y_rate),
                 "destination": tuple(final_pos_ndc),
                 "travel_state_outward": True,
             }
@@ -383,6 +491,56 @@ def run_loom_stimulus_with_ipc(
 
         animation_t0 = time.time()
         prev_elapsed = 0.0
+
+        # Keep-alive: prevent TV auto-dimming by drawing one imperceptible pixel
+        # on the near TV at the configured interval.
+        _keepalive_t0    = time.time()
+        _keepalive_phase = 0  # toggles between two visually identical grey values
+
+        # Near screen test flash (from "test_near_screen" command).
+        _near_test_until = 0.0
+
+        def _draw_near_monitor_effects(mon_w_px: int, mon_h_px: int, now: float) -> None:
+            """Test-flash + keep-alive drawing into the near_window's own
+            framebuffer (whatever GL context is currently bound)."""
+            nonlocal _keepalive_t0, _keepalive_phase
+            if now < _near_test_until:
+                glEnable(GL_SCISSOR_TEST)
+                glClearColor(0.85, 0.85, 0.85, 1.0)
+                glScissor(0, 0, mon_w_px, mon_h_px)
+                glClear(GL_COLOR_BUFFER_BIT)
+                glDisable(GL_SCISSOR_TEST)
+                glClearColor(*background_rgba)
+
+            if keepalive_interval_s > 0 and now - _keepalive_t0 >= keepalive_interval_s:
+                _keepalive_phase ^= 1
+                _keepalive_t0 = now
+                _bg = background_rgba[0]
+                glEnable(GL_SCISSOR_TEST)
+                if keepalive_mode == "pulse":
+                    _kv = min(1.0, _bg + 3/255) if _keepalive_phase else max(0.0, _bg - 3/255)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    glScissor(0, 0, mon_w_px, mon_h_px)
+                    glClear(GL_COLOR_BUFFER_BIT)
+                elif keepalive_mode == "distributed":
+                    _kv = min(1.0, _bg + 5/255) if _keepalive_phase else max(0.0, _bg - 5/255)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    for _px, _py in [
+                        (0,                  0),
+                        (mon_w_px - 16,      0),
+                        (0,                  mon_h_px - 16),
+                        (mon_w_px - 16,      mon_h_px - 16),
+                        (mon_w_px // 2 - 8,  mon_h_px // 2 - 8),
+                    ]:
+                        glScissor(_px, _py, 16, 16)
+                        glClear(GL_COLOR_BUFFER_BIT)
+                else:  # "corner" (default)
+                    _kv = min(1.0, _bg + 8/255) if _keepalive_phase else max(0.0, _bg - 8/255)
+                    glClearColor(_kv, _kv, _kv, 1.0)
+                    glScissor(0, 0, 16, 16)
+                    glClear(GL_COLOR_BUFFER_BIT)
+                glDisable(GL_SCISSOR_TEST)
+                glClearColor(*background_rgba)
 
         _status({"type": "stimulus_ready"})
 
@@ -399,17 +557,79 @@ def run_loom_stimulus_with_ipc(
                         start_requested = True
                         _status({"type": "start_received"})
                     elif cmd == "stop":
-                        # Do not hard-stop here — let the enter/leave edge
-                        # detection below call batch.on_leave(), which finishes
-                        # the current round of `round_size` looms before
-                        # stopping rather than cutting the animation off mid-batch.
+                        # Soft stop: finish the current round of `round_size`
+                        # looms before halting. The enter/leave edge detection
+                        # below calls batch.on_leave() to set the flag.
                         start_requested = False
                         _status({"type": "stop_received"})
+                    elif cmd == "abort":
+                        # Hard stop: immediately halt mid-round.
+                        start_requested = False
+                        batch.stop_now()
+                        motion = _reset_motion()
+                        _status({"type": "abort_received"})
                     elif cmd == "shutdown":
                         shutdown_requested = True
                         _status({"type": "shutdown_received"})
                     elif cmd == "ping":
                         _status({"type": "pong"})
+                    elif cmd == "test_near_screen":
+                        _near_test_until = time.time() + float(payload.get("duration_s", 2.0))
+                        _status({"type": "near_screen_test_started"})
+                    elif cmd == "reconfigure":
+                        # Hot-patch stimulus params without restarting the GL window.
+                        # stimulus_monitor_index is intentionally excluded — that
+                        # requires a full restart (different window/monitor).
+                        p = payload
+                        background_rgba      = tuple(p.get("background_rgba", background_rgba))
+                        photodiode_box_px    = int(p.get("photodiode_box_px", photodiode_box_px))
+                        photodiode_y_ndc     = float(p.get("photodiode_y_ndc", photodiode_y_ndc))
+                        initial_size_cm      = float(p.get("initial_size_cm", initial_size_cm))
+                        final_size_cm        = float(p.get("final_size_cm", final_size_cm))
+                        screen_width_cm      = float(p.get("screen_width_cm", screen_width_cm))
+                        screen_height_cm     = float(p.get("screen_height_cm", screen_height_cm))
+                        size_correction      = float(p.get("size_correction", size_correction))
+                        travel_time_s        = float(p.get("travel_time_s", travel_time_s))
+                        loom_wait_time_s     = float(p.get("loom_wait_time_s", loom_wait_time_s))
+                        batch.round_size     = int(p.get("round_size", batch.round_size))
+                        keepalive_interval_s = float(p.get("keepalive_interval_s", keepalive_interval_s))
+                        keepalive_mode       = str(p.get("keepalive_mode", keepalive_mode))
+                        x_offset_ndc         = float(p.get("x_offset_ndc", x_offset_ndc))
+                        _ini = p.get("initial_pos_ndc")
+                        _fin = p.get("final_pos_ndc")
+                        _ini_ndc = tuple(_ini) if _ini is not None else initial_pos_ndc
+                        _fin_ndc = tuple(_fin) if _fin is not None else final_pos_ndc
+                        # Re-apply the offset from this monitor's centre (NDC 0.0).
+                        _cx = float(x_offset_ndc)
+                        _ini_ndc = (_cx, _ini_ndc[1])
+                        _fin_ndc = (_cx, _fin_ndc[1])
+                        initial_pos_ndc = _ini_ndc
+                        final_pos_ndc   = _fin_ndc
+                        # Recompute all derived motion params (take effect on next _reset_motion()).
+                        initial_scale_x      = initial_size_cm / screen_width_cm * size_correction
+                        initial_scale_y      = initial_size_cm / screen_height_cm * size_correction
+                        final_scale_x        = final_size_cm   / screen_width_cm * size_correction
+                        final_scale_y        = final_size_cm   / screen_height_cm * size_correction
+                        outward_vx           = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 0)
+                        outward_vy           = vcalc(initial_pos_ndc, final_pos_ndc, travel_time_s, 1)
+                        return_vx            = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 0)
+                        return_vy            = vcalc(initial_pos_ndc, final_pos_ndc, loom_wait_time_s, 1)
+                        outward_scale_x_rate = (final_scale_x - initial_scale_x) / float(travel_time_s)
+                        outward_scale_y_rate = (final_scale_y - initial_scale_y) / float(travel_time_s)
+                        return_scale_x_rate  = (final_scale_x - initial_scale_x) / float(loom_wait_time_s)
+                        return_scale_y_rate  = (final_scale_y - initial_scale_y) / float(loom_wait_time_s)
+                        # Reload texture if path or angle changed.
+                        _new_path  = p.get("texture_path")
+                        _new_angle = p.get("image_angle_deg")
+                        if _new_path is not None or _new_angle is not None:
+                            texture_path    = str(_new_path)  if _new_path  is not None else texture_path
+                            image_angle_deg = float(_new_angle) if _new_angle is not None else image_angle_deg
+                            try:
+                                OpenGL.GL.glDeleteTextures(1, [texture])
+                            except Exception:
+                                pass
+                            texture = load_texture(texture_path, image_angle_deg)
+                        _status({"type": "reconfigure_applied"})
             except Exception:
                 pass
 
@@ -439,8 +659,9 @@ def run_loom_stimulus_with_ipc(
 
             last_start_requested = start_requested
 
-            # framebuffer size
+            # framebuffer size (spans both monitors)
             current_window_width, current_window_height = glfw.get_framebuffer_size(window)
+            glViewport(0, 0, current_window_width, current_window_height)
 
             # Clear
             glUseProgram(shader_program)
@@ -459,13 +680,18 @@ def run_loom_stimulus_with_ipc(
 
                 motion["x"] += motion["vx"] * dt
                 motion["y"] += motion["vy"] * dt
-                motion["scale"] += motion["scale_rate"] * dt
+                motion["scale_x"] += motion["scale_x_rate"] * dt
+                motion["scale_y"] += motion["scale_y_rate"] * dt
 
                 if motion["travel_state_outward"]:
                     # Draw stimulus only outward like your original
+                    # numpy is row-major; OpenGL reads flat data as column-major (GL_FALSE),
+                    # so numpy A@B becomes B@A in OpenGL's column-vector convention.
+                    # We want OpenGL to do: translate(centre) @ scale(radius).
+                    # Therefore in numpy we must write: scale @ translate (reversed).
                     transform = np.identity(4, dtype=np.float32)
                     transform = np.matmul(translate_matrix(motion["x"], motion["y"], 0.0), transform)
-                    transform = np.matmul(scale_matrix(motion["scale"]), transform)
+                    transform = np.matmul(scale_matrix_seperate(motion["scale_x"], motion["scale_y"]), transform)
 
                     loc = glGetUniformLocation(shader_program, "transform")
                     glUniformMatrix4fv(loc, 1, GL_FALSE, transform)
@@ -484,7 +710,7 @@ def run_loom_stimulus_with_ipc(
                     y_ok = (motion["vy"] < 0 and motion["y"] < motion["destination"][1]) or \
                            (motion["vy"] > 0 and motion["y"] > motion["destination"][1]) or \
                            (motion["vy"] == 0)
-                    s_ok = (motion["scale"] >= final_scale) if is_outward else (motion["scale"] <= initial_scale)
+                    s_ok = (motion["scale_x"] >= final_scale_x) if is_outward else (motion["scale_x"] <= initial_scale_x)
                     return x_ok and y_ok and s_ok
 
                 if _dest_reached(motion["travel_state_outward"]):
@@ -492,22 +718,26 @@ def run_loom_stimulus_with_ipc(
                         # outward -> return leg
                         motion["x"] = float(final_pos_ndc[0])
                         motion["y"] = float(final_pos_ndc[1])
-                        motion["scale"] = float(final_scale)
+                        motion["scale_x"] = float(final_scale_x)
+                        motion["scale_y"] = float(final_scale_y)
                         motion["destination"] = tuple(initial_pos_ndc)
                         motion["travel_state_outward"] = False
                         motion["vx"] = -float(return_vx)
                         motion["vy"] = -float(return_vy)
-                        motion["scale_rate"] = -float(return_scale_rate)
+                        motion["scale_x_rate"] = -float(return_scale_x_rate)
+                        motion["scale_y_rate"] = -float(return_scale_y_rate)
                     else:
                         # return -> outward completes one round-trip
                         motion["x"] = float(initial_pos_ndc[0])
                         motion["y"] = float(initial_pos_ndc[1])
-                        motion["scale"] = float(initial_scale)
+                        motion["scale_x"] = float(initial_scale_x)
+                        motion["scale_y"] = float(initial_scale_y)
                         motion["destination"] = tuple(final_pos_ndc)
                         motion["travel_state_outward"] = True
                         motion["vx"] = float(outward_vx)
                         motion["vy"] = float(outward_vy)
-                        motion["scale_rate"] = float(outward_scale_rate)
+                        motion["scale_x_rate"] = float(outward_scale_x_rate)
+                        motion["scale_y_rate"] = float(outward_scale_y_rate)
 
                         batch.on_completed_round_trip()
                         _status({"type": "round_trip_completed", "count_in_round": batch.round_trip_counter_in_round})
@@ -537,12 +767,31 @@ def run_loom_stimulus_with_ipc(
             if box_h > 0 and box_w > 0:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(*marker_rgba)
-                glScissor(current_window_width - box_w, y_start, box_w, box_h)
+                # Right edge of the stim window — its own monitor's outer/far
+                # edge relative to the arena.
+                box_x = current_window_width - box_w
+                glScissor(box_x, y_start, box_w, box_h)
                 glClear(GL_COLOR_BUFFER_BIT)
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
 
+            _now = time.time()
+
             glfw.swap_buffers(window)
+
+            # The near monitor is a separate real window, not a scissored
+            # region of this one — draw into it on its own context.
+            if near_window is not None:
+                glfw.make_context_current(near_window)
+                glfw.swap_interval(1 if vsync else 0)  # separate context, own swap-interval state
+                _near_w, _near_h = glfw.get_framebuffer_size(near_window)
+                glViewport(0, 0, _near_w, _near_h)
+                glClearColor(*background_rgba)
+                glClear(GL_COLOR_BUFFER_BIT)
+                _draw_near_monitor_effects(_near_w, _near_h, _now)
+                glfw.swap_buffers(near_window)
+                glfw.make_context_current(window)  # restore for next frame's drawing
+
             glfw.poll_events()
 
         _status({"type": "stimulus_exited"})
@@ -574,6 +823,11 @@ def run_loom_stimulus_with_ipc(
                 glfw.destroy_window(window)
         except Exception:
             pass
+        try:
+            if near_window is not None:
+                glfw.destroy_window(near_window)
+        except Exception:
+            pass
         glfw.terminate()
 
 
@@ -602,6 +856,14 @@ def loom_stimulus_process_main(
     cfg : LoomStimulusConfig
         Renderer configuration.
     """
+    # Die immediately if the parent process is killed (even with SIGKILL).
+    # daemon=True only handles clean parent exit; prctl handles the rest.
+    try:
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _libc.prctl(1, signal.SIGKILL, 0, 0, 0)  # PR_SET_PDEATHSIG = 1
+    except Exception:
+        pass
+
     status_queue.put({"type": "loom_stimulus_started"})
 
     try:
@@ -618,6 +880,15 @@ def loom_stimulus_process_main(
             repetitions_per_round=stim_cfg.round_size,
             image_angle_deg=stim_cfg.image_angle_deg,
             background_rgba=stim_cfg.background_rgba,
+            photodiode_box_px=stim_cfg.photodiode_box_px,
+            photodiode_y_ndc=stim_cfg.photodiode_y_ndc,
+            screen_width_cm=stim_cfg.screen_width_cm,
+            screen_height_cm=stim_cfg.screen_height_cm,
+            size_correction=stim_cfg.size_correction,
+            stimulus_monitor_index=stim_cfg.stimulus_monitor_index,
+            keepalive_interval_s=stim_cfg.keepalive_interval_s,
+            keepalive_mode=stim_cfg.keepalive_mode,
+            x_offset_ndc=stim_cfg.x_offset_ndc,
         )
     except Exception as exc:
         status_queue.put({"type": "loom_stimulus_error", "error": str(exc)})
@@ -647,18 +918,12 @@ class LoomStimulusController:
         if self._proc is not None and self._proc.is_alive():
             return
 
-        # X11 fallback
+        # Force X11: the renderer needs client-side window positioning
+        # (set_window_pos), which Wayland doesn't allow. Drop any inherited
+        # WAYLAND_DISPLAY so GLFW uses X11/XWayland.
         os.environ.setdefault("DISPLAY", ":0")
         os.environ.setdefault("XAUTHORITY", "/home/pi/.Xauthority")
-
-        # Wayland: discover the compositor socket if we're running as root
-        # (systemd service doesn't inherit the user session environment).
-        if not os.environ.get("WAYLAND_DISPLAY"):
-            import glob
-            sockets = sorted(glob.glob("/run/user/*/wayland-0"))
-            if sockets:
-                os.environ["XDG_RUNTIME_DIR"] = os.path.dirname(sockets[0])
-                os.environ["WAYLAND_DISPLAY"] = os.path.basename(sockets[0])
+        os.environ.pop("WAYLAND_DISPLAY", None)
 
         self._proc = mp.Process(
             target=loom_stimulus_process_main,
@@ -684,6 +949,12 @@ class LoomStimulusController:
         self.start()
         self._cmd_q.put((str(cmd), payload))
 
+    def reconfigure(self, payload: dict) -> None:
+        """Hot-patch stimulus params into the running renderer without restarting the GL window."""
+        if self._proc is None or not self._proc.is_alive():
+            return
+        self._cmd_q.put(("reconfigure", payload))
+
     def poll_status(self, max_messages: int = 10) -> list[dict]:
         """
         Drain status messages from the stimulus process.
@@ -707,13 +978,17 @@ class LoomStimulusController:
         return out
 
     def shutdown(self, timeout_s: float = 2.0) -> None:
-        """Request shutdown and join/terminate best-effort."""
+        """Request shutdown and join/terminate/kill best-effort."""
         if self._proc is None:
             return
         try:
             self.send("shutdown")
             self._proc.join(timeout=float(timeout_s))
             if self._proc.is_alive():
-                self._proc.terminate()
+                self._proc.terminate()          # SIGTERM
+                self._proc.join(timeout=1.0)
+            if self._proc.is_alive():
+                self._proc.kill()               # SIGKILL — last resort
+                self._proc.join(timeout=1.0)
         finally:
             self._proc = None

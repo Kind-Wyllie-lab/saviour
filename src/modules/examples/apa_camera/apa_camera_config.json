@@ -4,6 +4,7 @@
     },
     "camera": {
         "monochrome": false,
+        "rotation": 0,
         "sensor_mode_index": 0,
         "width": 1080,
         "height": 1080,
@@ -15,6 +16,7 @@
         "exposure_time": 10000,
         "ae_enable": false,
         "brightness": 0,
+        "contrast": 1.0,
         "overlay_framerate_on_preview": false,
         "bitrate_mb": 2,
         "autofocus_mode": "manual",

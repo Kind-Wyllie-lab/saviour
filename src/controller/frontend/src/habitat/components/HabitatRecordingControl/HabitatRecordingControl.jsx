@@ -64,7 +64,10 @@ export default function HabitatRecordingControl({ sessionList = [], modules = {}
   } else if (hasFault) {
     stateClass = "hrc--fault"; stateLabel = "Fault";
   } else {
-    stateClass = "hrc--ready"; stateLabel = "Ready";
+    // "Idle", not "Ready" — module.status === "READY" is a separate, per-module
+    // concept (passed pre-flight checks); this just means no session is
+    // active/starting/faulted right now.
+    stateClass = "hrc--ready"; stateLabel = "Idle";
   }
 
   const cameraStr = isRecording || isStarting

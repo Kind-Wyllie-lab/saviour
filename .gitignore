@@ -73,3 +73,6 @@ log/
 # Node
 node_modules/
 .claude/worktrees/
+
+# MkDocs build output
+site/

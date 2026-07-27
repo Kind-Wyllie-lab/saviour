@@ -68,6 +68,7 @@
         "notify_disk_space": true
     },
     "frontend": {
-        "accent_color": "#6495ed"
+        "accent_color": "#6495ed",
+        "dark_mode": true
     }
 } 

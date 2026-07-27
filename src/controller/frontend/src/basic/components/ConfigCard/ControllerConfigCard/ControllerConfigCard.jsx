@@ -221,17 +221,35 @@ function ControllerConfigCard() {
 
             {/* FRONTEND */}
             {activeTab === "frontend" && (
-              <div className="form-field">
-                <label>Accent color:</label>
-                <input
-                  type="color"
-                  value={formData?.frontend?.accent_color || DEFAULT_ACCENT_COLOR}
-                  onChange={e => handleChange(["frontend", "accent_color"], e)}
-                />
-                <span className="frontend-accent-hint">
-                  Applied live across every dashboard variant on save — buttons, links, and highlights.
-                </span>
-              </div>
+              <>
+                <div className="form-field">
+                  <label>Accent color:</label>
+                  <input
+                    type="color"
+                    value={formData?.frontend?.accent_color || DEFAULT_ACCENT_COLOR}
+                    onChange={e => handleChange(["frontend", "accent_color"], e)}
+                  />
+                  <span className="frontend-accent-hint">
+                    Applied live across every dashboard variant on save — buttons, links, and highlights.
+                  </span>
+                </div>
+                <div className="form-field">
+                  <label>Dark mode:</label>
+                  <label className="toggle-switch">
+                    <input
+                      type="checkbox"
+                      checked={formData?.frontend?.dark_mode ?? true}
+                      onChange={e => handleChange(["frontend", "dark_mode"], e)}
+                    />
+                    <span className="toggle-switch-track">
+                      <span className="toggle-switch-thumb" />
+                    </span>
+                  </label>
+                  <span className="frontend-accent-hint">
+                    Applied live across every dashboard variant on save.
+                  </span>
+                </div>
+              </>
             )}
           </div>
 

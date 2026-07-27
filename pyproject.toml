@@ -34,11 +34,15 @@ dependencies = [
     "zeroconf>=0.146.3",
     "Flask>=2.2.6",
     "Flask-SocketIO>=5.5.1",
+    "Werkzeug>=2.2.6",
     "opencv-python>=4.0.0",
     "SoundCard>=0.4.4",
     "soundfile>=0.13.1",
     "glfw>=2.5.0",
-    "PyOpenGL>=3.1.0"
+    "PyOpenGL>=3.1.0",
+    "Pillow>=10.0.0",
+    "pyserial>=3.5",
+    "gpiozero>=2.0"
 ]
 
 [tool.hatch.build]

@@ -15,6 +15,7 @@ Author: Paul Rignanese / Andrew SG
 import json
 import os
 import time
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
 
@@ -1044,8 +1045,9 @@ class LoomCameraModule(CameraBase):
                 with open(roi_path, "r") as f:
                     payload = json.load(f)
                 return jsonify(payload), 200
-            except Exception as e:
-                return jsonify({"error": f"Failed reading ROI JSON: {e}"}), 500
+            except Exception:
+                logging.exception("Failed reading ROI JSON")
+                return jsonify({"error": "Failed reading ROI JSON"}), 500
 
         @self.monitor_stream.app.route("/roi", methods=["POST"])
         def roi_post():

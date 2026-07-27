@@ -76,3 +76,7 @@ node_modules/
 
 # MkDocs build output
 site/
+
+# Generated run output — never meant to be committed
+framesync_summary.csv
+saviour_uninstall_summary.txt

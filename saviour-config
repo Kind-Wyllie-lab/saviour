@@ -188,6 +188,61 @@ admin_password() {
         10 $W
 }
 
+# researcher/sidbit are human-typed logins for connecting to the Samba share
+# from a researcher's own machine (sidbit is also the Samba admin user, with
+# full read/write/delete). Each gets a random initial password the first time
+# configure_samba_share() creates it (see there); this menu lets an admin set
+# a memorable one instead, or rotate it later without reconfiguring the device.
+samba_password() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nThe Samba share only exists on a controller." \
+            8 $W
+        return
+    fi
+
+    if ! pdbedit -Lu researcher > /dev/null 2>&1 && ! pdbedit -Lu sidbit > /dev/null 2>&1; then
+        whiptail --title "Not Available" \
+            --msgbox "\nSamba isn't configured yet -- configure this device's role first." \
+            8 $W
+        return
+    fi
+
+    local sysuser
+    sysuser=$(wt --title "Reset Samba Share Password" \
+        --menu "\nWhich share login should get a new password?\n\nUsers connect to the share from their own computer with one of these." \
+        14 $W 2 \
+        "researcher" "Regular read/write access" \
+        "sidbit"     "Admin access (full control over the share)") || return
+
+    local new_pass confirm_pass
+    while true; do
+        new_pass=$(wt --title "New Password for $sysuser" \
+            --passwordbox "\nEnter a new Samba password for '$sysuser' (min 8 characters):" \
+            9 $W) || return
+        if [ "${#new_pass}" -lt 8 ]; then
+            whiptail --title "Too Short" --msgbox "\nPassword must be at least 8 characters." 8 $W
+            continue
+        fi
+        confirm_pass=$(wt --title "Confirm Password" \
+            --passwordbox "\nRe-enter the new password to confirm:" \
+            9 $W) || return
+        if [ "$new_pass" != "$confirm_pass" ]; then
+            whiptail --title "Mismatch" --msgbox "\nPasswords did not match -- try again." 8 $W
+            continue
+        fi
+        break
+    done
+
+    printf '%s\n%s\n' "$new_pass" "$new_pass" | smbpasswd -s -a "$sysuser" > /dev/null
+    log "Samba password for '$sysuser' reset via saviour-config"
+
+    whiptail --title "Password Updated" \
+        --msgbox "\nThe Samba password for '$sysuser' has been updated.\n\nShare it with whoever needs '$sysuser' access to connect from their own machine." \
+        10 $W
+}
+
 run_mend() {
     local mend_script="$DIR/mend.sh"
     if [ ! -f "$mend_script" ]; then
@@ -222,10 +277,11 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 7 \
+            $H $W 8 \
             "configure" "Configure this device  (role / type)" \
             "network"   "Network settings  (controller only)" \
             "password"  "Reset web UI admin password  (controller only)" \
+            "samba"     "Reset Samba share password  (controller only)" \
             "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
             "view"      "View current configuration" \
             "mend"      "Repair / update this device" \
@@ -235,6 +291,7 @@ main_menu() {
             configure) configure_device ;;
             network)   network_settings ;;
             password)  admin_password ;;
+            samba)     samba_password ;;
             refresh)   clone_fix_menu ;;
             view)      view_config ;;
             mend)      run_mend ;;
@@ -691,15 +748,37 @@ configure_samba_share() {
     chown pi:saviour "/home/pi/${SHARENAME}"
     chmod 2775 "/home/pi/${SHARENAME}"
 
-    # Random password for saviour_module
+    # saviour_module is a machine account (modules authenticate with it via
+    # push_credentials.sh) and its password regenerates every run, same as
+    # before. researcher/sidbit are human-typed logins for connecting to the
+    # share from a researcher's own machine (sidbit is also the Samba admin
+    # user) -- only seed a random password the first time each account is
+    # created; after that, leave it alone so reconfiguring this device
+    # doesn't silently invalidate a password a lab has already shared with
+    # its members. Use the "Reset Samba share password" menu to change them
+    # deliberately.
     mkdir -p /etc/saviour
-    local module_pass
+    local module_pass researcher_pass="" sidbit_pass=""
     module_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
-    tee /etc/saviour/samba_credentials > /dev/null <<CREDS
-username=saviour_module
-password=${module_pass}
-CREDS
+    pdbedit -Lu researcher > /dev/null 2>&1 || researcher_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+    pdbedit -Lu sidbit     > /dev/null 2>&1 || sidbit_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+
+    {
+        echo "username=saviour_module"
+        echo "password=${module_pass}"
+        if [ -n "$researcher_pass" ]; then
+            echo ""
+            echo "username=researcher (initial password -- change via saviour-config)"
+            echo "password=${researcher_pass}"
+        fi
+        if [ -n "$sidbit_pass" ]; then
+            echo ""
+            echo "username=sidbit (initial password -- change via saviour-config)"
+            echo "password=${sidbit_pass}"
+        fi
+    } | tee /etc/saviour/samba_credentials > /dev/null
     chmod 600 /etc/saviour/samba_credentials
+    log "Samba credentials written -- retrieve with: sudo cat /etc/saviour/samba_credentials"
 
     # smb.conf
     [ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
@@ -729,8 +808,8 @@ CREDS
 EOF
 
     printf '%s\n%s\n' "$module_pass" "$module_pass" | smbpasswd -s -a saviour_module > /dev/null
-    printf 'getmyfiles\ngetmyfiles\n'               | smbpasswd -s -a researcher     > /dev/null
-    printf 'espressocreme\nespressocreme\n'          | smbpasswd -s -a sidbit         > /dev/null
+    [ -n "$researcher_pass" ] && printf '%s\n%s\n' "$researcher_pass" "$researcher_pass" | smbpasswd -s -a researcher > /dev/null
+    [ -n "$sidbit_pass" ]     && printf '%s\n%s\n' "$sidbit_pass" "$sidbit_pass"         | smbpasswd -s -a sidbit     > /dev/null
 
     run_logged systemctl restart smbd nmbd
     run_logged systemctl enable smbd nmbd

@@ -7,8 +7,8 @@
 # single biggest lever on multiclone.sh's flash time -- a full 64GB card
 # is usually only a few GB actually used.
 #
-# Usage: sudo ./capture_master_image.sh <source_device> <output.img>
-# Example: sudo ./capture_master_image.sh /dev/mmcblk0 /home/pi/saviour-master.img
+# Usage: sudo scripts/capture_master_image.sh <source_device> <output.img>
+# Example: sudo scripts/capture_master_image.sh /dev/mmcblk0 /home/pi/saviour-master.img
 #
 # The source device must be a real Raspberry Pi OS card: partition 1 =
 # vfat (boot), partition 2 = ext4 (root). Run this against a template
@@ -117,4 +117,4 @@ echo
 echo "=== Done ==="
 echo "Master image: $OUT_IMG"
 ls -lh "$OUT_IMG"
-echo "Use with: sudo ./multiclone.sh $OUT_IMG <device1> [device2] ..."
+echo "Use with: sudo scripts/multiclone.sh $OUT_IMG <device1> [device2] ..."

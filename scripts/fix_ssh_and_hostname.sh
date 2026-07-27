@@ -8,8 +8,8 @@
 # keys and sets a temporary hostname if needed, unmounts. Only touches
 # /etc/ssh and /etc/hostname/hosts; no data loss.
 #
-# Usage: sudo ./fix_ssh_and_hostname.sh <device1> [device2] ...
-# Example: sudo ./fix_ssh_and_hostname.sh sda sdb sdc sdd
+# Usage: sudo scripts/fix_ssh_and_hostname.sh <device1> [device2] ...
+# Example: sudo scripts/fix_ssh_and_hostname.sh sda sdb sdc sdd
 
 set -euo pipefail
 

@@ -4,8 +4,8 @@
 # writes interrupted during ungraceful power-off.
 #
 # Usage:
-#   ./repair_null_bytes.sh            # run from repo root, or
-#   bash /usr/local/src/saviour/repair_null_bytes.sh
+#   scripts/repair_null_bytes.sh            # run from repo root, or
+#   bash /usr/local/src/saviour/scripts/repair_null_bytes.sh
 
 set -euo pipefail
 

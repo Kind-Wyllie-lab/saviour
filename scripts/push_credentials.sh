@@ -4,11 +4,11 @@
 # Samba credentials and controller IP in its base_config.json.
 #
 # Usage:
-#   ./push_credentials.sh <module_ip> [<module_ip> ...]
+#   scripts/push_credentials.sh <module_ip> [<module_ip> ...]
 #
 # Examples:
-#   ./push_credentials.sh 10.0.3.10
-#   ./push_credentials.sh 10.0.3.10 10.0.3.11 10.0.3.12
+#   scripts/push_credentials.sh 10.0.3.10
+#   scripts/push_credentials.sh 10.0.3.10 10.0.3.11 10.0.3.12
 
 set -Eeuo pipefail
 trap 'rc=$?; echo "push_credentials.sh failed at line $LINENO (exit $rc)"' ERR

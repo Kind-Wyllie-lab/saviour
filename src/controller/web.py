@@ -32,6 +32,7 @@ from abc import ABC
 from dataclasses import asdict
 
 from src.controller.config import Config
+from src.shared.zip_extract import extract_preserving_permissions
 
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -1319,8 +1320,7 @@ class Web(ABC):
                     extract_dir = "/tmp/saviour_update"
                     shutil.rmtree(extract_dir, ignore_errors=True)
                     os.makedirs(extract_dir)
-                    with zipfile.ZipFile(_UPDATE_ZIP) as z:
-                        z.extractall(extract_dir)
+                    extract_preserving_permissions(_UPDATE_ZIP, extract_dir)
                     contents = os.listdir(extract_dir)
                     source = extract_dir
                     if (len(contents) == 1
@@ -1347,6 +1347,29 @@ class Web(ABC):
                             "pip install --no-index failed (new dependencies may need "
                             "a manual `pip install .` with internet access)"
                         )
+                    # Rebuild frontend so JSX changes ship with the update.
+                    frontend_dir = "/usr/local/src/saviour/src/controller/frontend"
+                    npm_bin = shutil.which("npm")
+                    if not npm_bin:
+                        import glob as _glob
+                        candidates = sorted(_glob.glob("/home/pi/.nvm/versions/node/*/bin/npm"))
+                        npm_bin = candidates[-1] if candidates else None
+                    if npm_bin and os.path.isdir(frontend_dir):
+                        self.socketio.emit("deploy_update_status", {"stage": "building_frontend"})
+                        self.logger.info("Rebuilding frontend after update...")
+                        subprocess.run([npm_bin, "install", "--silent"],
+                                       cwd=frontend_dir, capture_output=True)
+                        build = subprocess.run([npm_bin, "run", "build"],
+                                               cwd=frontend_dir, capture_output=True)
+                        if build.returncode == 0:
+                            self.logger.info("Frontend rebuilt successfully")
+                        else:
+                            self.logger.warning(
+                                "Frontend build failed after update: "
+                                + build.stderr.decode(errors="replace")
+                            )
+                    else:
+                        self.logger.warning("npm not found — frontend not rebuilt after update")
                 except Exception as e:
                     self.logger.error(f"Controller update failed: {e}")
                     self.socketio.emit("deploy_update_error", {"error": str(e)})

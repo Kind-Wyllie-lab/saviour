@@ -58,7 +58,7 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       onTabChange={setActiveTab}
       tabSectionMap={TAB_COPY_SECTION}
       markSaved={markSaved}
-      sidebar={module.type.includes("camera") ? <LivestreamCard module={module} /> : null}
+      sidebar={module.type?.includes("camera") ? <LivestreamCard module={module} /> : null}
     >
       {/* BASIC */}
       {activeTab === "basic" && (

@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import APAFullscreenVideo from "../APAFullscreenVideo/APAFullscreenVideo";
 import "./APALivestreamCard.css";
 
 function APALivestreamCard({ module, moduleList }) {
   const [showStream, setShowStream] = useState(true); // Show placeholder vs stream
   const [fullscreen, setFullscreen] = useState(false); // Track fullscreen
-  const [lastFrameTime, setLastFrameTime] = useState(Date.now());
   const [streamKey, setStreamKey] = useState(Date.now());
 
   return (
@@ -20,10 +19,10 @@ function APALivestreamCard({ module, moduleList }) {
           {showStream ? (
             <div className="stream-video stream-video--clickable" onClick={() => setFullscreen(true)}>
               <img
-                src={`http://${module.ip}:8080/video_feed`}
+                key={streamKey}
+                src={`http://${module.ip}:8080/video_feed?t=${streamKey}`}
                 alt={`Stream for ${module.id}`}
-                onLoad={() => setLastFrameTime(Date.now())}
-                onError={(e) => {
+                onError={() => {
                   console.log("Stream error, forcing reconnect");
                   setStreamKey(Date.now());
                 }}

@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
-import App from './loom/App';
+import ThemedApp from './ThemedApp';
 import AuthGate from './basic/components/AuthGate/AuthGate';
 import ChangePasswordModal from './basic/components/ChangePasswordModal/ChangePasswordModal';
 import { BrowserRouter } from "react-router-dom";
@@ -12,7 +12,7 @@ root.render(
     <BrowserRouter>
       <AuthGate />
       <ChangePasswordModal />
-      <App />
+      <ThemedApp />
     </BrowserRouter>
   </React.StrictMode>
 );

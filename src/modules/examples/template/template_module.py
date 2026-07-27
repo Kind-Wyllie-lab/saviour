@@ -9,6 +9,7 @@ Created: 05/02/2026
 # Base Imports
 import sys
 import os
+import random
 import subprocess
 from typing import Optional
 import time
@@ -23,83 +24,61 @@ class TemplateModule(Module):
 
         self.config.load_module_config("template_config.json")
 
-
-        self.module_checks = {
-            self._check_something,
-            self._check_something_else
-        }
-
-        self.template_commands = {
-            "do_this": self._do_this,
-            "get_something": self._get_something,
-            "do_that": self._do_that
-        }
-
-        self.command.set_commands(self.template_commands)
-
-        # Intialise special stuff
+        # @command()/@check()-decorated methods below are discovered automatically
+        # by Module.__init__ — no manual dict/list registration needed.
 
 
     @command()
-    def _do_this(self):
-        x = self.config.get("template.x", 2) 
-        y = self.config.get("template.y", 3) 
-        timestamp = time.time_ns()
+    def do_this(self):
+        x = self.config.get("template.x", 2)
+        y = self.config.get("template.y", 3)
 
         # Do something
-        d = []
-        for i in range(10):
-            z = x + (i**y)
-            d.append[z]
+        d = [x + (i ** y) for i in range(10)]
+        return {"result": "success", "output": d}
 
 
     @command()
-    def _get_something(self):
-        response = {
-            "something": random.randint(1,100),
-            "something_else": random.randint(1,100)
+    def get_something(self):
+        return {
+            "something": random.randint(1, 100),
+            "something_else": random.randint(1, 100),
         }
-        return response
 
 
     @command()
-    def _do_that(self):
-        cmd = [
-            "touch", "that.txt"
-        ]
-        subprocess.run(cmd)
+    def do_that(self):
+        subprocess.run(["touch", "that.txt"])
 
 
     """Config"""
-    def configure_module(self, updated_keys: Optional[list[str]]):
-        # Configure self however necessary
-        special_key = "x"
-        if special_key in updated_keys:
-            self.logger.info(f"{special_key} was changed!")
+    def configure_module_special(self, updated_keys: Optional[list[str]]):
+        # Called whenever module-specific config changes e.g. reconfigure hardware here
+        if updated_keys and "template.x" in updated_keys:
+            self.logger.info("template.x was changed!")
 
 
     """Recording"""
-    def _start_new_recording(self):
+    def _start_new_recording(self) -> bool:
         # Start recording session
-        pass
-    
+        return True
 
-    def _start_next_recording_segment(self):
+
+    def _start_next_recording_segment(self) -> bool:
         # Segment based recording
-        pass
+        return True
 
 
-    def _stop_recording(self):
-        pass
+    def _stop_recording(self) -> bool:
+        return True
 
 
     """Self Check"""
     @check()
     def _check_something(self):
-        if self.config.get("x") == self.config.get("y"):
+        if self.config.get("template.x") == self.config.get("template.y"):
             return False, "x must not equal y"
-        else: 
-            return True
+        return True, "x != y"
 
 def main():
     template = TemplateModule()

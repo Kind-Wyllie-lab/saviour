@@ -23,7 +23,6 @@ import datetime
 import json
 import numpy as np
 import cv2
-from flask import Flask, Response
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -33,6 +32,7 @@ import signal
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.module import Module, command
+from modules.mjpeg_stream import MJPEGStreamServer
 
 
 # Global GPIO cleanup function
@@ -119,13 +119,14 @@ class TTLModule(Module):
         self._pin_test_stop_flags: dict = {}
 
         # Monitoring stream state
-        self.monitoring_app = Flask(__name__)
-        self.monitoring_server = None
-        self.monitoring_server_thread = None
+        self.monitor_stream = MJPEGStreamServer(
+            render_fn=self._render_monitor_frame,
+            interval=0.05,
+            logger=self.logger,
+            name="TTL",
+        )
         self.should_stop_monitoring = False
         self.monitor_sample_thread = None
-
-        self._register_monitoring_routes()
 
         # Set up TTL-specific callbacks for the command handler
         self.ttl_commands = {
@@ -1240,42 +1241,6 @@ class TTLModule(Module):
             self.logger.error(f"TTL frame render error: {e}")
             return None
 
-    def _generate_monitor_frames(self):
-        """MJPEG generator — yields frames at ~20 fps."""
-        while not self.should_stop_monitoring:
-            frame = self._render_monitor_frame()
-            if frame is not None:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" +
-                    frame +
-                    b"\r\n"
-                )
-            time.sleep(0.05)
-
-    def _register_monitoring_routes(self):
-        @self.monitoring_app.route('/')
-        def index():
-            return "TTL Monitoring Server"
-
-        @self.monitoring_app.route('/video_feed')
-        def video_feed():
-            return Response(
-                self._generate_monitor_frames(),
-                mimetype='multipart/x-mixed-replace; boundary=frame'
-            )
-
-    def run_monitoring_server(self, port: int = 8082) -> None:
-        try:
-            from werkzeug.serving import make_server
-            self.monitoring_server = make_server('0.0.0.0', port, self.monitoring_app, threaded=True)
-            self.logger.info(f"TTL monitoring server listening on port {port}")
-            self.monitoring_server.serve_forever()
-        except Exception as e:
-            self.logger.error(f"TTL monitoring server error: {e}")
-            self.monitoring_server = None
-            self.is_streaming = False
-
     def start_streaming(self) -> bool:
         """Start the MJPEG monitoring stream and pin sampling thread."""
         try:
@@ -1293,20 +1258,13 @@ class TTLModule(Module):
             )
             self.monitor_sample_thread.start()
 
-            self.monitoring_server_thread = threading.Thread(
-                target=self.run_monitoring_server,
-                args=(port,),
-                daemon=True,
-                name="ttl-monitoring-server"
-            )
-            self.monitoring_server_thread.start()
-
-            self.is_streaming = True
-            self.logger.info(
-                f"TTL monitoring stream started — "
-                f"http://{getattr(self.network, 'ip', '?')}:{port}/video_feed"
-            )
-            return True
+            self.is_streaming = self.monitor_stream.start(port)
+            if self.is_streaming:
+                self.logger.info(
+                    f"TTL monitoring stream started — "
+                    f"http://{getattr(self.network, 'ip', '?')}:{port}/video_feed"
+                )
+            return self.is_streaming
 
         except Exception as e:
             self.logger.error(f"Error starting TTL monitoring stream: {e}")
@@ -1324,9 +1282,7 @@ class TTLModule(Module):
                 self.monitor_sample_thread.join(timeout=2)
                 self.monitor_sample_thread = None
 
-            if self.monitoring_server:
-                self.monitoring_server.shutdown()
-                self.monitoring_server = None
+            self.monitor_stream.stop()
 
             self.is_streaming = False
             self.logger.info("TTL monitoring stream stopped")

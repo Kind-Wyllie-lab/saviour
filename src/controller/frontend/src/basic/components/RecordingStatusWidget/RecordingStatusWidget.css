@@ -3,8 +3,64 @@
   user-select: none;
 }
 
+/* ── Full-width bar look, dark slate blue-grey ────────────────────────────
+   Overrides the shared .card (rounded corners, all-round border, box-shadow,
+   min-width, light/dark-mode background+text) and .hrc (left-accent stripe)
+   classes with higher-specificity rules scoped to this widget only — .card/
+   .hrc themselves are untouched, so ConfigCard/HabitatRecordingControl/etc.
+   keep their current look in both themes. #161a1f — mostly grey, dark, with
+   just a cool undertone; not saturated enough to read as blue, not neutral
+   enough to read as flat black. Fixed regardless of light/dark mode. */
+.recording-status-widget.card {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 8px 20px;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, #161a1f 60%, black);
+  border-radius: 0;
+  box-shadow: none;
+  background-color: #161a1f;
+  color: #e8e8e8;
+}
+
+.recording-status-widget.hrc {
+  border-left: none;
+}
+
 .recording-status-widget:hover {
-  background: color-mix(in srgb, var(--card-bg-color, #fff) 90%, var(--accent-color, #3b82f6));
+  background: color-mix(in srgb, #161a1f 85%, white);
+}
+
+.recording-status-widget.hrc--recording {
+  background-color: color-mix(in srgb, #2e7d32 20%, #161a1f);
+  border-bottom-color: color-mix(in srgb, #2e7d32 55%, #161a1f);
+}
+
+.recording-status-widget.hrc--starting {
+  background-color: color-mix(in srgb, #e8a020 20%, #161a1f);
+  border-bottom-color: color-mix(in srgb, #e8a020 55%, #161a1f);
+}
+
+.recording-status-widget.hrc--fault {
+  background-color: color-mix(in srgb, #c62828 20%, #161a1f);
+  border-bottom-color: color-mix(in srgb, #c62828 55%, #161a1f);
+}
+
+.recording-status-widget.hrc--ready {
+  opacity: 0.85;
+}
+
+/* Muted/secondary text (module names, separators, stats) is tuned for a
+   light card background elsewhere — bump it up so it stays legible here. */
+.recording-status-widget .hrc-stat,
+.recording-status-widget .hrc-sep,
+.recording-status-widget .hrc-since,
+.recording-status-widget .rsw-module-name,
+.recording-status-widget .rsw-elapsed {
+  color: #aaaaaa;
+  opacity: 1;
 }
 
 /* ── Session details (inline after state label) ─────────────────────────── */

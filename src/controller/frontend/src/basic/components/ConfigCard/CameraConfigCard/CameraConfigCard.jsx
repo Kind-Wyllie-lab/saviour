@@ -323,10 +323,26 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "vflip"], e)} />
             </div>
             <div className="form-field">
+              <label>Rotation:</label>
+              <select value={cam.rotation ?? 0}
+                onChange={e => handleChange(["camera", "rotation"], e)}>
+                <option value={0}>0°</option>
+                <option value={90}>90°</option>
+                <option value={180}>180°</option>
+                <option value={270}>270°</option>
+              </select>
+            </div>
+            <div className="form-field">
               <label>Brightness: {Number(brightness).toFixed(2)}</label>
               <input type="range" min="-1" max="1" step="0.05"
                 value={brightness} className="brightness-slider"
                 onChange={e => handleChange(["camera", "brightness"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Contrast: {Number(cam.contrast ?? 1.0).toFixed(2)}</label>
+              <input type="range" min="0" max="4" step="0.05"
+                value={cam.contrast ?? 1.0} className="brightness-slider"
+                onChange={e => handleChange(["camera", "contrast"], e)} />
             </div>
             <div className="form-field">
               <label>Auto gain/exposure:</label>
@@ -514,30 +530,219 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
 
         {/* LOOM TRACKING */}
         {activeTab === "tracking" && (
-          <ConfigFields
-            data={formData?.loom_tracking}
-            handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
-          />
+          <>
+            <ConfigFields
+              data={formData?.loom_tracking}
+              handleChange={(path, e) => handleChange(["loom_tracking", ...path], e)}
+            />
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Zone label position &amp; size</div>
+            <div className="form-field">
+              <label>X position (0–1):</label>
+              <input type="number" min="0" max="1" step="0.01"
+                value={formData?.loom_tracking?.overlay?.zone_label_x_frac ?? 0.01}
+                onChange={e => handleChange(["loom_tracking", "overlay", "zone_label_x_frac"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Y position (0–1):</label>
+              <input type="number" min="0" max="1" step="0.01"
+                value={formData?.loom_tracking?.overlay?.zone_label_y_frac ?? 0.95}
+                onChange={e => handleChange(["loom_tracking", "overlay", "zone_label_y_frac"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Font scale:</label>
+              <input type="number" min="0.1" max="5" step="0.1"
+                value={formData?.loom_tracking?.overlay?.zone_label_font_scale ?? 1.0}
+                onChange={e => handleChange(["loom_tracking", "overlay", "zone_label_font_scale"], e)} />
+            </div>
+          </>
         )}
 
         {/* LOOM STIMULUS */}
         {activeTab === "stimulus" && (
           <>
+            <div className="form-field">
+              <label>Armed (auto-fire on tracking):</label>
+              <input type="checkbox"
+                checked={formData?.loom_stimulus?.armed ?? false}
+                onChange={e => handleChange(["loom_stimulus", "armed"], e)} />
+            </div>
             <div className="stimulus-test-row">
               <button type="button" className="copy-btn"
                 onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_start", params: {} })}>
-                Fire stimulus
+                Fire
               </button>
               <button type="button" className="copy-btn"
                 onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_stop", params: {} })}>
-                Stop stimulus
+                Stop
               </button>
             </div>
             <div className="config-section-divider" />
-            <ConfigFields
-              data={formData?.loom_stimulus}
-              handleChange={(path, e) => handleChange(["loom_stimulus", ...path], e)}
-            />
+            <div className="sensor-mode-info sensor-mode-info--muted">Display</div>
+            <div className="form-field">
+              <label>Stimulus monitor:</label>
+              <select value={formData?.loom_stimulus?.stimulus_monitor_index ?? 0}
+                onChange={e => handleChange(["loom_stimulus", "stimulus_monitor_index"], e)}>
+                <option value={0}>Monitor 0</option>
+                <option value={1}>Monitor 1</option>
+              </select>
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Opens a window on each detected physical monitor, picked by GLFW's
+              raw detection order. There's no way to know in advance which is
+              Monitor 0 vs 1 — use the "Near screen" test flash button below to
+              check, and switch this if it's backwards. If a second monitor is
+              detected it automatically gets the keepalive/near-test display.
+            </div>
+            <div className="form-field">
+              <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>
+              <input type="range" min="0" max="1" step="0.01"
+                className="brightness-slider"
+                value={formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.background_rgba = [v, v, v, 1.0];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Timing</div>
+            <div className="form-field">
+              <label>Travel time (s):</label>
+              <input type="number" min="0.1" max="60" step="0.1"
+                value={formData?.loom_stimulus?.travel_time_s ?? 5.0}
+                onChange={e => handleChange(["loom_stimulus", "travel_time_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Return time (s):</label>
+              <input type="number" min="0.05" max="10" step="0.05"
+                value={formData?.loom_stimulus?.loom_wait_time_s ?? 0.5}
+                onChange={e => handleChange(["loom_stimulus", "loom_wait_time_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Looms per round:</label>
+              <input type="number" min="1" max="100" step="1"
+                value={formData?.loom_stimulus?.round_size ?? 5}
+                onChange={e => handleChange(["loom_stimulus", "round_size"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Size</div>
+            <div className="form-field">
+              <label>Initial size (cm):</label>
+              <input type="number" min="0" max="100" step="0.5"
+                value={formData?.loom_stimulus?.initial_size_cm ?? 6.0}
+                onChange={e => handleChange(["loom_stimulus", "initial_size_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Final size (cm):</label>
+              <input type="number" min="0" max="200" step="0.5"
+                value={formData?.loom_stimulus?.final_size_cm ?? 40.0}
+                onChange={e => handleChange(["loom_stimulus", "final_size_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Image angle (°):</label>
+              <input type="number" min="0" max="360" step="1"
+                value={formData?.loom_stimulus?.image_angle_deg ?? 90}
+                onChange={e => handleChange(["loom_stimulus", "image_angle_deg"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Position</div>
+            <div className="form-field">
+              <label>X offset: {Number(formData?.loom_stimulus?.x_offset_ndc ?? 0.0).toFixed(2)} (0 = centre)</label>
+              <input type="range" min="-0.5" max="0.5" step="0.01"
+                className="brightness-slider"
+                value={formData?.loom_stimulus?.x_offset_ndc ?? 0.0}
+                onChange={e => handleChange(["loom_stimulus", "x_offset_ndc"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Initial Y: {Number(formData?.loom_stimulus?.initial_pos_ndc?.[1] ?? 0.0).toFixed(2)} (0 = centre)</label>
+              <input type="range" min="-1" max="1" step="0.01"
+                className="brightness-slider"
+                value={formData?.loom_stimulus?.initial_pos_ndc?.[1] ?? 0.0}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.initial_pos_ndc = [cloned.loom_stimulus.initial_pos_ndc?.[0] ?? 0.5, v];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="form-field">
+              <label>Final Y: {Number(formData?.loom_stimulus?.final_pos_ndc?.[1] ?? 0.0).toFixed(2)} (0 = centre)</label>
+              <input type="range" min="-1" max="1" step="0.01"
+                className="brightness-slider"
+                value={formData?.loom_stimulus?.final_pos_ndc?.[1] ?? 0.0}
+                onChange={e => {
+                  const v = parseFloat(e.target.value);
+                  setFormData(prev => {
+                    const cloned = structuredClone(prev);
+                    cloned.loom_stimulus.final_pos_ndc = [cloned.loom_stimulus.final_pos_ndc?.[0] ?? 0.5, v];
+                    return cloned;
+                  });
+                }} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Calibration</div>
+            <div className="form-field">
+              <label>Screen width (cm):</label>
+              <input type="number" min="10" max="500" step="0.1"
+                value={formData?.loom_stimulus?.screen_width_cm ?? 105.41}
+                onChange={e => handleChange(["loom_stimulus", "screen_width_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Screen height (cm):</label>
+              <input type="number" min="10" max="500" step="0.1"
+                value={formData?.loom_stimulus?.screen_height_cm ?? 59.29}
+                onChange={e => handleChange(["loom_stimulus", "screen_height_cm"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Size correction:</label>
+              <input type="number" min="0.1" max="3" step="0.01"
+                value={formData?.loom_stimulus?.size_correction ?? 1.125}
+                onChange={e => handleChange(["loom_stimulus", "size_correction"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Photodiode</div>
+            <div className="form-field">
+              <label>Box size (px):</label>
+              <input type="number" min="10" max="500" step="5"
+                value={formData?.loom_stimulus?.photodiode_box_px ?? 80}
+                onChange={e => handleChange(["loom_stimulus", "photodiode_box_px"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Y position (−1 bottom, +1 top):</label>
+              <input type="number" min="-1" max="1" step="0.05"
+                value={formData?.loom_stimulus?.photodiode_y_ndc ?? 0.0}
+                onChange={e => handleChange(["loom_stimulus", "photodiode_y_ndc"], e)} />
+            </div>
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">Near screen</div>
+            <div className="form-field">
+              <label>Keep-alive mode:</label>
+              <select value={formData?.loom_stimulus?.keepalive_mode ?? "corner"}
+                onChange={e => handleChange(["loom_stimulus", "keepalive_mode"], e)}>
+                <option value="corner">Corner patch (least intrusive)</option>
+                <option value="distributed">Distributed patches (5 positions)</option>
+                <option value="pulse">Full-screen pulse (most effective)</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Keep-alive interval (s, 0 = off):</label>
+              <input type="number" min="0" max="120" step="1"
+                value={formData?.loom_stimulus?.keepalive_interval_s ?? 10}
+                onChange={e => handleChange(["loom_stimulus", "keepalive_interval_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Near screen:</label>
+              <button className="btn btn--small"
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_near_screen", params: { duration_s: 2.0 } })}>
+                Test (2 s flash)
+              </button>
+            </div>
           </>
         )}
 

@@ -267,18 +267,33 @@ show_first_time_credentials() {
     local msg="\nSave these now -- you will need them to use SAVIOUR.\n\n"
     msg+="Web UI login  (http://saviour.local:5000):\n"
     msg+="  password: $(cat /etc/saviour/admin_credentials 2>/dev/null)\n"
-    msg+="\nSamba share login(s):\n"
+    msg+="\nSamba share login(s) -- use these to browse recordings from your\n"
+    msg+="own computer (saviour_module is an internal machine account and\n"
+    msg+="isn't shown here):\n"
 
-    if [ -f /etc/saviour/samba_credentials ]; then
-        while IFS= read -r line; do
-            msg+="  $line\n"
-        done < /etc/saviour/samba_credentials
-    fi
+    # researcher/sidbit only get a password written to samba_credentials the
+    # first time their account is created (see configure_samba_share) --
+    # Samba stores passwords hashed, so an existing account's password can
+    # never be recovered/redisplayed here. Show whichever we have; flag any
+    # account this run didn't generate a fresh password for, so its absence
+    # reads as "already set, unchanged" rather than "missing".
+    for sysuser in researcher sidbit; do
+        if grep -q "username=$sysuser" /etc/saviour/samba_credentials 2>/dev/null; then
+            while IFS= read -r line; do
+                msg+="  $line\n"
+            done < <(grep -A1 "username=$sysuser" /etc/saviour/samba_credentials)
+            msg+="\n"
+        elif pdbedit -Lu "$sysuser" > /dev/null 2>&1; then
+            msg+="  $sysuser: account already exists -- password unchanged, not shown\n\n"
+        fi
+    done
 
-    msg+="\nRetrieve these again any time with:\n"
+    msg+="Retrieve these again any time with:\n"
     msg+="  sudo cat /etc/saviour/admin_credentials\n"
     msg+="  sudo cat /etc/saviour/samba_credentials\n"
-    msg+="\nChange either later via this menu's password-reset options."
+    msg+="\nChange them later via saviour-config's menu:\n"
+    msg+="  \"Reset web UI admin password\"\n"
+    msg+="  \"Reset Samba share password\"\n"
 
     whiptail --title "First-Time Credentials -- Save These Now" \
         --scrolltext --msgbox "$msg" 24 $W

@@ -66,7 +66,7 @@ Not much. Just plug them together, then complete first-time setup on the control
 
 ### First-time setup
 
-1. **Open the web UI.** With everything plugged into the switch and powered on, browse to `http://saviour.local:5000` from a PC on the same network (or use the controller's IP address if `.local` name resolution doesn't work on your network).
+1. **Open the web UI.** With everything plugged into the switch and powered on, browse to `http://saviour.local` from a PC on the same network (or use the controller's IP address if `.local` name resolution doesn't work on your network).
 2. **Log in.** There's no default password - the first login attempt generates a random one and saves it on the controller. Retrieve it by running, on the controller:
    ```sh
    sudo cat /etc/saviour/admin_credentials

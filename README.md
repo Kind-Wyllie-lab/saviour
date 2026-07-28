@@ -28,8 +28,22 @@
   </p>
 </div>
 
+⭐ Please Star us on GitHub: your support means a lot! 🙏😊
+
+## Overview
+***What is SAVIOUR?***<br>
+SAVIOUR is a modular, affordable system for recording synchronised video, audio, and sensor data across multiple points in an experiment - built from low-cost networked computers instead of expensive proprietary hardware. A TTL module can also sync SAVIOUR's recordings to external systems such as an **Open Ephys** electrophysiology rig, so behavioural and neural data share a common timeline.
+
+***Who is it for?***<br>
+Primarily behavioural neuroscience labs, though the same approach suits any experiment needing several sensors recording in sync.
+
+***Why was SAVIOUR made?***<br>
+SAVIOUR was developed in response to many one-off data gathering rigs being created that did similar things in a messy, expensive, and hard to reproduce way.
+
+See [About The Project](#about-the-project) below for how it works in more detail.
+
 ## Installation
-### 1. Manual Install
+### Manual Install
 
 One line install, simply copy this into the terminal of an internet connected Pi.
 ```sh
@@ -41,13 +55,17 @@ After completion, run the following and select the correct configuration (e.g. c
 sudo saviour-config
 ```
 
-### 2. Using a pre-baked image
+### Using a pre-baked image
 
 Not yet available. Eventually an OS image will be available which can be copied on to an SD card. 
 
 ## Usage
+So, you've installed SAVIOUR and configured a controller pi and one or more module pi's. What more remains to be done?
 
-# Docs
+Not much. Just plug them together.
+
+
+## Docs
 Full documentation can be found at https://saviour.readthedocs.io/en/latest/ 
 
 <!-- ABOUT THE PROJECT -->
@@ -58,6 +76,25 @@ The habitat project seeks to explore the behaviour and development of up to 50 r
 
 ### System Purpose
 The proposed system provides a modular, scalable, and synchronized data capture solution for behavioral testing labs. It enables precise multi-sensor data collection (video, audio, TTL events, RFID) while controlling external equipment. The controller manages synchronization, health monitoring, and data collation, while sensor modules autonomously capture and transmit data to a central repository. All power, synchronisation, control signalling and data transfer shall use a single POE (Power over Ethernet) connection.
+
+### How It Works
+A SAVIOUR system consists of a "controller" device talking to one or more "module" devices (camera, microphone, RFID reader, TTL I/O, etc.), each handling one sensor or piece of equipment. All devices are Raspberry Pi 5 (for now!), connected together via LAN, typically with Power-over-Ethernet (PoE) so a single cable carries both power and network to each device. Researchers control everything - starting and stopping recordings, checking device status - from a web page on their own PC.
+
+```mermaid
+graph TD
+    Switch["PoE Network Switch"]
+    Controller["Controller<br/>keeps every device in sync,<br/>manages recordings"]
+    Module1["Module: Camera"]
+    Module2["Module: Microphone"]
+    Researcher["Researcher's PC<br/>(web browser)"]
+
+    Controller ---|"Ethernet + Power"| Switch
+    Module1 ---|"Ethernet + Power"| Switch
+    Module2 ---|"Ethernet + Power"| Switch
+    Researcher ---|"Ethernet or Wi-Fi"| Switch
+```
+
+The key problem SAVIOUR solves is **synchronisation**: every device's clock is kept aligned to within microseconds of the others, so a video frame from one camera, an audio sample from a microphone, and an RFID read can always be lined up afterwards, even though they were captured by completely separate little computers scattered around the room. This synchronisation isn't limited to SAVIOUR's own devices - a TTL module can send or receive timing pulses to line up SAVIOUR's recordings with an entirely separate system, such as an electrophysiology rig running Open Ephys.
 
 ### Scope
 The system consists of a central controller with multiple PoE sensor modules. 

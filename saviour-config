@@ -358,6 +358,30 @@ run_mend() {
     read -r
 }
 
+credentials_menu() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nCredentials only apply to a controller." \
+            8 $W
+        return
+    fi
+
+    local choice
+    choice=$(wt --title "Credentials" \
+        --menu "\nManage this controller's login credentials:" \
+        $H $W 3 \
+        "show"  "Show current credentials" \
+        "web"   "Reset web UI admin password" \
+        "samba" "Reset Samba share password") || return
+
+    case "$choice" in
+        show)  view_credentials ;;
+        web)   admin_password ;;
+        samba) samba_password ;;
+    esac
+}
+
 main_menu() {
     if detect_clone; then
         clone_fix_menu
@@ -376,27 +400,23 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 9 \
-            "configure" "Configure this device  (role / type)" \
-            "network"   "Network settings  (controller only)" \
-            "password"  "Reset web UI admin password  (controller only)" \
-            "samba"     "Reset Samba share password  (controller only)" \
-            "creds"     "Show current credentials  (controller only)" \
-            "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
-            "view"      "View current configuration" \
-            "mend"      "Repair / update this device" \
-            "exit"      "Exit") || return 0
+            $H $W 7 \
+            "configure"   "Configure this device  (role / type)" \
+            "network"     "Network settings  (controller only)" \
+            "credentials" "Credentials  (controller only)" \
+            "refresh"     "Refresh identity  (hostname, SSH keys, machine ID)" \
+            "view"        "View current configuration" \
+            "mend"        "Repair / update this device" \
+            "exit"        "Exit") || return 0
 
         case "$choice" in
-            configure) configure_device ;;
-            network)   network_settings ;;
-            password)  admin_password ;;
-            samba)     samba_password ;;
-            creds)     view_credentials ;;
-            refresh)   clone_fix_menu ;;
-            view)      view_config ;;
-            mend)      run_mend ;;
-            exit)      return 0 ;;
+            configure)   configure_device ;;
+            network)     network_settings ;;
+            credentials) credentials_menu ;;
+            refresh)     clone_fix_menu ;;
+            view)        view_config ;;
+            mend)        run_mend ;;
+            exit)        return 0 ;;
         esac
     done
 }

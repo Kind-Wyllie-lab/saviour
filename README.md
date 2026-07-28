@@ -1,61 +1,87 @@
-<!-- PROJECT SHIELDS -->
-<div align="center">
-  
-  [![Contributors][contributors-shield]][contributors-url]
-  [![Forks][forks-shield]][forks-url]
-  [![Stargazers][stars-shield]][stars-url]
-  [![Issues][issues-shield]][issues-url]
-  [![License][license-shield]][license-url]
-  
+<!-- Hi! I hope you're having a good day, wherever you are :) -->
+<div align="center" style="margin: 20px"> 
+  <img width="502" height="90" alt="SAVIOUR" src="https://github.com/user-attachments/assets/0f85edd9-a86b-4326-b66a-7c86d93b454a" />
+    <h3 align="center">Synchronised Audio-Video Input-Output Recorder</h3>
 </div>
 
-<div align="center" style="background-color : white">
+<!-- PROJECT SHIELDS -->
+<div align="center">
 
-  <img width="502" height="90" alt="SAVIOUR logo_white" src="https://github.com/user-attachments/assets/0f85edd9-a86b-4326-b66a-7c86d93b454a" />
+  [![Github Contributors](https://img.shields.io/github/contributors/Kind-Wyllie-lab/saviour)](#)
+  [![Github Stars](https://img.shields.io/github/stars/Kind-Wyllie-lab/saviour?style=flat)](#)
+  [![Github Release](https://img.shields.io/github/v/release/Kind-Wyllie-lab/saviour)](#)
+  [![GitHub release date](https://img.shields.io/github/release-date/Kind-Wyllie-lab/saviour)](#)
+  [![GitHub last commit](https://img.shields.io/github/last-commit/Kind-Wyllie-lab/saviour)](#)
+  [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE.txt)
+  [![Docs](https://img.shields.io/readthedocs/saviour
+  )](https://saviour.readthedocs.io/en/latest/)
+  [![Report Bug](https://img.shields.io/badge/Report%20a%20bug-ff6600)](https://github.com/Kind-Wyllie-lab/habitat/issues)
+  [![3D Printable Cases](https://img.shields.io/badge/3d%20printable%20cases-8A2BE2)]("https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2")
 
 </div>
 
 <!-- PROJECT LOGO -->
 <div align="center">
-  <h3 align="center">SAVIOUR - Synchronised Audio Video Input Output Recorder</h3>
+
   <p align="center">
-    A modular and highly usable approach to I/O tasks within the Kind lab and beyond
-    <br />
-    <a href="https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2">3D Printable Module Cases</a>
-    <br />
-    <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Report Bug</a>
-    ·
-    <a href="https://github.com/Kind-Wyllie-lab/habitat/issues">Request Feature</a>
+    A modular and highly usable approach to synchronised, multimodal data capture using affordable open source components.
   </p>
 </div>
 
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#background">Background</a></li>
-        <li><a href="#system-purpose">System Purpose</a></li>
-        <li><a href="#scope">Scope</a></li>
-        <li><a href="#system-context">System Context</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-  </ol>
-</details>
+⭐ Please Star us on GitHub, your support means a lot! 🙏😊
+
+## Overview
+***What is SAVIOUR?***<br>
+SAVIOUR is a modular, affordable system for recording synchronised video, audio, and sensor data across multiple points in an experiment - built from low-cost networked computers instead of expensive proprietary hardware. A TTL module can also sync SAVIOUR's recordings to external systems such as an **Open Ephys** electrophysiology rig, so behavioural and neural data share a common timeline.
+
+***Who is it for?***<br>
+Primarily behavioural neuroscience labs, though the same approach suits any experiment needing several sensors recording in sync.
+
+***Why was SAVIOUR made?***<br>
+SAVIOUR was developed in response to many one-off data gathering rigs being created that did similar things in a messy, expensive, and hard to reproduce way.
+
+See [About The Project](#about-the-project) below for how it works in more detail.
+
+## Installation
+### Manual Install
+
+One line install, simply copy this into the terminal of an internet connected Pi.
+```sh
+curl -fsSL https://raw.githubusercontent.com/Kind-Wyllie-lab/saviour/main/install.sh | bash
+```
+
+After completion, run the following and select the correct configuration (e.g. controller, APA or module, camera)
+```
+sudo saviour-config
+```
+
+### Using a pre-baked image
+
+Not yet available. Eventually an OS image will be available which can be copied on to an SD card. 
+
+## Usage
+So, you've installed SAVIOUR and configured a controller pi and one or more module pi's. What more remains to be done?
+
+Not much. Just plug them together, then complete first-time setup on the controller.
+
+### First-time setup
+
+1. **Open the web UI.** With everything plugged into the switch and powered on, browse to `http://saviour.local` from a PC on the same network (or use the controller's IP address if `.local` name resolution doesn't work on your network).
+2. **Log in.** There's no default password - the first login attempt generates a random one and saves it on the controller. Retrieve it by running, on the controller:
+   ```sh
+   sudo cat /etc/saviour/admin_credentials
+   ```
+   Use this to log in, then change it to something memorable via `sudo saviour-config` → "Reset web UI admin password", or the in-app change-password option.
+3. **Note the Samba (file share) credentials**, needed if you or your lab want to browse recordings directly from your own PC:
+   ```sh
+   sudo cat /etc/saviour/samba_credentials
+   ```
+   These can likewise be reset via `sudo saviour-config` → "Reset Samba share password".
+4. **Check Ready.** Before your first recording, use the "Check Ready" button in the web UI to confirm all modules are connected and PTP clock sync has settled.
+
+
+## Docs
+Full documentation can be found at https://saviour.readthedocs.io/en/latest/ 
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
@@ -66,9 +92,28 @@ The habitat project seeks to explore the behaviour and development of up to 50 r
 ### System Purpose
 The proposed system provides a modular, scalable, and synchronized data capture solution for behavioral testing labs. It enables precise multi-sensor data collection (video, audio, TTL events, RFID) while controlling external equipment. The controller manages synchronization, health monitoring, and data collation, while sensor modules autonomously capture and transmit data to a central repository. All power, synchronisation, control signalling and data transfer shall use a single POE (Power over Ethernet) connection.
 
+### How It Works
+A SAVIOUR system consists of a "controller" device talking to one or more "module" devices (camera, microphone, RFID reader, TTL I/O, etc.), each handling one sensor or piece of equipment. All devices are Raspberry Pi 5 (for now!), connected together via LAN, typically with Power-over-Ethernet (PoE) so a single cable carries both power and network to each device. Researchers control everything - starting and stopping recordings, checking device status - from a web page on their own PC.
+
+```mermaid
+graph TD
+    Switch["PoE Network Switch"]
+    Controller["Controller<br/>keeps every device in sync,<br/>manages recordings"]
+    Module1["Module: Camera"]
+    Module2["Module: Microphone"]
+    Researcher["Researcher's PC<br/>(web browser)"]
+
+    Controller ---|"Ethernet + Power"| Switch
+    Module1 ---|"Ethernet + Power"| Switch
+    Module2 ---|"Ethernet + Power"| Switch
+    Researcher ---|"Ethernet or Wi-Fi"| Switch
+```
+
+The key problem SAVIOUR solves is **synchronisation**: every device's clock is kept aligned to within microseconds of the others, so a video frame from one camera, an audio sample from a microphone, and an RFID read can always be lined up afterwards, even though they were captured by completely separate little computers scattered around the room. This synchronisation isn't limited to SAVIOUR's own devices - a TTL module can send or receive timing pulses to line up SAVIOUR's recordings with an entirely separate system, such as an electrophysiology rig running Open Ephys.
+
 ### Scope
 The system consists of a central controller with multiple PoE sensor modules. 
-Planned sensor modules include cameras, microphones, TTL I/O, and RFID units.
+Sensor modules include cameras, microphones, TTL I/O, and RFID units.
 The controller detects, synchronises, and manages these modules.
 Data is collected, formatted, and stored for analysis.
 The system is modular, allowing for easy expansion and maintenance.
@@ -82,35 +127,6 @@ Each system includes:
   - A microphone module, recording ultrasonic mice vocalisations
   - A TTL I/O module, interfacing with various I/O devices
   - An RFID module, providing subject tracking
-
-<!-- GETTING STARTED -->
-## Getting Started
-
-### Prerequisites
-- PoE-capable network switch
-- 1x Raspberry Pi 5 for controller
-- 1x Raspberry Pi 5 per module, plus module specific hardware e.g. camera, audiomoth USV microphone 
-- An external storage device, e.g., Synology NAS DS1522+, or perhaps a controller Pi with NVME/SSD storage 
-
-### Installation
-1. Manual Install
-
-```sh
-# One line install
-$ curl -fsSL https://raw.githubusercontent.com/Kind-Wyllie-lab/saviour/main/install.sh | bash
-
-# After completed, run the following and select the correct configuration (e.g. controller, APA or module, camera)
-$ sudo saviour-config
-```
-
-2. Using a pre-baked image
-
-Not yet available. Eventually an OS image will be available which can be copied on to an SD card. 
-
-
-<!-- USAGE -->
-## Usage
-Detailed usage instructions can be found in the [System Requirements Specification document](https://github.com/Kind-Wyllie-lab/habitat/SRS.md).
 
 <!-- CONTRIBUTING -->
 ## Contributing
@@ -147,14 +163,4 @@ Andrew Scott-George - ascottg@ed.ac.uk
 
 Project Link: [https://github.com/Kind-Wyllie-lab/saviour](https://github.com/Kind-Wyllie-lab/saviour)
 
-<!-- MARKDOWN LINKS & IMAGES -->
-[contributors-shield]: https://img.shields.io/github/contributors/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
-[contributors-url]: https://github.com/Kind-Wyllie-lab/saviour/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
-[forks-url]: https://github.com/Kind-Wyllie-lab/saviour/network/members
-[stars-shield]: https://img.shields.io/github/stars/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
-[stars-url]: https://github.com/Kind-Wyllie-lab/saviour/stargazers
-[issues-shield]: https://img.shields.io/github/issues/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
-[issues-url]: https://github.com/Kind-Wyllie-lab/saviour/issues
-[license-shield]: https://img.shields.io/github/license/Kind-Wyllie-lab/saviour.svg?style=for-the-badge
-[license-url]: https://github.com/Kind-Wyllie-lab/saviour/blob/master/LICENSE.txt
+

@@ -188,11 +188,34 @@ admin_password() {
         10 $W
 }
 
-# researcher/sidbit are human-typed logins for connecting to the Samba share
-# from a researcher's own machine (sidbit is also the Samba admin user, with
-# full read/write/delete). Each gets a random initial password the first time
-# configure_samba_share() creates it (see there); this menu lets an admin set
-# a memorable one instead, or rotate it later without reconfiguring the device.
+# Writes/replaces $1's entry in samba_credentials with $2, labelled $3 --
+# keeps the file (and the "Show current credentials" dialog) in sync with
+# whatever's actually set in Samba, the same way admin_credentials is kept
+# in sync with the web UI password on every reset. Deliberately persists the
+# plaintext here even though Samba itself only stores a hash -- consistent
+# with the admin_credentials trust boundary (root-only, mode 600), and the
+# whole point of these two accounts is that lab members need to be able to
+# look the current one up, not just whoever performed the last reset.
+write_samba_credentials_entry() {
+    local sysuser="$1" pass="$2" label="$3"
+    local cred_file="/etc/saviour/samba_credentials"
+    mkdir -p /etc/saviour
+    touch "$cred_file"
+    sed -i "/^username=${sysuser} /,+1d" "$cred_file"
+    {
+        echo ""
+        echo "username=${sysuser} (${label})"
+        echo "password=${pass}"
+    } >> "$cred_file"
+    chmod 600 "$cred_file"
+}
+
+# saviour_user/saviour_admin are human-typed logins for connecting to the
+# Samba share from a researcher's own machine (saviour_admin is also the
+# Samba admin user, with full read/write/delete). Each gets a random initial
+# password the first time configure_samba_share() creates it (see there);
+# this menu lets an admin set a memorable one instead, or rotate it later
+# without reconfiguring the device.
 samba_password() {
     get_current_config
     if [ "$CURRENT_ROLE" != "controller" ]; then
@@ -202,7 +225,7 @@ samba_password() {
         return
     fi
 
-    if ! pdbedit -Lu researcher > /dev/null 2>&1 && ! pdbedit -Lu sidbit > /dev/null 2>&1; then
+    if ! pdbedit -Lu saviour_user > /dev/null 2>&1 && ! pdbedit -Lu saviour_admin > /dev/null 2>&1; then
         whiptail --title "Not Available" \
             --msgbox "\nSamba isn't configured yet -- configure this device's role first." \
             8 $W
@@ -213,8 +236,8 @@ samba_password() {
     sysuser=$(wt --title "Reset Samba Share Password" \
         --menu "\nWhich share login should get a new password?\n\nUsers connect to the share from their own computer with one of these." \
         14 $W 2 \
-        "researcher" "Regular read/write access" \
-        "sidbit"     "Admin access (full control over the share)") || return
+        "saviour_user"  "Regular read/write access" \
+        "saviour_admin" "Admin access (full control over the share)") || return
 
     local new_pass confirm_pass
     while true; do
@@ -236,11 +259,87 @@ samba_password() {
     done
 
     printf '%s\n%s\n' "$new_pass" "$new_pass" | smbpasswd -s -a "$sysuser" > /dev/null
+    write_samba_credentials_entry "$sysuser" "$new_pass" "reset via saviour-config"
     log "Samba password for '$sysuser' reset via saviour-config"
 
     whiptail --title "Password Updated" \
         --msgbox "\nThe Samba password for '$sysuser' has been updated.\n\nShare it with whoever needs '$sysuser' access to connect from their own machine." \
         10 $W
+}
+
+# Idempotent -- never overwrites an existing password, matching the "seed
+# once" behaviour of the Samba human logins in configure_samba_share() above.
+# Normally web.py generates this lazily on the controller's first web login
+# attempt; pre-creating it here lets show_first_time_credentials() display it
+# immediately after setup instead of making the operator SSH back in later.
+ensure_admin_password() {
+    local cred_file="/etc/saviour/admin_credentials"
+    mkdir -p /etc/saviour
+    if [ ! -s "$cred_file" ]; then
+        printf '%s' "$(openssl rand -hex 16)" > "$cred_file"
+        chmod 600 "$cred_file"
+        log "Admin web UI password generated via saviour-config"
+    fi
+}
+
+# Shown once at the end of first-time controller setup, before the automatic
+# reboot -- an explicit OK press gives the operator a chance to write these
+# down while still at the terminal, rather than needing a second SSH-in-and-
+# cat round trip for each file later. Both remain retrievable any time via
+# `sudo cat`, and resettable via the "Reset ... password" menu items.
+show_first_time_credentials() {
+    local msg="\nSave these now -- you will need them to use SAVIOUR.\n\n"
+    msg+="Web UI login  (http://saviour.local:5000):\n"
+    msg+="  password: $(cat /etc/saviour/admin_credentials 2>/dev/null)\n"
+    msg+="\nSamba share login(s) -- use these to browse recordings from your\n"
+    msg+="own computer (saviour_module is an internal machine account and\n"
+    msg+="isn't shown here):\n"
+
+    # saviour_user/saviour_admin only get a password written to
+    # samba_credentials the first time their account is created (see
+    # configure_samba_share) -- Samba stores passwords hashed, so an
+    # existing account's password can never be recovered/redisplayed here.
+    # Show whichever we have; flag any account this run didn't generate a
+    # fresh password for, so its absence reads as "already set, unchanged"
+    # rather than "missing".
+    for sysuser in saviour_user saviour_admin; do
+        if grep -q "username=$sysuser" /etc/saviour/samba_credentials 2>/dev/null; then
+            while IFS= read -r line; do
+                msg+="  $line\n"
+            done < <(grep -A1 "username=$sysuser" /etc/saviour/samba_credentials)
+            msg+="\n"
+        elif pdbedit -Lu "$sysuser" > /dev/null 2>&1; then
+            msg+="  $sysuser: account already exists -- password unchanged, not shown\n\n"
+        fi
+    done
+
+    msg+="Retrieve these again any time with:\n"
+    msg+="  sudo cat /etc/saviour/admin_credentials\n"
+    msg+="  sudo cat /etc/saviour/samba_credentials\n"
+    msg+="\nChange them later via saviour-config's menu:\n"
+    msg+="  \"Reset web UI admin password\"\n"
+    msg+="  \"Reset Samba share password\"\n"
+
+    whiptail --title "SAVIOUR Credentials" \
+        --scrolltext --msgbox "$msg" 24 $W
+}
+
+# Standalone menu entry for the same dialog configure_device() shows right
+# after first-time controller setup -- lets an operator check current
+# credentials at any later point without waiting for another reconfigure.
+# Pre-seeds the admin password if it doesn't exist yet (e.g. nobody has
+# logged into the web UI since this device was set up), so "view" always
+# has something to show.
+view_credentials() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nCredentials only apply to a controller." \
+            8 $W
+        return
+    fi
+    ensure_admin_password
+    show_first_time_credentials
 }
 
 run_mend() {
@@ -257,6 +356,30 @@ run_mend() {
     echo ""
     echo "Press Enter to return to the configuration menu..."
     read -r
+}
+
+credentials_menu() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nCredentials only apply to a controller." \
+            8 $W
+        return
+    fi
+
+    local choice
+    choice=$(wt --title "Credentials" \
+        --menu "\nManage this controller's login credentials:" \
+        $H $W 3 \
+        "show"  "Show current credentials" \
+        "web"   "Reset web UI admin password" \
+        "samba" "Reset Samba share password") || return
+
+    case "$choice" in
+        show)  view_credentials ;;
+        web)   admin_password ;;
+        samba) samba_password ;;
+    esac
 }
 
 main_menu() {
@@ -277,25 +400,23 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 8 \
-            "configure" "Configure this device  (role / type)" \
-            "network"   "Network settings  (controller only)" \
-            "password"  "Reset web UI admin password  (controller only)" \
-            "samba"     "Reset Samba share password  (controller only)" \
-            "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
-            "view"      "View current configuration" \
-            "mend"      "Repair / update this device" \
-            "exit"      "Exit") || return 0
+            $H $W 7 \
+            "configure"   "Configure this device  (role / type)" \
+            "network"     "Network settings  (controller only)" \
+            "credentials" "Credentials  (controller only)" \
+            "refresh"     "Refresh identity  (hostname, SSH keys, machine ID)" \
+            "view"        "View current configuration" \
+            "mend"        "Repair / update this device" \
+            "exit"        "Exit") || return 0
 
         case "$choice" in
-            configure) configure_device ;;
-            network)   network_settings ;;
-            password)  admin_password ;;
-            samba)     samba_password ;;
-            refresh)   clone_fix_menu ;;
-            view)      view_config ;;
-            mend)      run_mend ;;
-            exit)      return 0 ;;
+            configure)   configure_device ;;
+            network)     network_settings ;;
+            credentials) credentials_menu ;;
+            refresh)     clone_fix_menu ;;
+            view)        view_config ;;
+            mend)        run_mend ;;
+            exit)        return 0 ;;
         esac
     done
 }
@@ -422,7 +543,7 @@ configure_device() {
         summary+="\nWill enable  : PTP timeReceiver"
         summary+="\nWill disable : Samba, DHCP, mDNS"
     fi
-    summary+="\n\nThe device will reboot automatically when done."
+    summary+="\n\nYou'll be asked to reboot once setup finishes."
     summary+="\nProceed?"
 
     whiptail --title "Confirm Configuration" --yesno "$summary" 20 $W || return
@@ -435,23 +556,76 @@ configure_device() {
         return
     fi
 
-    # Step 7: reboot automatically — the user already confirmed above.
-    # We do not ask again here because controller setup changes the IP address
-    # mid-run (nmcli), which drops any SSH session.  The second dialog would
-    # appear on a screen the user can no longer see.
+    # Step 6b: surface first-time login credentials while the operator is
+    # still at this terminal. Deliberately still a whiptail dialog (needs an
+    # OK press to dismiss) rather than plain echo -- unlike the countdown
+    # below, this text must not scroll past unread before the reboot.
+    if [ "$role" = "controller" ]; then
+        ensure_admin_password
+        show_first_time_credentials
+    fi
+
+    # Step 7: ask whether to reboot now, same as raspi-config's finish screen.
     #
-    # tput rmcup restores the terminal's normal screen buffer so the whiptail
-    # overlay is fully gone before the countdown appears.
-    tput rmcup 2>/dev/null || clear
-    echo ""
-    echo "  ✓ Configuration complete."
-    echo ""
-    for i in 5 4 3 2 1; do
-        echo "  Rebooting in ${i}…"
-        sleep 1
-    done
-    echo ""
-    reboot
+    # Controller setup changes the IP address mid-run (nmcli), which likely
+    # already dropped an SSH session by this point -- an unanswered prompt
+    # on a dead terminal would otherwise hang forever, so it gets a bounded
+    # timeout that falls back to rebooting anyway (the previous unconditional
+    # behaviour), rather than risking the device being left half-configured.
+    # A module's own connection is never touched during setup, so its prompt
+    # can wait indefinitely for a real answer.
+    local reboot_now
+    if [ "$role" = "controller" ]; then
+        # --foreground keeps whiptail in the terminal's foreground process
+        # group. Without it, `timeout` puts the child in its own process
+        # group so it can kill the whole group reliably -- but that also
+        # means a background process group trying to read the controlling
+        # terminal gets stopped by the kernel (SIGTTIN) instead of actually
+        # receiving keystrokes, so the dialog looks "frozen" for the full
+        # 20s regardless of whether the terminal is still live.
+        timeout --foreground 20 whiptail --title "Reboot Required" --yesno \
+            "\nSetup is complete. A reboot is required for the new configuration to take effect.\n\nWould you like to reboot now?\n\n(If you're connected over SSH and this session already dropped when the network was reconfigured, this will reboot automatically in 20 seconds either way.)" \
+            15 $W
+        local rc=$?
+        # 0 = Yes, 124 = timed out unanswered (dead/unreachable terminal) --
+        # both reboot. Anything else (No / Esc) skips it.
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
+            reboot_now=true
+        else
+            reboot_now=false
+        fi
+        # Defensive: if whiptail was killed mid-draw (SIGTERM on timeout) it
+        # may not have restored the terminal itself -- make sure the stale
+        # frame is gone before anything else is printed.
+        tput rmcup 2>/dev/null || clear
+    else
+        if whiptail --title "Reboot Required" --yesno \
+            "\nSetup is complete. A reboot is required for the new configuration to take effect.\n\nWould you like to reboot now?" \
+            11 $W; then
+            reboot_now=true
+        else
+            reboot_now=false
+        fi
+    fi
+
+    if [ "$reboot_now" = true ]; then
+        # tput rmcup restores the terminal's normal screen buffer so the
+        # whiptail overlay is fully gone before the countdown appears.
+        tput rmcup 2>/dev/null || clear
+        echo ""
+        echo "  ✓ Configuration complete."
+        echo ""
+        for i in 5 4 3 2 1; do
+            echo "  Rebooting in ${i}…"
+            sleep 1
+        done
+        echo ""
+        reboot
+    else
+        whiptail --title "Reboot Later" \
+            --msgbox "\nOK -- remember to reboot manually for the new configuration to take effect:\n\n  sudo reboot" \
+            10 $W
+    fi
 }
 
 network_settings() {
@@ -725,6 +899,53 @@ EOF
     run_logged systemctl enable ptp4l phc2sys
 }
 
+# Idempotent, cheap, and safe to call on every controller run regardless of
+# role_changed -- unlike configure_samba_share() below, this never touches
+# saviour_module's password or restarts services unless it actually had to
+# create something. Exists so a rename/fix to the human accounts (like
+# researcher/sidbit -> saviour_user/saviour_admin) reaches an
+# already-provisioned controller without requiring an actual role flip --
+# same reasoning as the configure_mdns() re-apply comment below.
+ensure_samba_human_accounts() {
+    if ! getent group saviour > /dev/null 2>&1; then
+        run_logged groupadd saviour
+    fi
+
+    local changed=false
+    for sysuser in saviour_user saviour_admin; do
+        if ! id "$sysuser" > /dev/null 2>&1; then
+            run_logged useradd --system --no-create-home \
+                --shell /usr/sbin/nologin --gid saviour "$sysuser"
+        fi
+        if ! pdbedit -Lu "$sysuser" > /dev/null 2>&1; then
+            local pass
+            pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+            printf '%s\n%s\n' "$pass" "$pass" | smbpasswd -s -a "$sysuser" > /dev/null
+            write_samba_credentials_entry "$sysuser" "$pass" "initial password -- change via saviour-config"
+            log "Samba account '$sysuser' created via ensure_samba_human_accounts"
+            changed=true
+        fi
+    done
+
+    # smb.conf's share stanza is only (re)written by configure_samba_share --
+    # if this device predates that (e.g. upgraded from an old
+    # researcher/sidbit install without a role change), patch the account
+    # lists in place instead.
+    if [ -f /etc/samba/smb.conf ] && ! grep -q "saviour_user" /etc/samba/smb.conf; then
+        sed -i \
+            -e "s/^\(\s*valid users = \).*/\1saviour_user, saviour_module, saviour_admin/" \
+            -e "s/^\(\s*write list = \).*/\1saviour_user, saviour_module, saviour_admin/" \
+            -e "s/^\(\s*admin users = \).*/\1saviour_admin/" \
+            /etc/samba/smb.conf
+        log "Patched smb.conf account lists to saviour_user/saviour_admin"
+        changed=true
+    fi
+
+    if [ "$changed" = true ]; then
+        run_logged systemctl restart smbd nmbd
+    fi
+}
+
 configure_samba_share() {
     progress "Configuring Samba share…"
     log "Configuring Samba share"
@@ -735,7 +956,7 @@ configure_samba_share() {
     fi
     usermod -aG saviour pi 2>/dev/null || true
 
-    for sysuser in saviour_module researcher sidbit; do
+    for sysuser in saviour_module saviour_user saviour_admin; do
         if ! id "$sysuser" > /dev/null 2>&1; then
             run_logged useradd --system --no-create-home \
                 --shell /usr/sbin/nologin --gid saviour "$sysuser"
@@ -750,31 +971,31 @@ configure_samba_share() {
 
     # saviour_module is a machine account (modules authenticate with it via
     # push_credentials.sh) and its password regenerates every run, same as
-    # before. researcher/sidbit are human-typed logins for connecting to the
-    # share from a researcher's own machine (sidbit is also the Samba admin
-    # user) -- only seed a random password the first time each account is
-    # created; after that, leave it alone so reconfiguring this device
-    # doesn't silently invalidate a password a lab has already shared with
-    # its members. Use the "Reset Samba share password" menu to change them
-    # deliberately.
+    # before. saviour_user/saviour_admin are human-typed logins for
+    # connecting to the share from a researcher's own machine (saviour_admin
+    # is also the Samba admin user) -- only seed a random password the first
+    # time each account is created; after that, leave it alone so
+    # reconfiguring this device doesn't silently invalidate a password a lab
+    # has already shared with its members. Use the "Reset Samba share
+    # password" menu to change them deliberately.
     mkdir -p /etc/saviour
-    local module_pass researcher_pass="" sidbit_pass=""
+    local module_pass user_pass="" admin_pass=""
     module_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
-    pdbedit -Lu researcher > /dev/null 2>&1 || researcher_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
-    pdbedit -Lu sidbit     > /dev/null 2>&1 || sidbit_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+    pdbedit -Lu saviour_user  > /dev/null 2>&1 || user_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
+    pdbedit -Lu saviour_admin > /dev/null 2>&1 || admin_pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
 
     {
         echo "username=saviour_module"
         echo "password=${module_pass}"
-        if [ -n "$researcher_pass" ]; then
+        if [ -n "$user_pass" ]; then
             echo ""
-            echo "username=researcher (initial password -- change via saviour-config)"
-            echo "password=${researcher_pass}"
+            echo "username=saviour_user (initial password -- change via saviour-config)"
+            echo "password=${user_pass}"
         fi
-        if [ -n "$sidbit_pass" ]; then
+        if [ -n "$admin_pass" ]; then
             echo ""
-            echo "username=sidbit (initial password -- change via saviour-config)"
-            echo "password=${sidbit_pass}"
+            echo "username=saviour_admin (initial password -- change via saviour-config)"
+            echo "password=${admin_pass}"
         fi
     } | tee /etc/saviour/samba_credentials > /dev/null
     chmod 600 /etc/saviour/samba_credentials
@@ -797,9 +1018,9 @@ configure_samba_share() {
    path = /home/pi/${SHARENAME}
    browseable = yes
    read only = yes
-   valid users = researcher, saviour_module, sidbit
-   write list = researcher, saviour_module, sidbit
-   admin users = sidbit
+   valid users = saviour_user, saviour_module, saviour_admin
+   write list = saviour_user, saviour_module, saviour_admin
+   admin users = saviour_admin
    create mask = 0664
    directory mask = 0775
    oplocks = no
@@ -808,8 +1029,8 @@ configure_samba_share() {
 EOF
 
     printf '%s\n%s\n' "$module_pass" "$module_pass" | smbpasswd -s -a saviour_module > /dev/null
-    [ -n "$researcher_pass" ] && printf '%s\n%s\n' "$researcher_pass" "$researcher_pass" | smbpasswd -s -a researcher > /dev/null
-    [ -n "$sidbit_pass" ]     && printf '%s\n%s\n' "$sidbit_pass" "$sidbit_pass"         | smbpasswd -s -a sidbit     > /dev/null
+    [ -n "$user_pass" ]  && printf '%s\n%s\n' "$user_pass" "$user_pass"   | smbpasswd -s -a saviour_user  > /dev/null
+    [ -n "$admin_pass" ] && printf '%s\n%s\n' "$admin_pass" "$admin_pass" | smbpasswd -s -a saviour_admin > /dev/null
 
     run_logged systemctl restart smbd nmbd
     run_logged systemctl enable smbd nmbd
@@ -1175,6 +1396,7 @@ run_configuration() {
     if [ "$DEVICE_ROLE" = "controller" ]; then
         [ "$GATEWAY_MODE" = "controller" ] && configure_ip_forwarding
         configure_mdns
+        ensure_samba_human_accounts
     else
         disable_mdns
     fi

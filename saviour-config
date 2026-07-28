@@ -295,8 +295,26 @@ show_first_time_credentials() {
     msg+="  \"Reset web UI admin password\"\n"
     msg+="  \"Reset Samba share password\"\n"
 
-    whiptail --title "First-Time Credentials -- Save These Now" \
+    whiptail --title "SAVIOUR Credentials" \
         --scrolltext --msgbox "$msg" 24 $W
+}
+
+# Standalone menu entry for the same dialog configure_device() shows right
+# after first-time controller setup -- lets an operator check current
+# credentials at any later point without waiting for another reconfigure.
+# Pre-seeds the admin password if it doesn't exist yet (e.g. nobody has
+# logged into the web UI since this device was set up), so "view" always
+# has something to show.
+view_credentials() {
+    get_current_config
+    if [ "$CURRENT_ROLE" != "controller" ]; then
+        whiptail --title "Not Available" \
+            --msgbox "\nCredentials only apply to a controller." \
+            8 $W
+        return
+    fi
+    ensure_admin_password
+    show_first_time_credentials
 }
 
 run_mend() {
@@ -333,11 +351,12 @@ main_menu() {
         local choice
         choice=$(wt --title " SAVIOUR Configuration " \
             --menu "\n  Hostname : $hn\n  Role     : $status\n" \
-            $H $W 8 \
+            $H $W 9 \
             "configure" "Configure this device  (role / type)" \
             "network"   "Network settings  (controller only)" \
             "password"  "Reset web UI admin password  (controller only)" \
             "samba"     "Reset Samba share password  (controller only)" \
+            "creds"     "Show current credentials  (controller only)" \
             "refresh"   "Refresh identity  (hostname, SSH keys, machine ID)" \
             "view"      "View current configuration" \
             "mend"      "Repair / update this device" \
@@ -348,6 +367,7 @@ main_menu() {
             network)   network_settings ;;
             password)  admin_password ;;
             samba)     samba_password ;;
+            creds)     view_credentials ;;
             refresh)   clone_fix_menu ;;
             view)      view_config ;;
             mend)      run_mend ;;

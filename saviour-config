@@ -188,6 +188,28 @@ admin_password() {
         10 $W
 }
 
+# Writes/replaces $1's entry in samba_credentials with $2, labelled $3 --
+# keeps the file (and the "Show current credentials" dialog) in sync with
+# whatever's actually set in Samba, the same way admin_credentials is kept
+# in sync with the web UI password on every reset. Deliberately persists the
+# plaintext here even though Samba itself only stores a hash -- consistent
+# with the admin_credentials trust boundary (root-only, mode 600), and the
+# whole point of these two accounts is that lab members need to be able to
+# look the current one up, not just whoever performed the last reset.
+write_samba_credentials_entry() {
+    local sysuser="$1" pass="$2" label="$3"
+    local cred_file="/etc/saviour/samba_credentials"
+    mkdir -p /etc/saviour
+    touch "$cred_file"
+    sed -i "/^username=${sysuser} /,+1d" "$cred_file"
+    {
+        echo ""
+        echo "username=${sysuser} (${label})"
+        echo "password=${pass}"
+    } >> "$cred_file"
+    chmod 600 "$cred_file"
+}
+
 # saviour_user/saviour_admin are human-typed logins for connecting to the
 # Samba share from a researcher's own machine (saviour_admin is also the
 # Samba admin user, with full read/write/delete). Each gets a random initial
@@ -237,6 +259,7 @@ samba_password() {
     done
 
     printf '%s\n%s\n' "$new_pass" "$new_pass" | smbpasswd -s -a "$sysuser" > /dev/null
+    write_samba_credentials_entry "$sysuser" "$new_pass" "reset via saviour-config"
     log "Samba password for '$sysuser' reset via saviour-config"
 
     whiptail --title "Password Updated" \
@@ -878,13 +901,7 @@ ensure_samba_human_accounts() {
             local pass
             pass=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
             printf '%s\n%s\n' "$pass" "$pass" | smbpasswd -s -a "$sysuser" > /dev/null
-            mkdir -p /etc/saviour
-            {
-                echo ""
-                echo "username=$sysuser (initial password -- change via saviour-config)"
-                echo "password=${pass}"
-            } | tee -a /etc/saviour/samba_credentials > /dev/null
-            chmod 600 /etc/saviour/samba_credentials
+            write_samba_credentials_entry "$sysuser" "$pass" "initial password -- change via saviour-config"
             log "Samba account '$sysuser' created via ensure_samba_human_accounts"
             changed=true
         fi

@@ -28,7 +28,7 @@
   </p>
 </div>
 
-⭐ Please Star us on GitHub: your support means a lot! 🙏😊
+⭐ Please Star us on GitHub, your support means a lot! 🙏😊
 
 ## Overview
 ***What is SAVIOUR?***<br>
@@ -62,7 +62,22 @@ Not yet available. Eventually an OS image will be available which can be copied 
 ## Usage
 So, you've installed SAVIOUR and configured a controller pi and one or more module pi's. What more remains to be done?
 
-Not much. Just plug them together.
+Not much. Just plug them together, then complete first-time setup on the controller.
+
+### First-time setup
+
+1. **Open the web UI.** With everything plugged into the switch and powered on, browse to `http://saviour.local:5000` from a PC on the same network (or use the controller's IP address if `.local` name resolution doesn't work on your network).
+2. **Log in.** There's no default password - the first login attempt generates a random one and saves it on the controller. Retrieve it by running, on the controller:
+   ```sh
+   sudo cat /etc/saviour/admin_credentials
+   ```
+   Use this to log in, then change it to something memorable via `sudo saviour-config` → "Reset web UI admin password", or the in-app change-password option.
+3. **Note the Samba (file share) credentials**, needed if you or your lab want to browse recordings directly from your own PC:
+   ```sh
+   sudo cat /etc/saviour/samba_credentials
+   ```
+   These can likewise be reset via `sudo saviour-config` → "Reset Samba share password".
+4. **Check Ready.** Before your first recording, use the "Check Ready" button in the web UI to confirm all modules are connected and PTP clock sync has settled.
 
 
 ## Docs

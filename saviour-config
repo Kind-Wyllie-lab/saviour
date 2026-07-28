@@ -243,6 +243,47 @@ samba_password() {
         10 $W
 }
 
+# Idempotent -- never overwrites an existing password, matching the "seed
+# once" behaviour of the Samba human logins in configure_samba_share() above.
+# Normally web.py generates this lazily on the controller's first web login
+# attempt; pre-creating it here lets show_first_time_credentials() display it
+# immediately after setup instead of making the operator SSH back in later.
+ensure_admin_password() {
+    local cred_file="/etc/saviour/admin_credentials"
+    mkdir -p /etc/saviour
+    if [ ! -s "$cred_file" ]; then
+        printf '%s' "$(openssl rand -hex 16)" > "$cred_file"
+        chmod 600 "$cred_file"
+        log "Admin web UI password generated via saviour-config"
+    fi
+}
+
+# Shown once at the end of first-time controller setup, before the automatic
+# reboot -- an explicit OK press gives the operator a chance to write these
+# down while still at the terminal, rather than needing a second SSH-in-and-
+# cat round trip for each file later. Both remain retrievable any time via
+# `sudo cat`, and resettable via the "Reset ... password" menu items.
+show_first_time_credentials() {
+    local msg="\nSave these now -- you will need them to use SAVIOUR.\n\n"
+    msg+="Web UI login  (http://saviour.local:5000):\n"
+    msg+="  password: $(cat /etc/saviour/admin_credentials 2>/dev/null)\n"
+    msg+="\nSamba share login(s):\n"
+
+    if [ -f /etc/saviour/samba_credentials ]; then
+        while IFS= read -r line; do
+            msg+="  $line\n"
+        done < /etc/saviour/samba_credentials
+    fi
+
+    msg+="\nRetrieve these again any time with:\n"
+    msg+="  sudo cat /etc/saviour/admin_credentials\n"
+    msg+="  sudo cat /etc/saviour/samba_credentials\n"
+    msg+="\nChange either later via this menu's password-reset options."
+
+    whiptail --title "First-Time Credentials -- Save These Now" \
+        --scrolltext --msgbox "$msg" 24 $W
+}
+
 run_mend() {
     local mend_script="$DIR/mend.sh"
     if [ ! -f "$mend_script" ]; then
@@ -433,6 +474,15 @@ configure_device() {
             --msgbox "\nAn error occurred during configuration.\n\nSee $LOG for details." \
             9 $W || true
         return
+    fi
+
+    # Step 6b: surface first-time login credentials while the operator is
+    # still at this terminal. Deliberately still a whiptail dialog (needs an
+    # OK press to dismiss) rather than plain echo -- unlike the countdown
+    # below, this text must not scroll past unread before the reboot.
+    if [ "$role" = "controller" ]; then
+        ensure_admin_password
+        show_first_time_credentials
     fi
 
     # Step 7: reboot automatically — the user already confirmed above.

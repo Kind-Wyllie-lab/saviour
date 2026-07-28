@@ -500,7 +500,7 @@ configure_device() {
         summary+="\nWill enable  : PTP timeReceiver"
         summary+="\nWill disable : Samba, DHCP, mDNS"
     fi
-    summary+="\n\nThe device will reboot automatically when done."
+    summary+="\n\nYou'll be asked to reboot once setup finishes."
     summary+="\nProceed?"
 
     whiptail --title "Confirm Configuration" --yesno "$summary" 20 $W || return
@@ -522,23 +522,56 @@ configure_device() {
         show_first_time_credentials
     fi
 
-    # Step 7: reboot automatically — the user already confirmed above.
-    # We do not ask again here because controller setup changes the IP address
-    # mid-run (nmcli), which drops any SSH session.  The second dialog would
-    # appear on a screen the user can no longer see.
+    # Step 7: ask whether to reboot now, same as raspi-config's finish screen.
     #
-    # tput rmcup restores the terminal's normal screen buffer so the whiptail
-    # overlay is fully gone before the countdown appears.
-    tput rmcup 2>/dev/null || clear
-    echo ""
-    echo "  ✓ Configuration complete."
-    echo ""
-    for i in 5 4 3 2 1; do
-        echo "  Rebooting in ${i}…"
-        sleep 1
-    done
-    echo ""
-    reboot
+    # Controller setup changes the IP address mid-run (nmcli), which likely
+    # already dropped an SSH session by this point -- an unanswered prompt
+    # on a dead terminal would otherwise hang forever, so it gets a bounded
+    # timeout that falls back to rebooting anyway (the previous unconditional
+    # behaviour), rather than risking the device being left half-configured.
+    # A module's own connection is never touched during setup, so its prompt
+    # can wait indefinitely for a real answer.
+    local reboot_now
+    if [ "$role" = "controller" ]; then
+        timeout 20 whiptail --title "Reboot Required" --yesno \
+            "\nSetup is complete. A reboot is required for the new configuration to take effect.\n\nWould you like to reboot now?\n\n(If you're connected over SSH, this session likely already dropped when the network was reconfigured -- if so, this will reboot automatically in 20 seconds either way.)" \
+            15 $W
+        local rc=$?
+        # 0 = Yes, 124 = timed out unanswered (dead/unreachable terminal) --
+        # both reboot. Anything else (No / Esc) skips it.
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
+            reboot_now=true
+        else
+            reboot_now=false
+        fi
+    else
+        if whiptail --title "Reboot Required" --yesno \
+            "\nSetup is complete. A reboot is required for the new configuration to take effect.\n\nWould you like to reboot now?" \
+            11 $W; then
+            reboot_now=true
+        else
+            reboot_now=false
+        fi
+    fi
+
+    if [ "$reboot_now" = true ]; then
+        # tput rmcup restores the terminal's normal screen buffer so the
+        # whiptail overlay is fully gone before the countdown appears.
+        tput rmcup 2>/dev/null || clear
+        echo ""
+        echo "  ✓ Configuration complete."
+        echo ""
+        for i in 5 4 3 2 1; do
+            echo "  Rebooting in ${i}…"
+            sleep 1
+        done
+        echo ""
+        reboot
+    else
+        whiptail --title "Reboot Later" \
+            --msgbox "\nOK -- remember to reboot manually for the new configuration to take effect:\n\n  sudo reboot" \
+            10 $W
+    fi
 }
 
 network_settings() {

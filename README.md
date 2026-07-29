@@ -55,7 +55,7 @@ After completion, run the following and select the correct configuration (e.g. c
 sudo saviour-config
 ```
 
-![GIF Install](assets/install.gif)
+<img src="assets/install.gif" alt="GIF Install" width="100%" />
 
 ### Using a pre-baked image
 
@@ -126,16 +126,15 @@ Use the conventional commits framework wherever possible
 https://www.conventionalcommits.org/en/v1.0.0/#summary 
 
 ### Style
-Style is enforced by ruff (ruff check/ruff format); it's PEP 8 based with an 88-character line legnth.
+Style is enforced by ruff (ruff check/ruff format); it's PEP 8 based with an 88-character line length.
 
 ### Workflow 
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feat/AmazingNewModule`)
 3. Commit your Changes (`git commit -m 'feat: Create AmazingNewModule'`)
 4. Push to the Branch (`git push origin feat/AmazingNewModule`)
-5. Open a Pull Request between your branch and the "develop" branch
-6. When a number of changes have been accumulated in the "develop" branch, this will be merged with "staging"
-7. When the changes are stable, staging will be given a tag for a new release and this will be merged with main - your AmazingNewModule is now part of SAVIOUR!
+5. Open a Pull Request between your branch and the "staging" branch
+6. When the changes are stable, staging will be given a tag for a new release and this will be merged with main - your AmazingNewModule is now part of SAVIOUR!
 
 <!-- LICENSE -->
 ## License
@@ -145,6 +144,5 @@ Distributed under the MIT License. See `LICENSE.txt` for more information.
 ## Contact
 Andrew Scott-George - ascottg@ed.ac.uk
 
-Project Link: [https://github.com/Kind-Wyllie-lab/saviour](https://github.com/Kind-Wyllie-lab/saviour)
-
+Patrick Spooner - p.a.spooner@ed.ac.uk
 

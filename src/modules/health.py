@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Health Manager
 
@@ -9,14 +8,15 @@ Author: Andrew SG
 Created: 16/05/2025
 """
 
-import psutil
-import time
 import logging
-from typing import Callable, Dict, Any, Optional
-import threading
 import os
+import threading
+import time
+
+import psutil
 
 from src.shared.health import ModuleHealthSnapshot
+
 
 class Health:
     """
@@ -33,7 +33,7 @@ class Health:
         # Heartbeat parameters
         self.heartbeat_interval = self.config.get("module.heartbeat_interval", 30)
         self.heartbeats_active = False
-    
+
     def start_heartbeats(self) -> bool:
         """Start sending periodic heartbeats to the controller
         
@@ -47,14 +47,14 @@ class Health:
         if self.heartbeats_active:
             self.logger.info("Heartbeats already active")
             return False
-            
+
         if not self.facade.get_controller_ip():
             self.logger.error("Cannot start heartbeats: not connected to controller")
             return False
-            
+
         self.heartbeats_active = True
         self.heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, 
+            target=self._heartbeat_loop,
             daemon=True
         )
         self.heartbeat_thread.start()
@@ -65,7 +65,7 @@ class Health:
         self.logger.info("Heartbeat thread started")
         last_heartbeat_time = 0
         check_interval = 0.1  # Check for stop flag every 10ms
-        
+
         while self.heartbeats_active:
             current_time = time.time()
             # Check if it's time to send a heartbeat
@@ -76,7 +76,7 @@ class Health:
                         self.logger.warning("Controller IP not available, stopping heartbeats")
                         self.heartbeats_active = False
                         break
-                        
+
                     # self.logger.info("Sending heartbeat")
                     status = self.get_health()
                     status['type'] = 'heartbeat' # Add type field to identify heartbeat status
@@ -88,10 +88,10 @@ class Health:
                     # If we get an error sending the heartbeat, stop the heartbeats
                     self.heartbeats_active = False
                     break
-            
+
             # Sleep for a short interval rather than the full heartbeat interval - this allows for quicker response to stop requests
             time.sleep(check_interval)
-    
+
     def get_health(self) -> dict:
         """Get health metrics for the module"""
         ptp_status = self.facade.get_ptp_status()
@@ -122,23 +122,23 @@ class Health:
             temp = os.popen("vcgencmd measure_temp").readline()
             return float(temp.replace("temp=","").replace("'C\n",""))
         except:
-            return None            
+            return None
 
     def stop_heartbeats(self):
         """Stop sending heartbeats"""
         self.heartbeats_active = False
         self.logger.info("Heartbeat flag set to false")
-        
+
         # Ensure the thread has stopped
         if hasattr(self, 'heartbeat_thread') and self.heartbeat_thread and self.heartbeat_thread.is_alive():
             self.logger.info("Waiting for heartbeat thread to stop...")
             self.heartbeat_thread.join(timeout=1.0)
             if self.heartbeat_thread.is_alive():
                 self.logger.warning("Heartbeat thread did not stop cleanly - continuing shutdown")
-        
+
         self.logger.info("Heartbeat thread stopped")
-    
+
     def cleanup(self): # TODO: is this redundant with the stop_heartbeats method?
         """Clean up resources"""
         self.stop_heartbeats()
-        
+

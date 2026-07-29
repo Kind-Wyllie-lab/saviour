@@ -6,8 +6,8 @@ received_module_config / set_target_module_config running concurrently.
 """
 
 import threading
-import time
-from src.controller.modules import Modules, ConfigSyncStatus, Module
+
+from src.controller.modules import ConfigSyncStatus, Module, Modules
 
 
 def _make_modules() -> Modules:

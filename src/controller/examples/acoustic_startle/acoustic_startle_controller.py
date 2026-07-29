@@ -9,17 +9,15 @@ Serves up the system GUI and binds appropriate routes between GUI buttons and mo
 @date: 080725
 """
 
-import sys
 import os
-import logging
-import threading
-from typing import Optional, List
+import sys
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Import habitat controller
 from controller.controller import Controller
+
 
 class AcousticStartleController(Controller):
     def __init__(self):
@@ -33,7 +31,7 @@ class AcousticStartleController(Controller):
         self.web.handle_special_module_status = self.handle_special_module_status # Bind callback
 
 
-    def configure_controller(self, updated_keys: Optional[list[str]]):
+    def configure_controller(self, updated_keys: list[str] | None):
         pass
 
 

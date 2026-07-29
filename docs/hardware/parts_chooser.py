@@ -1,7 +1,6 @@
-from collections import defaultdict
 import csv
+from collections import defaultdict
 from datetime import datetime
-from typing import Optional
 
 components = {
     "pi5": {
@@ -156,7 +155,7 @@ def get_input(prompt: str) -> int:
             print("Please enter an integer number")
 
 
-def export_shopping_list_csv(filename, totals, components, module_counts, description: Optional[str] = None):
+def export_shopping_list_csv(filename, totals, components, module_counts, description: str | None = None):
     grand_total = 0.0
 
     # Build description

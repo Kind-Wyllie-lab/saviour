@@ -26,10 +26,9 @@ import logging
 import socket
 import threading
 import time
-from datetime import datetime, timezone
-from urllib.request import urlopen, Request
+from datetime import UTC, datetime
 from urllib.error import URLError
-
+from urllib.request import Request, urlopen
 
 _INTERNET_CHECK_HOST = "8.8.8.8"
 _INTERNET_CHECK_PORT = 53
@@ -86,7 +85,7 @@ class Notifier:
         if not self.check_internet():
             return False, "No internet access — controller cannot reach 8.8.8.8:53"
         colour = "default"
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
         payload = {
             "type": "message",
             "attachments": [
@@ -165,7 +164,7 @@ class Notifier:
             return
 
         colour = {"error": "attention", "warning": "warning"}.get(severity, "default")
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
         # Teams Workflows webhook requires an Adaptive Card envelope
         payload = {

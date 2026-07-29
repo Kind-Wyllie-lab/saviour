@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - TTL Module 
 
@@ -11,28 +10,25 @@ Author: Andrew SG
 Created: 23/05/2025
 """
 
+import atexit  # Add GPIO cleanup at module level
 import collections
 import os
-import sys
-import time
 import random
-import logging
+import signal
+import sys
 import threading
-import gpiozero
-import datetime
-import json
-import numpy as np
-import cv2
-from typing import Dict, Any, Optional, Callable
+import time
 from dataclasses import dataclass
 from enum import Enum
-import atexit # Add GPIO cleanup at module level
-import signal
+
+import cv2
+import gpiozero
+import numpy as np
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command
 from modules.mjpeg_stream import MJPEGStreamServer
+from modules.module import Module
 
 
 # Global GPIO cleanup function
@@ -73,7 +69,7 @@ class TTLModule(Module):
     def __init__(self, module_type="ttl"):
         # Call the parent class constructor first
         super().__init__(module_type)
-        
+
         # Load TTL Config
         self.config.load_module_config("ttl_config.json")
 
@@ -188,7 +184,7 @@ class TTLModule(Module):
         self.facade.add_session_file(filename)
         self._open_ttl_file(filename)
 
-    
+
     def configure_module_special(self, updated_keys: list):
         """Re-assign pins and refresh the MJPEG stream buffers when TTL config changes."""
         if any(k.startswith("ttl.") for k in updated_keys):
@@ -344,10 +340,10 @@ class TTLModule(Module):
 
 
     def _start_recording_all_input_pins(self):
-        self.logger.info(f"Starting to record all input pins")
+        self.logger.info("Starting to record all input pins")
         for pin in self.input_pins:
             self._start_recording_on_output_pin(pin)
-    
+
 
     def _start_recording_on_output_pin(self, pin):
         pin.when_pressed = self._handle_input_pin_low
@@ -362,13 +358,13 @@ class TTLModule(Module):
 
             # Stop monitoring all input pins
             self.stop_recording_all_input_pins()
-            
+
             # Stop all pin generators
             self._stop_pin_generators()
 
             # Return all output pins to resting (inactive) state
             self._set_all_output_pins_inactive()
-            
+
             # Update recording state
             self.recording_stop_time = time.time()
             self.is_recording = False
@@ -389,7 +385,7 @@ class TTLModule(Module):
                     "message": "Recording completed successfully"
                 })
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -399,21 +395,21 @@ class TTLModule(Module):
                     "error": str(e)
                 })
             return False
-    
+
 
 
 
     def stop_recording_all_input_pins(self):
-        self.logger.info(f"Stopping to record all input pins")
+        self.logger.info("Stopping to record all input pins")
         for pin in self.input_pins:
             self.stop_recording_on_input_pin(pin)
-    
+
 
     def stop_recording_on_input_pin(self, pin):
         pin.when_pressed = None
         pin.when_released = None
         self.logger.info(f"Stopped monitoring input pin {pin.pin}")
-    
+
 
     def stop_recording_on_output_pin(self, pin):
         pin.when_pressed = None
@@ -430,7 +426,7 @@ class TTLModule(Module):
     def _handle_input_pin_high(self, pin):
         """Handle input pin going high (released)"""
         self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.HIGH)
-        self.logger.info(f"Input pin {pin.pin} went high (released)") 
+        self.logger.info(f"Input pin {pin.pin} went high (released)")
 
 
     def _open_ttl_file(self, filename: str):
@@ -451,7 +447,7 @@ class TTLModule(Module):
         self._open_ttl_file(self.current_ttl_events_filename)
 
 
-    def _write_ttl_event(self, timestamp_ns: int, pin_number: int, state: TTLValue): 
+    def _write_ttl_event(self, timestamp_ns: int, pin_number: int, state: TTLValue):
         """Write a TTL event to file"""
         if self._ttl_file_handle:
             self._ttl_file_handle.write(f'{timestamp_ns},{pin_number},{self.pin_configs[pin_number].get("mode")},{state},{self.pin_configs[pin_number].get("description")}\n')
@@ -488,53 +484,53 @@ class TTLModule(Module):
             if pin_number not in self.ttl_output_pins:
                 self.logger.error(f"Pin {pin_number} is not configured as an output pin")
                 return False
-            
+
             # Stop any existing pulse generation
             if self.pulse_generation_active:
                 self.stop_pseudo_random_pulses()
-            
+
             # Find the pin object
             pin_obj = None
             for pin in self.output_pins:
                 if pin.pin.number == pin_number:
                     pin_obj = pin
                     break
-            
+
             if not pin_obj:
                 self.logger.error(f"Could not find pin object for pin {pin_number}")
                 return False
-            
+
             # Update configuration
             self.pulse_generation_config.update({
                 'min_interval': min_interval,
                 'max_interval': max_interval,
                 'pulse_duration': pulse_duration
             })
-            
+
             # Set initial state to low
             pin_obj.off()
             self.logger.info(f"Set pin {pin_number} to initial low state")
-            
+
             # Start pulse generation thread
             self.pulse_generation_active = True
             self.pulse_generation_pin = pin_obj
-            
+
             self.pulse_generation_thread = threading.Thread(
                 target=self._pulse_generation_worker,
                 args=(pin_obj,),
                 daemon=True
             )
             self.pulse_generation_thread.start()
-            
+
             self.logger.info(f"Started pseudo-random pulse generation on pin {pin_number}")
             self.logger.info(f"Configuration: min_interval={min_interval}s, max_interval={max_interval}s, pulse_duration={pulse_duration}s")
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error starting pseudo-random pulses: {e}")
             return False
-    
+
 
     def stop_pseudo_random_pulses(self):
         """
@@ -547,29 +543,29 @@ class TTLModule(Module):
             if not self.pulse_generation_active:
                 self.logger.info("Pulse generation was not active")
                 return True
-            
+
             # Stop the thread
             self.pulse_generation_active = False
-            
+
             # Wait for thread to finish
             if self.pulse_generation_thread and self.pulse_generation_thread.is_alive():
                 self.pulse_generation_thread.join(timeout=2.0)
-            
+
             # Set pin back to high state
             if self.pulse_generation_pin:
                 self.pulse_generation_pin.on()
                 self.logger.info(f"Set pin {self.pulse_generation_pin.pin.number} back to high state")
-            
+
             self.pulse_generation_pin = None
             self.pulse_generation_thread = None
-            
+
             self.logger.info("Stopped pseudo-random pulse generation")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping pseudo-random pulses: {e}")
             return False
-    
+
 
     def _pulse_generation_worker(self, pin_obj):
         """
@@ -582,34 +578,34 @@ class TTLModule(Module):
             # Set pin to high initially
             pin_obj.on()
             self.logger.info(f"Pulse generation worker started on pin {pin_obj.pin.number}")
-            
+
             while self.pulse_generation_active:
                 # Generate random interval
                 interval = random.uniform(
                     self.pulse_generation_config['min_interval'],
                     self.pulse_generation_config['max_interval']
                 )
-                
+
                 # Wait for the interval
                 time.sleep(interval)
-                
+
                 # Check if we should still be running
                 if not self.pulse_generation_active:
                     break
-                
+
                 # Generate pulse (set low, then high)
                 pin_obj.off()
                 time.sleep(self.pulse_generation_config['pulse_duration'])
                 pin_obj.on()
-                
+
                 self.logger.debug(f"Generated pulse on pin {pin_obj.pin.number} after {interval:.3f}s interval")
-                
+
         except Exception as e:
             self.logger.error(f"Error in pulse generation worker: {e}")
         finally:
             pin_obj.off()
             self.logger.info(f"Pulse generation worker stopped for pin {pin_obj.pin.number} and pin set to low")
-    
+
 
     def get_pulse_generation_status(self):
         """
@@ -630,30 +626,30 @@ class TTLModule(Module):
         try:
             # Clean up any existing GPIO resources first
             self._cleanup_gpio()
-            
+
             # Get pin configuration from config
             pins_config = self.config.get("ttl.pins", {})
-            
+
             if not pins_config:
                 self.logger.warning("No pin configuration found in config file")
                 return
-            
+
             self.logger.info(f"Assigning pins from config: {pins_config}")
-            
+
             # Clear existing pin lists
             self.input_pins = []
             self.output_pins = []
-            
+
             # Clear pin type tracking
             self.pin_configs = {}
             self.experiment_clock_pins = []
             self.pseudorandom_pins = []
             self.interval_pulse_pins = []
-            
+
             # Track pin assignments for logging
             input_pins_assigned = []
             output_pins_assigned = []
-            
+
             active_logic = self.config.get("ttl.active_logic", "active_low")
             pull_up = (active_logic == "active_low")
             self.logger.info(f"Assigning pins with active_logic='{active_logic}' (pull_up={pull_up})")
@@ -684,7 +680,7 @@ class TTLModule(Module):
                                 self.logger.info(f"Successfully assigned input pin {pin_number} after retry")
                             except Exception as e2:
                                 self.logger.error(f"Failed to assign input pin {pin_number} after retry: {e2}")
-                        
+
                     elif pin_type == "pseudorandom":
                         # Create output pin (LED object) with proper error handling
                         try:
@@ -725,7 +721,7 @@ class TTLModule(Module):
                                 self.logger.info(f"Successfully assigned output pin {pin_number} after retry")
                             except Exception as e2:
                                 self.logger.error(f"Failed to assign output pin {pin_number} after retry: {e2}")
-                            
+
                     elif pin_type == "interval_pulse":
                         try:
                             pin_obj = gpiozero.LED(pin_number)
@@ -749,12 +745,12 @@ class TTLModule(Module):
 
                     else:
                         self.logger.warning(f"Unknown pin type '{pin_type}' for pin {pin_number}")
-                        
+
                 except ValueError as e:
                     self.logger.error(f"Invalid pin number '{pin_number}': {e}")
                 except Exception as e:
                     self.logger.error(f"Error assigning pin {pin_number}: {e}")
-            
+
             # Update the pin lists for backward compatibility
             self.ttl_input_pins = input_pins_assigned
             self.ttl_output_pins = output_pins_assigned
@@ -770,10 +766,10 @@ class TTLModule(Module):
                         del self.pin_state_buffers[pn]
 
             self.logger.info(f"Pin assignment complete: {len(self.input_pins)} input pins, {len(self.output_pins)} output pins")
-            
+
         except Exception as e:
             self.logger.error(f"Error in assign_pins: {e}")
-    
+
 
     def _cleanup_gpio(self):
         """Clean up GPIO resources to prevent conflicts"""
@@ -816,27 +812,27 @@ class TTLModule(Module):
                 f"{len(self.pseudorandom_pins)} pseudorandom, "
                 f"{len(self.interval_pulse_pins)} interval_pulse generators"
             )
-            
+
         except Exception as e:
             self.logger.error(f"Error starting pin generators: {e}")
-    
-    
+
+
     def _stop_pin_generators(self):
         """Stop all pin generators"""
         try:
             # Set recording flag to False to signal threads to stop
             self.is_recording = False
-            
+
             # Give threads a moment to exit naturally and execute finally blocks
             time.sleep(0.1)  # 100ms should be enough for daemon threads to check the flag and cleanup
-            
+
             # Clear thread references
             self.generator_threads.clear()
             self.logger.info("Stopped all pin generators")
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping pin generators: {e}")
-    
+
 
     def _set_output_active(self, pin_obj) -> None:
         """Drive pin to its electrically active state."""
@@ -866,7 +862,7 @@ class TTLModule(Module):
             self.logger.info(f"Set all {len(self.output_pins)} output pins to inactive state")
         except Exception as e:
             self.logger.error(f"Error setting output pins to inactive: {e}")
-    
+
 
     def _start_experiment_clock(self, pin_number):
         """Start experiment clock generator for a specific pin"""
@@ -876,23 +872,23 @@ class TTLModule(Module):
             duty_cycle = float(pin_config.get("duty_cycle", 0.5))
             period = float(pin_config.get("period", 1.0))
             self.logger.info(f"Duty cycle for experiment clock {duty_cycle} from config")
-            
+
             # Find the pin object
             pin_obj = None
             for pin in self.output_pins:
                 if pin.pin.number == pin_number:
                     pin_obj = pin
                     break
-            
+
             if not pin_obj:
                 self.logger.error(f"Could not find pin object for experiment clock pin {pin_number}")
                 return False
-            
+
             # Set initial state to active (clock is active as soon as recording begins)
             self._set_output_active(pin_obj)
             self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
             self.logger.info(f"Started experiment clock on pin {pin_number} with {duty_cycle} duty cycle")
-            
+
             # Start generator thread
             thread = threading.Thread(
                 target=self._experiment_clock_worker,
@@ -901,24 +897,24 @@ class TTLModule(Module):
             )
             thread.start()
             self.generator_threads[pin_number] = thread
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error starting experiment clock on pin {pin_number}: {e}")
             return False
-    
+
 
     def _experiment_clock_worker(self, pin_obj, pin_number, duty_cycle, period):
         """Worker thread for experiment clock generation"""
         try:
             self.logger.info(f"Experiment clock worker started on pin {pin_number}")
-            
+
             while self.is_recording:
                 # Calculate timing
                 high_time = period * duty_cycle
                 low_time = period * (1.0 - duty_cycle)
-                
+
                 # Active phase
                 self._set_output_active(pin_obj)
                 self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
@@ -937,7 +933,7 @@ class TTLModule(Module):
         finally:
             self._set_output_inactive(pin_obj)
             self.logger.info(f"Experiment clock worker stopped for pin {pin_number}, returned to inactive state")
-    
+
 
     def _start_pseudorandom_generator(self, pin_number):
         """Start pseudorandom generator for a specific pin"""
@@ -949,20 +945,20 @@ class TTLModule(Module):
             pulse_duration = float(pin_config.get("pulse_duration", 0.01))
 
             self.logger.info(f"Min interval {min_interval}, max interval {max_interval}, pulse_duration {pulse_duration}")
-            
+
             # Find the pin object
             pin_obj = None
             for pin in self.output_pins:
                 if pin.pin.number == pin_number:
                     pin_obj = pin
                     break
-            
+
             if not pin_obj:
                 self.logger.error(f"Could not find pin object for pseudorandom pin {pin_number}")
                 return False
-            
+
             self.logger.info(f"Started pseudorandom generator on pin {pin_number}")
-            
+
             # Start generator thread
             thread = threading.Thread(
                 target=self._pseudorandom_worker,
@@ -971,13 +967,13 @@ class TTLModule(Module):
             )
             thread.start()
             self.generator_threads[pin_number] = thread
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error starting pseudorandom generator on pin {pin_number}: {e}")
             return False
-    
+
 
     def _pseudorandom_worker(self, pin_obj, pin_number, min_interval, max_interval, pulse_duration):
         """Worker thread for pseudorandom pulse generation"""
@@ -995,11 +991,11 @@ class TTLModule(Module):
 
                 # Wait for the interval
                 time.sleep(interval)
-                
+
                 # Check if still recording
                 if not self.is_recording:
                     break
-                
+
                 # Generate pulse: active for pulse_duration, then return to inactive
                 self._set_output_active(pin_obj)
                 self._write_ttl_event(time.time_ns(), pin_number, TTLValue.HIGH)
@@ -1012,7 +1008,7 @@ class TTLModule(Module):
         finally:
             self._set_output_inactive(pin_obj)
             self.logger.info(f"Pseudorandom worker stopped for pin {pin_number}, returned to inactive state")
-    
+
 
     def _start_interval_pulse(self, pin_number):
         """Start interval pulse generator for a specific pin."""
@@ -1324,29 +1320,29 @@ class TTLModule(Module):
             # Stop recording if active
             if self.is_recording:
                 self.stop_recording()
-            
+
             # Stop all pin generators
             self._stop_pin_generators()
-            
+
             # Return all output pins to inactive state before cleanup
             for pin in self.output_pins:
                 try:
                     self._set_output_inactive(pin)
                 except:
                     pass
-            
+
             # Clear pin lists
             self.input_pins.clear()
             self.output_pins.clear()
-            
+
             # Clean up GPIO
             self._cleanup_gpio()
-            
+
             self.logger.info("TTL module cleanup complete")
-            
+
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
-    
+
     def __del__(self):
         """Destructor to ensure cleanup"""
         try:

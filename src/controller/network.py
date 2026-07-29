@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Network Manager
 
@@ -9,18 +8,17 @@ Author: Andrew SG
 Created: ?
 """
 
-from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo # for mDNS module discovery
-import os
-import socket
-import uuid
-from typing import Dict, Any, Optional
 import logging
-import threading
-import time
+import socket
 import subprocess
-from src.controller.models import Module # Import the dataclass for Modules
+import time
 
-class Network():
+from zeroconf import ServiceBrowser, ServiceInfo, Zeroconf  # for mDNS module discovery
+
+from src.controller.models import Module  # Import the dataclass for Modules
+
+
+class Network:
     def __init__(self, config=None):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -29,14 +27,14 @@ class Network():
         self.module_discovery_times = {}
         self.module_last_seen = {}
         self._zeroconf_name_to_id = {}  # name → module_id for remove_service lookup
-        
+
         # Get the ip address of the controller
         self.interface = "eth0" # The interface connected to the SAVIOUR network
         self.ip_is_valid = False
         self.ip = self._wait_for_proper_ip()
 
         self.logger.info(f"Controller IP address: {self.ip}")
-        
+
         self.service_port = self.config.get("zeroconf.port", 5353)
         self.service_type = self.config.get("zeroconf.service_type", "_controller._tcp.local.")
         self.service_name = self.config.get("zeroconf.service_name", f"controller_{socket.gethostname()}._controller._tcp.local.")
@@ -47,7 +45,7 @@ class Network():
         self.browser = None
         self.service_registered = False
 
-        self.logger.info(f"Controller service manager initialized (service not yet registered)")
+        self.logger.info("Controller service manager initialized (service not yet registered)")
 
     def _wait_for_proper_ip(self, max_wait_secs: int = 60, retry_interval: int = 5):
         """Wait for the proper network IP on eth0 to be available.
@@ -105,7 +103,7 @@ class Network():
         if self.service_registered:
             self.logger.info("Service already registered")
             return True
-            
+
         try:
             # Create service info with current IP
             self.service_info = ServiceInfo(
@@ -137,16 +135,16 @@ class Network():
                 # Unregister our own service
                 self.zeroconf.unregister_service(self.service_info)
                 self.logger.info("Unregistered controller service")
-                
+
                 # Cancel browser
                 if hasattr(self, 'browser'):
                     self.browser.cancel()
                     self.logger.info("Cancelled service browser")
-                
+
                 # Close zeroconf
                 self.zeroconf.close()
                 self.logger.info("Closed zeroconf")
-                
+
                 # Clear module list
                 self.module_discovery_times.clear()
                 self.module_last_seen.clear()
@@ -157,7 +155,7 @@ class Network():
         finally:
             self.logger.info("Service manager cleanup complete")
 
-    
+
     """Zeroconf Required Methods"""
     @staticmethod
     def _prop(properties, key, default=b'unknown') -> str:
@@ -186,7 +184,7 @@ class Network():
         )
 
         self.logger.info(f"Module {module.id} {module.version} discovered")
-        
+
         # Update tracking information
         current_time = time.time()
         self.module_discovery_times[module.id] = current_time
@@ -201,8 +199,8 @@ class Network():
         self.logger.info(f"Service updated: {name}")
         # Update the last seen time for this module
         info = zeroconf.get_service_info(service_type, name)
-        if not info: 
-            self.logger.warning("update_service was called with no service info") 
+        if not info:
+            self.logger.warning("update_service was called with no service info")
             return
 
         module_id = self._prop(info.properties, b'id')
@@ -247,13 +245,13 @@ class Network():
 
             # Call the callback if it exists
             if self.on_module_removed:
-                self.logger.info(f"Calling module removal callback")
+                self.logger.info("Calling module removal callback")
                 self.on_module_removed(module_to_remove)
             else:
                 self.logger.warning(f"No callback to remove module: {module_to_remove}")
         except Exception as e:
             self.logger.error(f"Error removing module {name}: {e}")
-    
+
 
     def get_own_ip(self):
         if self.ip_is_valid:
@@ -263,12 +261,12 @@ class Network():
             self._wait_for_proper_ip()
 
 
-    def get_module_status(self, module_id: str) -> Optional[Dict]:
+    def get_module_status(self, module_id: str) -> dict | None:
         """Get detailed status for a specific module"""
         current_time = time.time()
         last_seen = self.module_last_seen.get(module_id, None)
         discovery_time = self.module_discovery_times.get(module_id, None)
-        
+
         return {
             'last_seen': last_seen,
             'discovery_time': discovery_time,

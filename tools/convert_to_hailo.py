@@ -31,11 +31,9 @@ Calibration images:
 
 import argparse
 import platform
-import sys
-import os
 import shutil
+import sys
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -192,7 +190,7 @@ image_dims=[{imgsz}, {imgsz}], classes={num_classes})
     print(f"      Quantized HAR saved: {har_path}")
 
     # ── 4. Compile → HEF ─────────────────────────────────────────────────────
-    print(f"\n[4/4] Compiling → HEF")
+    print("\n[4/4] Compiling → HEF")
     hef_bytes = runner.compile()
     hef_path.write_bytes(hef_bytes)
     print(f"      Saved HEF: {hef_path}")

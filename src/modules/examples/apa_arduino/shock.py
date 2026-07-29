@@ -1,11 +1,12 @@
 
 import logging
-import threading
-from collections import deque
-from protocol import Protocol
-import sys
 import os
+import sys
+import threading
 import time
+from collections import deque
+
+from protocol import Protocol
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -27,7 +28,7 @@ MSG_DEACTIVATE = "X"
 
 
 # Shock pnout etc
-PIN_MAP = [17, 16, 15, 14, 4, 5, 6, 7, 12, 2, 9] 
+PIN_MAP = [17, 16, 15, 14, 4, 5, 6, 7, 12, 2, 9]
 SHOCK_VALS = [0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56] # Mapping for the shocker
 SHOCK_PINS = [17, 16, 15, 14, 4, 5, 6, 7]
 SELF_TEST_OUT = 12
@@ -120,7 +121,7 @@ class Shocker:
 
         # Set time_off from config
         self.time_off = self.config.get("arduino.shocker.intershock_latency")
-        self.set_time_off(self.time_off)    
+        self.set_time_off(self.time_off)
 
 
     """Shock Thread"""
@@ -177,11 +178,11 @@ class Shocker:
         if not self.check_shock_set():
             self.logger.info("Cannot run grid test with current set to 0.")
             return False, "Cannot run grid test with current set to 0"
-        
+
         if self.shock_activated:
             self.logger.info("Cannot run grid test with shocks active.")
             return False, "Cannot run grid test with shocks active. Deactivate shocks first."
-        
+
         # Initiate test by writing to pin
         self.logger.info("Setting SELF_TEST_OUT low.")
         self.send_command(MSG_WRITE_PIN_LOW, SELF_TEST_OUT)
@@ -292,7 +293,7 @@ class Shocker:
 
             # If shock is no longer being attempted
             if self.trigger_out == 1:
-                if self.shock_being_delivered: # Stopped attempted shocks while shock was being delivered 
+                if self.shock_being_delivered: # Stopped attempted shocks while shock was being delivered
                     self._on_shock_stopped_being_delivered(time.time_ns())
                 if self.last_trigger_out == 0: # If we just stopped attempting shocks
                     self._on_shock_stopped_being_attempted(time.time_ns())
@@ -324,7 +325,7 @@ class Shocker:
         self.shock_being_delivered = True
         self.on_shock_started_being_delivered(timestamp)
 
-    
+
     def _on_shock_stopped_being_delivered(self, timestamp: int):
         self.shock_being_delivered = False
         # self.logger.info(f"Shock stopped being delivered at {time.time()}")
@@ -348,7 +349,7 @@ class Shocker:
 
         # if self_test_out == 0 or trigger_out == 0:
         #     self.grid_is_live = True
-        
+
             # if self_test_in == 0:
             #     self.logger.info("Shocker active but no shock being delivered...")
             # if self_test_in == 1:
@@ -365,7 +366,7 @@ class Shocker:
             valid = False
 
         if self.time_off != self.time_off_from_arduino/1000:
-            self.logger.warning(f"Time_off set to {self.time_off}s, Arduino reports {self.time_off_from_arduino}s") 
+            self.logger.warning(f"Time_off set to {self.time_off}s, Arduino reports {self.time_off_from_arduino}s")
             valid = False
 
         if not valid:
@@ -386,10 +387,10 @@ class Shocker:
         # cmd = int(cmd)
         try:
             match cmd:
-                case "0": 
+                case "0":
                     # self.logger.info(state_buffer)
                     self.logger.info(f"Shock set to {self.calculate_shock(self.state_buffer[-1][0:8])}mA")
-                case "1": 
+                case "1":
                     self.set_weak_shock()
                 case "2":
                     self.set_strong_shock()
@@ -423,8 +424,8 @@ class Shocker:
             self.stop_flag.set()
         except Exception as e:
             self.logger.info(f"Exception in CLI: {e}")
-            self.stop_flag.set()    
-    
+            self.stop_flag.set()
+
     def start(self):
         if self.cli_enabled == True:
             self.cli_thread = threading.Thread(target=self.command_line_interface).start()

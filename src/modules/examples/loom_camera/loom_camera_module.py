@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Loom Camera Module
 
@@ -13,22 +12,22 @@ Author: Paul Rignanese / Andrew SG
 """
 
 import json
-import os
-import time
 import logging
+import os
+import sys
+import time
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict
-
-import numpy as np
-import cv2
-
-from flask import request, jsonify
-from picamera2 import MappedArray
 from pathlib import Path
 
-import sys
+import cv2
+import numpy as np
+from flask import jsonify, request
+from picamera2 import MappedArray
 
-from modules.examples.loom_camera.loom_stimulus import LoomStimulusController, LoomStimulusConfig
+from modules.examples.loom_camera.loom_stimulus import (
+    LoomStimulusConfig,
+    LoomStimulusController,
+)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
@@ -58,7 +57,7 @@ class LoomCrossingState:
     """
     in_zone_prev: bool = False
     state: str = "out"
-    last_event: Optional[str] = None
+    last_event: str | None = None
     pending_frames: int = 0
 
 class LoomBlobDiffTracker:
@@ -105,11 +104,11 @@ class LoomBlobDiffTracker:
         self._kern_close = _ellipse(int(close_px)) if int(close_px) > 1 else None
         self._kern_open = _ellipse(int(open_px)) if int(open_px) > 1 else None
 
-        self._roi_mask_proc: Optional[np.ndarray] = None
+        self._roi_mask_proc: np.ndarray | None = None
 
-        self._prev_gray: Optional[np.ndarray] = None
-        self.last_detection_center_proc: Optional[Tuple[float, float]] = None
-        self.last_display_center_proc: Optional[Tuple[float, float]] = None
+        self._prev_gray: np.ndarray | None = None
+        self.last_detection_center_proc: tuple[float, float] | None = None
+        self.last_display_center_proc: tuple[float, float] | None = None
         self._miss_count: int = 0
 
     def reset(self) -> None:
@@ -120,12 +119,12 @@ class LoomBlobDiffTracker:
         self._miss_count = 0
 
     @staticmethod
-    def _resize_to_width(w0: int, h0: int, target_width: int) -> Tuple[int, int]:
+    def _resize_to_width(w0: int, h0: int, target_width: int) -> tuple[int, int]:
         w = max(1, int(target_width))
         h = max(1, int(round(w * h0 / w0)))
         return w, h
 
-    def set_roi_mask_proc(self, roi_mask_proc: Optional[np.ndarray]) -> None:
+    def set_roi_mask_proc(self, roi_mask_proc: np.ndarray | None) -> None:
         """
         Parameters
         ----------
@@ -137,7 +136,7 @@ class LoomBlobDiffTracker:
     def detect_center(
         self,
         frame_bgr: np.ndarray,
-    ) -> Tuple[Optional[Tuple[float, float]], Tuple[float, float], Tuple[int, int]]:
+    ) -> tuple[tuple[float, float] | None, tuple[float, float], tuple[int, int]]:
         """
         Detect / update centroid.
 
@@ -213,27 +212,26 @@ class LoomBlobDiffTracker:
                     (1.0 - a) * self.last_display_center_proc[0] + a * cx_raw,
                     (1.0 - a) * self.last_display_center_proc[1] + a * cy_raw,
                 )
-        else:
-            # HOLD-LAST behavior: keep last_display_center_proc for patience_frames
-            if self.last_display_center_proc is not None:
-                self._miss_count += 1
-                if self._miss_count > self.patience_frames:
-                    self.last_detection_center_proc = None
-                    self.last_display_center_proc = None
-                    self._miss_count = 0
+        # HOLD-LAST behavior: keep last_display_center_proc for patience_frames
+        elif self.last_display_center_proc is not None:
+            self._miss_count += 1
+            if self._miss_count > self.patience_frames:
+                self.last_detection_center_proc = None
+                self.last_display_center_proc = None
+                self._miss_count = 0
 
         return self.last_display_center_proc, (sx, sy), (nx, ny)
 
 
 
 def loom_load_roi_and_line(
-    roi_json_path: Optional[str],
+    roi_json_path: str | None,
     *,
     src_width: int,
     src_height: int,
     proc_width: int,
     proc_height: int,
-) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[Dict[str, float]]]:
+) -> tuple[np.ndarray, np.ndarray | None, dict[str, float] | None]:
     """
     Load an arena ROI polygon and a line definition from JSON and map to proc/source spaces.
 
@@ -272,7 +270,7 @@ def loom_load_roi_and_line(
         return np.ones((proc_height, proc_width), dtype=bool), None, None
 
     roi_path = Path(roi_json_path).expanduser()
-    with open(roi_path, "r") as f:
+    with open(roi_path) as f:
         data = json.load(f)
 
     ann_w = float(data.get("image_size", {}).get("width", src_width))
@@ -331,8 +329,8 @@ def loom_load_roi_and_line(
 
 def loom_update_crossing_state(
     *,
-    crossing_line_src: Optional[Dict[str, float]],
-    center_src: Optional[Tuple[float, float]],
+    crossing_line_src: dict[str, float] | None,
+    center_src: tuple[float, float] | None,
     prev: LoomCrossingState,
     track_valid: bool,
     enter_confirm_frames: int = 1,
@@ -433,13 +431,13 @@ class LoomCameraModule(CameraBase):
         super().__init__(module_type)
 
         # --- Loom tracking state ---
-        self.tracker: Optional[LoomBlobDiffTracker] = None
-        self.roi_json_path: Optional[str] = None
-        self.roi_mask_proc: Optional[np.ndarray] = None
-        self.arena_poly_src: Optional[np.ndarray] = None
-        self.crossing_line_src: Optional[Dict[str, float]] = None
+        self.tracker: LoomBlobDiffTracker | None = None
+        self.roi_json_path: str | None = None
+        self.roi_mask_proc: np.ndarray | None = None
+        self.arena_poly_src: np.ndarray | None = None
+        self.crossing_line_src: dict[str, float] | None = None
 
-        self.last_center_src: Optional[Tuple[float, float]] = None  # (cx, cy) source pixels
+        self.last_center_src: tuple[float, float] | None = None  # (cx, cy) source pixels
         self.crossing_state = LoomCrossingState()
 
         self._hold_miss_count: int = 0
@@ -474,7 +472,7 @@ class LoomCameraModule(CameraBase):
     # ---------------------------------------------------------------------
     # ROI resolution / hot-reload
     # ---------------------------------------------------------------------
-    def _resolve_roi_json_path(self) -> Optional[Path]:
+    def _resolve_roi_json_path(self) -> Path | None:
         """
         Resolve the ROI JSON path from config to an absolute path.
 
@@ -795,23 +793,22 @@ class LoomCameraModule(CameraBase):
                     self.last_center_src = (cx, cy)
                     self._hold_miss_count = 0
                     self._track_valid = True
-                else:
-                    # No new detection: HOLD last_center_src.
-                    if self.last_center_src is not None:
-                        self._hold_miss_count += 1
+                # No new detection: HOLD last_center_src.
+                elif self.last_center_src is not None:
+                    self._hold_miss_count += 1
 
-                        if self._hold_forever_when_still:
-                            # Never declare lost due to stillness
-                            self._track_valid = True
-                        elif self._hold_miss_count <= self._hold_patience_frames:
-                            self._track_valid = True
-                        else:
-                            # Track lost beyond patience
-                            self.last_center_src = None
-                            self._hold_miss_count = 0
-                            self._track_valid = False
+                    if self._hold_forever_when_still:
+                        # Never declare lost due to stillness
+                        self._track_valid = True
+                    elif self._hold_miss_count <= self._hold_patience_frames:
+                        self._track_valid = True
                     else:
+                        # Track lost beyond patience
+                        self.last_center_src = None
+                        self._hold_miss_count = 0
                         self._track_valid = False
+                else:
+                    self._track_valid = False
 
                 next_state = loom_update_crossing_state(
                     crossing_line_src=self.crossing_line_src,
@@ -1040,9 +1037,9 @@ class LoomCameraModule(CameraBase):
             if roi_path is None:
                 return jsonify({"error": "loom_tracking.roi_json_path is not set"}), 400
             if not roi_path.exists():
-                return jsonify({"error": f"ROI JSON not found: {str(roi_path)}"}), 404
+                return jsonify({"error": f"ROI JSON not found: {roi_path!s}"}), 404
             try:
-                with open(roi_path, "r") as f:
+                with open(roi_path) as f:
                     payload = json.load(f)
                 return jsonify(payload), 200
             except Exception:

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Saviour System - Arduino Module Class
 
@@ -9,20 +8,15 @@ Author: Andrew SG
 Created: 24/07/2025
 """
 
-import datetime
-import subprocess
+import json
 import os
 import sys
 import time
-import logging
-import numpy as np
-import threading
-import json
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command
-
+from modules.command import Command
+from modules.module import Module
 
 
 class ArduinoCommand(Command):
@@ -34,13 +28,13 @@ class ArduinoCommand(Command):
     def handle_command(self, command: str):
         """Handle arduino-specific commands while preserving base functionality"""
         self.logger.info("(ARDUINO COMMAND HANDLER) Checking for arduino specific commands.")
-        
+
         try:
             # Parse command and parameters
             parts = command.split()
             cmd = parts[0]
             params = parts[1:] if len(parts) > 1 else []
-            
+
             # Handle arduino-specific commands
             match cmd:
                 case "update_arduino_settings":
@@ -48,7 +42,7 @@ class ArduinoCommand(Command):
                 case _:
                     # If not a arduino-specific command, pass to parent class
                     super().handle_command(command)
-                    
+
         except Exception as e:
             self._handle_error(e)
 
@@ -58,7 +52,7 @@ class ArduinoCommand(Command):
         try:
             if not params:
                 raise ValueError("No settings provided for update_arduino_settings")
-            
+
             settings = json.loads(params[0])
             if 'handle_update_arduino_settings' in self.callbacks:
                 success = self.callbacks['handle_update_arduino_settings'](settings)
@@ -86,7 +80,7 @@ class ArduinoCommand(Command):
                 "error": "Invalid JSON format"
             })
         except Exception as e:
-            self.logger.error(f"(ARDUINO COMMAND HANDLER) Error updating arduino settings: {str(e)}")
+            self.logger.error(f"(ARDUINO COMMAND HANDLER) Error updating arduino settings: {e!s}")
             self.callbacks["send_status"]({
                 "type": "arduino_settings_update_failed",
                 "error": str(e)
@@ -101,13 +95,13 @@ class ArduinoModule(Module):
             config=None,  # Will be set by parent class
             start_time=None  # Will be set during start()
         )
-        
+
         # Call the parent class constructor
         super().__init__(module_type, config, config_file_path)
-        
+
         # Set up callbacks
         self.callbacks = {}
-        
+
         # Set up export manager callbacks
         self.export.set_callbacks({
             'get_controller_ip': lambda: self.service.controller_ip
@@ -153,12 +147,12 @@ class ArduinoModule(Module):
         """Start continuous video recording"""
         # Store experiment name for use in timestamps filename
         self.current_experiment_name = experiment_name
-        
+
         # First call parent class to handle common recording setup
         filename = super().start_recording(experiment_name=experiment_name, duration=duration, experiment_folder=experiment_folder, controller_share_path=controller_share_path)
         if not filename:
             return False
-        
+
         try:
             # TODO: Start recording here
 
@@ -170,7 +164,7 @@ class ArduinoModule(Module):
                 "session_id": self.recording_session_id
             })
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error starting recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -185,17 +179,17 @@ class ArduinoModule(Module):
         # First check if recording using parent class
         if not super().stop_recording():
             return False
-        
+
         try:
             # TODO: Stop recording with arduino-specific code
-            
+
             # Stop frame capture thread
             self.is_recording = False
-            
+
             # Calculate duration
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
-                
+
                 # Send status response after successful recording stop
                 if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
                     self.communication.send_status({
@@ -205,9 +199,9 @@ class ArduinoModule(Module):
                         "duration": duration,
                         "status": "success",
                         "recording": False,
-                        "message": f"Recording completed successfully"
+                        "message": "Recording completed successfully"
                     })
-                
+
                 return True
             else:
                 self.logger.error("Error: recording_start_time was None")
@@ -218,7 +212,7 @@ class ArduinoModule(Module):
                         "error": "Recording start time was not set"
                     })
                 return False
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             if hasattr(self, 'communication') and self.communication and self.communication.controller_ip:
@@ -228,7 +222,7 @@ class ArduinoModule(Module):
                     "error": str(e)
                 })
             return False
-        
+
     def set_arduino_parameters(self, params: dict) -> bool:
         """
         Set arduino parameters and update config
@@ -243,30 +237,30 @@ class ArduinoModule(Module):
             for key, value in params.items():
                 config_key = f"arduino.{key}"
                 self.config.set(config_key, value)
-                
+
             # Update file format if it's in the params
             if 'file_format' in params:
                 self.recording_filetype = params['file_format']
-                
+
             self.logger.info(f"Camera parameters updated: {params}")
             return True
         except Exception as e:
             self.logger.error(f"Error setting arduino parameters: {e}")
             return False
-        
+
     def handle_update_arduino_settings(self, params: dict) -> bool:
         """Handle update_arduino_settings command"""
         try:
             # Update arduino parameters
             success = self.set_arduino_parameters(params)
-            
+
             # Send status update
             self.communication.send_status({
                 "type": "arduino_settings_updated",
                 "settings": params,
                 "success": success
             })
-            
+
             return success
         except Exception as e:
             self.logger.error(f"Error updating arduino settings: {e}")
@@ -279,7 +273,7 @@ class ArduinoModule(Module):
     def get_latest_recording(self):
         """Get the latest recording"""
         return self.latest_recording
-    
+
     def when_controller_discovered(self, controller_ip: str, controller_port: int):
         super().when_controller_discovered(controller_ip, controller_port)
 
@@ -302,10 +296,10 @@ class ArduinoModule(Module):
             # Stop streaming if active
             if self.is_streaming:
                 self.stop_streaming()
-                
+
             # Call parent stop
             return super().stop()
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping module: {e}")
             return False

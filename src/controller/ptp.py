@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 PTP Manager
 
@@ -11,15 +10,13 @@ Author: Andrew SG
 Created: ?
 """
 
+import logging
+import os
 import subprocess
 import threading
 import time
-import logging
-import os
-import sys
-import re
 from enum import Enum
-from typing import Callable, Dict, Any, Optional
+
 
 class PTPRole(Enum):
     MASTER = "master"
@@ -76,7 +73,7 @@ class PTP:
         # Unified offset buffer for storing all PTP values by timestamp
         self.ptp_buffer = []
         self.max_buffer_size = 100  # Store last 100 timestamp entries
-        
+
         # Track latest values for each service
         self.latest_ptp4l_offset = None
         self.latest_ptp4l_freq = None
@@ -106,10 +103,10 @@ class PTP:
 
         # Check if interface is up
         try:
-            with open(f'/sys/class/net/{self.interface}/operstate', 'r') as f:
+            with open(f'/sys/class/net/{self.interface}/operstate') as f:
                 if f.read().strip() != 'up':
                     self.logger.warning(f"Interface {self.interface} is not up")
-        except IOError:
+        except OSError:
             self.logger.warning(f"Could not check interface {self.interface} state")
 
         # Check if interface supports PTP
@@ -124,7 +121,7 @@ class PTP:
     def _check_systemd_services(self):
         """Check if the required systemd services exist."""
         services = [self.ptp4l_service, self.phc2sys_service]
-        
+
         for service in services:
             try:
                 result = subprocess.run(['systemctl', 'status', service], capture_output=True, text=True)
@@ -147,7 +144,7 @@ class PTP:
             self.logger.info("Controller mode: NTP should be configured for PTP coexistence")
             try:
                 # Check if NTP is enabled
-                result = subprocess.run(["timedatectl", "show", "--property=NTP"], 
+                result = subprocess.run(["timedatectl", "show", "--property=NTP"],
                                        capture_output=True, text=True)
                 if "yes" in result.stdout.lower():
                     self.logger.info("NTP is enabled - this is correct for controller mode")
@@ -167,7 +164,7 @@ class PTP:
     def _get_service_status(self, service_name):
         """Get the status of a systemd service."""
         try:
-            result = subprocess.run(['systemctl', 'is-active', service_name], 
+            result = subprocess.run(['systemctl', 'is-active', service_name],
                                    capture_output=True, text=True)
             return result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -176,7 +173,7 @@ class PTP:
     def _get_service_logs(self, service_name, lines=10):
         """Get recent logs from a systemd service."""
         try:
-            result = subprocess.run(['journalctl', '-u', service_name, '-n', str(lines), '--no-pager'], 
+            result = subprocess.run(['journalctl', '-u', service_name, '-n', str(lines), '--no-pager'],
                                    capture_output=True, text=True)
             return result.stdout
         except subprocess.CalledProcessError:
@@ -238,7 +235,7 @@ class PTP:
                 for line in phc2sys_logs.split('\n'):
                     if line.strip():
                         self._parse_phc2sys_line(line)
-            
+
                 self._check_ptp_offsets()
 
             except Exception as e:
@@ -263,9 +260,9 @@ class PTP:
             'phc2sys_freq': self.latest_phc2sys_freq,
             'phc2sys_offset_ns': self.latest_phc2sys_offset_ns
         }
-        
+
         self.ptp_buffer.append(entry)
-        
+
         # Keep buffer size manageable
         if len(self.ptp_buffer) > self.max_buffer_size:
             self.ptp_buffer.pop(0)
@@ -288,10 +285,10 @@ class PTP:
                     self.last_offset = current_offset
                     self.last_sync_time = time.time()
                     self.status = 'synchronized'
-                    
+
                     # Add entry to buffer
                     self._add_buffer_entry(time.time())
-                    
+
             except (IndexError, ValueError) as e:
                 self.logger.warning(f"Could not parse phc2sys offset from line: {line}, error: {e}")
 
@@ -303,11 +300,11 @@ class PTP:
                 freq_match = re.search(r's2 freq\s+(-?\d+)', line)
                 if freq_match:
                     self.latest_phc2sys_freq = int(freq_match.group(1))
-                    
+
                     # Add entry to buffer if we don't have a recent one
                     if not self.ptp_buffer or time.time() - self.ptp_buffer[-1]['timestamp'] > 1.0:
                         self._add_buffer_entry(time.time())
-                    
+
             except (IndexError, ValueError) as e:
                 self.logger.warning(f"Could not parse phc2sys freq from line: {line}, error: {e}")
 
@@ -319,14 +316,14 @@ class PTP:
     def stop(self):
         """Stop PTP services using systemd."""
         self.running = False
-        
+
         try:
             # Stop phc2sys first
             subprocess.run(['systemctl', 'stop', self.phc2sys_service], check=False)
-            
+
             # Stop ptp4l
             subprocess.run(['systemctl', 'stop', self.ptp4l_service], check=False)
-            
+
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Error stopping services: {e}")
 
@@ -341,17 +338,17 @@ class PTP:
         """
         try:
             # Get NTP enabled status
-            ntp_enabled_result = subprocess.run(['timedatectl', 'show', '--property=NTP'], 
+            ntp_enabled_result = subprocess.run(['timedatectl', 'show', '--property=NTP'],
                                                capture_output=True, text=True)
             ntp_enabled = 'yes' in ntp_enabled_result.stdout.lower()
-            
+
             # Get NTP synchronized status
-            ntp_sync_result = subprocess.run(['timedatectl', 'show', '--property=NTPSynchronized'], 
+            ntp_sync_result = subprocess.run(['timedatectl', 'show', '--property=NTPSynchronized'],
                                             capture_output=True, text=True)
             ntp_synchronized = 'yes' in ntp_sync_result.stdout.lower()
-            
+
             # Get system time
-            system_time_result = subprocess.run(['timedatectl', 'show', '--property=TimeUSec'], 
+            system_time_result = subprocess.run(['timedatectl', 'show', '--property=TimeUSec'],
                                                capture_output=True, text=True)
             system_time = None
             if 'TimeUSec=' in system_time_result.stdout:
@@ -360,14 +357,14 @@ class PTP:
                     system_time = int(time_str) / 1000000  # Convert microseconds to seconds
                 except (ValueError, IndexError):
                     pass
-            
+
             return {
                 'ntp_enabled': ntp_enabled,
                 'ntp_synchronized': ntp_synchronized,
                 'system_time': system_time,
                 'role': self.role.value
             }
-            
+
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Could not get NTP status: {e}")
             return {
@@ -382,7 +379,7 @@ class PTP:
         """Get current PTP status."""
         ptp4l_status = self._get_service_status(self.ptp4l_service)
         phc2sys_status = self._get_service_status(self.phc2sys_service)
-        
+
         controller_ptp_status = {
             'role': self.role.value,
             'status': self.status,
@@ -435,29 +432,29 @@ class PTP:
         if self.role != PTPRole.MASTER:
             self.logger.warning("sync_to_network_time only available for master mode")
             return False
-            
+
         if not self.running:
             self.logger.warning("PTP not running, cannot sync to network time")
             return False
-            
+
         self.logger.info("Starting network time sync procedure...")
-        
+
         try:
             # Step 1: Temporarily stop PTP services
             self.logger.info("Temporarily stopping PTP services...")
             subprocess.run(['systemctl', 'stop', self.phc2sys_service], check=True)
             subprocess.run(['systemctl', 'stop', self.ptp4l_service], check=True)
-            
+
             # Step 2: Enable NTP and wait for sync
             self.logger.info("Enabling NTP for network time sync...")
             subprocess.run(['timedatectl', 'set-ntp', 'true'], check=True)
             subprocess.run(['systemctl', 'start', 'systemd-timesyncd'], check=True)
-            
+
             # Step 3: Wait for NTP sync (up to 30 seconds)
             self.logger.info("Waiting for NTP sync...")
             max_wait = 30
             for i in range(max_wait):
-                result = subprocess.run(['timedatectl', 'show', '--property=Synchronized'], 
+                result = subprocess.run(['timedatectl', 'show', '--property=Synchronized'],
                                        capture_output=True, text=True)
                 if 'yes' in result.stdout.lower():
                     self.logger.info("NTP sync completed successfully")
@@ -465,26 +462,26 @@ class PTP:
                 time.sleep(1)
             else:
                 self.logger.warning("NTP sync timeout after 30 seconds")
-            
+
             # Step 4: Get current time offset for logging
-            result = subprocess.run(['timedatectl', 'show', '--property=NTPSynchronized'], 
+            result = subprocess.run(['timedatectl', 'show', '--property=NTPSynchronized'],
                                    capture_output=True, text=True)
             ntp_sync = 'yes' in result.stdout.lower()
-            
+
             # Step 5: Restart PTP services
             self.logger.info("Restarting PTP services...")
             subprocess.run(['systemctl', 'start', self.ptp4l_service], check=True)
             time.sleep(2)
             subprocess.run(['systemctl', 'start', self.phc2sys_service], check=True)
-            
+
             # Step 6: Wait for PTP to stabilize
             self.logger.info("Waiting for PTP to stabilize...")
             time.sleep(5)
-            
+
             # Step 7: Check PTP status
             ptp4l_status = self._get_service_status(self.ptp4l_service)
             phc2sys_status = self._get_service_status(self.phc2sys_service)
-            
+
             if ptp4l_status == 'active' and phc2sys_status == 'active':
                 self.logger.info("Network time sync completed successfully")
                 self.logger.info(f"NTP synchronized: {ntp_sync}")
@@ -493,7 +490,7 @@ class PTP:
             else:
                 self.logger.error(f"PTP services failed to restart: ptp4l={ptp4l_status}, phc2sys={phc2sys_status}")
                 return False
-                
+
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error during network time sync: {e}")
             # Try to restart PTP services even if sync failed

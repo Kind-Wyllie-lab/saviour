@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Recording Manager
 
@@ -18,25 +17,24 @@ Author: Andrew SG
 Created: 12/01/2026
 """
 
+import csv
 import logging
-import threading
 import os
 import shutil
-import datetime
+import threading
 import time
-import csv
-from typing import Dict, Any, Optional
 
 from src.modules.config import Config
 
-class Recording():
+
+class Recording:
     def __init__(self, config: Config):
         # Basic Setup
         self.logger = logging.getLogger(__name__)
         self.config = config
-        
+
         # Parameters from config
-        self.recording_folder = f'{self.config.get("recording.recording_folder", "/var/lib/saviour/recordings")}/pending' # Location that files will be recorded to 
+        self.recording_folder = f'{self.config.get("recording.recording_folder", "/var/lib/saviour/recordings")}/pending' # Location that files will be recorded to
         self.logger.info(f"Recording folder: {self.recording_folder}")
         os.makedirs(self.recording_folder, exist_ok=True)
 
@@ -47,7 +45,7 @@ class Recording():
         self._recording_duration_thread = None # A thread to automatically stop recording if a duration is given # TODO: Rename this something to do with auto stop recording
         self.recording_start_time = None # When a recording session was started
         self.recording_intended_start_at = None # The start_at timestamp requested by the controller (None = start immediately)
-        
+
         # Health metadata thread
         self.health_recording_thread = None # A thread to record health on
         self.health_stop_event = threading.Event() # An event to signal health recording thread to stop
@@ -61,7 +59,7 @@ class Recording():
 
         # Segment based recording
         self.monitor_recording_segments_stop_flag = threading.Event()
-        self.monitor_recording_segments_thread = None 
+        self.monitor_recording_segments_thread = None
         self.segment_id = 0
         self.segment_start_time = None
         self.segment_files = []
@@ -69,7 +67,7 @@ class Recording():
 
     """Start / Stop Recording"""
     def start_recording(self, session_name: str = None, duration: str = None,
-                        start_at: Optional[float] = None) -> dict:
+                        start_at: float | None = None) -> dict:
         """Accept a start_recording command from the controller.
 
         If start_at is provided (a UTC epoch float), recording begins at that
@@ -235,7 +233,7 @@ class Recording():
         })
 
         return {"result": "success"}
-        
+
 
     def stop_recording(self) -> bool:
         """Stop recording. Returns True if stopped, False otherwise."""
@@ -255,13 +253,13 @@ class Recording():
 
             # Stop recording in general
             if not self.facade.stop_recording(): # Module specific implementation of stop_recording
-                self.logger.warning(f"Something went wrong stopping recording.")
+                self.logger.warning("Something went wrong stopping recording.")
                 self.facade.send_status({
                     "type": "recording_stopped",
                     "status": "error",
                 })
                 return {"result": "error", "error": "Failed to stop recording"}
-            
+
             # Stop recording health metadata
             self._stop_recording_health_metadata()
             self.facade.stage_file_for_export(self.current_health_segment)
@@ -294,7 +292,7 @@ class Recording():
         """
         if not session_name:
             return ""
-        formatted_session_name = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip() # Keep alphanumeric characters and spaces, dashes, underscores 
+        formatted_session_name = "".join(c for c in session_name if c.isalnum() or c in (' ', '-', '_')).rstrip() # Keep alphanumeric characters and spaces, dashes, underscores
         formatted_session_name = formatted_session_name.replace(' ', '_') # Replace all spaces with underscores
         return formatted_session_name
 
@@ -305,7 +303,7 @@ class Recording():
         # Increment segment
         self.segment_id += 1
         self.segment_start_time = time.time()
-        
+
         # Start new health metadata segment
         self._start_next_health_metadata_segment()
 
@@ -316,7 +314,7 @@ class Recording():
 
 
     def _create_initial_recording_segment(self) -> None:
-        self.logger.info(f"Creating initial recording segment")
+        self.logger.info("Creating initial recording segment")
         self.segment_id = 0
         self.segment_start_time = time.time()
         self.logger.info(f"Segment {self.segment_id} started at {self.segment_start_time}")
@@ -388,17 +386,17 @@ class Recording():
                     self.logger.warning(f"Export re-signal check failed: {e}")
 
             time.sleep(0.1) # Avoid busy waiting
-            
-                
+
+
     def _start_recording_segment_monitoring(self):
         self.monitor_recording_segments_stop_flag.clear()
-        self.segment_start_time = self.recording_start_time 
+        self.segment_start_time = self.recording_start_time
         self.segment_id = 0
         self.monitor_recording_segments_thread = threading.Thread(target=self._monitor_recording_length, daemon=True)
         self.monitor_recording_segments_thread.start()
 
 
-    def _stop_recording_segment_monitoring(self): 
+    def _stop_recording_segment_monitoring(self):
         self.logger.info("Stopping recording segment monitoring.")
         try:
             self.monitor_recording_segments_stop_flag.set()
@@ -447,7 +445,7 @@ class Recording():
         """Start thread to record next health metadata segment."""
         # Stop recording health metadata
         self._stop_recording_health_metadata()
-        
+
         # Get new filename and stage last file for export
         self.last_health_segment = self.current_health_segment
         self.current_health_segment = self._get_health_segment_filename()
@@ -458,7 +456,7 @@ class Recording():
 
 
     def _get_health_segment_filename(self) -> str:
-        """Return a filename for the current health metadata segment""" 
+        """Return a filename for the current health metadata segment"""
         strtime = self.facade.get_utc_time(self.segment_start_time)
         return f"{self.current_filename_prefix}_health_metadata_({self.segment_id}_{strtime}).csv"
 
@@ -481,7 +479,7 @@ class Recording():
     def _record_health_metadata(self):
         """Retrieve health metadata and write to csv tile"""
         interval = self.config.get("health_metadata_recording_interval", 1)
-        csv_filename = self.current_health_segment 
+        csv_filename = self.current_health_segment
         fieldnames = list(self.facade.get_health().keys())
         with open(csv_filename, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -497,10 +495,10 @@ class Recording():
 
     """File handling"""
     def get_session_from_filename(self, filename: str) -> str:
-        session_name = filename.split("_")[0]
+        session_name = filename.split("_", maxsplit=1)[0]
         return session_name
 
-    
+
     def get_start_time_from_filename(self, filename: str) -> str:
         import re
         # Extract "YYYYMMDD-HHMMSS" from the "(segment_YYYYMMDD-HHMMSS)" pattern.
@@ -509,4 +507,4 @@ class Recording():
         if m:
             return m.group(2)
         # Fallback: old behaviour (works for bare .ts files)
-        return filename.split("_")[-1][0:-1]
+        return filename.rsplit("_", maxsplit=1)[-1][0:-1]

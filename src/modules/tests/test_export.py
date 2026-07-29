@@ -6,16 +6,11 @@ and _mount_share retry + timeout behaviour.
 """
 
 import os
-import shutil
-import tempfile
-import threading
 import subprocess
-from unittest.mock import MagicMock, patch, call
-
-import pytest
+import tempfile
+from unittest.mock import MagicMock, patch
 
 from src.modules.export import Export
-
 
 # ---------------------------------------------------------------------------
 # Helpers

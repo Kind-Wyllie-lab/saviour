@@ -30,7 +30,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 PTP_THRESHOLD_NS = 50_000  # 50 µs — matches the recording gate
 
 
@@ -240,7 +239,7 @@ def build_ffmpeg_cmd(
     if layout == "stack":
         filter_parts.append(f"{joined}vstack=inputs={n}[out]")
     elif layout == "grid" and n == 4:
-        filter_parts.append(f"[v0][v1]hstack[top];[v2][v3]hstack[bot];[top][bot]vstack[out]")
+        filter_parts.append("[v0][v1]hstack[top];[v2][v3]hstack[bot];[top][bot]vstack[out]")
     else:  # side (hstack) — default
         filter_parts.append(f"{joined}hstack=inputs={n}[out]")
 

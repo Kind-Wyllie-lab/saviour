@@ -584,6 +584,12 @@ configure_device() {
         return
     fi
 
+    # run_configuration()'s progress() infoboxes don't block or get
+    # dismissed -- the last one shown just stays on screen (whiptail/newt
+    # never clears between dialogs) until something bigger happens to paint
+    # over the same region. Explicit clear so it can't linger.
+    clear
+
     # Step 6b: surface first-time login credentials while the operator is
     # still at this terminal. Deliberately still a whiptail dialog (needs an
     # OK press to dismiss) rather than plain echo -- unlike the countdown
@@ -1526,3 +1532,8 @@ if [ "${1:-}" = "--apply" ]; then
 fi
 
 main_menu
+# whiptail/newt dialogs paint their own box without a full-screen clear, and
+# never clear on the way out either -- whatever was last drawn (the main
+# menu, or a lingering progress/infobox from a prior step) would otherwise
+# still be sitting on screen once control returns to the shell prompt.
+clear

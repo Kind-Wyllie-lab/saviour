@@ -22,7 +22,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
@@ -128,7 +127,7 @@ def _verdict(detrended_p95_us: float, drift_us_per_sec: float,
     # (whisker deflection, startle, lick) are ~5–50 ms; locomotion 50–500 ms.
     margin_x = (5000 / detrended_p95_us) if detrended_p95_us else 0
 
-    print(f"\n── Alignment verdict ───────────────────────────────────")
+    print("\n── Alignment verdict ───────────────────────────────────")
     print(f"  ★ Timing accuracy  : {detrended_p95_us:.1f} µs  (p95, after timestamp alignment)")
     print(f"                       ~{margin_x:.0f}× better than fastest observable rodent events (~5 ms)")
     print(f"  Phase offset       : {phase_offset_us:+.0f} µs  — fixed per session, subtract to align by frame number")
@@ -136,8 +135,8 @@ def _verdict(detrended_p95_us: float, drift_us_per_sec: float,
         print(f"  Max safe duration  : {max_safe_min:.0f} min at {fps:.0f} fps  "
               f"(drift {abs(drift_us_per_sec):.2f} µs/sec → exceeds ½-frame at this point)")
     else:
-        print(f"  Max safe duration  : no limit  (drift negligible)")
-    print(f"  Action required    : match frames via per-frame CSV timestamps, not frame numbers")
+        print("  Max safe duration  : no limit  (drift negligible)")
+    print("  Action required    : match frames via per-frame CSV timestamps, not frame numbers")
 
 
 def report_offsets(per_frame: pd.DataFrame, ref_tag: str, client_tags: list,
@@ -249,7 +248,7 @@ def plot(per_frame: pd.DataFrame, ref_tag: str, client_tags: list,
          fps: float, session_dir: Path) -> None:
     try:
         import matplotlib.pyplot as plt
-        import matplotlib.gridspec as gridspec
+        from matplotlib import gridspec
     except ImportError:
         print("  [plot skipped — pip install matplotlib]")
         return

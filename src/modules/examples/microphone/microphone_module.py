@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Audiomoth Module Class
 
@@ -11,25 +10,24 @@ Created: 18/08/2025
 Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicrophone_setup by Domagoj Anticic
 """
 
-import datetime
 import os
-import sys
-import time
-import logging
-import subprocess
-import numpy as np
-import threading
-import soundfile
-import soundcard
 import re
+import subprocess
+import sys
+import threading
+import time
+
 import cv2
+import numpy as np
+import soundcard
+import soundfile
 
 AUDIOMOTH_CMD = "/usr/local/bin/AudioMoth-USB-Microphone"
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command
 from modules.mjpeg_stream import MJPEGStreamServer
+from modules.module import Module, command
 
 
 class AudiomothModule(Module):

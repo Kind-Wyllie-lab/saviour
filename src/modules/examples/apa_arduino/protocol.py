@@ -4,12 +4,12 @@ Features:
 - Message delimiters <MESSAGE>
 - Message format: <
 """
-import serial
-import time
-import threading
-from typing import Callable, Optional
 import logging
+import threading
+import time
+from collections.abc import Callable
 
+import serial
 
 # PROTOCOL
 MSG_IDENTITY = "I"
@@ -22,10 +22,10 @@ MSG_WRITE_PIN_LOW = "L"
 
 class Protocol:
     def __init__(
-        self, 
-        port: str, 
-        baud: int = 115200, 
-        on_identity: Optional[Callable["Protocol", str]] = None
+        self,
+        port: str,
+        baud: int = 115200,
+        on_identity: Callable["Protocol", str] | None = None
     ) -> None:
         """
         Initialize the serial communication protocol for an Arduino-like device.
@@ -37,10 +37,10 @@ class Protocol:
                          Signature: (protocol_instance, identity_str) -> None
         """
         self.logger = logging.getLogger(__name__)
-        
+
         # Protocol
         self.identity: str = "" # Identity of connected Arduino
-        self.on_identity: Callable = on_identity        
+        self.on_identity: Callable = on_identity
 
         # Connection
         self.port: str = port
@@ -81,7 +81,7 @@ class Protocol:
             except Exception as e:
                 self.logger.error("Unexpected error in listen() on %s: %s", self.port, e)
                 buf = ""
-    
+
 
     def _parse_message(self, packet: str):
         parts = packet.split(":", 1)
@@ -109,7 +109,7 @@ class Protocol:
             except Exception as e:
                 self.logger.warning("Reconnect attempt %d/5 on %s failed: %s", attempt, self.port, e)
         self.logger.error("Could not restore serial connection on %s after 5 attempts", self.port)
-    
+
 
     def _handle_message(self, cmd: str, param: str) -> None:
         """Private version of handle command which can parse identity and then passes to callback for handling specific commands."""
@@ -126,7 +126,7 @@ class Protocol:
             case _:
                 # Pass it to callback
                 self.handle_command(cmd, param)
-        
+
 
     def handle_command(self, cmd: str, param: str) -> None:
         """Callback that allows for additional cmd types to be implemented"""
@@ -157,7 +157,7 @@ class Protocol:
 # def main():
 #     p = Protocol(port=args.port, baud=args.baud, on_identity=handle_identity)
 #     try:
-#         p.start()   
+#         p.start()
 #     except KeyboardInterrupt:
 #         print("Exiting")
 #         p.stop()
@@ -169,5 +169,5 @@ class Protocol:
 
 # if (__name__ == '__main__'):
 #     print("Let us begin")
-    
+
 #     main()

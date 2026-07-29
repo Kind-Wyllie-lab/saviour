@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Config Manager
 
@@ -13,11 +12,11 @@ Author: Andrew SG
 Created: ?
 """
 
-import os
 import json
 import logging
+import os
 import shutil
-from typing import Dict, Any, Optional, Union
+from typing import Any
 
 _OLD_ACTIVE_CONFIG_PATH = "/usr/local/src/saviour/src/controller/config/active_config.json"
 
@@ -27,11 +26,11 @@ class Config:
     ENV_CONFIG_MAPPING = {
 
     }
-    
+
     def __init__(
         self,
-        base_config_path: Optional[str] = "/usr/local/src/saviour/src/controller/config/base_config.json",
-        active_config_path: Optional[str] = "/etc/saviour/controller/active_config.json"
+        base_config_path: str | None = "/usr/local/src/saviour/src/controller/config/base_config.json",
+        active_config_path: str | None = "/etc/saviour/controller/active_config.json"
     ):
         """
         Initialize the configuration manager
@@ -43,7 +42,7 @@ class Config:
         self.logger = logging.getLogger(__name__)
         self.base_config_path = os.path.abspath(base_config_path)
         self.active_config_path = os.path.abspath(active_config_path)
-        self.config: Dict[str, Any] = {}
+        self.config: dict[str, Any] = {}
 
         # One-time migration: copy active config from old in-tree location if needed
         if (not os.path.exists(self.active_config_path)
@@ -70,7 +69,7 @@ class Config:
 
         self._apply_env_override()
         self.logger.info(f"Controller config loaded - {len(self.config)} parameters")
-        
+
 
     def _apply_env_override(self):
         """Override config values using environment variables"""
@@ -106,7 +105,7 @@ class Config:
 
         # Extract keys from config and flatten to dot notation for easy comparison
         self.controller_config_keys = self._flatten_keys(controller_config)
-        
+
         self.logger.info(f"Loading controller config keys: {self.controller_config_keys}")
 
         if os.path.exists(self.active_config_path):
@@ -124,7 +123,7 @@ class Config:
         self.save_active()
 
 
-    def _flatten_keys(self, config: Dict[str, Any], parent_key=""):
+    def _flatten_keys(self, config: dict[str, Any], parent_key=""):
         """Return a set of all nested keys in dotted notation"""
         keys = set()
         for key, value in config.items():
@@ -134,18 +133,18 @@ class Config:
             else:
                 keys.add(full_key)
         return keys
-    
 
-    def _load_json(self, path: str) -> Dict[str, Any]:
+
+    def _load_json(self, path: str) -> dict[str, Any]:
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 return json.load(f)
         except Exception as e:
             self.logger.error(f"Failed to load {path}: {e}")
             return {}
 
 
-    def _merge_defaults(self, target: Dict[str, Any], defaults: Dict[str, Any]) -> None:
+    def _merge_defaults(self, target: dict[str, Any], defaults: dict[str, Any]) -> None:
         """
         Recursively merge defualts into target only for missing keys
         Does not overwrite existing values in target
@@ -154,14 +153,13 @@ class Config:
             if key not in target:
                 # Missing key - copy the default
                 target[key] = val
-            else:
-                # Both present and both dicts - recurse
-                if isinstance(target[key], dict) and isinstance(val, dict):
-                    self._merge_defaults(target[key], val)
+            # Both present and both dicts - recurse
+            elif isinstance(target[key], dict) and isinstance(val, dict):
+                self._merge_defaults(target[key], val)
                 # Otherwise target has a value, do not overwrite
 
 
-    def _merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
+    def _merge_dicts(self, base: dict[str, Any], override: dict[str, Any]) -> None:
         """Recursive merge - override values in base with override."""
         for key, val in override.items():
             # Check if current value is a dict, and recursively merge if so
@@ -176,7 +174,7 @@ class Config:
                 base[key] = val
 
 
-    def reset_to_defaults(self, controller_config_path: Optional[str] = None) -> None:
+    def reset_to_defaults(self, controller_config_path: str | None = None) -> None:
         """
         Delete active config (if exists) and rebuild from base + optional controller config.
         Use this to intentionally discard runtime changes and reinstall defaults.
@@ -194,8 +192,8 @@ class Config:
             controller_config = self._load_json(controller_config_path)
             self._merge_dicts(self.config, controller_config)
         self.save_active()
- 
-    
+
+
     def _check_if_controller_config_updated(self, key_path: str) -> bool:
         """
         Runs within set() and checks if a parameter which has been set belongs to the subcontroller
@@ -246,8 +244,8 @@ class Config:
         if config is None:
             self.logger.warning(f"config.get() returning None for {key}")
         return config
-    
-    
+
+
     def set(self, key_path: str, value: Any, persist: bool = True) -> bool:
         """Set value unless key is private (starts with underscore)."""
         parts = key_path.split('.')
@@ -270,9 +268,9 @@ class Config:
         if persist:
             self.save_active()
         return True
-        
 
-    def get_all(self) -> Dict[str, Any]:
+
+    def get_all(self) -> dict[str, Any]:
         """
         Get the entire configuration
         
@@ -280,8 +278,8 @@ class Config:
             Dictionary containing the entire configuration
         """
         return self.config.copy()
-    
-    
+
+
     def set_all(self, updates: dict, persist: bool = False) -> None:
         """
         Update multiple config keys at once.
@@ -290,7 +288,7 @@ class Config:
             updates: dict with new values (can be nested)
             persist: whether to save active_config after update
         """
-    
+
         self.logger.info("Set_all called for config")
         controller_config_updated = False # Flag to track if we should notify that the controller settings were updated
         controller_config_updated_keys = [] # Array to store updated controller configs
@@ -301,17 +299,16 @@ class Config:
                 full_key = f"{parent_key}.{k}" if parent_key else k
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
                     _recursive_update(target[k], v, full_key)
+                # Update the value
+                elif target[k] != v:
+                    target[k] = v
+                    # Track controller-specific changes
+                    if hasattr(self, "controller_config_keys") and full_key in self.controller_config_keys:
+                        self.logger.info(f"controller-specific config updated: {full_key}")
+                        controller_config_updated_keys.append(full_key)
+                        controller_config_updated = True
                 else:
-                    # Update the value
-                    if target[k] != v:
-                        target[k] = v
-                        # Track controller-specific changes
-                        if hasattr(self, "controller_config_keys") and full_key in self.controller_config_keys:
-                            self.logger.info(f"controller-specific config updated: {full_key}")
-                            controller_config_updated_keys.append(full_key)
-                            controller_config_updated = True
-                    else:
-                        pass
+                    pass
 
         _recursive_update(self.config, updates)
 

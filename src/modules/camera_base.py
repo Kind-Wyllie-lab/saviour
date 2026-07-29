@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Camera Base Class
 
@@ -21,23 +20,23 @@ import collections
 import csv
 import datetime
 import os
-import sys
-import time
-import threading
 import subprocess
+import sys
+import threading
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
-import numpy as np
 import cv2
-from picamera2 import Picamera2, MappedArray
+import numpy as np
+from flask import request
+from picamera2 import MappedArray, Picamera2
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import PyavOutput, SplittableOutput
-from flask import request
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command, check
 from modules.mjpeg_stream import MJPEGStreamServer
+from modules.module import Module, check, command
 
 
 @dataclass
@@ -46,7 +45,7 @@ class FrameTiming:
     timestamp_ns: int
     timestamp_utc: str
     ts_label: str          # "{module_name} {utc string}" — the on-frame overlay string
-    actual_fps: Optional[float]
+    actual_fps: float | None
     delta_ms: Any           # float or "" — same convention as the base CSV columns
     dropped_before: Any      # int or ""
 
@@ -153,7 +152,7 @@ class CameraBase(Module):
         self._frame_id = 0
         self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
 
-        self._preview_timing: Optional[FrameTiming] = None
+        self._preview_timing: FrameTiming | None = None
 
 
     """Self Check"""
@@ -233,7 +232,7 @@ class CameraBase(Module):
         pass
 
 
-    def configure_module_special(self, updated_keys: Optional[list]):
+    def configure_module_special(self, updated_keys: list | None):
         """Shared restart-vs-live-controls config handling for every camera module."""
         self._configure_module_extra(updated_keys)
 
@@ -674,7 +673,7 @@ class CameraBase(Module):
             self._wall_mono_offset_updated_s = now
         return self._wall_mono_offset_ns
 
-    def _get_frame_timestamp(self, metadata: dict) -> Optional[int]:
+    def _get_frame_timestamp(self, metadata: dict) -> int | None:
         """Return the frame exposure time as wall-clock nanoseconds.
 
         Prefers SensorTimestamp (hardware-stamped at actual sensor exposure,
@@ -732,7 +731,7 @@ class CameraBase(Module):
                 actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 3)
             self.last_frame_timestamp = timestamp
 
-            dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.timezone.utc)
+            dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.UTC)
             timestamp_utc = dt.strftime("%Y-%m-%d %H:%M:%S.%f") + "+00:00"
 
             if self._csv_prev_ns is not None and self.fps:
@@ -909,11 +908,11 @@ class CameraBase(Module):
             return True
 
         except Exception as e:
-            self.logger.error(f"Error starting streaming: {str(e)}")
+            self.logger.error(f"Error starting streaming: {e!s}")
             self.communication.send_status({
                 'type': 'streaming_start_failed',
                 'status': 'error',
-                'error': f"Failed to start streaming: {str(e)}"
+                'error': f"Failed to start streaming: {e!s}"
             })
             return False
 
@@ -1025,7 +1024,7 @@ class CameraBase(Module):
             self.communication.send_status({
                 "type": "streaming_stopped",
                 "status": "error",
-                "error": f"Failed to stop streaming: {str(e)}"
+                "error": f"Failed to stop streaming: {e!s}"
             })
             return False
 

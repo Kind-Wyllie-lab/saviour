@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Camera Module Class
 
@@ -16,8 +15,8 @@ Author: Andrew SG
 Created: 17/03/2025
 """
 
-import sys
 import os
+import sys
 import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))

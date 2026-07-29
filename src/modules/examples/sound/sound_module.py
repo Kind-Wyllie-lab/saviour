@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Sound Module Class
 
@@ -10,15 +9,15 @@ Author: Andrew SG
 Created: 27/01/2026
 """
 # Base Imports
-import sys
 import os
 import subprocess
-from typing import Optional
+import sys
 import time
 
 # Saviour Imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command, check
+from modules.module import Module, check, command
+
 
 class SoundModule(Module):
     def __init__(self, module_type="sound"):
@@ -50,9 +49,9 @@ class SoundModule(Module):
 
     @command()
     def _play_sound(self):
-        duration = self.config.get("sound.duration") # Duration in seconds to play for 
-        filename = "sounds/" + self.sound_to_play # The wav to be played 
-        volume = self.config.get("sound.volume") # The volume to play at (1 = 100%) 
+        duration = self.config.get("sound.duration") # Duration in seconds to play for
+        filename = "sounds/" + self.sound_to_play # The wav to be played
+        volume = self.config.get("sound.volume") # The volume to play at (1 = 100%)
         device = "plughw:2,0"
 
         timestamp = time.time_ns()
@@ -110,20 +109,20 @@ class SoundModule(Module):
 
 
     """Config"""
-    def configure_module_special(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: list[str] | None):
         # Configure self however necessary
         pass
 
 
     """Recording"""
     def _get_sound_segment_filename(self) -> str:
-        """Return a filename for the current sound events segment""" 
+        """Return a filename for the current sound events segment"""
         strtime = self.facade.get_utc_time(self.facade.get_segment_start_time())
         return f"{self.facade.get_filename_prefix()}_sound_events_({self.facade.get_segment_id()}_{strtime}).csv"
 
 
     def _write_sound_event_to_file(self, timestamp_ns: int):
-        # Use file handler 
+        # Use file handler
         if self._sound_file_handle:
             self._sound_file_handle.write(f'{timestamp_ns},{self.sound_to_play},{self.config.get("sound.volume")},{self.config.get("sound.duration")}\n')
 
@@ -145,7 +144,7 @@ class SoundModule(Module):
             self.logger.error(f"Failed to open sound events file: {e}")
             self._sound_file_handle = None
 
-    
+
     def _close_sound_event_file(self) -> bool:
         """Close sound events file"""
         try:
@@ -162,7 +161,7 @@ class SoundModule(Module):
         # Start recording session - probably tracking sounds produced in csv file
         self._create_sound_event_file()
         return True
-    
+
 
     def _start_next_recording_segment(self):
         self._close_sound_event_file()
@@ -187,7 +186,7 @@ class SoundModule(Module):
             self.logger.warning(message)
             return False, message
         else:
-            return True, "Hifiberry working" 
+            return True, "Hifiberry working"
 
 
 def main():
@@ -197,7 +196,7 @@ def main():
     try:
         while True:
             time.sleep(1)
-    
+
     except KeyboardInterrupt:
         print("\nShuttind down...")
         sound.stop()

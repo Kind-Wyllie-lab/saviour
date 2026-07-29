@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Module State Manager
 
@@ -20,13 +19,14 @@ Author: Andrew SG
 """
 
 import logging
-import time
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any
 
 from src.controller.models import Module, ModuleStatus
+
 
 def _type_from_id(module_id: str) -> str:
     """Derive the module type from its ID (e.g. 'camera_a349' → 'camera')."""
@@ -47,11 +47,11 @@ class ConfigSyncStatus(StrEnum):
 @dataclass
 class ModuleConfigState:
     """Holds both sides of a module's config plus the current sync status."""
-    true_config:   Dict[str, Any] = field(default_factory=dict)
-    target_config: Dict[str, Any] = field(default_factory=dict)
+    true_config:   dict[str, Any] = field(default_factory=dict)
+    target_config: dict[str, Any] = field(default_factory=dict)
     status:        ConfigSyncStatus = ConfigSyncStatus.UNKNOWN
     pending_since: float = 0.0
-    diffs:         List[Tuple] = field(default_factory=list)  # [(path, true_val, target_val)]
+    diffs:         list[tuple] = field(default_factory=list)  # [(path, true_val, target_val)]
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +83,10 @@ class Modules:
         self.logger = logging.getLogger(__name__)
 
         # Core module registry
-        self._modules: Dict[str, Module] = {}
+        self._modules: dict[str, Module] = {}
 
         # Config state registry – keyed by module_id
-        self._config_states: Dict[str, ModuleConfigState] = {}
+        self._config_states: dict[str, ModuleConfigState] = {}
 
         # Serialises config state reads/writes across received_module_config
         # and set_target_module_config, which may run on different threads.
@@ -98,7 +98,7 @@ class Modules:
         # Tracks consecutive heartbeats received from currently-offline modules.
         # Reset to 0 when the module goes offline; incremented on each heartbeat
         # while still offline; module marked online once threshold is reached.
-        self._pending_online_counts: Dict[str, int] = {}
+        self._pending_online_counts: dict[str, int] = {}
 
         # Background thread: revert READY/NOT_READY modules that have timed out
         self._ready_timeout_thread = threading.Thread(
@@ -401,7 +401,7 @@ class Modules:
     # Getters
     # -----------------------------------------------------------------------
 
-    def get_modules(self) -> Dict[str, Any]:
+    def get_modules(self) -> dict[str, Any]:
         """Return all modules serialised to dicts, ready for the frontend."""
         return self._serialise_modules()
 
@@ -417,7 +417,7 @@ class Modules:
         return bool(module and module.config)
 
 
-    def get_module_configs(self) -> Dict[str, Any]:
+    def get_module_configs(self) -> dict[str, Any]:
         """Return config state for all modules, keyed by module_id."""
         result = {}
         for module_id, state in self._config_states.items():
@@ -479,7 +479,7 @@ class Modules:
         return (module_id, filtered)
 
 
-    def get_modules_by_target(self, target: str) -> Dict[str, Any]:
+    def get_modules_by_target(self, target: str) -> dict[str, Any]:
         """
         Resolve a target string to a dict of modules.
         Target may be "all", a group name, or a specific module_id.
@@ -561,7 +561,7 @@ class Modules:
         self._modules[module_id].group = config.get("module", {}).get("group", "").strip()
 
 
-    def _serialise_modules(self) -> Dict[str, Dict[str, Any]]:
+    def _serialise_modules(self) -> dict[str, dict[str, Any]]:
         """
         Convert _modules to plain dicts, augmenting each with config sync state
         so the frontend has everything it needs in one payload.
@@ -635,7 +635,7 @@ class Modules:
 
 
     @staticmethod
-    def _diff_dicts(a: dict, b: dict, path: str = "") -> List[Tuple]:
+    def _diff_dicts(a: dict, b: dict, path: str = "") -> list[tuple]:
         """
         Recursively diff two dicts. Returns a list of (path, value_in_a, value_in_b)
         tuples for every key that differs.

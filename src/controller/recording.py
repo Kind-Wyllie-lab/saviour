@@ -7,17 +7,15 @@ Author: Andrew SG
 Created: 26/01/2026
 """
 
-import os
 import json
 import logging
+import os
 import shutil
-from datetime import datetime, date, timedelta
-import time
-from typing import Optional, Dict
-from dataclasses import dataclass, field, asdict
 import threading
+import time
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timedelta
 from enum import StrEnum
-
 
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
 _SHARE_ROOT_DEFAULT = "/home/pi/controller_share"
@@ -54,15 +52,15 @@ class RecordingSession:
     target:                    str
     state:                     str  = SessionState.ACTIVE
     modules:                   list = field(default_factory=list)
-    start_time:                Optional[str] = None
-    end_time:                  Optional[str] = None
+    start_time:                str | None = None
+    end_time:                  str | None = None
     error_message:             str  = ""
     scheduled:                 bool = False
-    scheduled_start_time:      Optional[str] = None   # HH:MM
-    scheduled_end_time:        Optional[str] = None   # HH:MM
+    scheduled_start_time:      str | None = None   # HH:MM
+    scheduled_end_time:        str | None = None   # HH:MM
     # Prevents a scheduled session from starting more than once on the same
     # calendar day (YYYY-MM-DD).
-    scheduled_last_start_date: Optional[str] = None
+    scheduled_last_start_date: str | None = None
     # Per-module stop acknowledgement: "recording" | "stopping" | "stopped" | "unknown"
     module_stop_states:        dict = field(default_factory=dict)
     # Per-module export tracking:  "idle" | "pending" | "complete" | "failed"
@@ -72,24 +70,24 @@ class RecordingSession:
     total_exports_failed:      int  = 0
     # UTC epoch at which modules are scheduled to begin recording (time.time() + LEAD_SECS).
     # None for immediate starts (e.g. module_back_online).
-    recording_start_at:        Optional[float] = None
+    recording_start_at:        float | None = None
     # Set by _stop_scheduled_session so _check_all_stopped returns to SCHEDULED
     # rather than STOPPED when the day's run finishes.
     scheduled_stopping:        bool = False
     # Timestamp (YYYYMMDD-HHMMSS) when this session most recently entered ERROR state.
     # Never cleared after recovery — preserves the fault record for display.
-    error_time:                Optional[str] = None
+    error_time:                str | None = None
     # Timed sessions: requested duration in minutes (for display purposes).
-    duration_minutes:          Optional[int]   = None
+    duration_minutes:          int | None   = None
     # Timed sessions: epoch timestamp at which the session should auto-stop.
     # None means no auto-stop (infinite / manual stop).
-    timed_stop_at:             Optional[float] = None
+    timed_stop_at:             float | None = None
     # Scheduled sessions: weekday ints (0=Mon…6=Sun) on which to run.
     # Empty list means every day.
     scheduled_days:            list = field(default_factory=list)
-    researcher:                Optional[str] = None
+    researcher:                str | None = None
     # Set while PTP offset exceeds threshold on any recording module; cleared on recovery.
-    ptp_warning:               Optional[str] = None
+    ptp_warning:               str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -100,18 +98,18 @@ class Recording:
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.sessions: Dict[str, RecordingSession] = {}
+        self.sessions: dict[str, RecordingSession] = {}
         self._lock = threading.Lock()
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
         self._not_recording_strikes: dict = {}  # (session_name, module_id) → consecutive miss count
-        self._ptp_degraded: Dict[str, set] = {}  # session_name → set of currently-degraded module IDs
-        self._last_export_success: Dict[str, float] = {}   # module_id → epoch of last successful export
-        self._export_failure_streak: Dict[str, int] = {}   # module_id → consecutive export failures
-        self._daily_run_export_start: Dict[str, tuple] = {} # session_name → (complete, failed) at day-start
+        self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
+        self._last_export_success: dict[str, float] = {}   # module_id → epoch of last successful export
+        self._export_failure_streak: dict[str, int] = {}   # module_id → consecutive export failures
+        self._daily_run_export_start: dict[str, tuple] = {} # session_name → (complete, failed) at day-start
         self._daily_summary_sent: set = set()               # "session:date" already summarized
-        self._gap_check_date: Optional[str] = None          # last date gap-check ran
+        self._gap_check_date: str | None = None          # last date gap-check ran
         self._monitor_cycle: int = 0                        # loop counter for periodic tasks
-        self._readiness_checks: Dict[str, float] = {}       # session_name → epoch when validate_readiness was dispatched
+        self._readiness_checks: dict[str, float] = {}       # session_name → epoch when validate_readiness was dispatched
 
         self._load_sessions()
 
@@ -236,7 +234,7 @@ class Recording:
         }
 
 
-    def _check_share_writable(self) -> Optional[str]:
+    def _check_share_writable(self) -> str | None:
         """Return an error string if the controller share is not writable, else None."""
         share = self._get_share_root()
         probe = os.path.join(share, ".saviour_write_probe")
@@ -285,7 +283,7 @@ class Recording:
 
         lines = [
             f"Session **{session_name}** completed its {run_date} run.",
-            f"",
+            "",
             f"- Modules: {len(session.modules)}",
             f"- Start: {session.start_time or '—'}  |  End: {session.end_time or '—'}",
             f"- Exports this run: {exports_today} completed, {failures_today} failed",
@@ -304,8 +302,8 @@ class Recording:
 
 
     def create_session(self, session_name: str, target: str,
-                       duration_minutes: Optional[int] = None,
-                       researcher: Optional[str] = None,
+                       duration_minutes: int | None = None,
+                       researcher: str | None = None,
                        raw_name: bool = False) -> dict:
         """Create a session that begins recording immediately.
 
@@ -381,8 +379,8 @@ class Recording:
 
     def create_scheduled_session(self, session_name: str, target: str,
                                   start_time: str, end_time: str,
-                                  days: Optional[list] = None,
-                                  researcher: Optional[str] = None,
+                                  days: list | None = None,
+                                  researcher: str | None = None,
                                   raw_name: bool = False) -> dict:
         """Create a session that records on specified days between start_time and end_time (HH:MM).
 
@@ -577,7 +575,7 @@ class Recording:
         The session is identified from the first path component of export_path,
         which is always the session_name (e.g. 'myexp-20260312/20260312/camera_d61e').
         """
-        session_name = export_path.split('/')[0] if export_path else None
+        session_name = export_path.split('/', maxsplit=1)[0] if export_path else None
         if not session_name or session_name not in self.sessions:
             return
 
@@ -613,7 +611,7 @@ class Recording:
     def get_active_recording_sessions(self) -> dict:
         return {k: v for k, v in self.sessions.items() if v.state == SessionState.ACTIVE}
 
-    def get_session_name_from_target(self, target: str) -> Optional[str]:
+    def get_session_name_from_target(self, target: str) -> str | None:
         """Find a non-stopped session that the target belongs to."""
         non_stopped = {
             k: v for k, v in self.sessions.items()
@@ -980,41 +978,40 @@ class Recording:
             self.logger.error(
                 f"Scheduled session '{session_name}': NAS space check failed: {nas['error']}"
             )
-        else:
-            if nas["free_pct"] < nas_min:
-                err = (
-                    f"NAS only {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB) — "
-                    f"minimum threshold is {nas_min}%"
+        elif nas["free_pct"] < nas_min:
+            err = (
+                f"NAS only {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB) — "
+                f"minimum threshold is {nas_min}%"
+            )
+            self.logger.error(f"Scheduled session '{session_name}' blocked: {err}")
+            with self._lock:
+                session.state = SessionState.ERROR
+                session.error_message = err
+                session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.scheduled_last_start_date = today
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            self._log_session_event(session_name, "FAULT",
+                f"Scheduled recording blocked — NAS full: {err}")
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"nas_full_{session_name}_{today}",
+                    title="Scheduled recording blocked — NAS nearly full",
+                    message=f"Session **{session_name}** could not start its {today} run.\n\n{err}",
+                    severity="error",
                 )
-                self.logger.error(f"Scheduled session '{session_name}' blocked: {err}")
-                with self._lock:
-                    session.state = SessionState.ERROR
-                    session.error_message = err
-                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-                    session.scheduled_last_start_date = today
-                self.facade.update_sessions(self.sessions)
-                self._save_sessions()
-                self._log_session_event(session_name, "FAULT",
-                    f"Scheduled recording blocked — NAS full: {err}")
-                if self._notify_enabled("notify_session_faults"):
-                    self.facade.send_alert(
-                        key=f"nas_full_{session_name}_{today}",
-                        title=f"Scheduled recording blocked — NAS nearly full",
-                        message=f"Session **{session_name}** could not start its {today} run.\n\n{err}",
-                        severity="error",
-                    )
-                return
-            elif nas["free_pct"] < nas_warn:
-                if self._notify_enabled("notify_disk_space"):
-                    self.facade.send_alert(
-                        key=f"nas_warn_{today}",
-                        title="NAS space low",
-                        message=(
-                            f"NAS is {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB). "
-                            f"At current write rates this may fill before the campaign ends."
-                        ),
-                        severity="warning",
-                    )
+            return
+        elif nas["free_pct"] < nas_warn:
+            if self._notify_enabled("notify_disk_space"):
+                self.facade.send_alert(
+                    key=f"nas_warn_{today}",
+                    title="NAS space low",
+                    message=(
+                        f"NAS is {nas['free_pct']:.1f}% free ({nas['free_gb']:.0f} GiB). "
+                        f"At current write rates this may fill before the campaign ends."
+                    ),
+                    severity="warning",
+                )
 
         # ── PTP sync ──────────────────────────────────────────────────────────
         ptp = self._check_ptp_sync(session.modules)
@@ -1050,7 +1047,7 @@ class Recording:
             if self._notify_enabled("notify_session_faults"):
                 self.facade.send_alert(
                     key=f"ptp_fail_{session_name}_{today}",
-                    title=f"Scheduled recording blocked — PTP not synchronised",
+                    title="Scheduled recording blocked — PTP not synchronised",
                     message=(
                         f"Session **{session_name}** could not start its {today} run.\n\n"
                         f"{ptp['error']}"
@@ -1294,7 +1291,7 @@ class Recording:
 
     @staticmethod
     def _scheduled_session_action(session: "RecordingSession", today: str, yesterday: str,
-                                   current_time: str, today_weekday: int) -> Optional[str]:
+                                   current_time: str, today_weekday: int) -> str | None:
         """Decide whether a scheduled session's monitor tick should start or stop it.
 
         end < start means the window spans midnight (e.g. 22:00-06:00): the stop
@@ -1324,11 +1321,10 @@ class Recording:
                 if (session.scheduled_last_start_date == today
                         and current_time >= session.scheduled_end_time):
                     return "stop"
-            else:
-                if (session.scheduled_last_start_date == yesterday
-                        and current_time >= session.scheduled_end_time
-                        and current_time < session.scheduled_start_time):
-                    return "stop"
+            elif (session.scheduled_last_start_date == yesterday
+                    and current_time >= session.scheduled_end_time
+                    and current_time < session.scheduled_start_time):
+                return "stop"
 
         return None
 

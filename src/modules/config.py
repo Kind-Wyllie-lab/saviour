@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Config Manager
 
@@ -11,12 +10,12 @@ Centralizes configuration management for SAVIOUR modules, including:
 - Saving configuration changes
 """
 
-import os
 import json
 import logging
+import os
 import shutil
 import threading
-from typing import Dict, Any, Optional, Union
+from typing import Any
 
 _OLD_ACTIVE_CONFIG_PATH = "/usr/local/src/saviour/src/modules/config/active_config.json"
 
@@ -31,11 +30,11 @@ class Config:
         "NAS_USERNAME": "_nas_username",
         "NAS_PASSWORD": "_nas_password"
     }
-    
+
     def __init__(
         self,
-        base_config_path: Optional[str] = "/usr/local/src/saviour/src/modules/config/base_config.json",
-        active_config_path: Optional[str] = "/etc/saviour/module/active_config.json"
+        base_config_path: str | None = "/usr/local/src/saviour/src/modules/config/base_config.json",
+        active_config_path: str | None = "/etc/saviour/module/active_config.json"
     ):
         """
         Initialize the configuration manager
@@ -49,7 +48,7 @@ class Config:
 
         self.base_config_path = os.path.abspath(base_config_path)
         self.active_config_path = os.path.abspath(active_config_path)
-        self.config: Dict[str, Any] = {}
+        self.config: dict[str, Any] = {}
 
         # One-time migration: copy active config from old in-tree location if needed
         if (not os.path.exists(self.active_config_path)
@@ -114,13 +113,13 @@ class Config:
         # Build the merged defaults snapshot used by set_all to restore keys
         # that the stale-key pruning deletes when the controller's target_config
         # predates a newly-added base/module config key.
-        self._combined_defaults: Dict[str, Any] = {}
+        self._combined_defaults: dict[str, Any] = {}
         self._merge_dicts(self._combined_defaults, self._load_json(self.base_config_path))
         self._merge_dicts(self._combined_defaults, module_config)
 
         # Extract keys from config and flatten to dot notation for easy comparison
         self.module_config_keys = self._flatten_keys(module_config)
-        
+
         self.logger.info(f"Loading module config keys: {self.module_config_keys}")
 
         if os.path.exists(self.active_config_path):
@@ -134,7 +133,7 @@ class Config:
             # from the live config that no longer appears in either source.
             # This ensures keys removed from config files don't persist forever
             # in active_config.json across restarts.
-            reference: Dict[str, Any] = {}
+            reference: dict[str, Any] = {}
             self._merge_dicts(reference, self._load_json(self.base_config_path))
             self._merge_dicts(reference, module_config)
             self._prune_stale_keys(self.config, reference)
@@ -149,7 +148,7 @@ class Config:
         self.save_active()
 
 
-    def _flatten_keys(self, config: Dict[str, Any], parent_key=""):
+    def _flatten_keys(self, config: dict[str, Any], parent_key=""):
         """Return a set of all nested keys in dotted notation"""
         keys = set()
         for key, value in config.items():
@@ -159,18 +158,18 @@ class Config:
             else:
                 keys.add(full_key)
         return keys
-    
 
-    def _load_json(self, path: str) -> Dict[str, Any]:
+
+    def _load_json(self, path: str) -> dict[str, Any]:
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 return json.load(f)
         except Exception as e:
             self.logger.error(f"Failed to load {path}: {e}")
             return {}
 
 
-    def _merge_internal_defaults(self, target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    def _merge_internal_defaults(self, target: dict[str, Any], source: dict[str, Any]) -> None:
         """Recursively overwrite any _-prefixed keys in target with values from source.
 
         _-prefixed keys are internal developer defaults (not user-settable). They must
@@ -186,7 +185,7 @@ class Config:
             elif key.startswith("_"):
                 target[key] = val
 
-    def _merge_defaults(self, target: Dict[str, Any], defaults: Dict[str, Any]) -> None:
+    def _merge_defaults(self, target: dict[str, Any], defaults: dict[str, Any]) -> None:
         """
         Recursively merge defualts into target only for missing keys
         Does not overwrite existing values in target
@@ -195,14 +194,13 @@ class Config:
             if key not in target:
                 # Missing key - copy the default
                 target[key] = val
-            else:
-                # Both present and both dicts - recurse
-                if isinstance(target[key], dict) and isinstance(val, dict):
-                    self._merge_defaults(target[key], val)
+            # Both present and both dicts - recurse
+            elif isinstance(target[key], dict) and isinstance(val, dict):
+                self._merge_defaults(target[key], val)
                 # Otherwise target has a value, do not overwrite
 
 
-    def _prune_stale_keys(self, target: Dict[str, Any], reference: Dict[str, Any]) -> None:
+    def _prune_stale_keys(self, target: dict[str, Any], reference: dict[str, Any]) -> None:
         """Remove from *target* any non-private key absent from *reference*.
 
         Called after merging so that keys removed from base_config.json or the
@@ -219,7 +217,7 @@ class Config:
             elif isinstance(target[key], dict) and isinstance(reference.get(key), dict):
                 self._prune_stale_keys(target[key], reference[key])
 
-    def _merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
+    def _merge_dicts(self, base: dict[str, Any], override: dict[str, Any]) -> None:
         """Recursive merge - override values in base with override."""
         for key, val in override.items():
             # Check if current value is a dict, and recursively merge if so
@@ -234,7 +232,7 @@ class Config:
                 base[key] = val
 
 
-    def reset_to_defaults(self, module_config_path: Optional[str] = None) -> None:
+    def reset_to_defaults(self, module_config_path: str | None = None) -> None:
         """
         Delete active config (if exists) and rebuild from base + optional module config.
         Use this to intentionally discard runtime changes and reinstall defaults.
@@ -254,8 +252,8 @@ class Config:
             module_config = self._load_json(path)
             self._merge_dicts(self.config, module_config)
         self.save_active()
- 
-    
+
+
     def _check_if_module_config_updated(self, key_path: str) -> bool:
         """
         Runs within set() and checks if a parameter which has been set belongs to the submodule
@@ -309,8 +307,8 @@ class Config:
         if config == None:
             self.logger.warning(f"config.get() returning None for {key}")
         return config
-    
-    
+
+
     def set(self, key_path: str, value: Any, persist: bool = True) -> bool:
         """Set value unless key is private (starts with underscore)."""
         parts = key_path.split('.')
@@ -337,9 +335,9 @@ class Config:
             self.on_module_config_change([key_path])
 
         return True
-        
 
-    def get_all(self) -> Dict[str, Any]:
+
+    def get_all(self) -> dict[str, Any]:
         """
         Get the entire configuration
         
@@ -347,8 +345,8 @@ class Config:
             Dictionary containing the entire configuration
         """
         return self.config.copy()
-    
-    
+
+
     def set_all(self, updates: dict, persist: bool = False) -> None:
         """
         Update multiple config keys at once.
@@ -357,7 +355,7 @@ class Config:
             updates: dict with new values (can be nested)
             persist: whether to save active_config after update
         """
-    
+
         self.logger.info("Set_all called for config")
         config_updated = False
         updated_keys = []
@@ -375,12 +373,11 @@ class Config:
                         del target[k][stale]
                         config_updated = True
                         updated_keys.append(f"{full_key}.{stale}")
-                else:
-                    # Use .get() so new keys (e.g. a freshly added pin) don't raise KeyError
-                    if target.get(k) != v:
-                        target[k] = v
-                        config_updated = True
-                        updated_keys.append(full_key)
+                # Use .get() so new keys (e.g. a freshly added pin) don't raise KeyError
+                elif target.get(k) != v:
+                    target[k] = v
+                    config_updated = True
+                    updated_keys.append(full_key)
 
         with self._lock:
             _recursive_update(self.config, updates)
@@ -396,7 +393,7 @@ class Config:
         if self.module_config_keys:
             for key in updated_keys:
                 if key in self.module_config_keys:
-                    self.logger.info(f"Module specific config updated")
+                    self.logger.info("Module specific config updated")
                     module_config_updated_keys.append(key)
 
         if persist:

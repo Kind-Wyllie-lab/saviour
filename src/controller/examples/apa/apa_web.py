@@ -1,26 +1,22 @@
 """
 Extension of the SAVIOUR web class to handle APA specific socket events and callbacks.
 """
-import sys
-import os
 import logging
-import threading
-import time
-from flask import Flask, render_template, jsonify, request, send_from_directory
-from flask_socketio import SocketIO
-
+import os
+import sys
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from web import Web
 from config import Config
+from web import Web
+
 
 class APAWeb(Web):
     def __init__(self, config: Config):
         super().__init__(config)
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"APAWeb instantiated.")
+        self.logger.info("APAWeb instantiated.")
 
 
     # Override base method
@@ -34,7 +30,7 @@ class APAWeb(Web):
 
         Returns
             bool - True if handled, False if not
-        """ 
+        """
         match status.get('type'):
             case "arduino_state":
                 self.socketio.emit("arduino_state", status)
@@ -48,4 +44,3 @@ class APAWeb(Web):
             case _:
                 self.logger.warning(f"APA web has no logic for {status.get('type')} from {module_id}")
                 return False
-    

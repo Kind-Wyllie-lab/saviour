@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Command Handler
 
@@ -10,18 +9,19 @@ Author: Andrew SG
 Created: 16/05/2025         
 """
 
-import time
-import logging
-import threading
 import json
-from typing import Dict, Any, Optional, Callable
+import logging
+import time
+from collections.abc import Callable
+
 from src.modules.config import Config
+
 
 class Command:
     """
     Routes commands and params recieved by the communication manager to functionality in the main module and managers.
     """
-    
+
     def __init__(self, config: Config=None):
         """
         Initialize the command router
@@ -30,11 +30,11 @@ class Command:
             config: Manager for configuration
         """
         self.logger = logging.getLogger(__name__)
-    
+
         self.commands = {}
 
 
-    def set_commands(self, commands: Dict[str, Callable]):
+    def set_commands(self, commands: dict[str, Callable]):
         """
         Set callbacks for commands that can be executed by the module
 
@@ -46,7 +46,7 @@ class Command:
 
     # Alias used by some module implementations
     set_callbacks = set_commands
-        
+
 
     def _parse_command(self, command: str):
         # TODO: Migrate to zmq send and recv json
@@ -68,23 +68,23 @@ class Command:
                 # Find the first '{' and last '}' to extract the JSON part
                 start_idx = command.find('{')
                 end_idx = command.rfind('}') + 1
-                
+
                 # self.logger.info(f"JSON start: {start_idx}, end: {end_idx}")
-                
+
                 # Extract the command part (before the JSON)
                 cmd_part = command[:start_idx].strip()
                 json_part = command[start_idx:end_idx]
-                
+
                 # self.logger.info(f"Command part: '{cmd_part}'")
                 # self.logger.info(f"JSON part: '{json_part}'")
-                
+
                 # Parse the command part
                 cmd_parts = cmd_part.split()
                 cmd = cmd_parts[0] if cmd_parts else ""
-                
+
                 # self.logger.info(f"Extracted command: '{cmd}', JSON param: '{json_part}'")
                 params = json.loads(json_part)
-                
+
                 # Return the command and the JSON as a single parameter
                 return cmd, params
             else:
@@ -100,7 +100,7 @@ class Command:
         except Exception as e:
             self.logger.error(f"Error parsing command {command}: {e}")
             return "", {}
-    
+
 
     def handle_command(self, raw_command: str):
         """
@@ -109,8 +109,8 @@ class Command:
         Args:
             command: The command string to process
         """
-        self.logger.debug(f"Handling command: {raw_command}") 
-        
+        self.logger.debug(f"Handling command: {raw_command}")
+
         try:
             # 1. Parse command and parameters
             cmd, params = self._parse_command(raw_command)
@@ -118,15 +118,15 @@ class Command:
             # 2. Find corresponding callback
             handler = self.commands.get(cmd) # Find the callback that matches the name of the commmand
             if not handler:
-                return self._unknown_command(cmd)    
-            
+                return self._unknown_command(cmd)
+
             # 3. Execute callback and get response
             # self.logger.info(f"Executing command {cmd}")
             if not params:
                 # self.logger.info(f"Executing without arguments")
                 result = handler()
             else:
-                result = handler(**params) # Unpack params into arguments 
+                result = handler(**params) # Unpack params into arguments
 
             # self.logger.info(f"Command handler returned {result}")
 
@@ -161,11 +161,11 @@ class Command:
         """Handle unrecognized command"""
         self.logger.info(f"Command {command} not recognized")
         self.facade.send_status({
-            "type": "error", 
+            "type": "error",
             "error": f"Command {command} not recognized"
         })
-    
-    
+
+
     def cleanup(self):
         """Clean up resources used by the command handler"""
         pass # I don't think anything needs cleaned up?

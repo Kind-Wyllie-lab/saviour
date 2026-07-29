@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - APA Camera Module
 
@@ -16,18 +15,17 @@ No PyTorch / CUDA required.  To use a custom model, export ratnet.pt → ONNX
 Author: Andrew SG
 """
 
-import sys
 import os
+import sys
 import time
-import numpy as np
-import cv2
-from picamera2 import MappedArray
-from typing import Optional, List
 from collections import deque
+
+import cv2
+import numpy as np
+from picamera2 import MappedArray
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
-
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -67,13 +65,13 @@ class HailoDetector:
             return shape[1], shape[2]
         return shape[0], shape[1]
 
-    def detect(self, frame: np.ndarray, labels: List[str]) -> List[Detection]:
+    def detect(self, frame: np.ndarray, labels: list[str]) -> list[Detection]:
         """Run inference on a BGR frame. Returns detections by descending confidence."""
         h, w = self.input_size
         rgb = cv2.cvtColor(cv2.resize(frame, (w, h)), cv2.COLOR_BGR2RGB)
         return self._decode(self._hailo.run(rgb), frame.shape, labels)
 
-    def _decode(self, results, orig_shape: tuple, labels: List[str]) -> List[Detection]:
+    def _decode(self, results, orig_shape: tuple, labels: list[str]) -> list[Detection]:
         detections = []
         oh, ow = orig_shape[:2]
         for class_id, class_dets in enumerate(results):
@@ -147,8 +145,8 @@ class BlobTracker:
         self._kern_close = _ellipse(max(1, close_px))     if close_px  > 1 else None
         self._kern_open  = _ellipse(max(1, open_px))      if open_px   > 1 else None
 
-        self._prev_gray:    Optional[np.ndarray]          = None
-        self._last_center:  Optional[tuple]               = None
+        self._prev_gray:    np.ndarray | None          = None
+        self._last_center:  tuple | None               = None
         self._miss_count:   int                           = 0
 
     def reset(self) -> None:
@@ -157,7 +155,7 @@ class BlobTracker:
         self._last_center = None
         self._miss_count  = 0
 
-    def detect(self, frame: np.ndarray, labels: list) -> List[Detection]:
+    def detect(self, frame: np.ndarray, labels: list) -> list[Detection]:
         """
         Process one BGR (or grayscale) frame.
         Returns a one-element list with the rat's Detection, or [] if not found.
@@ -239,13 +237,13 @@ class APACameraModule(CameraBase):
         super().__init__(module_type)
 
         # ── APA: detection state ────────────────────────────────────────────
-        self.detector: Optional[HailoDetector] = None
-        self._detector_backend: Optional[str] = None
-        self._labels: List[str] = ["rat"]
+        self.detector: HailoDetector | None = None
+        self._detector_backend: str | None = None
+        self._labels: list[str] = ["rat"]
         self.threshold = 0.55
         self.max_detections = 2
         self._detection_buffer = deque(maxlen=3)
-        self._last_known_det: Optional[Detection] = None
+        self._last_known_det: Detection | None = None
 
         # ── APA: position tracking ───────────────────────────────────────────
         self.last_cx = None

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - MJPEG monitoring stream helper
 
@@ -11,8 +10,9 @@ standalone class the module owns is a better fit than another inheritance
 layer.
 """
 
-import time
 import threading
+import time
+
 from flask import Flask, Response
 from werkzeug.serving import make_server
 

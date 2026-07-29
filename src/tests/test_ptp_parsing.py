@@ -3,10 +3,10 @@
 Test script to verify PTP parsing logic
 """
 
-import sys
 import os
-import logging
-from unittest.mock import patch, MagicMock
+import sys
+from unittest.mock import patch
+
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from modules.ptp import PTP, PTPRole

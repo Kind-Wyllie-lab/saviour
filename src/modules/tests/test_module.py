@@ -5,9 +5,8 @@ Covers auto-registration of @command()/@check()-decorated methods, which
 replaces the manual per-subclass command/check dict boilerplate.
 """
 
-import pytest
 
-from src.modules.module import Module, command, check
+from src.modules.module import Module, check, command
 
 
 class _DummyModule(Module):

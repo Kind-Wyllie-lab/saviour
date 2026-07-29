@@ -1,10 +1,11 @@
-import threading
 import logging
-from collections import deque
-from protocol import Protocol
-import sys
 import os
+import sys
+import threading
 import time
+from collections import deque
+
+from protocol import Protocol
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -112,7 +113,7 @@ class Motor:
         self.send_command(MSG_START_MOTOR, "")
         self.time_started_rotating = time.time()
         self.rotating = True
-    
+
 
     def stop_motor(self) -> None:
         self.logger.info("Stopping motor")
@@ -122,7 +123,7 @@ class Motor:
         self.speed_error = None
 
 
-    def get_speed(self) -> float: 
+    def get_speed(self) -> float:
         return self.state_buffer[-1][0]
 
 
@@ -130,11 +131,11 @@ class Motor:
         # cmd = int(cmd)
         try:
             match cmd:
-                case "0": 
+                case "0":
                     # self.logger.info(state_buffer)
                     # self.logger.info(f"RPM={self.state_buffer[0][0]}, position={self.state_buffer[0][1]}deg")
                     self.logger.info(self.state_buffer[-1])
-                case "1": 
+                case "1":
                     self.set_speed(2.0)
                 case "2":
                     self.start_motor()
@@ -163,8 +164,8 @@ class Motor:
             self.stop_flag.set()
         except Exception as e:
             self.logger.info(f"Exception in CLI: {e}")
-            self.stop_flag.set()    
-    
+            self.stop_flag.set()
+
 
     def start(self):
         if self.cli_enabled == True:

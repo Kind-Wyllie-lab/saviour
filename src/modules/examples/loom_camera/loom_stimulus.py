@@ -1,20 +1,17 @@
+import ctypes
+import multiprocessing as mp
 import os
 import signal
-from dataclasses import dataclass
-from typing import Literal, Optional
-import multiprocessing as mp
-import ctypes
 import time
-import queue
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Literal
 
-import numpy as np
 import glfw
+import numpy as np
 import OpenGL.GL
 import OpenGL.GL.shaders
 from OpenGL.GL import glGenBuffers, glGenVertexArrays
-
+from OpenGL.raw.GL._types import GL_FALSE, GL_FLOAT, GL_UNSIGNED_INT
 from OpenGL.raw.GL.VERSION.GL_1_0 import (
     GL_BLEND,
     GL_COLOR_BUFFER_BIT,
@@ -53,11 +50,14 @@ from OpenGL.raw.GL.VERSION.GL_2_0 import (
     glVertexAttribPointer,
 )
 from OpenGL.raw.GL.VERSION.GL_3_0 import glBindVertexArray, glDeleteVertexArrays
-from OpenGL.raw.GL._types import GL_FALSE, GL_FLOAT, GL_UNSIGNED_INT
 
-from modules.examples.loom_camera.utils import framebuffer_size_callback, load_texture, vcalc, translate_matrix, \
-    scale_matrix, scale_matrix_seperate
-
+from modules.examples.loom_camera.utils import (
+    framebuffer_size_callback,
+    load_texture,
+    scale_matrix_seperate,
+    translate_matrix,
+    vcalc,
+)
 
 LoomStimulusCommand = Literal["start", "stop", "abort", "shutdown", "ping"]
 
@@ -165,13 +165,13 @@ def run_loom_stimulus_with_ipc(
     texture_path: str,
     initial_size_cm: float,
     final_size_cm: float,
-    initial_pos_ndc: Tuple[float, float],
-    final_pos_ndc: Tuple[float, float],
+    initial_pos_ndc: tuple[float, float],
+    final_pos_ndc: tuple[float, float],
     travel_time_s: float,
     loom_wait_time_s: float,
     repetitions_per_round: int,
     image_angle_deg: float,
-    background_rgba: Tuple[float, float, float, float],
+    background_rgba: tuple[float, float, float, float],
     photodiode_box_px: int = 80,
     photodiode_y_ndc: float = 0.0,
     screen_width_cm: float = 105.41,
@@ -181,7 +181,7 @@ def run_loom_stimulus_with_ipc(
     keepalive_mode: str = "corner",
     x_offset_ndc: float = 0.0,
     fullscreen: bool = True,
-    window_size_px: Tuple[int, int] = (1920, 1080),
+    window_size_px: tuple[int, int] = (1920, 1080),
     vsync: bool = True,
     stimulus_monitor_index: int = 0,
 ) -> None:
@@ -909,9 +909,9 @@ class LoomStimulusController:
     """
     def __init__(self, cfg: LoomStimulusConfig) -> None:
         self.cfg = cfg
-        self._cmd_q: "mp.Queue[tuple[str, dict]]" = mp.Queue()
-        self._status_q: "mp.Queue[dict]" = mp.Queue()
-        self._proc: Optional[mp.Process] = None
+        self._cmd_q: mp.Queue[tuple[str, dict]] = mp.Queue()
+        self._status_q: mp.Queue[dict] = mp.Queue()
+        self._proc: mp.Process | None = None
 
     def start(self) -> None:
         """Start the stimulus process if not running."""
@@ -933,7 +933,7 @@ class LoomStimulusController:
         )
         self._proc.start()
 
-    def send(self, cmd: LoomStimulusCommand, payload: Optional[dict] = None) -> None:
+    def send(self, cmd: LoomStimulusCommand, payload: dict | None = None) -> None:
         """
         Send a command to the stimulus process.
 

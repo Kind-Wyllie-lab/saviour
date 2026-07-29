@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Export Manager
 
@@ -14,15 +13,14 @@ Author: Andrew SG
 Created: 12/06/2025
 """
 
-import os
-import shutil
-import pathlib
-import logging
-import subprocess
 import datetime
-import time
+import logging
+import os
+import pathlib
+import shutil
+import subprocess
 import threading
-
+import time
 
 from src.modules.config import Config
 
@@ -40,11 +38,11 @@ class Export:
         os.makedirs(self.to_export_folder, exist_ok=True)
         os.makedirs(self.exported_folder, exist_ok=True)
         self.mount_point = "/mnt/export"  # This is where the samba share gets mounted
-        
+
         # Samba details (configurable)
-        self.samba_share_ip = None 
+        self.samba_share_ip = None
         self.samba_share_path = None # The name of the top level folder on the samba share
-        self.samba_share_username = None 
+        self.samba_share_username = None
         self.samba_share_password = None
         self._update_samba_settings()
 
@@ -76,7 +74,7 @@ class Export:
         if not self._mount_share():
             return False
 
-        # Create export folder on mounted share 
+        # Create export folder on mounted share
         export_path = self._format_export_path(export_path)
         self._create_export_path(export_path)
 
@@ -153,7 +151,7 @@ class Export:
             present in the result so callers can check it directly.
         """
         all_files = os.listdir(self.to_export_folder)
-        triggered_session = export_path.split('/')[0] if export_path and '/' in export_path else export_path
+        triggered_session = export_path.split('/', maxsplit=1)[0] if export_path and '/' in export_path else export_path
 
         with self._export_lock:
             if self.exporting:
@@ -292,7 +290,7 @@ class Export:
             self.logger.error(f"Error creating export path: {e}")
             return False
 
-    
+
     def stage_file_for_export(self, filename: str) -> bool:
         """Take a filename and stage it for export"""
         current_path = os.path.abspath(filename)
@@ -330,12 +328,12 @@ class Export:
 
     def clear_session_files(self) -> None:
         self.session_files = []
-    
+
 
     def clear_staged_for_export(self) -> None:
         self.staged_for_export = []
 
-    
+
     def when_recording_starts(self) -> bool:
         """To be called by recording object when a new recording session starts.
 
@@ -411,7 +409,7 @@ class Export:
             manifest_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             manifest_filename = f"export_manifest_{manifest_timestamp}.txt"
             manifest_path = os.path.join(export_folder, manifest_filename)
-            
+
             with open(manifest_path, 'w') as f:
                 f.write(f"Export Manifest - {manifest_timestamp}\n")
                 f.write(f"Module ID: {self.module_id}\n")
@@ -419,7 +417,7 @@ class Export:
                 f.write(f"Export Folder: {os.path.basename(export_folder)}\n")
                 if session_name:
                     f.write(f"session_name: {session_name}\n")
-                f.write(f"Files to be exported:\n")
+                f.write("Files to be exported:\n")
                 for file in files_to_export:
                     f.write(f"- {file}\n")
                     # Add file size and modification time from source
@@ -430,10 +428,10 @@ class Export:
                         mod_time = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
                         f.write(f"  Size: {size_mb:.2f} MB\n")
                         f.write(f"  Modified: {mod_time}\n")
-            
+
             self.logger.info(f"Created export manifest: {manifest_filename}")
             return manifest_filename
-            
+
         except Exception as e:
             self.logger.error(f"Failed to create export manifest: {e}")
             return None
@@ -462,7 +460,7 @@ class Export:
         self.samba_share_password = self.config.get("export.share_password", "")
         self._clear_traffic_control_filter()
         self._apply_traffic_control_filter()
-        
+
 
     def _clear_traffic_control_filter(self):
         self.logger.info("Clearing traffic control filters")
@@ -474,8 +472,8 @@ class Export:
             if "htb" in check_result.stdout:
                 # Proceed to delete the qdisc if it exists
                 cmd = [
-                    "sudo", "tc", "qdisc", "del", 
-                    "dev", "eth0", 
+                    "sudo", "tc", "qdisc", "del",
+                    "dev", "eth0",
                     "root"
                 ]
                 self._run_shell_command(cmd)
@@ -497,15 +495,15 @@ class Export:
 
     def _apply_traffic_control_filter(self):
         self.logger.info(f"Applying new traffic control filter for {self.samba_share_ip} on samba port 445")
-        
+
         add_qdisc_cmd = [
-            "sudo", "tc", "qdisc", "add", 
-            "dev", "eth0", 
+            "sudo", "tc", "qdisc", "add",
+            "dev", "eth0",
             "root", # Create the root level queueing discipling
             "handle", "1:0",  # Create new queueing discipline with handle 1:0
             "htb", # Hierarchical token bucket
             "default", "10" # Default class for packets that don't match any criteria
-        ] 
+        ]
 
         # result = subprocess.run(add_qdisc_cmd, shell=True, check=True, text=True, capture_output=True)
         self._run_shell_command(add_qdisc_cmd)
@@ -513,12 +511,12 @@ class Export:
         max_bitrate_mb = self.config.get("export.max_bitrate_mb", 10)
         max_burst_kb = self.config.get("export.max_burst_kb", 30)
         add_class_cmd = [
-            "sudo", "tc", "class", "add", 
-            "dev", "eth0", 
+            "sudo", "tc", "class", "add",
+            "dev", "eth0",
             "parent", "1:0",  # Apply to parent queueing discipline with handle 1:0 (root)
             "classid", "1:1",  # Create new class with handle 1:1
             "htb", # Hierarchical token bucket
-            "rate", f"{max_bitrate_mb}mbit", 
+            "rate", f"{max_bitrate_mb}mbit",
             "burst", f"{max_burst_kb}k"
         ]
         # result = subprocess.run(add_class_cmd, shell=True, check=True, text=True, capture_output=True)
@@ -603,7 +601,7 @@ class Export:
             self.logger.warning(f"Error mounting share: {e}")
             return False
 
-            
+
     def unmount(self) -> bool:
         """Unmount current destination"""
         try:

@@ -351,7 +351,11 @@ run_mend() {
     whiptail --title "Repair / Update" \
         --yesno "\nThis will rebuild dependencies and restart the service (code itself is not changed -- deploy a ZIP via the web UI for that).\n\nThe process takes a few minutes. Continue?" \
         10 $W || return
-    tput rmcup 2>/dev/null || clear
+    # whiptail (newt) draws directly onto the primary screen buffer rather
+    # than switching to the terminal's alternate one, so `tput rmcup` has
+    # nothing to restore and silently no-ops -- a plain `clear` is what
+    # actually removes the dialog before the next command's output.
+    clear
     bash "$mend_script"
     echo ""
     echo "Press Enter to return to the configuration menu..."
@@ -594,10 +598,12 @@ configure_device() {
         else
             reboot_now=false
         fi
-        # Defensive: if whiptail was killed mid-draw (SIGTERM on timeout) it
-        # may not have restored the terminal itself -- make sure the stale
-        # frame is gone before anything else is printed.
-        tput rmcup 2>/dev/null || clear
+        # Defensive: if whiptail was killed mid-draw (SIGTERM on timeout) or
+        # simply exited normally, its dialog is still sitting on the primary
+        # screen buffer (newt doesn't use the alternate one, so there's
+        # nothing for `tput rmcup` to restore) -- `clear` is what actually
+        # removes it before anything else is printed.
+        clear
     else
         if whiptail --title "Reboot Required" --yesno \
             "\nSetup is complete. A reboot is required for the new configuration to take effect.\n\nWould you like to reboot now?" \
@@ -609,9 +615,9 @@ configure_device() {
     fi
 
     if [ "$reboot_now" = true ]; then
-        # tput rmcup restores the terminal's normal screen buffer so the
-        # whiptail overlay is fully gone before the countdown appears.
-        tput rmcup 2>/dev/null || clear
+        # `clear` (not `tput rmcup` -- see above) so the whiptail overlay is
+        # actually gone before the countdown appears.
+        clear
         echo ""
         echo "  ✓ Configuration complete."
         echo ""
@@ -723,7 +729,7 @@ clone_fix_menu() {
         return
     fi
 
-    tput rmcup 2>/dev/null || clear
+    clear
     echo ""
     echo "  ✓ Identity refresh complete."
     echo ""

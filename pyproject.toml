@@ -63,6 +63,7 @@ packages = ["src"]
 dev = [
     "pytest>=8.3.5",
     "pytest-mock>=3.14.0",
+    "ruff>=0.6.0",
 ]
 
 [tool.setuptools_scm]
@@ -75,11 +76,13 @@ addopts = "-v"
 
 [tool.ruff]
 line-length = 88
-target-version = "py38"
+target-version = "py311"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "B", "UP", "PL", "RUF"]
 ignore = []
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["saviour"]
 
 [tool.mypy]

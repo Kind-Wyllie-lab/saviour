@@ -55,6 +55,8 @@ After completion, run the following and select the correct configuration (e.g. c
 sudo saviour-config
 ```
 
+![GIF Install](assets/install.gif)
+
 ### Using a pre-baked image
 
 Not yet available. Eventually an OS image will be available which can be copied on to an SD card. 
@@ -85,14 +87,10 @@ Full documentation can be found at https://saviour.readthedocs.io/en/latest/
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
+SAVIOUR was created in response to two problems: 
+1. Many behavioural test rigs were "re-inventing the wheel" each time, often at cost and in messy, unreplicable ways
+2. Habitat (a large rig monitoring up to 50 rats for months at a time) demanded a modular approach to manage complexity and replication
 
-### Background
-The habitat project seeks to explore the behaviour and development of up to 50 rodents in a single large enclosure ("the habitat"). The research is being conducted by SIDB/UofE/Kind Lab with the intention of exploring the genetic factors relating to autism in rodents. To achieve this, experimental data must be gathered. Numerous sensors and actuators are currently distributed throughout the environment - cameras, microphones, RFID, and TTL I/O. To date, measurements have been gathered manually. This is time consuming and leads to unsynchronised measurements. A modular, autonomous approach is desired. Such an approach will have externalities well beyond the Habitat project, which serves as the initial context for the system.
-
-### System Purpose
-The proposed system provides a modular, scalable, and synchronized data capture solution for behavioral testing labs. It enables precise multi-sensor data collection (video, audio, TTL events, RFID) while controlling external equipment. The controller manages synchronization, health monitoring, and data collation, while sensor modules autonomously capture and transmit data to a central repository. All power, synchronisation, control signalling and data transfer shall use a single POE (Power over Ethernet) connection.
-
-### How It Works
 A SAVIOUR system consists of a "controller" device talking to one or more "module" devices (camera, microphone, RFID reader, TTL I/O, etc.), each handling one sensor or piece of equipment. All devices are Raspberry Pi 5 (for now!), connected together via LAN, typically with Power-over-Ethernet (PoE) so a single cable carries both power and network to each device. Researchers control everything - starting and stopping recordings, checking device status - from a web page on their own PC.
 
 ```mermaid
@@ -111,23 +109,6 @@ graph TD
 
 The key problem SAVIOUR solves is **synchronisation**: every device's clock is kept aligned to within microseconds of the others, so a video frame from one camera, an audio sample from a microphone, and an RFID read can always be lined up afterwards, even though they were captured by completely separate little computers scattered around the room. This synchronisation isn't limited to SAVIOUR's own devices - a TTL module can send or receive timing pulses to line up SAVIOUR's recordings with an entirely separate system, such as an electrophysiology rig running Open Ephys.
 
-### Scope
-The system consists of a central controller with multiple PoE sensor modules. 
-Sensor modules include cameras, microphones, TTL I/O, and RFID units.
-The controller detects, synchronises, and manages these modules.
-Data is collected, formatted, and stored for analysis.
-The system is modular, allowing for easy expansion and maintenance.
-
-Each system includes:
-- A main controller responsible for time synchronisation, data processing, and module management
-- A PoE switch which connects the controller to all modules
-- A storage dump which is likely a samba share running on the controller, a NAS or other dedicated device
-- An array of modules, including:
-  - A camera module, providing compressed video capture
-  - A microphone module, recording ultrasonic mice vocalisations
-  - A TTL I/O module, interfacing with various I/O devices
-  - An RFID module, providing subject tracking
-
 <!-- CONTRIBUTING -->
 ## Contributing
 SAVIOUR is designed to be easily extensible to new types of modules and new user interfaces to control them in experiment specific ways.
@@ -143,6 +124,9 @@ Any contributions you make are **greatly appreciated**.
 ### Commits
 Use the conventional commits framework wherever possible
 https://www.conventionalcommits.org/en/v1.0.0/#summary 
+
+### Style
+Style is enforced by ruff (ruff check/ruff format); it's PEP 8 based with an 88-character line legnth.
 
 ### Workflow 
 1. Fork the Project

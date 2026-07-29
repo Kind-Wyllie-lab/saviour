@@ -14,16 +14,14 @@ SAVIOUR (Synchronised Audio Video Input Output Recorder) is a modular, PoE-netwo
 # Activate the virtual environment first
 source env/bin/activate
 
-# Run tests — NOTE: pyproject testpaths only covers src/controller/tests and
-# src/tests; the 50 module-side tests must be run explicitly:
+# Run tests — testpaths already covers src/controller/tests, src/modules/tests,
+# and src/tests, so plain `pytest` runs everything:
 pytest
-pytest src/modules/tests/
 
 # Run a single test file
 pytest src/controller/tests/test_facade.py
 
-# Lint — ruff is configured in pyproject but NOT installed in env;
-# CI uses flake8 instead (toolchain drift, see TODO)
+# Lint — ruff is a dev dependency (pip install -e ".[dev]") and is what CI runs
 ruff check src/
 
 # Type check (aspirational — strict mypy config has never passed)
@@ -182,10 +180,10 @@ Threat model: a local network of Raspberry Pi 5s (one controller, several module
 
 ### Medium priority — reliability / UX
 
-- [ ] **CI never runs on PRs** (found 2026-07-09 review) — `.github/workflows/python-app.yml` triggers only on `main`, but the branch flow targets PRs at `staging`. Also: CI lints with flake8 while pyproject configures ruff, excludes `src/modules/examples` (where all real module code lives) from the undefined-name check, and inherits the testpaths gap so module tests never run. Fix triggers, converge on ruff, include examples, add `src/modules/tests` to testpaths.
+- [x] **CI never runs on PRs / lints with flake8 / excludes examples / testpaths gap** (found 2026-07-09 review) — all four resolved: PR triggers were already present on `main`/`staging`/`develop`; CI now runs `ruff` (dev dependency, converged from flake8); `src/modules/examples` is no longer excluded (fixing this required correcting `[tool.ruff] target-version` from the false `py38` to `py311` — the old value made `match` statements register as syntax errors); `testpaths` already included `src/modules/tests`. One real bug the newly-included directory caught immediately: `src/modules/examples/arduino/arduino_module.py` subclassed `Command` without importing it — fixed. Note `arduino_module.py` has other latent issues beyond that (e.g. `ArduinoCommand` methods reference `self.callbacks`, which nothing ever sets — the base `Command` class populates `self.commands`) not yet addressed.
 - [ ] **`web.py:400`: broken timestamp format in legacy `send_command start_recording` path** (found 2026-07-09 review) — `strftime("%Y%M%d_%H%m%s")` has month/minute swapped and non-portable `%s`; should be `"%Y%m%d_%H%M%S"`.
 - [ ] **`web.py`: NAS exported-recordings listing is broken** (found 2026-07-09 review) — `get_nas_recordings()` scans `/mnt/nas` but calls `mount_nas()` which mounts at `/mnt/controller_export`, so the scan never sees the mount. Also logs one INFO line per file found — a journal flood on large shares. Feature appears dead; either fix the mount point or remove it.
-- [ ] **`pyproject.toml` hygiene** (found 2026-07-09 review) — `requires-python = ">=3.8"` is false (code needs 3.11+); `pytest` is a runtime dependency (belongs in dev extras only); `[tool.ruff]` uses deprecated top-level `select`/`ignore` (modern ruff wants `[tool.ruff.lint]`).
+- [ ] **`pyproject.toml` hygiene** (found 2026-07-09 review) — `requires-python = ">=3.8"` is false (code needs 3.11+); `pytest` is a runtime dependency (belongs in dev extras only). (The `[tool.ruff]` deprecated top-level `select`/`ignore` part of this is now fixed — moved to `[tool.ruff.lint]`.)
 - [x] **`export.py` / `module.py`: blocking subprocess calls on network thread** — `_mount_share()` has no timeout and `update_saviour()` blocks ZMQ command processing; move to background threads.
 - [x] **`config.py`: `set()` fires `on_module_config_change()` even when value is unchanged** — guard with an equality check before calling `configure_module()`.
 - [x] **`config.py`: `reset_to_defaults()` doesn't purge stale keys** — keys removed from the module config file persist in `active_config.json` after a reset; rebuild from scratch rather than merging.

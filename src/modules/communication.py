@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Communication Manager
 
@@ -11,12 +10,14 @@ a module and the controller, including:
 - Message handling and routing
 """
 
-import zmq
-import threading
 import logging
+import threading
 import time
-from typing import Callable, Dict, Any, Optional
+from typing import Any
+
+import zmq
 from zmq.utils.monitor import recv_monitor_message
+
 
 class Communication:
     def __init__(self,
@@ -30,23 +31,23 @@ class Communication:
         """
         self.logger = logging.getLogger(__name__)
         self.config = config
-        
+
         self.group = self.config.get("module.group")
-        
+
         # Control flags
         self.command_listener_running = False
         self.last_command = None
-        
+
         # Controller connection info
         self.controller_ip = None
         self.controller_port = None
-        
+
         # Connection state tracking
         self.connection_attempts = 0
         self.max_connection_attempts = self.config.get("network.reconnect_attempts", 5) if config else 5
         self.connection_delay = self.config.get("network.reconnect_delay", 5) if config else 5
         self.last_connection_time = None
-        
+
         # ZeroMQ setup - initialized but not connected
         self.context = zmq.Context()
         self.command_socket = self.context.socket(zmq.DEALER)
@@ -90,21 +91,21 @@ class Communication:
         """
         try:
             # Check if already connected to the same controller
-            if (self.controller_ip == controller_ip and 
+            if (self.controller_ip == controller_ip and
                 self.controller_port == controller_port and
                 self.command_listener_running):
                 self.logger.info("Already connected to this controller")
                 return True
-            
+
             # Clean up existing connection if connecting to different controller
             if self.controller_ip and self.controller_ip != controller_ip:
                 self.logger.info("Connecting to different controller, cleaning up existing connection")
                 self.cleanup()
-            
+
             # Store controller information
             self.controller_ip = controller_ip
             self.controller_port = controller_port
-            
+
             # Get ports from config if available
             if self.config:
                 command_port = self.config.get("communication.command_socket_port", 5555)
@@ -112,7 +113,7 @@ class Communication:
             else:
                 command_port = 5555
                 status_port = 5556
-            
+
             # Set DEALER identity to module_id before connecting — must be done
             # before the first connect() call; cannot be changed afterwards.
             module_id = self.facade.get_module_id()
@@ -134,11 +135,11 @@ class Communication:
             # us to its routing table so it can send commands back to us.
             self._send_hello()
             self.logger.info(f"Connected to controller command socket at {controller_ip}:{command_port}, status socket at {controller_ip}:{status_port}")
-            
+
             # Reset connection tracking on successful connection
             self.connection_attempts = 0
             self.last_connection_time = time.time()
-            
+
             return True
         except Exception as e:
             self.logger.error(f"Error connecting to controller: {e}")
@@ -242,11 +243,11 @@ class Communication:
         if self.command_listener_running:
             self.logger.info("Command listener already running")
             return True
-        
+
         if not self.controller_ip:
             self.logger.error("Cannot start command listener: not connected to controller")
             return False
-        
+
         self.command_listener_running = True
         self.command_thread = threading.Thread(target=self.listen_for_commands, daemon=True)
         self.command_thread.start()
@@ -302,14 +303,14 @@ class Communication:
         if self.connection_attempts < self.max_connection_attempts:
             self.connection_attempts += 1
             self.logger.info(f"Scheduling reconnection attempt {self.connection_attempts}/{self.max_connection_attempts} in {self.connection_delay} seconds")
-            
+
             # Schedule reconnection in a separate thread
             def delayed_reconnect():
                 time.sleep(self.connection_delay)
                 if self.controller_ip and not self.command_listener_running:  # Only reconnect if we have controller info
                     self.logger.info(f"Attempting reconnection {self.connection_attempts}/{self.max_connection_attempts}")
                     self._attempt_reconnection()
-            
+
             threading.Thread(target=delayed_reconnect, daemon=True).start()
         else:
             self.logger.warning(f"Max reconnection attempts ({self.max_connection_attempts}) reached")
@@ -395,7 +396,7 @@ class Communication:
             self._reconnect_lock.release()
 
 
-    def send_status(self, status_data: Dict[str, Any]) -> None:
+    def send_status(self, status_data: dict[str, Any]) -> None:
         """Send status information to the controller
         
         Args:
@@ -405,20 +406,20 @@ class Communication:
             if not self.status_socket:
                 self.logger.warning("Status socket not available")
                 return
-            
+
             # Add timestamp and module ID to status data
             status_data['timestamp'] = time.time()
             status_data['module_id'] = self.facade.get_module_id()
             status_data['module_name'] = self.facade.get_module_name()
-            
+
             # Convert to JSON string
             import json
             message = json.dumps(status_data)
-            
+
             # Send status
             self.status_socket.send_string(f"status/{self.facade.get_module_id()} {message}")
             # self.logger.info(f"Status sent: {message}")
-            
+
         except Exception as e:
             self.logger.error(f"Error sending status: {e}")
             # Check if this is a connection error

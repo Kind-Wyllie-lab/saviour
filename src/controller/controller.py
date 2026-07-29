@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR Controller
 
@@ -13,18 +12,17 @@ Author: Andrew SG
 Created: 11/11/2025
 """
 
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
+
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+import logging  # for logging and debugging
 import time
-import datetime
-import logging # for logging and debugging
-from dataclasses import dataclass # to define Module dataclass
-from typing import List, Dict, Any, Optional # for type hinting
-import asyncio # for asyncio
 from abc import ABC, abstractmethod
+from typing import Any  # for type hinting
 
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
@@ -41,23 +39,23 @@ else:
 logging.basicConfig(
     level=logging.INFO,
     format=format_string
-)   
+)
 
 # Networking and synchronization
-import threading # for concurrent operations
 
 # Local managers
-from src.controller.network import Network
 from src.controller.communication import Communication
-from src.controller.health import Health
 from src.controller.config import Config
-from src.controller.ptp import PTP, PTPRole
-from src.controller.web import Web
-from src.controller.modules import Modules
-from src.controller.facade import ControllerFacade
-from src.controller.recording import Recording
 from src.controller.export_queue import ExportQueue
+from src.controller.facade import ControllerFacade
+from src.controller.health import Health
+from src.controller.modules import Modules
+from src.controller.network import Network
 from src.controller.notify import Notifier
+from src.controller.ptp import PTP, PTPRole
+from src.controller.recording import Recording
+from src.controller.web import Web
+
 
 # Habitat Controller Class
 class Controller(ABC):
@@ -79,20 +77,20 @@ class Controller(ABC):
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"Initializing managers")
+        self.logger.info("Initializing managers")
 
         # Initialize config manager
         self.config = Config()
 
         self._setup_logging()
-        
-        # Control flags 
+
+        # Control flags
         self.is_running = True  # Add flag for listener thread
 
         # Managers
-        self.network = Network(self.config) 
-        self.network.on_module_discovered = self.on_module_discovered 
-        self.network.on_module_removed = self.on_module_removed              
+        self.network = Network(self.config)
+        self.network.on_module_discovered = self.on_module_discovered
+        self.network.on_module_removed = self.on_module_removed
         self.communication = Communication(status_callback=self.handle_status_update)
         self.ptp = PTP(role=PTPRole.MASTER, config=self.config)
         self.web = Web(self.config)
@@ -121,16 +119,16 @@ class Controller(ABC):
         self.health.start_monitoring()
 
 
-    def on_controller_config_change(self, updated_keys: Optional[list[str]]) -> None:
+    def on_controller_config_change(self, updated_keys: list[str] | None) -> None:
         self.logger.info(f"Received notification that controller config changed, calling configure_controller() with keys {updated_keys}")
         self.configure_controller(updated_keys)
 
 
     @abstractmethod
-    def configure_controller(self, updated_keys: Optional[list[str]]):
+    def configure_controller(self, updated_keys: list[str] | None):
         """Gets called when controller specific configuration changes - allows controllers to update their specific settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_controller")
-    
+
 
     def _register_special_socket_events(self, socketio):
         """
@@ -313,26 +311,26 @@ class Controller(ABC):
         self.web.broadcast_module_health()
 
 
-    def _setup_logging(self): 
+    def _setup_logging(self):
         # Add logging file handler if none exists
         if not self.config.get("logging.file_logging", False):
             return
-            
+
         if not self.logger.handlers:
             # Add file handler for persistent logging (useful when running as systemd network)
             try:
                 # Create logs directory if it doesn't exist
                 log_dir = self.config.get("logging.directory", "/var/log/habitat")
                 os.makedirs(log_dir, exist_ok=True)
-                
+
                 # Generate log filename with module info
-                log_filename = f"controller.log"
+                log_filename = "controller.log"
                 log_filepath = os.path.join(log_dir, log_filename)
-                
+
                 # Get config values for rotation
                 max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
                 backup_count = self.config.get("logging.backup_count", 5)
-                
+
                 # Add file handler with rotation
                 from logging.handlers import RotatingFileHandler
                 file_handler = RotatingFileHandler(
@@ -342,7 +340,7 @@ class Controller(ABC):
                 )
                 file_handler.setLevel(logging.INFO)
                 self.logger.addHandler(file_handler)
-                
+
                 self.logger.info(f"File logging enabled: {log_filepath}")
                 self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
 
@@ -355,37 +353,37 @@ class Controller(ABC):
     def stop(self) -> bool:
         """Stop the controller and clean up resources"""
         self.logger.info("Stopping controller...")
-        
+
         try:
             # Stop all threads by setting flags
             self.is_running = False
-            
+
             # Stop health monitoring
             self.logger.info("Stopping health monitoring")
             self.health.stop_monitoring()
-            
+
             # Clean up health monitoring
             self.logger.info("Cleaning up module health tracking")
             self.health.clear_all_health()
-            
+
             # Clean up network manager
             self.logger.info("Cleaning up network manager")
             self.network.cleanup()
-            
+
             # Clean up communication manager
             self.logger.info("Cleaning up communication manager")
             self.communication.cleanup()
-            
+
             # Clean up database manager
             self.logger.info("Cleaning up database manager")
             # self.database.cleanup()
 
             # Give modules time to detect the controller is gone
             time.sleep(1)
-            
+
             self.logger.info("Controller stopped successfully")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping controller: {e}")
             return False
@@ -422,7 +420,7 @@ class Controller(ABC):
         if self.web:
             self.logger.info("Starting web interface")
             self.web.start() # This will start a thread to serve a webapp and listen for commands from user
-            
+
             # Update web interface with initial module list
             if hasattr(self, 'modules'):
                 self.web.update_modules(self.modules.get_modules())
@@ -433,9 +431,9 @@ class Controller(ABC):
 
         # Resume any exports that were queued or in-flight when the controller last stopped
         self.export_queue.start()
-        
+
         # Keep the main thread alive
-        try: 
+        try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -446,9 +444,9 @@ class Controller(ABC):
             self.logger.error(f"Error in main thread: {e}")
             self.stop()
             return False
-        
+
         return True
-        
+
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """
@@ -462,7 +460,7 @@ class Controller(ABC):
             Configuration value
         """
         return self.config.get(key, default)
-        
+
 
     def set_config(self, key: str, value: Any, persist: bool = False) -> bool:
         """
@@ -478,7 +476,7 @@ class Controller(ABC):
         """
 
         # Update in config manager
-        return self.config.set(key, value, persist) 
+        return self.config.set(key, value, persist)
 
 
     def on_module_discovered(self, module):
@@ -487,12 +485,12 @@ class Controller(ABC):
         if self.modules.is_removed(module.id):
             self.logger.info(f"Previously removed module {module.id} has reappeared — re-adding")
             self.modules.clear_removed(module.id)
-        
+
         # Add module to health monitor with initial offline status
         # This allows the health monitor to track the module even before it sends heartbeat
         initial_health_data = {
             'timestamp': time.time(),
-            'status': 'online', 
+            'status': 'online',
             'cpu_temp': 0,
             'cpu_usage': 0,
             'memory_usage': 0,
@@ -500,7 +498,7 @@ class Controller(ABC):
             'disk_space': 0
         }
         self.health.update_module_health(module.id, initial_health_data)
-        
+
         # Update web interface
         if hasattr(self, 'web'):
             self.web.update_modules(self.modules.get_modules())
@@ -521,7 +519,7 @@ class Controller(ABC):
     def get_module_configs(self):
         """Get the module configuration data for online modules only"""
         # Request config from all modules - refresh the config stored on controller
-        self.logger.info(f"Sending get_config command to all modules")
+        self.logger.info("Sending get_config command to all modules")
         self.communication.send_command("all", "get_config", {})
 
 
@@ -601,7 +599,7 @@ class Controller(ABC):
         try:
             # Get controller IP address from service manager (already detected and stored)
             controller_ip = self.network.ip
-            
+
             # Get Samba configuration from config
             samba_config = {
                 'share_name': self.config.get('samba.share_name', 'controller_share'),
@@ -610,7 +608,7 @@ class Controller(ABC):
                 'share_path': f'\\\\{controller_ip}\\{self.config.get("samba.share_name", "controller_share")}',
                 'controller_ip': controller_ip
             }
-            
+
             self.logger.info(f"Returning Samba info: {samba_config}")
             return samba_config
         except Exception as e:

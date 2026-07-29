@@ -5,13 +5,11 @@ Covers merge helpers, set_all behaviour, and thread safety.
 """
 
 import json
-import threading
-import tempfile
 import os
-import pytest
+import tempfile
+import threading
 
 from src.modules.config import Config
-
 
 # ---------------------------------------------------------------------------
 # Helpers

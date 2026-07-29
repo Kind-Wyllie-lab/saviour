@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 
 # Make src/ importable without package prefix so tests can use
 # 'from modules.ptp import PTP' as well as 'from src.modules.ptp import PTP'.

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Communication Manager
 
@@ -13,12 +12,14 @@ Author: Andrew SG
 Created: ?
 """
 
-import zmq
-import threading
-import logging
-import time
-from typing import Callable, Dict, Any, Set
 import json
+import logging
+import threading
+import time
+from collections.abc import Callable
+
+import zmq
+
 
 class Communication:
     def __init__(self,
@@ -31,7 +32,7 @@ class Communication:
         self.data_callback = None
 
         # Tracks module IDs whose DEALER sockets have registered via "hello"
-        self._connected_dealers: Set[str] = set()
+        self._connected_dealers: set[str] = set()
         self._dealers_lock = threading.Lock()
 
         # ZMQ sockets are not thread-safe: send_command() can be called from any
@@ -75,7 +76,7 @@ class Communication:
         self.status_callback = status_callback
         self.data_callback = data_callback
 
-    def send_command(self, module_id: str, command: str, params: Dict) -> None:
+    def send_command(self, module_id: str, command: str, params: dict) -> None:
         """Send a command to a specific module, or to all connected modules if module_id='all'."""
         if not params:
             params = {}

@@ -9,11 +9,8 @@ Serves up the system GUI and binds appropriate routes between GUI buttons and mo
 @date: 080725
 """
 
-import sys
 import os
-import logging
-import threading
-from typing import Optional
+import sys
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -21,13 +18,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Import habitat controller
 from controller.controller import Controller
 
+
 class APAController(Controller):
     def __init__(self):
         super().__init__()
         self.config.load_controller_config("apa_controller_config.json")
         self.web.handle_special_module_status = self.handle_special_module_status
 
-    def configure_controller(self, updated_keys: Optional[list[str]]):
+    def configure_controller(self, updated_keys: list[str] | None):
         pass
 
     def handle_special_module_status(self, module_id: str, status: dict):

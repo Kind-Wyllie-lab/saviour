@@ -1,7 +1,11 @@
 # SAVIOUR
 
-**S**ynchronised **A**udio **V**ideo **I**nput **O**utput **R**ecorder — a modular, PoE-networked multi-sensor recording system for rodent behavioural research. Each Raspberry Pi 5 on the network runs either as the **controller** or as a **module** (camera, microphone, TTL, RFID, etc.).
+SAVIOUR (Synchronised Audio Video Input Output Recorder) is a modular and open-source approach to generating synchronised datasets from a multitude of sources including cameras, microphones, RFIDs, and TTLs. 
 
-Built for the Kind Lab / SIDB / University of Edinburgh "Habitat" project.
+A SAVIOUR system consists of a "controller" device talking to one or more "module" devices (camera, microphone, RFID reader, TTL I/O, etc.), each handling one sensor or piece of equipment. All devices are Raspberry Pi 5 (for now!), connected together via LAN, typically with Power-over-Ethernet (PoE) so a single cable carries both power and network to each device. Researchers control everything - starting and stopping recordings, checking device status - from a web page on their own PC.
 
-See [Overview](Overview.md) for the full project description, or the [software requirements](SRS.md), [config structure](CONFIG_STRUCTURE.md), and [new module guide](NEW_MODULE_GUIDE.md) for the technical docs.
+SAVIOUR was developed to meet the needs of behavioural neuroscience researchers (at the Simon's Initative for the Developing Brain, University of Edinburgh) who wanted an affordable, high throughput means of running their experiments with low barriers to entry. 
+
+See [Getting Started](getting_started.md) to learn more about making recordings with SAVIOUR, visit the [FAQs](faqs.md).
+
+To learn about contributing to SAVIOUR, start with [How it Works](how_it_works.md) and then visit the [New Module Guide](new_module_guide.md). 

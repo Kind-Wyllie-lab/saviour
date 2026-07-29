@@ -13,8 +13,6 @@ whole controller process with a native "Assertion failed: !_current_out
 import threading
 import time
 
-import pytest
-
 from src.controller.communication import Communication
 
 

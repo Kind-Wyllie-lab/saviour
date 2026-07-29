@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Data Models
 
@@ -8,9 +7,10 @@ This file provides a single source for representations of data important to the 
 Author: Andrew SG
 Created: 31/10/25
 """
-from enum import StrEnum
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from enum import StrEnum
+from typing import Any
+
 
 class ModuleStatus(StrEnum):
     """Enum class which holds all possible status codes a Module can be in"""
@@ -21,7 +21,7 @@ class ModuleStatus(StrEnum):
     FAULT = "FAULT"
     OFFLINE = "OFFLINE"
 
-@dataclass 
+@dataclass
 class Module:
     """Dataclass to represent a connected SAVIOUR Module"""
     id: str # ID of connected module which is combination of type and last 4 digits of MAC e.g. camera_dc67
@@ -34,7 +34,7 @@ class Module:
     group: str = "" # Group the module belongs to
     online: bool = True # Default to assuming it's online
     status: ModuleStatus = ModuleStatus.DEFAULT # Default to NOT_READY
-    config: Dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     ready_time: float = 0.0 # Time at which a module went ready, so as to flip it back to NOT_READY if time elapsed.
     ready_message: str = "" # Message associated with a ready update
     last_heartbeat_time: float = 0.0 # Epoch of last received status message; used to detect ungraceful disconnects

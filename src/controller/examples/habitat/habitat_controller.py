@@ -7,11 +7,9 @@ Inherits the base Controller class and serves the Habitat GUI.
 @date: 080725
 """
 
-import sys
 import os
-import logging
+import sys
 from datetime import date
-from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -137,7 +135,7 @@ class HabitatController(Controller):
 
     # ── Controller overrides ──────────────────────────────────────────────────
 
-    def configure_controller(self, updated_keys: Optional[list[str]]):
+    def configure_controller(self, updated_keys: list[str] | None):
         pass
 
 

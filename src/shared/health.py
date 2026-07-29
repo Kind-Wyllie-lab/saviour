@@ -6,8 +6,8 @@ missing field is caught at import time rather than silently producing None in th
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, fields, asdict
-from typing import Optional
+
+from dataclasses import asdict, dataclass, fields
 
 
 @dataclass
@@ -15,20 +15,20 @@ class ModuleHealthSnapshot:
     """Health metrics reported by a module in each heartbeat."""
 
     timestamp:       float          = 0.0
-    cpu_temp:        Optional[float] = None
-    cpu_usage:       Optional[float] = None
-    memory_usage:    Optional[float] = None
-    memory_total_gb: Optional[float] = None
+    cpu_temp:        float | None = None
+    cpu_usage:       float | None = None
+    memory_usage:    float | None = None
+    memory_total_gb: float | None = None
     uptime:          float           = 0.0
-    disk_space:      Optional[float] = None
-    disk_used_gb:    Optional[float] = None
-    disk_total_gb:   Optional[float] = None
-    ptp4l_offset_ns: Optional[float] = None
-    ptp4l_freq:      Optional[float] = None
-    phc2sys_offset_ns:  Optional[float] = None
-    phc2sys_freq:    Optional[float] = None
+    disk_space:      float | None = None
+    disk_used_gb:    float | None = None
+    disk_total_gb:   float | None = None
+    ptp4l_offset_ns: float | None = None
+    ptp4l_freq:      float | None = None
+    phc2sys_offset_ns:  float | None = None
+    phc2sys_freq:    float | None = None
     recording:       bool            = False
-    version:         Optional[str]   = None
+    version:         str | None   = None
 
     def to_dict(self) -> dict:
         return asdict(self)

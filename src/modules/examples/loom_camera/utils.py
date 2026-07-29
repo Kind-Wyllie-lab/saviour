@@ -1,13 +1,22 @@
 import numpy as np
 from OpenGL.GL import glGenTextures, glTexImage2D
+from OpenGL.raw.GL._types import GL_UNSIGNED_BYTE
 from OpenGL.raw.GL.ARB.internalformat_query2 import GL_TEXTURE_2D
-from OpenGL.raw.GL.VERSION.GL_1_0 import glTexParameteri, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_MIN_FILTER, \
-    GL_LINEAR, GL_TEXTURE_MAG_FILTER, GL_RGBA, glViewport
+from OpenGL.raw.GL.VERSION.GL_1_0 import (
+    GL_LINEAR,
+    GL_RGBA,
+    GL_TEXTURE_MAG_FILTER,
+    GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_WRAP_T,
+    glTexParameteri,
+    glViewport,
+)
 from OpenGL.raw.GL.VERSION.GL_1_1 import glBindTexture
 from OpenGL.raw.GL.VERSION.GL_1_2 import GL_CLAMP_TO_EDGE
 from OpenGL.raw.GL.VERSION.GL_3_0 import glGenerateMipmap
-from OpenGL.raw.GL._types import GL_UNSIGNED_BYTE
 from PIL import Image
+
 
 def vcalc(x0, x1, t, dim):
     """Calculate required velocity of image"""

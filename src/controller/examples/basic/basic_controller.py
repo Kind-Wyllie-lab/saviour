@@ -9,17 +9,15 @@ Serves up the system GUI and binds appropriate routes between GUI buttons and mo
 @date: 080725
 """
 
-import sys
 import os
-import logging
-import threading
-from typing import Optional
+import sys
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Import habitat controller
 from controller.controller import Controller
+
 
 class BasicController(Controller):
     def __init__(self):
@@ -34,9 +32,9 @@ class BasicController(Controller):
         match status:
             case _:
                 self.logger.warning(f"No logic for {status} from {module_id}")
-                return False    
+                return False
 
-    def configure_controller(self, updated_keys: Optional[list[str]]):
+    def configure_controller(self, updated_keys: list[str] | None):
         pass
 
 if __name__ == "__main__":

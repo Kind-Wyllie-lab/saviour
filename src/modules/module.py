@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Base Module Class
 
@@ -9,21 +8,20 @@ Author: Andrew SG
 Created: 17/03/2025
 """
 
-import sys
 import os
-import json
+import sys
+
 from dotenv import load_dotenv
+
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-import subprocess
-import time
-import logging
-import uuid
-import threading
-from typing import Dict, Any, Optional, Union
 import datetime
-import csv
-from abc import ABC, abstractmethod 
+import logging
+import subprocess
+import threading
+import time
+from abc import ABC, abstractmethod
+from typing import Any
 
 INSTALL_DIR = "/usr/local/src/saviour"
 
@@ -45,15 +43,15 @@ logging.basicConfig(
 )
 
 # Import managers
-from src.modules.config import Config
-from src.modules.communication import Communication
-from src.modules.health import Health
 from src.modules.command import Command
+from src.modules.communication import Communication
+from src.modules.config import Config
+from src.modules.export import Export
+from src.modules.facade import ModuleFacade
+from src.modules.health import Health
 from src.modules.network import Network
 from src.modules.ptp import PTP, PTPRole
-from src.modules.export import Export
 from src.modules.recording import Recording
-from src.modules.facade import ModuleFacade
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -127,7 +125,7 @@ class Module(ABC):
         self.module_id = self.generate_module_id(self.module_type)
         self.description = "No description" # A human readable description to be overridden by child classes
         self.version = self._get_version()
-        
+
 
         self.logger.info(f"Initializing {self.module_type} module {self.module_id}, SAVIOUR {self.version}")
 
@@ -182,10 +180,10 @@ class Module(ABC):
         self.command.facade = self.facade
         self.export.facade = self.facade
         self.recording.facade = self.facade
-    
+
         # Register commands with command router
         self.command.set_commands(self.command_callbacks)
-        
+
         # Recording management
         self.recording_session_id = None
         self.current_filename_prefix = None
@@ -233,13 +231,13 @@ class Module(ABC):
 
         # Log to file if enabled
         if self.config.get("logging.to_file", True):
-            self.setup_logger_file_handling() 
+            self.setup_logger_file_handling()
 
-        
+
         # self.check_interrupted_recordings()
 
 
-    def _auto_register_decorated_methods(self) -> tuple[Dict[str, Any], list]:
+    def _auto_register_decorated_methods(self) -> tuple[dict[str, Any], list]:
         """Scan this instance's full class hierarchy for @command()/@check()
         methods and return (commands, module_checks) ready to register.
 
@@ -249,7 +247,7 @@ class Module(ABC):
         runs during `Module.__init__`, before the subclass's own `__init__` body
         has executed (methods are class attributes, so they already exist).
         """
-        commands: Dict[str, Any] = {}
+        commands: dict[str, Any] = {}
         module_checks = []
         for name in dir(type(self)):
             member = getattr(type(self), name, None)
@@ -296,7 +294,8 @@ class Module(ABC):
 
     def restart_service(self) -> dict:
         """Restart the saviour service. Sends ack before restarting so the controller hears it."""
-        import threading, time as _time
+        import threading
+        import time as _time
         def _do_restart():
             self.communication.send_status({
                 "type": "cmd_ack",
@@ -316,7 +315,10 @@ class Module(ABC):
         The controller serves the package at GET /update/package.  After rsync
         the service restarts itself so the ZMQ command thread returns first.
         """
-        import threading, shutil, zipfile, urllib.request
+        import shutil
+        import threading
+        import urllib.request
+        import zipfile
 
         def _do_update():
             try:
@@ -414,15 +416,15 @@ class Module(ABC):
                 # Create logs directory if it doesn't exist
                 log_dir = self.config.get("logging.directory", "/var/log/saviour")
                 os.makedirs(log_dir, exist_ok=True)
-                
+
                 # Generate log filename with module info
                 log_filename = f"{self.module_type}_{self.module_id}.log"
                 log_filepath = os.path.join(log_dir, log_filename)
-                
+
                 # Get config values for rotation
                 max_bytes = self.config.get("logging.max_file_size_mb", 10) * 1024 * 1024
                 backup_count = self.config.get("logging.backup_count", 5)
-                
+
                 # Add file handler with rotation
                 from logging.handlers import RotatingFileHandler
                 file_handler = RotatingFileHandler(
@@ -432,7 +434,7 @@ class Module(ABC):
                 )
                 file_handler.setLevel(logging.INFO)
                 self.logger.addHandler(file_handler)
-                
+
                 self.logger.info(f"File logging enabled: {log_filepath}")
                 self.logger.info(f"Log rotation: max {max_bytes//(1024*1024)}MB, keep {backup_count} backups")
 
@@ -444,7 +446,7 @@ class Module(ABC):
             self.logger.info("Logger file handler was not set up as handlers already exist")
 
 
-    def configure_module(self, updated_keys: Optional[list[str]]) -> None:
+    def configure_module(self, updated_keys: list[str] | None) -> None:
         self.logger.info(f"Received notification that module config changed, calling configure_module() with keys {updated_keys}")
 
         # Check for special keys
@@ -464,7 +466,7 @@ class Module(ABC):
 
 
     @abstractmethod
-    def configure_module_special(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: list[str] | None):
         """Gets called when module specific configuration changes e.g. framerate for a camera - allows modules to update their settings when they change"""
         self.logger.warning("No implementation provided for abstract method configure_module")
 
@@ -481,7 +483,7 @@ class Module(ABC):
             self._discovery_lock.release()
 
     def _when_controller_discovered_inner(self, controller_ip: str, controller_port: int):
-        self.logger.info(f"Module will now initialize the necessary managers")
+        self.logger.info("Module will now initialize the necessary managers")
 
         # Cancel any pending stop-recording grace timer.  Must happen both
         # before and after controller_disconnected() because that call may start
@@ -504,35 +506,35 @@ class Module(ABC):
             # immediately since we are about to reconnect.
             _cancel_grace_timer()
             self.logger.info("Controller rediscovered — cancelled disconnect recording timer")
-            
+
         try:
-            
+
             # 2. Connect communication manager
             self.logger.info("Connecting communication manager to controller")
             if not self.communication.connect(controller_ip, controller_port):
                 raise Exception("Failed to connect communication manager")
             self.logger.info("Communication manager connected to controller")
-            
+
             # 3. Start command listener
             self.logger.info("Requesting communication manager to start command listener")
             if not self.communication.start_command_listener():
                 raise Exception("Failed to start command listener")
             self.logger.info("Command listener started")
-            
+
             # 4. Start heartbeats if module is running
             if self.is_running:
                 self.logger.info("Requesting health manager to start heartbeats")
                 self.health.start_heartbeats()
                 self.logger.info("Heartbeats started")
-            
-            # 5. Start 
+
+            # 5. Start
             self.logger.info("Starting PTP manager")
             self.ptp.start()
-            
+
             self.logger.info("Controller connection and initialization complete")
 
             self.is_connected_to_controller = True
-            
+
             self.check_interrupted_recordings()
 
         except Exception as e:
@@ -566,17 +568,17 @@ class Module(ABC):
                 )
                 self._disconnect_recording_timer.daemon = True
                 self._disconnect_recording_timer.start()
-        
+
         # Stop heartbeats before cleaning up communication
         self.health.stop_heartbeats()
-        
+
         # Clean up communication manager (this will recreate ZMQ context and sockets)
         self.communication.cleanup()
-        
+
         # Clean up file transfer
         self.file_transfer = None
         self.is_streaming = False
-        
+
         self.logger.info("Controller disconnection cleanup complete, ready for reconnection")
 
     def _on_disconnect_grace_expired(self):
@@ -593,7 +595,7 @@ class Module(ABC):
         """To be implemented by subclasses"""
         pass
 
-    
+
     @abstractmethod
     def _start_next_recording_segment(self) -> bool:
         """To be implemented by subclasses"""
@@ -620,15 +622,15 @@ class Module(ABC):
         """List all recorded files with metadata and send to controller"""
         try:
             recordings = [] # TODO: Get recordings here
-            
+
             # Send status response
             self.communication.send_status({
                 "type": "recordings_list",
                 "recordings": recordings
             })
-            
+
             return recordings
-            
+
         except Exception as e:
             self.logger.error(f"Error listing recordings: {e}")
             # Send error status but don't re-raise the exception
@@ -664,24 +666,24 @@ class Module(ABC):
         if self.is_running:
             self.logger.info("Module already running")
             return False
-        
+
         # Wait for proper network connectivity (DHCP-assigned IP)
         if not self._wait_for_network_ready():
             self.logger.error("Failed to get proper network connectivity")
             return False
-        
+
         # Register service with proper IP address
         if not self.network.register_service():
             self.logger.error("Failed to register service")
             return False
-        
+
         self.is_running = True
         self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
         self.logger.info(f"Module started at {self.start_time}")
-        
+
         # Update start time in command handler
         self.command.start_time = self.start_time
-        
+
         # Start command listener thread if controller is discovered
         if self.network.controller_ip:
             self.logger.info(f"Attempting to connect to controller at {self.network.controller_ip}")
@@ -700,7 +702,7 @@ class Module(ABC):
             # Start sending heartbeats
             time.sleep(1)
             self.health.start_heartbeats()
-        
+
         return True
 
 
@@ -715,41 +717,41 @@ class Module(ABC):
         Returns:
             bool: True if proper IP is obtained (will always return True eventually)
         """
-        self.logger.info(f"Waiting for proper network connectivity (will keep trying until IP is obtained)")
-        
+        self.logger.info("Waiting for proper network connectivity (will keep trying until IP is obtained)")
+
         attempts = 0
-        
+
         while True:
             attempts += 1
-            
+
             try:
                 # Get all IP addresses
-                result = subprocess.run(['hostname', '-I'], 
+                result = subprocess.run(['hostname', '-I'],
                                       capture_output=True, text=True, timeout=5)
-                
+
                 if result.returncode == 0:
                     ip_addresses = result.stdout.strip().split()
-                    
+
                     # Check for proper DHCP-assigned IP (192.168.x.x)
                     for ip in ip_addresses:
                         if ip.startswith('192.168.') or ip.startswith('10.0.'):
                             self.logger.info(f"Network ready! Got IP: {ip} (attempt {attempts})")
                             return True
-                    
+
                     # Log current IPs for debugging
                     if ip_addresses:
                         self.logger.info(f"Attempt {attempts}: Current IPs: {ip_addresses}")
                     else:
                         self.logger.info(f"Attempt {attempts}: No IP addresses found")
-                        
+
                 else:
                     self.logger.warning(f"Attempt {attempts}: hostname -I failed: {result.stderr}")
-                    
+
             except subprocess.TimeoutExpired:
                 self.logger.warning(f"Attempt {attempts}: hostname -I timed out")
             except Exception as e:
                 self.logger.warning(f"Attempt {attempts}: Error checking network: {e}")
-            
+
             # Wait before next check
             time.sleep(check_interval)
 
@@ -772,7 +774,7 @@ class Module(ABC):
             # First: Clean up command handler (stops streaming and thread)
             self.logger.info("Cleaning up command handler...")
             self.command.cleanup()
-            
+
             # Second: Stop the health manager (and its heartbeat thread)
             self.logger.info("Stopping health manager...")
             self.health.stop_heartbeats()
@@ -780,7 +782,7 @@ class Module(ABC):
             # Fourth: Stop the service manager (doesn't use ZMQ directly)
             self.logger.info("Cleaning up network manager...")
             self.network.cleanup()
-            
+
             # Fifth: Stop the communication manager (ZMQ cleanup)
             self.logger.info("Cleaning up communication manager...")
             self.communication.cleanup()
@@ -797,7 +799,7 @@ class Module(ABC):
         self.is_running = False
         self.logger.info(f"Module stopped at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return True
-    
+
 
     def generate_session_id(self, module_id="unknown"):
         """Start a new session for a module"""
@@ -928,7 +930,7 @@ class Module(ABC):
             float: Required disk space in MB (default: 100MB)
         """
         return self.config.get("module.required_disk_space_mb", 100.0)
-    
+
 
     def _get_ptp_offset_threshold_us(self) -> float:
         """
@@ -939,7 +941,7 @@ class Module(ABC):
             float: Maximum acceptable PTP offset in microseconds (default: 1000μs = 1ms)
         """
         return self.config.get("module.ptp_offset_threshold_us", 1000000.0)
-    
+
 
     """Ready to record checks"""
     def _perform_module_specific_checks(self) -> tuple[bool, str]:
@@ -962,7 +964,7 @@ class Module(ABC):
                 return False, message
                 break # Exit loop on first failed check
         return True, f"{self.module_type} checks passed"
-    
+
 
     @check()
     def _check_running(self) -> tuple[bool, str]:
@@ -1008,7 +1010,7 @@ class Module(ABC):
             if free_mb < required_mb:
                 return False, f"Insufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
         except Exception as e:
-            return False, f"Cannot check disk space: {str(e)}"
+            return False, f"Cannot check disk space: {e!s}"
 
 
     @check()
@@ -1020,7 +1022,7 @@ class Module(ABC):
             max_offset_us = self._get_ptp_offset_threshold_us()
             last_offset = ptp_status["last_offset"]
             if last_offset is None:
-                return False, f"PTP reporting Nonetype offsets - may need time to settle"
+                return False, "PTP reporting Nonetype offsets - may need time to settle"
             if abs(last_offset) > max_offset_us:
                 return False, f"PTP not synchronized: offset {last_offset}μs (max: {max_offset_us}μs)"
             else:
@@ -1132,15 +1134,15 @@ class Module(ABC):
                 self.logger.info(f"A check failed: {check.__name__}, {message}")
                 return False, message
                 break # Exit loop on first failed check
-        
+
         result, message = self._perform_module_specific_checks()
         if result == False:
             self.logger.info(f"Check failed {result} {message}")
             return result, message
 
         self.logger.info("ALL CHECKS PASSED")
-        return True, "All tests passed" # Everything passed    
-        
+        return True, "All tests passed" # Everything passed
+
 
     def validate_readiness(self) -> dict:
         try:
@@ -1160,7 +1162,7 @@ class Module(ABC):
             return
 
         self.logger.warning(f"Module has only just booted but incomplete recordings are present. Will attempt to export {len(files['pending'])} files.")
-        
+
         incomplete_files = files["pending"]
         for file in incomplete_files:
             self.logger.info(f"Backing up {file}")
@@ -1168,12 +1170,12 @@ class Module(ABC):
             # Rename file to indicate that it is a partial recording
             filename, filetype = file.split(".")
             current_filepath = f"{self.facade.get_recording_folder()}/{file}"
-            new_filepath = f"{self.facade.get_recording_folder()}/{filename}_PARTIAL.{filetype}" 
+            new_filepath = f"{self.facade.get_recording_folder()}/{filename}_PARTIAL.{filetype}"
             os.rename(current_filepath, new_filepath)
 
             # Get session name from filename
             session_name = self.facade.get_session_from_filename(filename)
-            file_start_date = self.facade.get_start_time_from_filename(filename)[0:8] # 
+            file_start_date = self.facade.get_start_time_from_filename(filename)[0:8]
 
             # Create export path
             export_path = f"{session_name}/{file_start_date}/{self.facade.get_module_name()}"
@@ -1206,7 +1208,7 @@ class Module(ABC):
             session_results = self.facade.export_staged(export_path)
             # Determine success based on the triggered session only —
             # stale files from other sessions failing should not taint this result.
-            triggered_session = export_path.split('/')[0] if export_path and '/' in export_path else export_path
+            triggered_session = export_path.split('/', maxsplit=1)[0] if export_path and '/' in export_path else export_path
             success = session_results.get(triggered_session, False)
             if success:
                 self.facade.send_status({
@@ -1250,7 +1252,7 @@ class Module(ABC):
         # mac = hex(uuid.getnode())[2:]  # Gets MAC address as hex, removes '0x' prefix (old method, led to MAC changing)
         mac = self.get_mac_address("eth0")
         short_id = mac[-4:]  # Takes last 4 characters
-        return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"    
+        return f"{module_type}_{short_id}"  # e.g., "camera_5e4f"
 
 
     def get_mac_address(self, interface="eth0"):
@@ -1268,7 +1270,7 @@ class Module(ABC):
         strtime = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d-%H%M%S")
         return strtime
 
-    
+
     def get_utc_date(self, timestamp: int):
         strdate = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y%m%d")
         return strdate
@@ -1320,5 +1322,5 @@ class Module(ABC):
         v3 = parts[2].split("-")[0]
 
         vers = f"{v1}.{v2}.{v3}"
-        
+
         return vers

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Export Queue
 
@@ -27,7 +26,6 @@ import logging
 import os
 import threading
 import time
-
 
 QUEUE_FILE = "/var/lib/saviour/controller/export_queue.json"
 

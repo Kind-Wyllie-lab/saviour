@@ -5,11 +5,11 @@ Covers retry-on-failure, give-up after MAX_RETRIES, concurrency cap, and
 queue persistence across restarts.
 """
 
-import json
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
-from src.controller.export_queue import ExportQueue, QUEUE_FILE
+
+from src.controller.export_queue import ExportQueue
 
 
 def _make_queue(max_concurrent: int = 2) -> tuple:

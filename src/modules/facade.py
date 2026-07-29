@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Module Facade
 
@@ -12,9 +11,10 @@ Created: 12/01/2026
 import logging
 import os
 import subprocess
-from typing import Dict, Any, Optional
+from typing import Any
 
-class ModuleFacade():
+
+class ModuleFacade:
     def __init__(self, module):
         self.logger = logging.getLogger(__name__)
         self.logger.info("Instantiating ModuleAPI...")
@@ -33,7 +33,7 @@ class ModuleFacade():
     def get_module_name(self) -> str:
         return self.module.get_module_name()
 
-    
+
     def get_module_type(self) -> str:
         return self.module.module_type
 
@@ -45,15 +45,15 @@ class ModuleFacade():
     def get_controller_ip(self) -> str:
         return self.module.network.controller_ip
 
-    
+
     def get_recording_folder(self) -> str:
         return self.module.recording.recording_folder
-    
+
 
     def get_to_export_folder(self) -> str:
         return self.module.export.to_export_folder
 
-    
+
     def get_exported_folder(self) -> str:
         return self.module.export.exported_folder
 
@@ -65,15 +65,15 @@ class ModuleFacade():
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id
 
-    
+
     def get_staged_files(self) -> list:
         return self.module.export.staged_for_export
-    
-    
+
+
     def get_ptp_status(self) -> dict:
         return self.module.ptp.get_status()
 
-    
+
     def get_health(self) -> dict:
         return self.module.health.get_health()
 
@@ -89,7 +89,7 @@ class ModuleFacade():
     def get_utc_time(self, timestamp: int) -> str:
         return self.module.get_utc_time(timestamp)
 
-    
+
     def get_utc_date(self, timestamp: int) -> str:
         return self.module.get_utc_date(timestamp)
 
@@ -119,12 +119,12 @@ class ModuleFacade():
             self.logger.info(f"Command succeeded: {result.stdout}")
             return True, result.stdout
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Command failed: {e.stderr}") 
+            self.logger.error(f"Command failed: {e.stderr}")
             return False, e.stderr
 
 
     """Communication Methods"""
-    def send_status(self, status_data: Dict[str, Any]) -> None:
+    def send_status(self, status_data: dict[str, Any]) -> None:
         """Send a response to the controller"""
         self.module.communication.send_status(status_data)
 
@@ -167,11 +167,11 @@ class ModuleFacade():
     def get_current_session_name(self) -> str:
         return self.module.recording.current_session_name
 
-    
+
     def get_session_from_filename(self, filename: str) -> str:
         return self.module.recording.get_session_from_filename(filename)
 
-    
+
     def get_start_time_from_filename(self, filename: str) -> str:
         return self.module.recording.get_start_time_from_filename(filename)
 
@@ -188,12 +188,12 @@ class ModuleFacade():
             "file_count": file_count
         })
 
-    
+
     def stage_file_for_export(self, filename: str) -> None:
         """Stage a file for export when next segment starts or recording is stopped."""
         self.module.export.stage_file_for_export(filename)
 
-    
+
     def add_session_file(self, filename: str) -> None:
         """Add a file to the recording session - mayb be redundant with stage_file_for_export"""
         self.module.export.add_session_file(filename)
@@ -222,30 +222,30 @@ class ModuleFacade():
 
 
     """Event callbacks"""
-    def on_module_config_change(self, updated_keys: Optional[list[str]]) -> None:
+    def on_module_config_change(self, updated_keys: list[str] | None) -> None:
         """When the module config changes, this is triggered"""
         self.module.on_module_config_change(updated_keys)
-    
-    
+
+
     def when_controller_discovered(self, controller_ip: str, controller_port: int) -> None:
-        """When the Network object discovers a controller via mDNS/zeroconf, this gets triggered""" 
+        """When the Network object discovers a controller via mDNS/zeroconf, this gets triggered"""
         self.module.when_controller_discovered(controller_ip, controller_port)
 
-    
+
     def controller_disconnected(self) -> None:
         self.module.controller_disconnected()
 
 
     def when_recording_starts(self):
-        self.module.export.when_recording_starts()        
-    
+        self.module.export.when_recording_starts()
+
 
     """Network"""
     def subscribe_to_topic(self, topic: str):
         """Subscribe to commands for supplied topic."""
         self.module.communication.subscribe_to_topic(topic)
 
-    
+
     def unsubscribe_from_topic(self, topic: str):
         """Unsubscribe from commands related to given topic. Typically used when module changes group."""
         self.module.communication.unsubscribe_from_topic(topic)

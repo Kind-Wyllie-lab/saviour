@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Web Interface
 
@@ -15,29 +14,35 @@ Created: ?
 
 import hmac
 import io
+import json
 import logging
+import os
 import secrets
 import subprocess
+import threading
 import time
 import zipfile
-from flask import Flask, render_template, jsonify, request, send_from_directory, send_file
-from flask_socketio import SocketIO
-from typing import Any
-import threading
-import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
 from abc import ABC
 from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
+
+from flask import (
+    Flask,
+    jsonify,
+    request,
+    send_file,
+    send_from_directory,
+)
+from flask_socketio import SocketIO
 
 from src.controller.config import Config
 from src.shared.zip_extract import extract_preserving_permissions
 
-
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
 
 import queue as _queue
+
 
 class _QueueStream(io.RawIOBase):
     """Write-only, non-seekable stream that feeds chunks into a SimpleQueue.
@@ -110,11 +115,11 @@ class Web(ABC):
         }
         self.current_experiment_name = self._generate_experiment_name() # To be constructed from metadata, or overriden
 
-        # Register routes and webhooks        
-        self._register_routes() 
-        self._register_socketio_events() 
+        # Register routes and webhooks
+        self._register_routes()
+        self._register_socketio_events()
 
-        # Store module readiness state in memory 
+        # Store module readiness state in memory
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
 
         self.rest_facade = True
@@ -149,8 +154,8 @@ class Web(ABC):
         # handle_connect below).
         self._authenticated_sids: set = set()
         self._auth_lock = threading.Lock()
-    
-    
+
+
     def _generate_experiment_name(self) -> str:
         """Generate experiment name from metadata, skipping empty fields."""
         md = self.experiment_metadata
@@ -234,7 +239,8 @@ class Web(ABC):
         error string for surfacing to the user.  Returns None immediately if no
         NAS IP is configured.
         """
-        import subprocess, shutil as _shutil
+        import shutil as _shutil
+        import subprocess
         nas_ip = self.config.get("export.share_ip", "")
         if not nas_ip:
             return None
@@ -356,11 +362,11 @@ class Web(ABC):
         If the initial attempt fails (NAS temporarily unavailable), a background
         thread retries with exponential backoff.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         metadata = {
             "session_name": session_name,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "target": target,
             **self.experiment_metadata,
         }
@@ -393,7 +399,7 @@ class Web(ABC):
         self.socketio.emit('modules_update', modules)
 
 
-    def _register_routes(self):      
+    def _register_routes(self):
         # Serve React app
         @self.app.route("/", defaults={"path": ""})
         @self.app.route("/<path>")
@@ -447,7 +453,7 @@ class Web(ABC):
             modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
             self.socketio.emit('module_update', {"modules": modules})
-            
+
             # Send current experiment name to new client
             if self.current_experiment_name:
                 self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
@@ -456,7 +462,7 @@ class Web(ABC):
 
         @self.socketio.on('disconnect')
         def handle_disconnect():
-            self.logger.info(f"Client disconnected")
+            self.logger.info("Client disconnected")
             with self._auth_lock:
                 self._authenticated_sids.discard(request.sid)
 
@@ -488,9 +494,9 @@ class Web(ABC):
                         self.facade.send_command(mid, command, params)
                 else:
                     self.facade.send_command(module_id, command, params)
-                    
+
             except Exception as e:
-                self.logger.error(f"Error handling command: {str(e)}")
+                self.logger.error(f"Error handling command: {e!s}")
                 self.socketio.emit('error', {'message': str(e)})
 
 
@@ -509,7 +515,7 @@ class Web(ABC):
                 duration = data.get("duration")
                 self.facade.start_recording(target, session_name, duration)
             except Exception as e:
-                self.logger.error(f"Error starting recording: {str(e)}")
+                self.logger.error(f"Error starting recording: {e!s}")
                 self.socketio.emit('error', {'message': str(e)})
 
         @self.socketio.on("stop_recording")
@@ -520,18 +526,18 @@ class Web(ABC):
                 target = data.get("target")
                 self.facade.stop_recording(target)
             except Exception as e:
-                self.logger.error(f"Error stopping recording: {str(e)}")
+                self.logger.error(f"Error stopping recording: {e!s}")
                 self.socketio.emit('error', {'message': str(e)})
 
 
         """ Get Modules """
         @self.socketio.on('get_modules')
         def handle_module_update():
-            """Handle request for module data"""     
+            """Handle request for module data"""
             # Get current modules from callback
             modules = self.facade.get_modules()
             self.logger.info(f"{len(modules)} modules connected")
-            
+
             # Send module update to all clients
             self.socketio.emit('modules_update', modules)
             self.logger.info(f"Sent module update to all clients: {modules}")
@@ -548,7 +554,7 @@ class Web(ABC):
             self.socketio.sleep(0.75)
             ptp = self.facade.check_ptp_sync(target)
             self.socketio.emit("ptp_sync_status", ptp)
-        
+
 
         @self.socketio.on('get_sessions')
         def handle_get_sessions():
@@ -585,10 +591,11 @@ class Web(ABC):
             except Exception as e:
                 _emit('session_log_response', {'session_name': session_name, 'lines': [], 'error': str(e)})
 
-        
+
         @self.socketio.on("get_session_file_info")
         def handle_get_session_file_info(data=None):
             import re
+
             from flask_socketio import emit as _emit
             session_name = (data or {}).get("session_name", "")
             if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
@@ -771,7 +778,7 @@ class Web(ABC):
             result = self.facade.add_module_to_session(session_name, module_id)
             if not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
-            
+
 
         @self.socketio.on('module_status') # TODO: Does this make sense? Frontend shouldn't be sending module status
         def handle_module_status(data):
@@ -781,25 +788,25 @@ class Web(ABC):
                 # self.logger.info(f"Received module status: {data}")
                 if not isinstance(data, dict):
                     raise ValueError("Status data must be a dictionary")
-                
+
                 module_id = data.get('module_id')
                 status = data.get('status')
-                
+
                 if not module_id or not status:
                     raise ValueError("Status must include 'module_id' and 'status'")
-                
+
                 # Handle recordings list response
                 if status.get('type') == 'recordings_list':
                     self.logger.info(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
-                    
+
                     # Send individual module recordings response
                     self.socketio.emit('module_recordings', {
                         'module_id': module_id,
                         'recordings': module_recordings
                     })
                     return
-                
+
                 # Handle export complete response
                 if status.get('type') == 'export_complete':
                     self.logger.info(f"Broadcasting export complete for module {module_id}")
@@ -810,7 +817,7 @@ class Web(ABC):
                         'filename': status.get('filename')
                     })
                     return
-                
+
                 # Handle recording started/stopped status
                 if status.get('type') in ['recording_started', 'recording_stopped']:
                     self.logger.info(f"Broadcasting recording status for module {module_id}")
@@ -819,19 +826,19 @@ class Web(ABC):
                         'status': status
                     })
                     return
-                
+
                 # For heartbeat and other status types
                 if 'recording_status' not in status:
                     self.logger.warning("Recording status not in received status update.")
-                
+
                 # Broadcast status to all clients
                 self.socketio.emit('module_status', {
                     'module_id': module_id,
                     'status': status
                 })
-                
+
             except Exception as e:
-                self.logger.error(f"Error handling module status: {str(e)}")
+                self.logger.error(f"Error handling module status: {e!s}")
                 # Optionally emit error back to client
                 # self.socketio.emit('error', {'message': str(e)})
 
@@ -849,7 +856,7 @@ class Web(ABC):
 
             # Rebuild experiment name
             self.current_experiment_name = self._generate_experiment_name()
-            
+
             # Send confirmation back to client
             self.socketio.emit('experiment_metadata_updated', {
                 'status': 'success',
@@ -860,7 +867,7 @@ class Web(ABC):
 
         @self.socketio.on('get_experiment_metadata')
         def handle_get_experiment_metadata(data=None):
-            """Handle request for experiment metadata from frontend"""     
+            """Handle request for experiment metadata from frontend"""
             # Send current metadata to client
             self.socketio.emit('experiment_metadata_response', {
                 'status': 'success',
@@ -879,7 +886,7 @@ class Web(ABC):
         @self.socketio.on('get_module_configs')
         def handle_get_module_configs(data=None):
             """Handle request for module configuration data"""
-            self.logger.info(f"Get module configs called")
+            self.logger.info("Get module configs called")
             self.facade.get_module_configs()
 
 
@@ -1154,8 +1161,8 @@ class Web(ABC):
             # Version
             health['version'] = _read_running_version() or None
             # Controller clock (UTC ISO-8601) — lets the frontend detect gross clock drift
-            from datetime import datetime, timezone as _tz
-            health['controller_time'] = datetime.now(_tz.utc).isoformat()
+            from datetime import datetime
+            health['controller_time'] = datetime.now(UTC).isoformat()
             # Controller uptime in seconds
             health['uptime'] = round(self.facade.get_uptime())
             self.socketio.emit("controller_health_response", health)
@@ -1213,8 +1220,11 @@ class Web(ABC):
 
         @self.socketio.on("upload_update_chunk")
         def handle_upload_update_chunk(data):
+            import io
+            import re
+            import zipfile
+
             from flask_socketio import emit as _emit
-            import zipfile, io, re
             if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
                 return
             chunk_index = data.get("index")
@@ -1286,8 +1296,9 @@ class Web(ABC):
 
         @self.socketio.on("deploy_update")
         def handle_deploy_update(data=None):
+            import shutil
+
             from flask_socketio import emit as _emit
-            import zipfile, shutil, re
             if not self._require_auth("deploy_update_error", {"error": "Login required for this action"}):
                 return
             if not os.path.exists(_UPDATE_ZIP):
@@ -1383,7 +1394,6 @@ class Web(ABC):
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
-            from flask_socketio import emit as _emit
             import zipfile as _zf
             if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
                 return
@@ -1563,14 +1573,14 @@ class Web(ABC):
 
         @self.socketio.on("set_controller_time")
         def handle_set_controller_time(data=None):
-            from datetime import datetime, timezone as _tz
+            from datetime import datetime
             if not self._require_auth("auth_required"):
                 return
             self.logger.info("Set controller time requested")
             ntp_was_enabled = False
             try:
                 iso = (data or {}).get("iso", "")
-                dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(_tz.utc)
+                dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(UTC)
                 time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
 
                 # timedatectl set-time refuses to run while NTP sync is active.
@@ -1614,7 +1624,7 @@ class Web(ABC):
                     'exported_recordings': recordings
                 })
             except Exception as e:
-                self.logger.error(f"Error getting exported recordings: {str(e)}")
+                self.logger.error(f"Error getting exported recordings: {e!s}")
                 self.socketio.emit('exported_recordings_list', {
                     'exported_recordings': [],
                     'error': str(e)
@@ -1641,7 +1651,7 @@ class Web(ABC):
         """ Debug """
         @self.socketio.on('get_debug_data')
         def handle_get_debug_info():
-            self.logger.info(f"Received request for debug data")
+            self.logger.info("Received request for debug data")
             debug_data = {}
             debug_data["modules"] = self.facade.get_modules()
             debug_data["module_health"] = self.facade.get_module_health()
@@ -1705,7 +1715,7 @@ class Web(ABC):
     def update_module_readiness(self, module_id: str, ready_status: dict):
         """Update module readiness state and broadcast to all clients"""
         import time
-        
+
         # Store the readiness status with timestamp
         self.module_readiness[module_id] = {
             'ready': ready_status.get('ready', False),
@@ -1713,9 +1723,9 @@ class Web(ABC):
             'checks': ready_status.get('checks', {}),
             'error': ready_status.get('error')
         }
-        
+
         self.logger.info(f"Updated readiness for {module_id}: {'ready' if ready_status.get('ready') else 'not ready'}")
-        
+
         # Broadcast to all connected clients
         self.socketio.emit('update_module_readiness', {
             'module_id': module_id,
@@ -1776,7 +1786,7 @@ class Web(ABC):
             ctrl_logs = f"Could not collect controller logs: {e}"
 
         # Build ZIP in memory
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(f"saviour_diagnostics_{ts}/controller/logs.txt", ctrl_logs)
@@ -1883,23 +1893,23 @@ class Web(ABC):
     def get_exported_recordings(self):
         """Get list of exported recordings from controller share and NAS directories"""
         recordings = []
-        
+
         # Get controller share recordings
         if self.habitat_share_dir.exists():
             for file in self.habitat_share_dir.glob('**/*'):
                 if file.is_file() and file.suffix in ['.mp4', '.txt']:
                     recordings.append({
-                        'filename': f"controller/{str(file.relative_to(self.habitat_share_dir))}",
+                        'filename': f"controller/{file.relative_to(self.habitat_share_dir)!s}",
                         'size': file.stat().st_size,
                         'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
                         'is_exported': True,
                         'destination': 'controller'
                     })
-        
+
         # Get NAS recordings (if mounted)
         nas_recordings = self.get_nas_recordings()
         recordings.extend(nas_recordings)
-        
+
         return recordings
 
 
@@ -1907,37 +1917,37 @@ class Web(ABC):
         """Get list of exported recordings from NAS"""
         recordings = []
         nas_mount_point = Path("/mnt/nas")
-        
-        self.logger.info(f"Scanning NAS for recordings...")
-        
+
+        self.logger.info("Scanning NAS for recordings...")
+
         # Try to mount NAS if not already mounted
         if not nas_mount_point.exists() or not nas_mount_point.is_mount():
-            self.logger.info(f"NAS not mounted, attempting to mount...")
+            self.logger.info("NAS not mounted, attempting to mount...")
             if not self.mount_nas():
-                self.logger.error(f"Failed to mount NAS, returning empty list")
+                self.logger.error("Failed to mount NAS, returning empty list")
                 return recordings  # Return empty list if mounting failed
-        
+
         self.logger.info(f"NAS is mounted at {nas_mount_point}")
-        
+
         # Check what's in the root NAS directory
         if nas_mount_point.exists():
             root_contents = list(nas_mount_point.iterdir())
             self.logger.info(f"NAS root contents: {[item.name for item in root_contents]}")
-            
+
             # Look specifically for export directories
             export_dirs = [item for item in root_contents if item.is_dir() and item.name.startswith('export_')]
             self.logger.info(f"Found export directories: {[item.name for item in export_dirs]}")
         else:
             self.logger.error(f"NAS mount point does not exist: {nas_mount_point}")
             return recordings
-        
+
         # Scan multiple directories for recordings
         directories_to_scan = ["recordings", "videos", "ttl"]
-        
+
         for dir_name in directories_to_scan:
             scan_path = nas_mount_point / dir_name
             self.logger.info(f"Looking for recordings in: {scan_path}")
-            
+
             if scan_path.exists():
                 self.logger.info(f"{dir_name} directory exists, scanning for files...")
                 for file in scan_path.glob('**/*'):
@@ -1945,7 +1955,7 @@ class Web(ABC):
                     if file.is_file() and file.suffix in ['.mp4', '.txt']:
                         self.logger.info(f"Adding file to recordings list: {file}")
                         recordings.append({
-                            'filename': f"nas/{dir_name}/{str(file.relative_to(scan_path))}",
+                            'filename': f"nas/{dir_name}/{file.relative_to(scan_path)!s}",
                             'size': file.stat().st_size,
                             'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
                             'is_exported': True,
@@ -1953,9 +1963,9 @@ class Web(ABC):
                         })
             else:
                 self.logger.info(f"{dir_name} directory does not exist: {scan_path}")
-        
+
         # Also scan for export directories (like export_20250624_220253) in the root
-        self.logger.info(f"Scanning for export directories in root...")
+        self.logger.info("Scanning for export directories in root...")
         for item in nas_mount_point.iterdir():
             self.logger.info(f"Checking item: {item.name} (is_dir: {item.is_dir()}, starts_with_export: {item.name.startswith('export_')})")
             if item.is_dir() and item.name.startswith('export_'):
@@ -1965,13 +1975,13 @@ class Web(ABC):
                     if file.is_file() and file.suffix in ['.mp4', '.txt']:
                         self.logger.info(f"Adding export file to recordings list: {file}")
                         recordings.append({
-                            'filename': f"nas/{item.name}/{str(file.relative_to(item))}",
+                            'filename': f"nas/{item.name}/{file.relative_to(item)!s}",
                             'size': file.stat().st_size,
                             'created': datetime.fromtimestamp(file.stat().st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
                             'is_exported': True,
                             'destination': 'nas'
                         })
-        
+
         self.logger.info(f"Found {len(recordings)} NAS recordings")
         return recordings
 
@@ -2016,7 +2026,7 @@ class Web(ABC):
 
 
     def handle_special_module_status(self, module_id, status):
-        """To be overriden by rig specific functionality""" 
+        """To be overriden by rig specific functionality"""
         pass
 
 
@@ -2031,12 +2041,12 @@ class Web(ABC):
             if not status_type:
                 self.logger.warning(f"Bad status type: {status}")
 
-            match status_type:  
+            match status_type:
                 # Handle recordings list response
                 case 'recordings_list':
                     self.logger.info(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
-                    
+
                     # Send individual module recordings response
                     self.socketio.emit('module_recordings', {
                         'module_id': module_id,
@@ -2060,7 +2070,7 @@ class Web(ABC):
                         'module_id': module_id,
                         'status': status
                     })
-                
+
                 case "heartbeat":
                     version = status.get("version")
                     if version:
@@ -2099,7 +2109,7 @@ class Web(ABC):
                     if not was_special_status:
                         pass
         except Exception as e:
-            self.logger.error(f"Error handling module status: {str(e)}")
+            self.logger.error(f"Error handling module status: {e!s}")
 
 
     def _register_rest_facade_routes(self):
@@ -2108,7 +2118,7 @@ class Web(ABC):
         """
         @self.app.route('/facade/list_modules', methods=['GET'])
         def list_modules():
-            self.logger.info(f"/facade/list_modules endpoint called. Listing modules")
+            self.logger.info("/facade/list_modules endpoint called. Listing modules")
             modules = self.facade.get_modules()
             self.logger.info(f"Found {len(modules)} modules")
             return jsonify({"modules": modules})
@@ -2156,14 +2166,14 @@ class Web(ABC):
                             "module_id": "all"
                         }
                     }), 400
-                
+
                 data = request.get_json(force=True)
                 self.logger.info(f"Received command request: {data}")
-                
+
                 command = data.get('command')
                 module_id = data.get('module_id')
                 params = data.get('params', {})
-                
+
                 if not command or not module_id:
                     return jsonify({
                         "error": "Missing required fields",
@@ -2173,9 +2183,9 @@ class Web(ABC):
                             "module_id": module_id
                         }
                     }), 400
-                
+
                 self.logger.info(f"Processing command: {command} for module: {module_id}")
-                
+
                 result = self.facade.send_command(module_id, command, params)
                 return jsonify({
                     "status": "success",
@@ -2183,19 +2193,19 @@ class Web(ABC):
                     "command": command,
                     "module_id": module_id
                 })
-                    
+
             except Exception as e:
-                self.logger.error(f"Error in send_command endpoint: {str(e)}")
+                self.logger.error(f"Error in send_command endpoint: {e!s}")
                 return jsonify({
                     "error": str(e),
                     "status": "error"
                 }), 500
-                
+
 
         @self.app.route('/facade/module_health', methods=['GET'])
         def module_health():
             """Get the health status of all modules"""
-            self.logger.info(f"/facade/module_health endpoint called. Getting module health")
+            self.logger.info("/facade/module_health endpoint called. Getting module health")
             health = self.facade.get_module_health()
             self.logger.info(f"Got module health for {len(health)} modules")
             return jsonify(health)

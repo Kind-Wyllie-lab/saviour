@@ -1,6 +1,5 @@
-import sys
 import os
-from typing import Optional
+import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -19,7 +18,7 @@ class LoomController(Controller):
                 self.logger.warning(f"No logic for {status} from {module_id}")
                 return False
 
-    def configure_controller(self, updated_keys: Optional[list[str]]):
+    def configure_controller(self, updated_keys: list[str] | None):
         pass
 
 

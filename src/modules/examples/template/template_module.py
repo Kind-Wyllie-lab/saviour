@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 SAVIOUR System - Template Module
 
@@ -7,16 +6,16 @@ Author: Andrew SG
 Created: 05/02/2026
 """
 # Base Imports
-import sys
 import os
 import random
 import subprocess
-from typing import Optional
+import sys
 import time
 
 # Saviour Imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command, check
+from modules.module import Module, check, command
+
 
 class TemplateModule(Module):
     def __init__(self, module_type="template"):
@@ -52,7 +51,7 @@ class TemplateModule(Module):
 
 
     """Config"""
-    def configure_module_special(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: list[str] | None):
         # Called whenever module-specific config changes e.g. reconfigure hardware here
         if updated_keys and "template.x" in updated_keys:
             self.logger.info("template.x was changed!")
@@ -87,7 +86,7 @@ def main():
     try:
         while True:
             time.sleep(1)
-    
+
     except KeyboardInterrupt:
         print("\nShuttind down...")
         template.stop()

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Health Monitor
 
@@ -14,15 +13,15 @@ Author: Andrew SG
 Created: ?
 """
 
-import time
-import threading
 import logging
-import subprocess
 import socket as _socket
-from collections import deque
-from typing import Dict, Any, Optional, List
+import subprocess
+import threading
+import time
+from typing import Any
 
 from src.shared.health import ModuleHealthSnapshot
+
 
 class Health:
     def __init__(self, config):
@@ -124,7 +123,7 @@ class Health:
             self._confirm_module_offline(module_id, 0)
 
 
-    def update_module_health(self, module_id: str, status_data: Dict[str, Any]) -> bool:
+    def update_module_health(self, module_id: str, status_data: dict[str, Any]) -> bool:
         """
         Update health data for a specific module
 
@@ -225,7 +224,7 @@ class Health:
 
 
     """Get methods"""
-    def get_module_health_history(self, module_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_module_health_history(self, module_id: str, limit: int | None = None) -> list[dict[str, Any]]:
         """
         Get historical health data for a specific module
 
@@ -245,7 +244,7 @@ class Health:
         return history
 
 
-    def get_module_health(self, module_id: Optional[str] = None) -> Dict:
+    def get_module_health(self, module_id: str | None = None) -> dict:
         """
         Get health data for a specific module or all modules
 
@@ -285,7 +284,7 @@ class Health:
         ]
 
 
-    def get_health_summary(self) -> Dict[str, Any]:
+    def get_health_summary(self) -> dict[str, Any]:
         """
         Get a summary of overall system health
 
@@ -323,8 +322,7 @@ class Health:
             ptp_sync = self.module_health[module_id]["ptp4l_offset_ns"]
             if not ptp_sync:
                 return None
-            if abs(ptp_sync) > max_ptp_sync:
-                max_ptp_sync = abs(ptp_sync)
+            max_ptp_sync = max(max_ptp_sync, abs(ptp_sync))
         return int(max_ptp_sync)
 
 
@@ -361,10 +359,9 @@ class Health:
                         if current_time - last_probe >= self.probe_interval:
                             self._probe_module(module_id)
 
-                else:
-                    # Hard timeout exceeded — confirm offline
-                    if status in ('online', 'suspected'):
-                        self._confirm_module_offline(module_id, time_diff)
+                # Hard timeout exceeded — confirm offline
+                elif status in ('online', 'suspected'):
+                    self._confirm_module_offline(module_id, time_diff)
 
             # Check PTP health periodically
             if cycle_count % 2 == 0:
@@ -573,8 +570,7 @@ class Health:
                     self.logger.info(f"Telling {module} to restart_ptp")
                     self.module_health[module]["last_ptp_restart"] = time.time()
                     self.module_health[module]["ptp_restarts"] += 1
-                    if self.module_health[module]["ptp_restarts"] >= 5:
-                        self.module_health[module]["ptp_restarts"] = 5
+                    self.module_health[module]["ptp_restarts"] = min(5, self.module_health[module]["ptp_restarts"])
                     self.facade.send_command(module, "restart_ptp", {})
 
 

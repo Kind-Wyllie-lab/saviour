@@ -10,15 +10,11 @@ It is used to control a Pololu G2 Motor Controller with encoder for speed contro
 @date: 03/07/2025
 """
 
-import logging
-import sys
 import os
-import time
-import json
+import sys
 import threading
-import csv
-from datetime import datetime
-from typing import Optional, Dict
+import time
+
 import serial.tools.list_ports
 
 # Add the current directory to the path for imports
@@ -26,25 +22,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from modules.module import Module, command, check
-from protocol import Protocol
 from motor import Motor
+from protocol import Protocol
 from shock import Shocker
+
+from modules.module import Module, check, command
+
 
 class APAModule(Module):
     def __init__(self, module_type="apa_arduino"):
         super().__init__(module_type)
         self.description = "Module for controlling the APA rig, including rotating the arena and using the shock grid."
 
-        # Update config 
+        # Update config
         self.config.load_module_config("apa_arduino_config.json")
 
         # List of arduino types we expect to find
         self.arduino_types: list[str] = ["motor_arduino", "shock_arduino"]
-        
+
         # Store found arduinos and their ports
-        self.arduino_ports: Dict[str, str] = {}  # Maps arduino_type to port
-        self.connected_arduinos: Dict[str, Protocol] = {} # Maps arduino_type to a Protocol which implements a protocol around a serial connection
+        self.arduino_ports: dict[str, str] = {}  # Maps arduino_type to port
+        self.connected_arduinos: dict[str, Protocol] = {} # Maps arduino_type to a Protocol which implements a protocol around a serial connection
         self.motor: Motor = None
         self.shock: Shocker = None
         self._find_arduino_ports()
@@ -79,7 +77,7 @@ class APAModule(Module):
         }
 
         self.command.set_commands(self.apa_arduino_commands)
-    
+
 
     """Arduino Discovery methods"""
     def _initialize_arduino(self, arduino_type: str, protocol_instance: Protocol) -> None:
@@ -88,8 +86,8 @@ class APAModule(Module):
         if arduino_type.lower() == "motor": # TODO: Use an ENUM for type? Maybe rename it arduino_role as well?
             self.motor = Motor(protocol_instance, self.config)
             self.motor.start()
-                
-        if arduino_type.lower() == "shock": 
+
+        if arduino_type.lower() == "shock":
             self.shock = Shocker(protocol_instance, self.config)
             self.shock.start()
 
@@ -120,7 +118,7 @@ class APAModule(Module):
     def _get_available_ports(self) -> list:
         """Return the available serial ports."""
         return list(serial.tools.list_ports.comports())
-                
+
 
     def _validate_available_ports(self, ports: list) -> list:
         """Return only ports whose device path begins with /dev/ttyACM."""
@@ -139,7 +137,7 @@ class APAModule(Module):
         self.logger.info(f"Checking {port_info} for an Arduino")
         test_protocol = Protocol(port=port_info.device, on_identity=self.handle_identity).start()
 
-            
+
     def handle_identity(self, protocol: Protocol, identity: str) -> None:
         """
         Callback to be registered with a Protocol object. 
@@ -183,7 +181,7 @@ class APAModule(Module):
             self.motor.stop_motor()
         else:
             self.logger.warning("Stop motor called but no motor connected!")
-    
+
 
     @command()
     def _reset_pulse_counter(self):
@@ -211,14 +209,14 @@ class APAModule(Module):
             return False, "No motor found"
         else:
             return True, "Motor connected"
-    
+
 
     @check()
     def _check_shocker(self) -> tuple[bool, str]:
         if not self.shock:
             return False, "No shocker found"
         else:
-            return True, "Shocker connected" 
+            return True, "Shocker connected"
 
 
     @check()
@@ -242,7 +240,7 @@ class APAModule(Module):
             return False, "Shocks are active! Please deactivate and try again."
         else:
             return True, "No shock sequence active."
-    
+
 
     @check()
     def _check_shocks_not_above_50(self) -> tuple[bool, str]:
@@ -274,7 +272,7 @@ class APAModule(Module):
         self.shock.on_shock_stopped_being_attempted = self.on_shock_stopped_being_attempted
         self.shock.on_shock_started_being_delivered = self.on_shock_started_being_delivered
         self.shock.on_shock_stopped_being_delivered = self.on_shock_stopped_being_delivered
-        
+
 
     def on_shock_started_being_attempted(self, timestamp: int):
         if self.recording_shocks:
@@ -297,7 +295,7 @@ class APAModule(Module):
         }
         self.communication.send_status(status)
 
-    
+
     def on_shock_stopped_being_delivered(self, timestamp: int):
         if self.recording_shocks:
             self._write_shock_event(timestamp, "SHOCK_STOP_DELIVERY")
@@ -307,7 +305,7 @@ class APAModule(Module):
         }
         self.communication.send_status(status)
 
-    
+
     def send_controller_arduino_state(self):
         with self.shock._shock_lock:
             attempted = self.shock.attempted_shocks
@@ -329,7 +327,7 @@ class APAModule(Module):
         }
         self.communication.send_status(status)
 
-    
+
     def send_state_loop(self):
         while True:
             time.sleep(self.send_state_period)
@@ -338,7 +336,7 @@ class APAModule(Module):
 
     """Recording Methods"""
     def _start_new_recording(self):
-        """Start APA recording - motor rotation and data collection"""      
+        """Start APA recording - motor rotation and data collection"""
         try:
             # Initialize recording variables
             self.recording_data = []
@@ -357,17 +355,17 @@ class APAModule(Module):
 
             # Set recording flag - this happens in module.py too but just to be safe
             self.recording_shocks = True
-            
+
             # Send status response after successful recording start
             self.communication.send_status({
                 "type": "recording_started",
                 "recording": True,
                 "session_id": self.recording_session_id,
-                "message": f"APA recording started"
+                "message": "APA recording started"
             })
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error starting recording: {e}")
             self.communication.send_status({
@@ -377,7 +375,7 @@ class APAModule(Module):
             return False
 
 
-    def _write_shock_event(self, timestamp_ns: int, event: str): 
+    def _write_shock_event(self, timestamp_ns: int, event: str):
         """Write a shock event to file"""
         if self._shock_file_handle:
             self._shock_file_handle.write(f'{timestamp_ns},{event},{self.motor.speed_from_arduino}\n')
@@ -421,31 +419,31 @@ class APAModule(Module):
         return True
 
     def _stop_recording(self) -> bool:
-        """Stop APA recording and save data"""       
+        """Stop APA recording and save data"""
         try:
             # Stop motor
             self.motor.stop_motor()
-            
+
             # Set recording flag to false
             self.recording_shocks = False
 
             self._close_shock_event_file()
             if self.current_shock_events_filename:
                 self.facade.stage_file_for_export(self.current_shock_events_filename)
-            
+
             # Calculate duration
             if self.recording_start_time is not None:
                 duration = time.time() - self.recording_start_time
-                
+
                 # Send status response after successful recording stop
                 self.communication.send_status({
                     "type": "recording_stopped",
                     "duration": duration,
                     "status": "success",
                     "recording": False,
-                    "message": f"APA recording completed successfully"
+                    "message": "APA recording completed successfully"
                 })
-                
+
                 return True
             else:
                 self.logger.error("Error: recording_start_time was None")
@@ -455,7 +453,7 @@ class APAModule(Module):
                     "error": "Recording start time was not set"
                 })
                 return False
-            
+
         except Exception as e:
             self.logger.error(f"Error stopping recording: {e}")
             self.communication_manager.send_status({
@@ -464,10 +462,10 @@ class APAModule(Module):
                 "error": str(e)
             })
             return False
-    
+
 
     """Configuration"""
-    def configure_module_special(self, updated_keys: Optional[list[str]]):
+    def configure_module_special(self, updated_keys: list[str] | None):
         self.logger.info("Configuring APA ARDUINO module...")
         if not self.shock or not self.motor:
             self.logger.warning(

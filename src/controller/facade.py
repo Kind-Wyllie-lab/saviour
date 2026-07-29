@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Controller Facade
 
@@ -10,19 +9,17 @@ Created: 20/01/2026
 """
 
 import logging
-import os
-from typing import Dict, Any, Optional
 import time
 from dataclasses import asdict
 
 
-class ControllerFacade():
+class ControllerFacade:
     def __init__(self, controller):
         self.logger = logging.getLogger(__name__)
         self.logger.info("Instantiating ControllerAPI...")
         self.controller = controller
 
-    
+
     """Getter Methods"""
     def get_modules(self) -> dict:
         return self.controller.modules.get_modules()
@@ -36,7 +33,7 @@ class ControllerFacade():
         return self.controller.modules.get_modules_by_target(target)
 
 
-    def get_module_health(self, module_id: Optional[str] = None):
+    def get_module_health(self, module_id: str | None = None):
         return self.controller.health.get_module_health(module_id)
 
 
@@ -46,12 +43,12 @@ class ControllerFacade():
 
     def get_module_config(self, module_id: str) -> dict:
         return self.controller.get_module_config(module_id)
-        
-    
+
+
     def get_module_configs(self) -> dict:
         return self.controller.modules.get_module_configs()
 
-    
+
     def get_samba_info(self):
         return self.controller.get_samba_info()
 
@@ -69,7 +66,7 @@ class ControllerFacade():
     def get_config(self) -> dict:
         return self.controller.config.get_all()
 
-    
+
     def get_uptime(self) -> int:
         return round(time.time() - self.controller.start_time, 0)
 
@@ -78,7 +75,7 @@ class ControllerFacade():
         """Return the offset for the worst-synced module"""
         return self.controller.health.get_ptp_sync()
 
-    
+
     def get_recording_status(self) -> bool:
         return self.controller.recording.get_recording_status()
 
@@ -101,12 +98,12 @@ class ControllerFacade():
         self.controller._remove_module(module_id)
 
 
-    def send_command(self, module_id: str, command: str, params: Dict) -> None:
+    def send_command(self, module_id: str, command: str, params: dict) -> None:
         self.controller.communication.send_command(module_id, command, params)
 
     def remove_dealer(self, module_id: str) -> None:
         self.controller.communication.remove_dealer(module_id)
-            
+
 
     """Callbacks"""
     def on_status_change(self, module_id: str, status: str):
@@ -161,7 +158,7 @@ class ControllerFacade():
     def module_stopped(self, module_id: str) -> None:
         self.controller.recording.module_stopped(module_id)
 
-    
+
     def update_sessions(self, sessions: dict) -> None:
         serializable_sessions = {k: asdict(v) for k, v in sessions.items()}
         self.controller.web.socketio.emit("sessions_update", serializable_sessions)
@@ -201,7 +198,7 @@ class ControllerFacade():
         )
 
 
-    def get_sync_server_camera_params(self) -> Optional[dict]:
+    def get_sync_server_camera_params(self) -> dict | None:
         """Return fps and sensor_mode_index of the camera with sync_mode='server', or None."""
         modules = self.controller.modules
         for mid, state in modules._config_states.items():
@@ -266,7 +263,7 @@ class ControllerFacade():
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline
         self.controller.recording.module_offline(module_id)
-    
+
 
     def module_back_online(self, module_id: str) -> None:
         # What to do when a module comes back online
@@ -316,7 +313,7 @@ class ControllerFacade():
     def module_id_changed(self, old_module_id: str, new_module_id: str) -> None:
         self.controller.modules.module_id_changed(old_module_id, new_module_id)
         self.controller.health.module_id_changed(old_module_id, new_module_id)
-    
+
 
     def update_module_version(self, module_id: str, version: str) -> None:
         self.controller.modules.update_module_version(module_id, version)

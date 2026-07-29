@@ -287,7 +287,18 @@ ensure_admin_password() {
 # down while still at the terminal, rather than needing a second SSH-in-and-
 # cat round trip for each file later. Both remain retrievable any time via
 # `sudo cat`, and resettable via the "Reset ... password" menu items.
+#
+# Optional $1: seconds to wait before auto-dismissing (via `timeout
+# --foreground` -- see the reboot prompt for why --foreground matters).
+# configure_device() passes one here for the controller path, because by
+# this point in setup the network has already been reconfigured (nmcli, in
+# run_configuration()) and very likely already dropped the SSH session --
+# without a timeout, an unanswered msgbox would hang the whole script
+# forever, leaving the device stuck mid-setup and never rebooting on its
+# own. view_credentials() (an on-demand menu item, never adjacent to a
+# network change) calls this with no argument and waits indefinitely.
 show_first_time_credentials() {
+    local wait_secs="${1:-}"
     local msg="\nSave these now -- you will need them to use SAVIOUR.\n\n"
     msg+="Web UI login  (http://saviour.local:5000):\n"
     msg+="  password: $(cat /etc/saviour/admin_credentials 2>/dev/null)\n"
@@ -320,8 +331,13 @@ show_first_time_credentials() {
     msg+="  \"Reset web UI admin password\"\n"
     msg+="  \"Reset Samba share password\"\n"
 
-    whiptail --title "SAVIOUR Credentials" \
-        --scrolltext --msgbox "$msg" 24 $W
+    if [ -n "$wait_secs" ]; then
+        timeout --foreground "$wait_secs" whiptail --title "SAVIOUR Credentials" \
+            --scrolltext --msgbox "$msg" 24 $W
+    else
+        whiptail --title "SAVIOUR Credentials" \
+            --scrolltext --msgbox "$msg" 24 $W
+    fi
 }
 
 # Standalone menu entry for the same dialog configure_device() shows right
@@ -503,6 +519,14 @@ select_controller_ip() {
 }
 
 configure_device() {
+    # whiptail (newt) never clears between separate dialog invocations, so
+    # without this, remnants of the (tall) main menu list linger in the
+    # margins around every smaller dialog for the rest of this flow -- most
+    # visible if the terminal freezes mid-setup (e.g. the SSH session
+    # dropping when the network is reconfigured), leaving a confusing
+    # composite of the main menu plus whatever ran right before the freeze.
+    clear
+
     # Step 1: role
     local role
     role=$(select_role) || return
@@ -560,13 +584,22 @@ configure_device() {
         return
     fi
 
+    # run_configuration()'s progress() infoboxes don't block or get
+    # dismissed -- the last one shown just stays on screen (whiptail/newt
+    # never clears between dialogs) until something bigger happens to paint
+    # over the same region. Explicit clear so it can't linger.
+    clear
+
     # Step 6b: surface first-time login credentials while the operator is
     # still at this terminal. Deliberately still a whiptail dialog (needs an
     # OK press to dismiss) rather than plain echo -- unlike the countdown
     # below, this text must not scroll past unread before the reboot.
+    # Bounded timeout: the network may already have been reconfigured inside
+    # run_configuration() above, likely dropping an SSH session already --
+    # an unanswered dialog here must not hang the script forever.
     if [ "$role" = "controller" ]; then
         ensure_admin_password
-        show_first_time_credentials
+        show_first_time_credentials 30
     fi
 
     # Step 7: ask whether to reboot now, same as raspi-config's finish screen.
@@ -626,7 +659,13 @@ configure_device() {
             sleep 1
         done
         echo ""
+        # `reboot` under systemd just requests a shutdown and returns
+        # immediately -- the actual reboot happens asynchronously a few
+        # seconds later. Without `exit` here, this function would return,
+        # main_menu()'s loop would redraw the menu, and *that* would be
+        # what's on screen when the connection actually drops moments later.
         reboot
+        exit 0
     else
         whiptail --title "Reboot Later" \
             --msgbox "\nOK -- remember to reboot manually for the new configuration to take effect:\n\n  sudo reboot" \
@@ -738,7 +777,12 @@ clone_fix_menu() {
         sleep 1
     done
     echo ""
+    # See the matching comment in configure_device() -- `reboot` returns
+    # immediately under systemd, so without `exit` here this function would
+    # return and main_menu() would redraw right before the actual shutdown
+    # happens moments later.
     reboot
+    exit 0
 }
 
 # ── Setup functions ────────────────────────────────────────────────────────────
@@ -1488,3 +1532,8 @@ if [ "${1:-}" = "--apply" ]; then
 fi
 
 main_menu
+# whiptail/newt dialogs paint their own box without a full-screen clear, and
+# never clear on the way out either -- whatever was last drawn (the main
+# menu, or a lingering progress/infobox from a prior step) would otherwise
+# still be sitting on screen once control returns to the shell prompt.
+clear

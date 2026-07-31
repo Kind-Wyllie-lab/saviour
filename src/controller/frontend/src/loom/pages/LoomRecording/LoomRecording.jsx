@@ -43,6 +43,7 @@ export default function LoomRecording() {
   const allReady     = targetModules.length > 0 && targetModules.every((m) => m.status === "READY");
   const anyRecording = targetModules.some((m) => m.status === "RECORDING");
   const canStart     = !!experimentName && allReady && !anyRecording;
+  const notReadyModules = targetModules.filter((m) => m.status === "NOT_READY");
 
   const nameAlreadyUsed = experimentName
     ? sessionList.some((s) => s.session_name?.startsWith(safeName(experimentName) + "-"))
@@ -105,7 +106,14 @@ export default function LoomRecording() {
             <p className="loom-recording-warning">Target modules are already recording.</p>
           )}
           {!canStart && !anyRecording && targetModules.length > 0 && !allReady && (
-            <p className="loom-recording-warning">Not all target modules are ready.</p>
+            <div className="loom-recording-warning">
+              <p>Not all target modules are ready:</p>
+              <ul>
+                {notReadyModules.map((m) => (
+                  <li key={m.id}>{m.name}: {m.ready_message || "no reason given"}</li>
+                ))}
+              </ul>
+            </div>
           )}
           {targetModules.length === 0 && (
             <p className="loom-recording-warning">No target modules connected.</p>

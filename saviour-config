@@ -1420,7 +1420,13 @@ run_configuration() {
 
     set_device_hostname
 
-    if $type_changed && [ "$DEVICE_ROLE" = "controller" ]; then
+    # Also rebuild if dist/ is simply missing -- e.g. after a fresh git clone
+    # or reset of this repo directory, which wipes the gitignored build output
+    # without touching /etc/saviour/.provisioned (that marker lives outside
+    # the repo and survives re-clones, so type_changed alone would wrongly
+    # read as "nothing to do").
+    if [ "$DEVICE_ROLE" = "controller" ] && \
+       { $type_changed || [ ! -d "${DIR}/src/controller/frontend/dist" ]; }; then
         build_frontend
     fi
 

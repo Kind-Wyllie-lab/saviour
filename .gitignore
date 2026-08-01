@@ -34,6 +34,7 @@ log.txt
 *.swp
 *.swo
 .cursor/
+.claude/
 
 
 # OS specific files

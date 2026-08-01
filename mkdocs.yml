@@ -1,12 +1,20 @@
 site_name: SAVIOUR
 site_description: Synchronised Audio Video Input Output Recorder — a modular, PoE-networked multi-sensor recording system for rodent behavioural research.
 repo_url: https://github.com/Kind-Wyllie-lab/saviour
-docs_dir: docs
+docs_dir: docs/readthedocs
 
 nav:
   - Home: index.md
   - Getting Started: getting_started.md
-  - Adding a new module: new_module_guide.md
+  - FAQs: faqs.md
+  - Using SAVIOUR with ephys: open_ephys.md
+  - How it Works: how_it_works.md 
+  - Hardware: hardware.md
+  - CAD/3D Prints: cad.md
+  - About:
+    - License: about/license.md
+    - Contributing: about/contributing.md
+    - Acknowledgements: about/acknowledgements.md
 
 theme:
   name: readthedocs

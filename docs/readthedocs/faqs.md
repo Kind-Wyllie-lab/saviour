@@ -8,6 +8,7 @@ All Pis connect together via PoE ethernet cable - simply connect your computer t
 
 ***What makes SAVIOUR unique?***<br>
 SAVIOUR provides a framework for modular test rigs that is highly customisable and extendible to new types of module and setup. Already SAVIOUR has been used to modernise a wide variety of experiments including:
+
 - Habitat, a large scale project that involves 24/7 recording from 16 cameras, microphones, and RFIDs over many weeks
 - Active Place Avoidance, in which a special module was created to drive a rotating arena and a shock grid
 - Loom, in which a special camera module was created to detect rat location using computer vision and play a loom stimulus when in a specific part of the arena  

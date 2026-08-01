@@ -4,6 +4,7 @@ The SAVIOUR project was initially developed at the [Simons Initiative for the De
 Major thanks are also given to Domagoj Anticic, who developed the AudioMoth microphone module, and to Paul Rignanese, who built the loom camera module and introduced computer vision to SAVIOUR.
 
 SAVIOUR would not have been possible without the patience and good will of the many students and researchers at SIDB who were its first users. We thank them for their time and feedback, which continues to make SAVIOUR what it is today. In particular, we thank:
+
 - [Lysandra Fryer-Petridis](https://sidb.org.uk/emma-wood/lysandra-fryer-petridis/), who tested the earliest and most frustrating version of SAVIOUR
 - [Mary O'Keeffe](https://sidb.org.uk/peter-kind/mary-okeeffe/), whose feedback on the original APA was essential for developing the SAVIOUR version 
 - [Vijay Kapgal](https://sidb.org.uk/peter-kind/vijay-kapgal/), whose collaboration and endless patience made possible the SAVIOUR APA and Loom rigs

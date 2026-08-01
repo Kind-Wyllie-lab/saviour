@@ -133,7 +133,7 @@ The React frontend communicates with Flask exclusively via **Socket.IO** (not RE
 - Systemd-aware logging: timestamps are skipped when `INVOCATION_ID` env var is set (systemd sets this)
 - PTP log parsing lives in `src/*/ptp.py`; health metrics in `src/*/health.py`
 - `src/__version__.py` is written by a **pre-commit hook** (`git describe`) so ZIP deploys carry the version. It is inherently one commit behind — never "fix" this by committing a manual bump.
-- The frontend variant (basic / loom / apa / habitat / acoustic_startle) is selected by a **hardcoded import in `src/controller/frontend/src/main.jsx`** — switching rigs requires editing that import and rebuilding.
+- The frontend variant (basic / loom / apa / habitat / acoustic_startle) is selected at build time via the `VITE_VARIANT` env var, which `saviour-config`'s `build_frontend()` writes; `vite.config.js` resolves the `virtual:active-app` alias to `src/${variant}/App.jsx`, and `main.jsx` imports that alias indirectly through `ThemedApp`. Switching rigs means re-running the build with a different `VITE_VARIANT`, not editing source.
 
 ## Roadmap (2026-07-09 review; security items added 2026-07-27)
 
@@ -153,7 +153,7 @@ Known issues and planned improvements, grouped by priority. Check these off (`- 
 ### High priority — silent data loss / correctness
 
 - [x] **`web.py`: four Socket.IO handlers registered inside the wrong method** (found 2026-07-09 review) — everything from the `""" Recording """` comment at ~line 1521 (`get_recording_sessions`, `get_debug_data`, `login`, `remove_module`) is indented inside `broadcast_module_health()` instead of `_register_socketio_events()`. These handlers only register when the first health broadcast fires, and re-register on every subsequent call. Fix the indentation and delete the dead `login` handler while there.
-- [ ] **`recording.py`: scheduled sessions cannot span midnight** (found 2026-07-09 review) — start/stop use lexicographic `"HH:MM"` comparison; a window like 22:00–06:00 stops immediately after starting (`"22:00" >= "06:00"`). Dark-cycle overnight recording is a core rodent-lab use case. Fix: detect `end < start` and treat the window as crossing midnight.
+- [x] **`recording.py`: scheduled sessions cannot span midnight** (found 2026-07-09 review) — fixed: `_scheduled_session_action()` now computes `crosses_midnight` explicitly instead of relying on lexicographic `"HH:MM"` comparison, so a window like 22:00–06:00 no longer stops immediately after starting.
 - [ ] **`pyproject.toml`: `hatchling` in build requires breaks offline module installs** (found 2026-07-09 review) — build backend is `setuptools.build_meta`, so hatchling is never used, but pip's build isolation tries to download it (and setuptools/setuptools_scm) from PyPI on every `pip install -e .`. This is the exact `ERROR: No matching distribution found for hatchling` seen in module journals. Fix: remove hatchling from requires AND use `--no-build-isolation` in mend.sh/update paths; also delete the dead `[tool.hatch.*]` sections.
 - [x] **`export.py`: Samba mount not retried** — if the mount fails at session start the entire segment is never exported; add a retry loop with backoff.
 - [x] **`export_queue.py`: failed exports dropped permanently** — `on_export_failed()` removes the module from `_active` without re-queuing; add retry logic so transient NAS outages don't silently lose data.

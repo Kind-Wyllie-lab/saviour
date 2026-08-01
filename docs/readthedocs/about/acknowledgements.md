@@ -17,4 +17,5 @@ SAVIOUR would not have been possible without the patience and good will of the m
 - [Niamh McLaughlin](https://sidb.org.uk/alfredo-gonzalez-sulser/niamh-mclaughlin/), who contributed greatly to the integration of SAVIOUR with open-ephys and supported the development of the saviour-ephys pipeline tool
 - [Natalie Ling-Sum-Hung](https://sidb.org.uk/alfredo-gonzalez-sulser/natalie-ling-sum-hung/), who applied a SAVIOUR-ephys rig to the analysis of seizure in rats
 - [Elise Chang](https://sidb.org.uk/marino-pagan/elise-chang/), who provided experiental feedback on building SAVIOUR controllers and modules and assisted with debugging hardware issues
+- [Chris Halcrow](https://github.com/chrishalcrow) who provided valuable advice on building and promoting open-source research software
 - [Anjie Harris](https://sidb.org.uk/peter-kind/anjanette-harris/), [Tom Watson](https://sidb.org.uk/peter-kind/thomas-watson/), and [Emma Perkins](https://sidb.org.uk/peter-kind/emma-perkins/), who are still waiting for SAVIOUR systems to this day

@@ -1,4 +1,5 @@
 # SAVIOUR
+
 SAVIOUR (Synchronised Audio Video Input Output Recorder) is a modular and open-source approach to generating synchronised datasets from a multitude of sources including cameras, microphones, RFIDs, and TTLs. 
 
 A SAVIOUR system consists of a "controller" device talking to one or more "module" devices (camera, microphone, RFID reader, TTL I/O, etc.), each handling one sensor or piece of equipment. All devices are Raspberry Pi 5 (for now!), connected together via LAN, typically with Power-over-Ethernet (PoE) so a single cable carries both power and network to each device. Researchers control everything - starting and stopping recordings, checking device status - from a web page on their own PC.

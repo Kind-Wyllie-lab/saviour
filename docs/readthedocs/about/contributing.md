@@ -5,14 +5,13 @@ Any contributions you make are **greatly appreciated**.
 For a deeper understanding of how the SAVIOUR software works, please refer to [How SAVIOUR Works](../how_it_works.md).
 
 ## New Modules
-The basic steps for creating the new module "AmazingNewModule":<br>
-<ol>
-<li>Create the folder src/modules/examples/amazing_new_module 
-<li>In that folder, create the files amazing_new_module.py, amazing_new_module_config.json
-<li>Following the example of src/modules/examples/template_module, create your new module
-<li>Modify the saviour-config script to be able to configure a pi to run as your module
-<li>Use saviour-config to deploy your AmazingNewModule on a network with a controller and test its behaviour
-</ol>
+The basic steps for creating the new module "AmazingNewModule":
+
+1. Create the folder src/modules/examples/amazing_new_module
+2. In that folder, create the files amazing_new_module.py, amazing_new_module_config.json
+3. Following the example of src/modules/examples/template_module, create your new module
+4. Modify the saviour-config script to be able to configure a pi to run as your module
+5. Use saviour-config to deploy your AmazingNewModule on a network with a controller and test its behaviour
 
 ## New Controllers / GUIs
 Many experiments are able to use the basic SAVIOUR GUI, but sometimes novel variants are developed for tasks with specific requirements such as APA, Loom, Habitat, and Acoustic Startle. This may be due to the need for a particular visual layout (a 4x4 grid of livestreams), or specific features ("activate grid" or "play sound" buttons). 
@@ -24,6 +23,7 @@ Some experiments also require the implementation of specific logic, either to ma
 More details to come soon here as a refactor is planned around how controllers and frontends are implemented!
 
 ## Branches
+
 - main - The latest release of saviour e.g. v1.2
 - staging - This branch is used for final testing of new releases
 - fix/ - Prefix for a branch in which a fix is developed
@@ -37,7 +37,8 @@ https://www.conventionalcommits.org/en/v1.0.0/#summary
 ## Style
 Style is enforced by ruff (ruff check/ruff format); it's PEP 8 based with an 88-character line length.
 
-## Workflow 
+## Workflow
+
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feat/AmazingNewModule`)
 3. Commit your Changes (`git commit -m 'feat: Create AmazingNewModule'`)

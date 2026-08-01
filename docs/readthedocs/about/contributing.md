@@ -1,4 +1,4 @@
-# Contributing
+# Contributing to SAVIOUR
 SAVIOUR is designed to be easily extensible to new types of modules and new user interfaces to control them in experiment specific ways.
 Any contributions you make are **greatly appreciated**.
 

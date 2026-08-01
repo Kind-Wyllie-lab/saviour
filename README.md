@@ -16,7 +16,7 @@
   [![Docs](https://img.shields.io/readthedocs/saviour
   )](https://saviour.readthedocs.io/en/latest/)
   [![Report Bug](https://img.shields.io/badge/Report%20a%20bug-ff6600)](https://github.com/Kind-Wyllie-lab/habitat/issues)
-  [![3D Printable Cases](https://img.shields.io/badge/3d%20printable%20cases-8A2BE2)]("https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2")
+  [![3D Printable Cases](https://img.shields.io/badge/3d%20printable%20cases-8A2BE2)](https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2)
 
 </div>
 

@@ -1,7 +1,7 @@
 <!-- Hi! I hope you're having a good day, wherever you are :) -->
 <div align="center" style="margin: 20px"> 
   <img width="502" height="90" alt="SAVIOUR" src="https://github.com/user-attachments/assets/0f85edd9-a86b-4326-b66a-7c86d93b454a" />
-    <h3 align="center">Synchronised Audio-Video Input-Output Recorder</h3>
+    <h3 align="center">Easy capture of multi-modal synchronised data for behavioural neuroscience using networked Raspberry Pis</h3>
 </div>
 
 <!-- PROJECT SHIELDS -->
@@ -24,7 +24,14 @@
 <div align="center">
 
   <p align="center">
+    SAVIOUR - Synchronised Audio Video Input Output Recorder.
+    <br> 
     A modular and highly usable approach to synchronised, multimodal data capture using affordable open source components.
+    <br>
+    With a PoE switch, ethernet cables, Pi 5s and a few extra parts, you can be generating nanosecond-sync multimodal datasets all controlled from one central GUI.
+    <br>
+    SAVIOUR also allows for syncronising these recordings with ephysiology setups.
+
   </p>
 </div>
 
@@ -32,7 +39,20 @@
 
 ## Overview
 ***What is SAVIOUR?***<br>
-SAVIOUR is a modular, affordable system for recording synchronised video, audio, and sensor data across multiple points in an experiment - built from low-cost networked computers instead of expensive proprietary hardware. A TTL module can also sync SAVIOUR's recordings to external systems such as an **Open Ephys** electrophysiology rig, so behavioural and neural data share a common timeline.
+SAVIOUR is a modular, affordable system for recording synchronised video, audio, and sensor data across multiple points in an experiment, built from low-cost networked Raspberry Pis instead of expensive proprietary hardware. 
+
+One Pi acts as a controller, and all other Pis are specialised modules: camera modules, ultrasonic microphone modules, TTL ePhys sync modules, stimulus modules etc. 
+
+All Pis connect together via PoE ethernet cable - simply connect your computer to the same LAN and access the GUI at *http://saviour.local* in a browser and you're ready to start making recordings.  
+
+***What makes SAVIOUR unique?***<br>
+SAVIOUR provides a framework for modular test rigs that is highly customisable and extendible to new types of module and setup. Already SAVIOUR has been used to modernise a wide variety of experiments including:
+- Habitat, a large scale project that involves 24/7 recording from 16 cameras, microphones, and RFIDs over many weeks
+- Active Place Avoidance, in which a special module was created to drive a rotating arena and a shock grid
+- Loom, in which a special camera module was created to detect rat location using computer vision and play a loom stimulus when in a specific part of the arena  
+- Acoustic startle, in which a special sound module was created to play a variety of sounds at the press of a button
+
+Many SAVIOUR users also capture electrophysiology data in their experiments. A TTL module can be used to sync SAVIOUR's recordings to external systems such as an **Open Ephys** rig, so behavioural and neural data share a common timeline. This makes it incredibly easy to produce real-time multimodal graphs of video, audio, and neuronal activity. For more information, see https://github.com/Kind-Wyllie-lab/saviour-ephys-analysis. 
 
 ***Who is it for?***<br>
 Primarily behavioural neuroscience labs, though the same approach suits any experiment needing several sensors recording in sync.
@@ -62,7 +82,7 @@ sudo saviour-config
 Not yet available. Eventually an OS image will be available which can be copied on to an SD card. 
 
 ## Usage
-So, you've installed SAVIOUR and configured a controller pi and one or more module pi's. What more remains to be done?
+So, you've installed SAVIOUR and configured a Controller Pi and one or more Module Pis. What more remains to be done?
 
 Not much. Just plug them together, then complete first-time setup on the controller.
 
@@ -73,12 +93,12 @@ Not much. Just plug them together, then complete first-time setup on the control
    ```sh
    sudo cat /etc/saviour/admin_credentials
    ```
-   Use this to log in, then change it to something memorable via `sudo saviour-config` → "Reset web UI admin password", or the in-app change-password option.
+   Use this to log in, then change it to something memorable via `sudo saviour-config` -> "Reset web UI admin password", or the in-app change-password option.
 3. **Note the Samba (file share) credentials**, needed if you or your lab want to browse recordings directly from your own PC:
    ```sh
    sudo cat /etc/saviour/samba_credentials
    ```
-   These can likewise be reset via `sudo saviour-config` → "Reset Samba share password".
+   These can likewise be reset via `sudo saviour-config` -> "Reset Samba share password".
 4. **Check Ready.** Before your first recording, use the "Check Ready" button in the web UI to confirm all modules are connected and PTP clock sync has settled.
 
 
@@ -145,4 +165,3 @@ Distributed under the MIT License. See `LICENSE.txt` for more information.
 Andrew Scott-George - ascottg@ed.ac.uk
 
 Patrick Spooner - p.a.spooner@ed.ac.uk
-

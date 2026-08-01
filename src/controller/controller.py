@@ -545,15 +545,7 @@ class Controller(ABC):
         # Fall back to controller-as-share using /etc/saviour/samba_credentials
         creds_path = "/etc/saviour/samba_credentials"
         try:
-            username = ""
-            password = ""
-            with open(creds_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("username="):
-                        username = line.split("=", 1)[1]
-                    elif line.startswith("password="):
-                        password = line.split("=", 1)[1]
+            username, password = self._read_samba_module_credentials(creds_path)
             return {
                 "share_ip": self.network.ip,
                 "share_path": self.config.get("samba.share_name", "controller_share"),
@@ -571,19 +563,42 @@ class Controller(ABC):
             return {}
 
 
+    @staticmethod
+    def _read_samba_module_credentials(creds_path: str) -> tuple[str, str]:
+        """
+        Parse /etc/saviour/samba_credentials for the saviour_module machine
+        account specifically.
+
+        The file holds one block per Samba account (saviour_module, and
+        optionally the human saviour_user/saviour_admin logins — see
+        saviour-config's configure_samba_share()), each as a bare
+        "username=<name>\\npassword=<pass>" pair. Modules must always
+        authenticate as saviour_module, never the human accounts, so this
+        scans for that specific block rather than taking whichever
+        username=/password= pair happens to appear last in the file.
+        """
+        username = ""
+        password = ""
+        with open(creds_path) as f:
+            in_module_block = False
+            for line in f:
+                line = line.strip()
+                if line.startswith("username="):
+                    in_module_block = line.split("=", 1)[1] == "saviour_module"
+                elif line.startswith("password=") and in_module_block:
+                    username = "saviour_module"
+                    password = line.split("=", 1)[1]
+                    break
+        return username, password
+
+
     def get_controller_own_share_info(self) -> dict:
         """Return this controller's own Samba share details, ignoring any NAS override."""
         creds_path = "/etc/saviour/samba_credentials"
         username = ""
         password = ""
         try:
-            with open(creds_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("username="):
-                        username = line.split("=", 1)[1]
-                    elif line.startswith("password="):
-                        password = line.split("=", 1)[1]
+            username, password = self._read_samba_module_credentials(creds_path)
         except Exception:
             pass
         return {

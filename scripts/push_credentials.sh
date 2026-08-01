@@ -35,8 +35,20 @@ if [ -z "$CONTROLLER_IP" ]; then
     exit 1
 fi
 
-MODULE_USER=$(grep '^username=' "$CREDS_FILE" | cut -d= -f2)
-MODULE_PASS=$(grep '^password=' "$CREDS_FILE" | cut -d= -f2)
+# samba_credentials holds one block per Samba account (saviour_module, and
+# optionally the human saviour_user/saviour_admin logins). Modules must
+# always authenticate as saviour_module, so pull that block specifically
+# rather than grepping every "username="/"password=" line in the file —
+# the file has three of each once the human logins exist.
+MODULE_USER="saviour_module"
+MODULE_PASS=$(awk '
+    /^username=saviour_module$/ { getline; if ($0 ~ /^password=/) { sub(/^password=/, ""); print; exit } }
+' "$CREDS_FILE")
+
+if [ -z "$MODULE_PASS" ]; then
+    echo "ERROR: Could not find saviour_module credentials in $CREDS_FILE"
+    exit 1
+fi
 
 echo "Controller IP : $CONTROLLER_IP"
 echo "Samba user    : $MODULE_USER"

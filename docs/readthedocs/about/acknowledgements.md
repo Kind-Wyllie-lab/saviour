@@ -1,3 +1,4 @@
+# Acknowledgements
 The SAVIOUR project was initially developed at the [Simons Initiative for the Developing Brain, University of Edinburgh](https://www.sidb.org.uk/) by [Andrew Scott-George](https://www.sidb.org.uk/peter-kind/andrew-scott-george), based on the experience and ideas of [Patrick Spooner](https://www.sidb.org.uk/peter-kind/patrick-spooner/) and the willingness of [Dr Peter Kind](https://www.sidb.org.uk/peter-kind/) to support those ideas. Major thanks go to the [Simons Foundation Autism Research Initiative (SFARI)](https://www.sfari.org/) for funding SIDB's research.
 
 Major thanks are also given to Domagoj Anticic, who developed the AudioMoth microphone module, and to Paul Rignanese, who built the loom camera module and introduced computer vision to SAVIOUR.

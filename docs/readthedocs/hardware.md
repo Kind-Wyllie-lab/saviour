@@ -43,4 +43,13 @@ Each microphone module is capable of supporting up to 4 AudioMoth USB ultrasonic
 - If desired, a [3.5mm microphone module with a good ultrasonic response](https://micbooster.com/product/primo-em258-mono-module-with-35mm-plug), to extend the range and positioning of the AudioMoth  
 
 ### TTL (/Ephys Sync)
-TTL modules can be used for a variety of I/O purposes, for example receiving inputs from triggers such as nose pokes and providing outputs to stimuli such as LEDs. However, their most common usage is for generating signals that can be used to align a SAVIOUR dataset with an Open-Ephys dataset.
+TTL modules can be used for a variety of I/O purposes, for example receiving inputs from triggers such as nose pokes and providing outputs to stimuli such as LEDs. However, their most common usage is for generating signals that can be used to align a SAVIOUR dataset with an Open-Ephys dataset. 
+
+For more information on the alignment process, please refer to the [dedicated GitHub repo](https://github.com/Kind-Wyllie-lab/saviour-ephys-analysis). The appropriate hardware is dependent on the Open-Ephys setup and the users preference. 
+
+**IMPORTANT**: If you want your experiment to include aligned SAVIOUR and ephys data, you **must** read the [guide to using SAVIOUR with ephys](open_ephys.md). Researchers have lost hours of data because the HDMI cable was plugged into the wrong port of their HDMI board. Read the guide, and double check everything is working correctly before hitting record!
+
+Generally, the hardware is all of the [shared module hardware](#shared-hardware), plus:
+- If an [open ephys I/O board](https://open-ephys.org/acquisition-system/io-board-pcb) is available, we recommend using [BNC test cables](https://uk.rs-online.com/web/p/test-leads/2967747) or an equivalent.
+- If no such board is available, we recommend a HDMI cable and a [HDMI breakout connector](https://uk.rs-online.com/web/p/hdmi-connectors/7248959) with some [Dupont leads](https://thepihut.com/products/thepihuts-jumper-bumper-pack-120pcs-dupont-wire). 
+

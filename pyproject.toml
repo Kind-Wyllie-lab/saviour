@@ -7,10 +7,11 @@ name = "saviour"
 dynamic = ["version"]
 description = "Modular Synchronised Data Capture System for behavioral testing labs"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = { file = "LICENSE.txt" }
 authors = [
     { name = "Andrew Scott-George", email = "ascottg@ed.ac.uk" },
+    { name = "Paul Rignanese", email = "prignane@ed.ac.uk" },
     { name = "Domagoj Anticic", email = "d.anticic@sms.ed.ac.uk" },
     { name = "Patrick Spooner", email = "p.a.spooner@ed.ac.uk" }
 ]
@@ -19,9 +20,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering",
 ]
@@ -64,6 +62,7 @@ dev = [
     "pytest>=8.3.5",
     "pytest-mock>=3.14.0",
     "ruff>=0.6.0",
+    "pytest-cov>=7.0",
 ]
 
 [tool.setuptools_scm]
@@ -86,7 +85,7 @@ ignore = []
 known-first-party = ["saviour"]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

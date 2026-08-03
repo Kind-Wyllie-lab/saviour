@@ -31,19 +31,31 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
   const prevStatus     = useRef(syncStatus);
   const lastBumpAt      = useRef(0);
   const pendingBumpTimer = useRef(null);
+  const imgRef           = useRef(null);
+
+  // Changing `key` unmounts the old <img>, but Chrome doesn't reliably abort
+  // the underlying multipart/x-mixed-replace connection just because the
+  // element left the DOM — it can keep the socket open until GC gets to it.
+  // Repeated reconnects can then pile up dangling connections against the
+  // browser's per-host limit, so the *next* reconnect never gets a socket at
+  // all — stuck with neither onLoad nor onError to recover it, exactly the
+  // failure a manual refresh "fixes" by tearing down every connection to the
+  // origin at once. Clearing src synchronously forces an immediate abort
+  // before the remount.
+  const doBump = () => {
+    if (imgRef.current) imgRef.current.src = "";
+    lastBumpAt.current = Date.now();
+    setStreamKey(Date.now());
+  };
 
   const bump = () => {
     const now = Date.now();
     const elapsed = now - lastBumpAt.current;
     if (elapsed >= MIN_RECONNECT_MS) {
-      lastBumpAt.current = now;
-      setStreamKey(now);
+      doBump();
     } else {
       clearTimeout(pendingBumpTimer.current);
-      pendingBumpTimer.current = setTimeout(() => {
-        lastBumpAt.current = Date.now();
-        setStreamKey(Date.now());
-      }, MIN_RECONNECT_MS - elapsed);
+      pendingBumpTimer.current = setTimeout(doBump, MIN_RECONNECT_MS - elapsed);
     }
   };
 
@@ -56,6 +68,24 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamKey]);
+
+  // A live MJPEG connection that dies after its first frame (e.g. the OS
+  // suspends/changes the network under it — Chrome surfaces this as
+  // ERR_NETWORK_IO_SUSPENDED / ERR_NETWORK_CHANGED on laptop sleep/wake or
+  // wifi roam) fires neither onLoad nor onError again, so the stream sits
+  // frozen until something remounts it (opening fullscreen, or a manual
+  // refresh). Force a reconnect on the two OS-level signals that correlate
+  // with those errors.
+  useEffect(() => {
+    const handleVisibility = () => { if (document.visibilityState === "visible") bump(); };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("online", bump);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("online", bump);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Bump stream when a save completes (PENDING → SYNCED means camera restarted).
   useEffect(() => {
@@ -87,6 +117,7 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
       <div className="loom-stream-tile">
         <img
           key={streamKey}
+          ref={imgRef}
           src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
           alt={label || "stream"}
           onLoad={resetStall}

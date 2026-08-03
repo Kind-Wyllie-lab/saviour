@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
+import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigCardShell from "../ConfigCardShell";
@@ -92,7 +93,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const [sensorModel, setSensorModel]   = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
-  const [activeTab, setActiveTab]       = useState("basic");
+  const [activeTab, setActiveTab]       = useHashTab("basic");
   const [maskOpen, setMaskOpen]         = useState(true);
   const [shockZoneOpen, setShockZoneOpen] = useState(true);
   const [detectionOpen, setDetectionOpen] = useState(false);

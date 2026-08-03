@@ -1,7 +1,7 @@
 // React imports
 import React, { useEffect, useState } from "react";
 import socket from "../../../socket";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 // Style imports
 import './Header.css';

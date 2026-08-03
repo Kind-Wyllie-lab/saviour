@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import socket from "/src/socket";
 import { useConfigForm } from "../useConfigForm";
+import { useHashTab } from "../useHashTab";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import ExportConfigSection from "../ExportConfigSection";
@@ -104,7 +105,7 @@ const MIC_TABS = [
 
 function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
-  const [activeTab, setActiveTab]               = useState("basic");
+  const [activeTab, setActiveTab]               = useHashTab("basic");
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
   const [streamEnabled, setStreamEnabled] = useState(true);
 

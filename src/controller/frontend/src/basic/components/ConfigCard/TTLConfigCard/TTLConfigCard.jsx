@@ -3,6 +3,7 @@ import socket from "../../../../socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import "./TTLConfigCard.css";
 import { useConfigForm } from "../useConfigForm";
+import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
@@ -29,7 +30,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const loggedIn = useIsLoggedIn();
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic");
   const [newPin, setNewPin] = useState("");
   const [newMode, setNewMode] = useState("");
   const [hasSaved, setHasSaved] = useState(false);

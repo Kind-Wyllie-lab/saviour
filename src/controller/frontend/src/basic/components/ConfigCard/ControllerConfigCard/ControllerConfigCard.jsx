@@ -3,6 +3,7 @@ import "./ControllerConfigCard.css";
 import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { useConfigForm } from "../useConfigForm";
+import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "./ExportConfigSection";
@@ -22,7 +23,7 @@ function ControllerConfigCard() {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm();
   const [controllerInfo, setControllerInfo] = useState({ ip: null, version: null });
   const [saveStatus, setSaveStatus] = useState(null);
-  const [activeTab, setActiveTab] = useState("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic");
   const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
   const saveTimerRef = useRef(null);
 

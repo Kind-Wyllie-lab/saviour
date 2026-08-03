@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, useLocation } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router";
 import "./App.css";
 
 import Sidebar from "/src/basic/components/Sidebar/Sidebar";

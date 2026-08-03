@@ -4,7 +4,14 @@ import useModules from "/src/hooks/useModules";
 
 import ConfigCard from "/src/basic/components/ConfigCard/ConfigCard";
 
-const getHashId = () => window.location.hash.slice(1) || "controller";
+// Hash format is "#<deviceId>/<tab>" — the tab half is owned by each config
+// card's useHashTab, this only ever reads/writes the device half so a tab
+// deep-link isn't clobbered by module-selection logic.
+const getHashId = () => {
+  const raw = window.location.hash.slice(1);
+  const slash = raw.indexOf("/");
+  return (slash === -1 ? raw : raw.slice(0, slash)) || "controller";
+};
 
 function Settings() {
   const { modules } = useModules();
@@ -31,8 +38,12 @@ function Settings() {
     setSelectedId(newId);
   };
 
-  // Write hash whenever selection changes
+  // Write hash whenever selection changes — but only if the device id
+  // actually changed (e.g. on mount, it hasn't) so a tab suffix already in
+  // the hash isn't wiped out before the newly-mounted card's useHashTab
+  // gets a chance to read it.
   useEffect(() => {
+    if (getHashId() === selectedId) return;
     window.location.hash = selectedId;
   }, [selectedId]);
 

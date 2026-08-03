@@ -1,6 +1,6 @@
 import '../basic/App.css';
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route } from "react-router";
 
 import Sidebar from "../basic/components/Sidebar/Sidebar";
 import APADashboard from "./pages/APADashboard/APADashboard";

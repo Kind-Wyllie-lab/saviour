@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router";
 import socket from "/src/socket";
 import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 

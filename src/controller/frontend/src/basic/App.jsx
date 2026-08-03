@@ -4,7 +4,7 @@ import React,  { useEffect, useRef, useState } from "react";
 
 // SAVIOUR Imports
 import Sidebar from "./components/Sidebar/Sidebar";
-import { Routes, Route, useLocation } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import Settings from "./pages/Settings/Settings";
 import Recording from "./pages/Recording/Recording";

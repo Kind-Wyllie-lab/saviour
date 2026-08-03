@@ -1,6 +1,6 @@
 import './App.css';
 import React, { useEffect, useState } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route } from "react-router";
 
 import Sidebar from '../basic/components/Sidebar/Sidebar';
 import Settings from "../basic/pages/Settings/Settings";

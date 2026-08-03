@@ -343,6 +343,7 @@ class TestAddModuleToSession:
         facade.send_command.assert_called_once_with(
             "cam2", "start_recording", {"duration": 0, "session_name": "exp1"}
         )
+        facade.update_sessions.assert_called_once_with(rec.sessions)
 
     def test_recovers_error_session_when_broken_module_confirmed_stopped(self):
         rec, facade = _make_recording()

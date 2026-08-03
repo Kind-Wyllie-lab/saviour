@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
+import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "../ExportConfigSection";
@@ -21,7 +22,7 @@ const TABS = [
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
-  const [activeTab, setActiveTab] = useState("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic");
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 import { useConfigForm } from "../useConfigForm";
+import { useHashTab } from "../useHashTab";
 import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigFields from "../ConfigFields";
@@ -68,7 +69,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [sensorModel, setSensorModel] = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
-  const [activeTab, setActiveTab] = useState("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic");
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;

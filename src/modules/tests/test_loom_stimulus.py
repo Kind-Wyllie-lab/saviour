@@ -10,6 +10,7 @@ ever spawns) but real multiprocessing.Queue objects, since those are cheap
 and let the tests verify actual put/get behaviour rather than a mock of it.
 """
 
+import time
 from unittest.mock import MagicMock, patch
 
 from src.modules.examples.loom_camera.loom_stimulus import (
@@ -176,6 +177,11 @@ class TestLoomStimulusControllerPollStatus:
         controller = LoomStimulusController(cfg)
         for i in range(3):
             controller._status_q.put({"seq": i})
+        # multiprocessing.Queue.put() hands off to a background feeder
+        # thread rather than making the item visible to get_nowait()
+        # immediately -- without this, poll_status() below can race and
+        # see an empty queue under system load.
+        time.sleep(0.2)
 
         messages = controller.poll_status(max_messages=2)
 

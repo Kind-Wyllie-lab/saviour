@@ -15,6 +15,7 @@
   [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE.txt)
   [![Docs](https://img.shields.io/readthedocs/saviour
   )](https://saviour.readthedocs.io/en/latest/)
+  [![codecov](https://codecov.io/gh/Kind-Wyllie-lab/saviour/branch/main/graph/badge.svg)](https://codecov.io/gh/Kind-Wyllie-lab/saviour)
   [![Report Bug](https://img.shields.io/badge/Report%20a%20bug-ff6600)](https://github.com/Kind-Wyllie-lab/habitat/issues)
   [![3D Printable Cases](https://img.shields.io/badge/3d%20printable%20cases-8A2BE2)](https://grabcad.com/library/saviour-pi-5-cases-v1-0-0-2)
 

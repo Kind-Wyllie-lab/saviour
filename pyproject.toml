@@ -96,6 +96,9 @@ module = ["tests.*"]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
+[tool.coverage.run]
+omit = ["*/tests/*"]
+
 [project.urls]
 Homepage = "https://github.com/Kind-Wyllie-lab/saviour"
 Documentation = "https://github.com/Kind-Wyllie-lab/saviour#readme"

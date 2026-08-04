@@ -728,7 +728,7 @@ class CameraBase(Module):
 
             actual_fps = None
             if self.last_frame_timestamp:
-                actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 3)
+                actual_fps = round((1 / (timestamp - self.last_frame_timestamp)) * 1e9, 1)
             self.last_frame_timestamp = timestamp
 
             dt = datetime.datetime.fromtimestamp(timestamp / 1e9, tz=datetime.UTC)
@@ -823,7 +823,10 @@ class CameraBase(Module):
     _TIMESTAMP_WIDTH_FRACTIONS = {"small": 0.50, "medium": 0.72, "large": 0.92}
 
     def _apply_framerate(self, arr, framerate: str, stream: str = "main") -> None:
-        """Apply the framerate to the image. Size is fixed and independent of text_size config.
+        """Apply the framerate to the image, top-right corner (top-center is
+        already taken by the timestamp, and the bottom edge tends to sit
+        under video-player controls). Size is fixed and independent of
+        text_size config.
 
         Uses the array's actual (post-rotation) shape rather than the
         configured stream dimensions, so placement stays correct at 90/270°.
@@ -836,8 +839,9 @@ class CameraBase(Module):
 
         text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
 
-        x = int((width - text_width) / 2)
-        y = height - max(4, int(height * 0.01))
+        padding = max(4, int(height * 0.01))
+        x = width - text_width - padding
+        y = text_height + padding
 
         cv2.putText(
             img=arr, text=framerate, org=(x, y), fontFace=font,

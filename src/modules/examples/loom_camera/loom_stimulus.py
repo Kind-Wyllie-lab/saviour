@@ -315,7 +315,12 @@ def run_loom_stimulus_with_ipc(
                 except Exception:
                     pass
                 win = glfw.create_window(mw, mh, title, None, None)
-                if win is not None:
+                # NOTE: glfwCreateWindow's ctypes restype is POINTER(_GLFWwindow).
+                # ctypes represents a NULL POINTER(Struct) as a distinct, falsy
+                # object — NOT the Python `None` singleton — so `is None`/
+                # `is not None` checks against it never fire and silently let a
+                # failed window through. Use plain truthiness everywhere below.
+                if win:
                     glfw.set_window_pos(win, mx, my)
                 return win, (mx, my, mw, mh)
 
@@ -334,14 +339,15 @@ def run_loom_stimulus_with_ipc(
                 # draw call, so it has no need of the stim window's shared
                 # GL object namespace.
                 near_window, _ = _create_positioned_window(near_monitor, "Loom Stimulus (near)")
-                if near_window is None:
+                if not near_window:
+                    near_window = None  # normalise the falsy ctypes NULL to Python None
                     _status({"type": "loom_stimulus_error",
                              "error": "Failed to create near-monitor window — keepalive/near-test disabled"})
         else:
             w, h = int(window_size_px[0]), int(window_size_px[1])
             window = glfw.create_window(w, h, "Loom Stimulus", None, None)
 
-        if window is None:
+        if not window:
             raise RuntimeError("Failed to create GLFW window (window=None). Check GLX/Mesa driver stack.")
 
         glfw.make_context_current(window)
@@ -358,7 +364,7 @@ def run_loom_stimulus_with_ipc(
             "win_wh": glfw.get_window_size(window),
             "n_monitors": len(monitors),
             "selected_rects": selected if fullscreen else [],
-            "has_near_window": near_window is not None,
+            "has_near_window": bool(near_window),
         })
 
         # -----------------------------
@@ -781,7 +787,7 @@ def run_loom_stimulus_with_ipc(
 
             # The near monitor is a separate real window, not a scissored
             # region of this one — draw into it on its own context.
-            if near_window is not None:
+            if near_window:
                 glfw.make_context_current(near_window)
                 glfw.swap_interval(1 if vsync else 0)  # separate context, own swap-interval state
                 _near_w, _near_h = glfw.get_framebuffer_size(near_window)
@@ -819,12 +825,12 @@ def run_loom_stimulus_with_ipc(
         except Exception:
             pass
         try:
-            if window is not None:
+            if window:
                 glfw.destroy_window(window)
         except Exception:
             pass
         try:
-            if near_window is not None:
+            if near_window:
                 glfw.destroy_window(near_window)
         except Exception:
             pass

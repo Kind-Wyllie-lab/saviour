@@ -62,8 +62,8 @@ class Notifier:
         cooldown = self.config.get("teams.alert_cooldown_secs", 600)
         now = time.monotonic()
         with self._lock:
-            last = self._last_sent.get(key, 0)
-            if now - last < cooldown:
+            last = self._last_sent.get(key)
+            if last is not None and now - last < cooldown:
                 return
             self._last_sent[key] = now
 

@@ -29,10 +29,79 @@ function useIsCompact() {
   return isCompact;
 }
 
+// Tracks an element's content-box size. Uses a callback ref (not
+// useRef+one-shot useEffect) so it reattaches correctly when the element
+// itself mounts/unmounts — e.g. the wide/compact dashboard layouts swap
+// which grid div exists as the window crosses COMPACT_BREAKPOINT.
+function useElementSize() {
+  const [node, setNode] = useState(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSize({ width, height });
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node]);
+  return [setNode, size];
+}
+
+const GRID_GAP_PX = 12;
+// Fixed vertical chrome per card outside the video box itself (the ~8px
+// top/bottom padding plus the uppercase label header) — subtracted from the
+// per-row height budget so the fitted grid doesn't overshoot by a few
+// pixels per row and reintroduce a scrollbar.
+const CARD_CHROME_PX = 40;
+
+// Largest (width, height) matching `ratio` that still fits `cols` columns x
+// `rows` rows inside a `containerW` x `containerH` box — so the camera grid
+// always fits the available space instead of overflowing and forcing the
+// dashboard to scroll.
+function fitCellSize(containerW, containerH, cols, rows, ratio) {
+  if (!containerW || !containerH || cols < 1 || rows < 1) return null;
+  const availW = containerW - GRID_GAP_PX * (cols - 1);
+  const availH = containerH - GRID_GAP_PX * (rows - 1) - CARD_CHROME_PX * rows;
+  if (availW <= 0 || availH <= 0) return null;
+  let width = availW / cols;
+  let height = width / ratio;
+  if (height * rows > availH) {
+    height = availH / rows;
+    width = height * ratio;
+  }
+  return { width, height };
+}
+
+// Picks the column count (1..n) that yields the largest per-card area for
+// `n` same-ratio cards in a containerW x containerH box. A fixed column
+// count picked from `n` alone (the old heuristic) can land on a layout
+// that's row-bound — e.g. 2 cameras stacked in 1 column, 2 rows — leaving
+// each card's width unused once fitCellSize shrinks it to fit the row
+// budget. Trying every column count and keeping the biggest result finds
+// the arrangement that actually uses the most of the available box.
+function bestCameraLayout(containerW, containerH, n, ratio) {
+  if (!containerW || !containerH || n === 0) return null;
+  let best = null;
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const cellSize = fitCellSize(containerW, containerH, cols, rows, ratio);
+    if (!cellSize) continue;
+    const area = cellSize.width * cellSize.height;
+    if (!best || area > best.area) best = { cols, cellSize, area };
+  }
+  return best;
+}
+
 function Dashboard() {
   const { moduleList } = useModules();
   const [selectedGroup, setSelectedGroup] = useState("all");
   const isCompact = useIsCompact();
+  const [camerasGridRef, camerasGridSize] = useElementSize();
+  // Real aspect ratio of the camera streams, discovered from the first
+  // loaded frame — used to fit the grid (see fitCellSize above). Assumes a
+  // uniform ratio across camera modules, which holds for a real rig.
+  const [streamRatio, setStreamRatio] = useState(16 / 9);
 
   const groups = useMemo(() => {
     const names = [...new Set(moduleList.map(m => m.group).filter(Boolean))].sort();
@@ -47,8 +116,15 @@ function Dashboard() {
   const micModules    = visibleModules.filter(m => m.type === "microphone");
   const ttlModules    = visibleModules.filter(m => m.type === "ttl");
 
-  // Optimal column count for wide camera grid
-  const cameraCols = (() => { const n = cameraModules.length; return n <= 2 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4; })();
+  // Column count used before the grid's box has been measured yet (first
+  // render) — a reasonable guess so nothing flashes unstyled.
+  const cameraColsFallback = (() => { const n = cameraModules.length; return n <= 2 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4; })();
+  const cameraLayout = useMemo(
+    () => bestCameraLayout(camerasGridSize.width, camerasGridSize.height, cameraModules.length, streamRatio),
+    [camerasGridSize.width, camerasGridSize.height, cameraModules.length, streamRatio]
+  );
+  const cameraCols = cameraLayout?.cols ?? cameraColsFallback;
+  const cameraCellSize = cameraLayout?.cellSize ?? null;
 
   // Flat ordered list of all streams — used by the compact grid
   const allStreams = useMemo(() => [
@@ -115,7 +191,17 @@ function Dashboard() {
       ) : (
         /* ── Wide: cameras left, status panel right ── */
         <div className="dashboard-main">
-          <div className="dashboard-cameras" style={{ gridTemplateColumns: `repeat(${cameraCols}, 1fr)` }}>
+          <div
+            className="dashboard-cameras"
+            ref={camerasGridRef}
+            style={{
+              gridTemplateColumns: `repeat(${cameraCols}, 1fr)`,
+              ...(cameraCellSize && {
+                "--cell-w": `${cameraCellSize.width}px`,
+                "--cell-h": `${cameraCellSize.height}px`,
+              }),
+            }}
+          >
             {cameraModules.length === 0 ? (
               <div className="dashboard-no-cameras">No camera modules connected</div>
             ) : (
@@ -126,6 +212,7 @@ function Dashboard() {
                   port={STREAM_PORTS.camera}
                   label={m.name}
                   isRecording={m.status === "RECORDING"}
+                  onAspectRatio={setStreamRatio}
                 />
               ))
             )}

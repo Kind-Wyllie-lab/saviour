@@ -17,6 +17,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# pytest cache (also disabled via -p no:cacheprovider; this is a safety net)
+.pytest_cache/
+pytest-cache-files-*/
+
 # Distribution / packaging
 dist/
 build/

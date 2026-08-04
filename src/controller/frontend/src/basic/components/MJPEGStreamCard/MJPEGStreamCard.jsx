@@ -18,9 +18,15 @@ const MIN_RECONNECT_MS = 3000;
  * Handles stall detection and reconnection for any module that serves
  * an MJPEG stream at http://{ip}:{port}/video_feed.
  */
-function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
+function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [streamKey, setStreamKey] = useState(Date.now());
+  // Actual aspect ratio of the stream, discovered from the first loaded
+  // frame — streams aren't all 16:9 (e.g. square camera crops), and a
+  // hardcoded ratio leaves either the card or the image letterboxed with
+  // dead space. Re-detected on every reconnect in case a config change
+  // (e.g. livestream_quality, resolution) altered it.
+  const [aspectRatio, setAspectRatio] = useState(null);
   const stallTimer = useRef(null);
   const reconnectTimer = useRef(null);
   const lastBumpAt       = useRef(0);
@@ -54,6 +60,7 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
   };
 
   useEffect(() => {
+    setAspectRatio(null);
     stallTimer.current = setTimeout(bump, STALL_TIMEOUT_MS);
     return () => {
       clearTimeout(stallTimer.current);
@@ -87,7 +94,15 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
   // timer forever every STALL_TIMEOUT_MS regardless of stream health,
   // forcing a full reconnect (and killing the live video) on a healthy
   // stream. Recovery from a stream that actually dies is handled by onError.
-  const handleLoad = () => clearTimeout(stallTimer.current);
+  const handleLoad = (e) => {
+    clearTimeout(stallTimer.current);
+    const { naturalWidth, naturalHeight } = e.target;
+    if (naturalWidth && naturalHeight) {
+      const ratio = naturalWidth / naturalHeight;
+      setAspectRatio(ratio);
+      onAspectRatio?.(ratio);
+    }
+  };
 
   const handleError = () => {
     clearTimeout(stallTimer.current);
@@ -103,7 +118,10 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false }) {
             <span className="mjpeg-stream-label">{label}</span>
           </div>
         )}
-        <div className="mjpeg-stream-video">
+        <div
+          className="mjpeg-stream-video"
+          style={aspectRatio ? { "--stream-ratio": aspectRatio } : undefined}
+        >
           <img
             key={streamKey}
             ref={imgRef}

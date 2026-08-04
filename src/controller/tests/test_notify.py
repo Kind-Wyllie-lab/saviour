@@ -74,6 +74,20 @@ class TestSendAlert:
 
         assert mock_thread.call_count == 2
 
+    def test_first_alert_is_not_suppressed_when_monotonic_clock_is_small(self):
+        # time.monotonic()'s reference point is undefined -- on a freshly
+        # booted CI runner it can be well under the cooldown window. A
+        # never-seen key must not be suppressed just because `now` is small.
+        notifier = _make_notifier(**{
+            "teams.webhook_url": "https://example.invalid/webhook",
+            "teams.alert_cooldown_secs": 600,
+        })
+        with patch("src.controller.notify.threading.Thread") as mock_thread, \
+             patch("src.controller.notify.time.monotonic", return_value=5.0):
+            notifier.send_alert("key1", "title", "message")
+
+        mock_thread.assert_called_once()
+
     def test_zero_cooldown_allows_immediate_repeats(self):
         notifier = _make_notifier(**{
             "teams.webhook_url": "https://example.invalid/webhook",

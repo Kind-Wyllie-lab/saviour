@@ -835,7 +835,10 @@ class CameraBase(Module):
         height, width = arr.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
         thickness = 1
-        font_scale = max(0.2, height * 0.02 / 18)
+        # Deliberately smaller and a different colour (cyan, vs. the
+        # timestamp's green) so the two overlays read as distinct at a
+        # glance rather than a single wall of green text.
+        font_scale = max(0.15, height * 0.02 / 18 * 0.75)
 
         text_width, text_height = cv2.getTextSize(framerate, font, font_scale, thickness)[0]
 
@@ -845,7 +848,7 @@ class CameraBase(Module):
 
         cv2.putText(
             img=arr, text=framerate, org=(x, y), fontFace=font,
-            fontScale=font_scale, color=(50, 255, 50), thickness=thickness,
+            fontScale=font_scale, color=(255, 255, 0), thickness=thickness,  # BGR cyan
         )
 
     def _apply_timestamp(self, arr, timestamp: str, stream: str = "main") -> None:

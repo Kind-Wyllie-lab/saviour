@@ -130,6 +130,31 @@ class TestApplyGrayscale:
         assert shim.array is arr
 
 
+class TestApplyFramerate:
+    def test_draws_top_right_in_cyan(self):
+        cam = _make_camera()
+        arr = np.zeros((600, 800, 3), dtype=np.uint8)
+
+        cam._apply_framerate(arr, "24.8")
+
+        # Top-right corner (current placement) has drawn pixels; the old
+        # bottom-center placement does not.
+        top_right = arr[:80, 600:800]
+        bottom_center = arr[480:600, 300:500]
+        assert np.any(top_right != 0)
+        assert np.all(bottom_center == 0)
+
+        # Colour is BGR cyan (255, 255, 0). At this small font scale, stroke
+        # rasterization gives partial-intensity edge pixels rather than flat
+        # 255s, so check the B==G, R==0 relationship the blend preserves
+        # (green would have B far below G) instead of an exact match, and
+        # that at least one pixel reaches near-full brightness.
+        drawn_pixels = arr[np.any(arr != 0, axis=2)]
+        assert np.array_equal(drawn_pixels[:, 0], drawn_pixels[:, 1])
+        assert np.all(drawn_pixels[:, 2] == 0)
+        assert drawn_pixels[:, 0].max() > 200
+
+
 class TestCacheFrameConfig:
     def test_reads_config_and_facade_module_name(self):
         cam = _make_camera(

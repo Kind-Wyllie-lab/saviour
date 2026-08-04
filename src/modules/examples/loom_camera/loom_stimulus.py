@@ -130,10 +130,16 @@ class LoomBatchRunState:
     def on_enter(self) -> None:
         """
         Enter means: keep running (or start running), and DO NOT stop after round.
-        Does not reset current round progress.
+
+        Always grants a fresh batch of `round_size` round-trips from this entry,
+        whether this is the very first entry or a re-entry that cancels a
+        pending stop. Otherwise a leave-then-reenter-then-leave cycle would
+        only get whatever trips were left over from the original round instead
+        of its own full allotment counted from the most recent exit.
         """
         self.active = True
         self.stop_after_current_round = False
+        self.round_trip_counter_in_round = 0
 
     def on_leave(self) -> None:
         """Leave means: finish current round then stop."""
@@ -646,12 +652,14 @@ def run_loom_stimulus_with_ipc(
             if start_requested and not last_start_requested:
                 # ENTER edge: resume/continue. Do not restart if already active.
                 was_active = batch.active
-                batch.on_enter()
+                batch.on_enter()  # always grants a fresh round_size allotment
 
-                # Only start a new round if we were previously inactive
+                # Only reset the VISUAL animation if we were previously fully
+                # inactive — a re-entry mid-flight should not visibly snap the
+                # loom back to its start position. The round-trip count is
+                # reset unconditionally inside on_enter() above regardless.
                 if not was_active:
                     motion = _reset_motion()
-                    batch.reset_round()
                     animation_t0 = time.time()
                     prev_elapsed = 0.0
                     _status({"type": "round_started"})

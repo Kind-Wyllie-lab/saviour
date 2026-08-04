@@ -22,7 +22,12 @@
   flex: 2;
   display: grid;
   /* column count set via inline style on the element */
-  grid-auto-rows: 1fr;
+  grid-auto-rows: auto;
+  /* grid-auto-rows: auto still stretches rows to fill a definite-height
+     container by default — this container gets one from flex:2 above, so
+     without this, cards would bloat back out to fill the column exactly
+     like the old 1fr did. */
+  align-content: start;
   gap: 12px;
   min-width: 0;
   min-height: 0;
@@ -32,6 +37,30 @@
 .dashboard-cameras .mjpeg-stream-card {
   min-width: 0;
   min-height: 0;
+  /* Grid items stretch to fill their column by default — shrink the card
+     itself to wrap its (aspect-ratio-constrained) content and center it,
+     otherwise the card's background/border still spans the full column
+     even once the video inside it stops doing so, showing as empty card
+     space rather than neutral page background either side of it. */
+  width: fit-content;
+  max-width: 100%;
+  justify-self: center;
+}
+
+/* Size the video area to a cell size that (a) matches the stream's real
+   aspect ratio and (b) is guaranteed to fit rows x cols within the grid's
+   measured box (--cell-w/--cell-h, computed in Dashboard.jsx's
+   fitCellSize()) — a square stream in a wide column would otherwise sit in
+   a much taller card than it needs (blank card space), or the grid would
+   grow taller than the viewport and force the whole dashboard to scroll.
+   Before the grid's size / the stream's ratio are known, fall back to
+   100%-wide with an assumed 16:9 so nothing flashes at zero size. */
+.dashboard-cameras .mjpeg-stream-video {
+  flex: none;
+  width: var(--cell-w, 100%);
+  height: var(--cell-h, auto);
+  aspect-ratio: var(--stream-ratio, 16 / 9);
+  margin: 0 auto;
 }
 
 /* ── Group filter bar ────────────────────────────────────────────────────── */
@@ -128,12 +157,14 @@
   display: grid;
   gap: 8px;
   flex-shrink: 0;
+  align-content: start;
 }
 
-/* Lock the video area to 16:9 so cards don't bloat with empty space */
+/* Size to the stream's real aspect ratio (see .dashboard-cameras above) so
+   cards don't bloat with empty space; 16:9 is only a pre-first-frame guess. */
 .dashboard-compact-streams .mjpeg-stream-video {
   flex: none;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--stream-ratio, 16 / 9);
 }
 
 .dashboard-compact-panel {

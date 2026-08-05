@@ -27,7 +27,7 @@
         "autofocus_mode": "manual",
         "lens_position": 0.0,
         "sync_mode": "none",
-        "framesync_enabled": false,
+        "framesync_enabled": true,
         "sync_lock_exposure": false,
         "sync_lock_awb": false,
         "livestream_quality": "normal"

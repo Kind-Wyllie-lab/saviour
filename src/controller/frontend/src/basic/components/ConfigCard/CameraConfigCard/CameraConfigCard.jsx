@@ -175,7 +175,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
   const currentSyncMode  = cam.sync_mode ?? "none";
-  const framesyncEnabled = cam.framesync_enabled ?? false;
+  const framesyncEnabled = cam.framesync_enabled ?? true;
   const isRecording      = module.status === "RECORDING";
   const syncExposureLocked = currentSyncMode === "client" && cam.sync_lock_exposure;
   const aeEnabled        = (cam.ae_enable ?? false) && !syncExposureLocked;

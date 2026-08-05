@@ -22,7 +22,7 @@
         "autofocus_mode": "manual",
         "lens_position": 0.0,
         "sync_mode": "none",
-        "framesync_enabled": false,
+        "framesync_enabled": true,
         "_codec": "h264",
         "_profile": "high",
         "_level": 4.2

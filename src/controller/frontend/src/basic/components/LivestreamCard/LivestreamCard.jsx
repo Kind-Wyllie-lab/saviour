@@ -122,6 +122,15 @@ function LivestreamCard({ module }) {
               onError={handleError}
               onClick={() => setFullscreen(true)}
             />
+            <button
+              type="button"
+              className="stream-restart-button"
+              onClick={(e) => { e.stopPropagation(); bump(); }}
+              title="Restart stream"
+              aria-label="Restart stream"
+            >
+              ⟳
+            </button>
             {restarting && (
               <div className="stream-restarting-overlay">
                 <span>Stream restarting…</span>

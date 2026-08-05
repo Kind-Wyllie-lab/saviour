@@ -18,7 +18,7 @@ const MIN_RECONNECT_MS = 3000;
  * Handles stall detection and reconnection for any module that serves
  * an MJPEG stream at http://{ip}:{port}/video_feed.
  */
-function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio }) {
+function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio, syncStatus }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [streamKey, setStreamKey] = useState(Date.now());
   // Actual aspect ratio of the stream, discovered from the first loaded
@@ -27,8 +27,10 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   // dead space. Re-detected on every reconnect in case a config change
   // (e.g. livestream_quality, resolution) altered it.
   const [aspectRatio, setAspectRatio] = useState(null);
+  const [restarting, setRestarting] = useState(false);
   const stallTimer = useRef(null);
   const reconnectTimer = useRef(null);
+  const prevStatus       = useRef(syncStatus);
   const lastBumpAt       = useRef(0);
   const pendingBumpTimer = useRef(null);
   const imgRef           = useRef(null);
@@ -58,6 +60,22 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
       pendingBumpTimer.current = setTimeout(doBump, MIN_RECONNECT_MS - elapsed);
     }
   };
+
+  // A config save (e.g. resolution/fps change) restarts the camera's stream
+  // server-side. Without watching this, the <img> connection just keeps
+  // showing its last frame from before the restart — the config page's own
+  // preview (LivestreamCard.jsx) already does this; this card serves the
+  // same streams on the Dashboard and needs the same reconnect.
+  useEffect(() => {
+    const prev = prevStatus.current;
+    prevStatus.current = syncStatus;
+    if (syncStatus === "PENDING") {
+      setRestarting(true);
+    } else if (prev === "PENDING" && syncStatus === "SYNCED") {
+      bump();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStatus]);
 
   useEffect(() => {
     setAspectRatio(null);
@@ -96,6 +114,7 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   // stream. Recovery from a stream that actually dies is handled by onError.
   const handleLoad = (e) => {
     clearTimeout(stallTimer.current);
+    setRestarting(false);
     const { naturalWidth, naturalHeight } = e.target;
     if (naturalWidth && naturalHeight) {
       const ratio = naturalWidth / naturalHeight;
@@ -113,25 +132,43 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   return (
     <>
       <div className="mjpeg-stream-card card">
-        {label && (
-          <div className="mjpeg-stream-header">
-            <span className="mjpeg-stream-label">{label}</span>
-          </div>
-        )}
+        <div className="mjpeg-stream-header">
+          {label && <span className="mjpeg-stream-label">{label}</span>}
+          <button
+            type="button"
+            className="mjpeg-restart-button"
+            onClick={(e) => { e.stopPropagation(); bump(); }}
+            title="Restart stream"
+            aria-label="Restart stream"
+          >
+            ⟳
+          </button>
+        </div>
         <div
           className="mjpeg-stream-video"
           style={aspectRatio ? { "--stream-ratio": aspectRatio } : undefined}
         >
+          {/* `?t=${streamKey}` cache-busts the request — without a query
+              param that changes on every bump(), a remounted <img> can
+              still resolve against the browser's in-flight/cached response
+              for the identical bare URL instead of opening a genuinely new
+              multipart connection, leaving the frame frozen even after a
+              "successful" reconnect. */}
           <img
             key={streamKey}
             ref={imgRef}
-            src={`http://${ip}:${port}/video_feed`}
+            src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
             alt={label || "stream"}
             onLoad={handleLoad}
             onError={handleError}
             onClick={() => setFullscreen(true)}
           />
           {isRecording && <span className="mjpeg-rec-dot" title="Recording" />}
+          {restarting && (
+            <div className="mjpeg-stream-restarting-overlay">
+              <span>Stream restarting…</span>
+            </div>
+          )}
         </div>
       </div>
 

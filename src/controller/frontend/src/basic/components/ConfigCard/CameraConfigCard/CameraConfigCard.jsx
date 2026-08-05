@@ -433,6 +433,28 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 )}
               </>
             )}
+
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Timestamp overlay:</label>
+              <input type="checkbox"
+                checked={overlayTimestamp}
+                onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              This will be on your saved videos.
+            </div>
+            {overlayTimestamp && (
+              <div className="form-field">
+                <label>Timestamp size:</label>
+                <select value={cam.text_size ?? "medium"}
+                  onChange={e => handleChange(["camera", "text_size"], e)}>
+                  <option value="small">Small</option>
+                  <option value="medium">Medium</option>
+                  <option value="large">Large</option>
+                </select>
+              </div>
+            )}
           </>
         )}
 
@@ -509,26 +531,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
             </div>
             <div className="filesize-preview">~{gbPerHour} GB / hr at {bitrateMb} Mbps</div>
-            <div className="form-field">
-              <label>Timestamp overlay:</label>
-              <input type="checkbox"
-                checked={overlayTimestamp}
-                onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
-            </div>
-            <div className="sensor-mode-info sensor-mode-info--muted">
-              This will be on your saved videos.
-            </div>
-            {overlayTimestamp && (
-              <div className="form-field">
-                <label>Timestamp size:</label>
-                <select value={cam.text_size ?? "medium"}
-                  onChange={e => handleChange(["camera", "text_size"], e)}>
-                  <option value="small">Small</option>
-                  <option value="medium">Medium</option>
-                  <option value="large">Large</option>
-                </select>
-              </div>
-            )}
             <div className="config-section-divider" />
             <div className="form-field">
               <label>Segment length (mins):</label>

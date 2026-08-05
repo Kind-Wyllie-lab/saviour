@@ -2083,6 +2083,33 @@ class Web(ABC):
                         'status': status
                     })
 
+                # The module itself detected it couldn't start/stop recording (e.g. a
+                # racing double-start, or a module-specific stop failure). Previously
+                # unmatched here — fell through to handle_special_module_status(),
+                # which every non-APA variant treats as a no-op — so this was silently
+                # dropped instead of reaching the operator. Route it into the same
+                # session-fault path used for offline-module detection, which already
+                # drives FaultAlertModal and the Teams alert.
+                case ('recording_start_failed' | 'recording_stop_failed'):
+                    error = status.get("error", "unknown error")
+                    self.logger.warning(f"{status_type} for module {module_id}: {error}")
+                    self.facade.report_module_fault(module_id, f"{status_type}: {error}")
+
+                # Generic failure path: Command._handle_error() sends this on any
+                # unhandled exception (or unknown command) while executing a command.
+                # Previously silently dropped the same way as above. Not escalated to
+                # a session fault here — "error" covers every command, not just
+                # recording ones, so blindly faulting the session would misfire on
+                # unrelated failures (e.g. a failed trigger_autofocus). At minimum it
+                # must stop disappearing: log it and hand it to the frontend.
+                case "error":
+                    error = status.get("error", "unknown error")
+                    self.logger.warning(f"Module {module_id} reported an error: {error}")
+                    self.socketio.emit('module_error', {
+                        'module_id': module_id,
+                        'error': error,
+                    })
+
                 case "heartbeat":
                     version = status.get("version")
                     if version:

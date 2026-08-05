@@ -330,6 +330,11 @@ class ControllerFacade:
         # Tell anyone who cares that a module has gone offline
         self.controller.recording.module_offline(module_id)
 
+    def report_module_fault(self, module_id: str, message: str) -> None:
+        # A module reported a recording failure directly (rather than the
+        # controller inferring it from a missed heartbeat/poll)
+        self.controller.recording.report_module_fault(module_id, message)
+
 
     def module_back_online(self, module_id: str) -> None:
         # What to do when a module comes back online

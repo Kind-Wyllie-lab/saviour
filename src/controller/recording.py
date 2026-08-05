@@ -705,6 +705,41 @@ class Recording:
                 )
 
 
+    def report_module_fault(self, module_id: str, message: str) -> None:
+        """Record a module-reported recording failure (e.g. recording_start_failed /
+        recording_stop_failed) against whatever session it belongs to.
+
+        Unlike the periodic "not recording" strikes check in _monitor_sessions
+        (which needs several missed polls before it notices), this reacts the
+        moment the module itself says something went wrong — closing the gap
+        where a module-side failure was previously silently dropped rather
+        than surfaced via the existing session-fault / Teams-alert /
+        FaultAlertModal pipeline.
+        """
+        session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            self.logger.warning(f"Module {module_id} reported a fault with no active session: {message}")
+            return
+        session = self.sessions[session_name]
+        if session.state == SessionState.STOPPED:
+            return
+
+        session.error_message = f"{module_id}: {message}"
+        if session.state != SessionState.ERROR:
+            session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+        session.state = SessionState.ERROR
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self.logger.info(f"Session '{session_name}' → ERROR: {module_id} reported fault: {message}")
+        self._log_session_event(session_name, "FAULT", f"{module_id}: {message}")
+        if self._notify_enabled("notify_session_faults"):
+            self.facade.send_alert(
+                key=f"module_fault_{module_id}",
+                title=f"Recording error — {session_name}",
+                message=f"Module **{module_id}** reported a recording fault in session **{session_name}**: {message}",
+            )
+
+
     def module_back_online(self, module_id: str) -> None:
         """Resume recording for a module that reconnected during an active session."""
         session_name = self.get_session_name_from_target(module_id)

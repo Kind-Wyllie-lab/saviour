@@ -3,7 +3,7 @@ import "./LivestreamSelector.css";
 
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
 
-function LivestreamSelector({ modules }) {
+function LivestreamSelector({ modules, heading = "Livestream" }) {
     // Filter camera modules
     const cameraModules = (modules || []).filter(
         (m) => m.type?.includes("camera")
@@ -32,7 +32,7 @@ function LivestreamSelector({ modules }) {
     return (
         <div className="livestream-selector card">
             <div className="livestream-selector-top">
-                <h2>Livestream</h2>
+                <h2>{heading}</h2>
                 <select
                     id="camera-select"
                     value={selectedId}

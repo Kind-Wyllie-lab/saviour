@@ -130,10 +130,16 @@ class LoomBatchRunState:
     def on_enter(self) -> None:
         """
         Enter means: keep running (or start running), and DO NOT stop after round.
-        Does not reset current round progress.
+
+        Always grants a fresh batch of `round_size` round-trips from this entry,
+        whether this is the very first entry or a re-entry that cancels a
+        pending stop. Otherwise a leave-then-reenter-then-leave cycle would
+        only get whatever trips were left over from the original round instead
+        of its own full allotment counted from the most recent exit.
         """
         self.active = True
         self.stop_after_current_round = False
+        self.round_trip_counter_in_round = 0
 
     def on_leave(self) -> None:
         """Leave means: finish current round then stop."""
@@ -315,7 +321,12 @@ def run_loom_stimulus_with_ipc(
                 except Exception:
                     pass
                 win = glfw.create_window(mw, mh, title, None, None)
-                if win is not None:
+                # NOTE: glfwCreateWindow's ctypes restype is POINTER(_GLFWwindow).
+                # ctypes represents a NULL POINTER(Struct) as a distinct, falsy
+                # object — NOT the Python `None` singleton — so `is None`/
+                # `is not None` checks against it never fire and silently let a
+                # failed window through. Use plain truthiness everywhere below.
+                if win:
                     glfw.set_window_pos(win, mx, my)
                 return win, (mx, my, mw, mh)
 
@@ -334,14 +345,15 @@ def run_loom_stimulus_with_ipc(
                 # draw call, so it has no need of the stim window's shared
                 # GL object namespace.
                 near_window, _ = _create_positioned_window(near_monitor, "Loom Stimulus (near)")
-                if near_window is None:
+                if not near_window:
+                    near_window = None  # normalise the falsy ctypes NULL to Python None
                     _status({"type": "loom_stimulus_error",
                              "error": "Failed to create near-monitor window — keepalive/near-test disabled"})
         else:
             w, h = int(window_size_px[0]), int(window_size_px[1])
             window = glfw.create_window(w, h, "Loom Stimulus", None, None)
 
-        if window is None:
+        if not window:
             raise RuntimeError("Failed to create GLFW window (window=None). Check GLX/Mesa driver stack.")
 
         glfw.make_context_current(window)
@@ -358,7 +370,7 @@ def run_loom_stimulus_with_ipc(
             "win_wh": glfw.get_window_size(window),
             "n_monitors": len(monitors),
             "selected_rects": selected if fullscreen else [],
-            "has_near_window": near_window is not None,
+            "has_near_window": bool(near_window),
         })
 
         # -----------------------------
@@ -640,12 +652,14 @@ def run_loom_stimulus_with_ipc(
             if start_requested and not last_start_requested:
                 # ENTER edge: resume/continue. Do not restart if already active.
                 was_active = batch.active
-                batch.on_enter()
+                batch.on_enter()  # always grants a fresh round_size allotment
 
-                # Only start a new round if we were previously inactive
+                # Only reset the VISUAL animation if we were previously fully
+                # inactive — a re-entry mid-flight should not visibly snap the
+                # loom back to its start position. The round-trip count is
+                # reset unconditionally inside on_enter() above regardless.
                 if not was_active:
                     motion = _reset_motion()
-                    batch.reset_round()
                     animation_t0 = time.time()
                     prev_elapsed = 0.0
                     _status({"type": "round_started"})
@@ -781,7 +795,7 @@ def run_loom_stimulus_with_ipc(
 
             # The near monitor is a separate real window, not a scissored
             # region of this one — draw into it on its own context.
-            if near_window is not None:
+            if near_window:
                 glfw.make_context_current(near_window)
                 glfw.swap_interval(1 if vsync else 0)  # separate context, own swap-interval state
                 _near_w, _near_h = glfw.get_framebuffer_size(near_window)
@@ -819,12 +833,12 @@ def run_loom_stimulus_with_ipc(
         except Exception:
             pass
         try:
-            if window is not None:
+            if window:
                 glfw.destroy_window(window)
         except Exception:
             pass
         try:
-            if near_window is not None:
+            if near_window:
                 glfw.destroy_window(near_window)
         except Exception:
             pass

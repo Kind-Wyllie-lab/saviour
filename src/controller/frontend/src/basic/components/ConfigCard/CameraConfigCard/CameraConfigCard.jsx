@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import socket from "/src/socket";
+import useModules from "/src/hooks/useModules";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
+import LivestreamSelector from "/src/basic/components/LivestreamSelector/LivestreamSelector";
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
@@ -27,9 +29,10 @@ const CM3_PRESETS = [
 ];
 
 const BASE_TABS = [
-  { key: "basic",  label: "Basic"  },
-  { key: "image",  label: "Image"  },
-  { key: "record", label: "Record" },
+  { key: "basic",   label: "Basic"   },
+  { key: "image",   label: "Image"   },
+  { key: "record",  label: "Record"  },
+  { key: "preview", label: "Preview" },
 ];
 
 const LOOM_TABS = [
@@ -43,6 +46,7 @@ const TAB_COPY_SECTION = {
   basic:    { key: "module",        label: "Basic"    },
   image:    { key: "camera",        label: "Image"    },
   record:   { key: "camera",        label: "Record"   },
+  preview:  { key: "camera",        label: "Preview"  },
   tracking: { key: "loom_tracking", label: "Tracking" },
   stimulus: { key: "loom_stimulus", label: "Stimulus" },
   export:   { key: "export",        label: "Export"   },
@@ -65,6 +69,7 @@ function detectPreset(presetList, width, height, fps) {
 
 function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { moduleList } = useModules();
   const [sensorModes, setSensorModes] = useState([]);
   const [sensorModel, setSensorModel] = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
@@ -171,9 +176,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const bitrateMb        = cam.bitrate_mb ?? 0;
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
-  const isThisServer     = syncServerModule?.id === module.id;
-  const otherIsServer    = syncServerModule != null && !isThisServer;
   const currentSyncMode  = cam.sync_mode ?? "none";
+  const framesyncEnabled = cam.framesync_enabled ?? true;
+  const isRecording      = module.status === "RECORDING";
   const syncExposureLocked = currentSyncMode === "client" && cam.sync_lock_exposure;
   const aeEnabled        = (cam.ae_enable ?? false) && !syncExposureLocked;
   const serverCam        = syncServerModule?.config?.camera ?? {};
@@ -215,6 +220,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                   Set ROI / Line
                 </button>
               </div>
+            )}
+            {module.type === "loom_camera" && (
+              <>
+                <div className="config-section-divider" />
+                <LivestreamSelector modules={moduleList.filter(m => m.id !== module.id)} heading="Other Camera" />
+              </>
             )}
           </>
         }
@@ -422,6 +433,28 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 )}
               </>
             )}
+
+            <div className="config-section-divider" />
+            <div className="form-field">
+              <label>Timestamp overlay:</label>
+              <input type="checkbox"
+                checked={overlayTimestamp}
+                onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              This will be on your saved videos.
+            </div>
+            {overlayTimestamp && (
+              <div className="form-field">
+                <label>Timestamp size:</label>
+                <select value={cam.text_size ?? "medium"}
+                  onChange={e => handleChange(["camera", "text_size"], e)}>
+                  <option value="small">Small</option>
+                  <option value="medium">Medium</option>
+                  <option value="large">Large</option>
+                </select>
+              </div>
+            )}
           </>
         )}
 
@@ -429,32 +462,34 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         {activeTab === "record" && (
           <>
             <div className="form-field">
-              <label>Frame sync:</label>
-              <select value={currentSyncMode}
-                onChange={e => handleChange(["camera", "sync_mode"], e)}>
-                <option value="none">None</option>
-                <option value="server" disabled={otherIsServer}>
-                  Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
-                </option>
-                <option value="client" disabled={!otherIsServer}>
-                  Client (follows server){!otherIsServer ? " — set another camera to Server first" : ""}
-                </option>
-              </select>
+              <label>Enable FrameSync:</label>
+              <input type="checkbox"
+                checked={framesyncEnabled}
+                disabled={isRecording}
+                onChange={e => handleChange(["camera", "framesync_enabled"], e)} />
             </div>
-            {currentSyncMode === "server" && (
+            {isRecording && (
+              <div className="sensor-mode-info sensor-mode-info--muted">
+                Stop recording to change FrameSync.
+              </div>
+            )}
+            {framesyncEnabled && currentSyncMode === "server" && (
               <div className="sensor-mode-info">
-                This camera broadcasts sync timing. Start client cameras first, then this one.
+                This camera is the FrameSync transmitter — it broadcasts timing to every
+                other FrameSync-enabled camera. The controller assigns this automatically;
+                start client cameras first, then this one.
               </div>
             )}
-            {currentSyncMode === "client" && !syncServerModule && (
-              <div className="fov-label fov-cropped">
-                No server camera configured — set another camera to Server first.
-              </div>
-            )}
-            {currentSyncMode === "client" && syncServerModule && (
+            {framesyncEnabled && currentSyncMode === "client" && syncServerModule && (
               <div className="sensor-mode-info">
                 Syncing to {syncServerModule.name} ({syncServerModule.id}).
                 {serverFps != null && <> FPS locked to {serverFps} fps.</>}
+              </div>
+            )}
+            {framesyncEnabled && currentSyncMode === "none" && (
+              <div className="sensor-mode-info sensor-mode-info--muted">
+                Waiting for the controller to assign a FrameSync role — this camera
+                may be offline, or has just been enabled and hasn't been reconciled yet.
               </div>
             )}
             {fpsMismatch && (
@@ -473,11 +508,19 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 checked={cam.sync_lock_exposure ?? false}
                 onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
             </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              While frame-synced: fixes exposure/gain so brightness matches across cameras —
+              overrides Image tab's "Auto gain/exposure".
+            </div>
             <div className="form-field">
               <label>Lock white balance:</label>
               <input type="checkbox"
                 checked={cam.sync_lock_awb ?? false}
                 onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              While frame-synced: fixes white balance so colour matches across cameras
+              (no manual control for this elsewhere).
             </div>
 
             <div className="config-section-divider" />
@@ -488,28 +531,27 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "bitrate_mb"], e)} />
             </div>
             <div className="filesize-preview">~{gbPerHour} GB / hr at {bitrateMb} Mbps</div>
+            <div className="config-section-divider" />
             <div className="form-field">
-              <label>Timestamp overlay:</label>
-              <input type="checkbox"
-                checked={overlayTimestamp}
-                onChange={e => handleChange(["camera", "overlay_timestamp"], e)} />
+              <label>Segment length (mins):</label>
+              <input type="number" min="1" step="1"
+                value={formData?.recording?.segment_length_mins ?? 60}
+                onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
             </div>
-            {overlayTimestamp && (
-              <div className="form-field">
-                <label>Text size:</label>
-                <select value={cam.text_size ?? "medium"}
-                  onChange={e => handleChange(["camera", "text_size"], e)}>
-                  <option value="small">Small</option>
-                  <option value="medium">Medium</option>
-                  <option value="large">Large</option>
-                </select>
-              </div>
-            )}
+          </>
+        )}
+
+        {/* PREVIEW */}
+        {activeTab === "preview" && (
+          <>
             <div className="form-field">
               <label>Overlay framerate (preview):</label>
               <input type="checkbox"
                 checked={cam.overlay_framerate_on_preview ?? false}
                 onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Live monitoring stream only — never on saved videos.
             </div>
             <div className="form-field">
               <label>Livestream quality:</label>
@@ -518,13 +560,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 <option value="normal">Normal (low-res)</option>
                 <option value="high">High (recording resolution)</option>
               </select>
-            </div>
-            <div className="config-section-divider" />
-            <div className="form-field">
-              <label>Segment length (mins):</label>
-              <input type="number" min="1" step="1"
-                value={formData?.recording?.segment_length_mins ?? 60}
-                onChange={e => handleChange(["recording", "segment_length_mins"], e)} />
             </div>
           </>
         )}

@@ -899,38 +899,47 @@ class Web(ABC):
                 return
             module_id = data['id']
             config = _filter_private_keys(data.get("config", {}))
-            self.logger.info(f"Received request to save config to module {module_id} with data {config}")
 
+            if self.facade.is_module_recording(module_id):
+                self.logger.warning(
+                    f"Rejected config save for {module_id}: module is recording"
+                )
+                self.socketio.emit("module_config_error", {
+                    "module_id": module_id,
+                    "error": (
+                        "Cannot change settings while this module is recording — "
+                        "stop the session first."
+                    ),
+                })
+                return
+
+            self.logger.info(
+                f"Received request to save config to module {module_id} "
+                f"with data {config}"
+            )
+
+            # FrameSync role (sync_mode) is no longer set directly by the operator —
+            # it's derived by facade.reconcile_framesync() from every camera's
+            # framesync_enabled flag once this save is confirmed (modules.py calls
+            # it from received_module_config()). If this module currently *is* the
+            # elected transmitter, still propagate any fps/sensor_mode_index change
+            # in this save to its clients immediately, so they stay pinned even when
+            # the transmitter's own settings change after election, not just at it.
             camera_section = config.get("camera", {})
-            new_sync_mode = camera_section.get("sync_mode")
-
-            # When configuring a camera as a sync client, pin its fps and sensor_mode_index
-            # to match the sync server so frame synchronisation can work correctly.
-            if new_sync_mode == "client":
-                server_params = self.facade.get_sync_server_camera_params()
-                if server_params:
-                    camera_section["fps"] = server_params["fps"]
-                    camera_section["sensor_mode_index"] = server_params["sensor_mode_index"]
-                    config["camera"] = camera_section
-                    self.logger.info(
-                        f"Pinned {module_id} to sync server {server_params['module_id']}: "
-                        f"fps={server_params['fps']} sensor_mode_index={server_params['sensor_mode_index']}"
-                    )
-                else:
-                    self.logger.warning(
-                        f"sync_mode=client set for {module_id} but no sync server found — "
-                        "fps/sensor_mode_index not auto-pinned"
-                    )
-
-            # When saving the sync server, propagate its fps and sensor_mode_index to all clients.
-            elif new_sync_mode == "server":
+            module_configs = self.facade.get_module_configs()
+            current_state = module_configs.get(module_id) or {}
+            current_true = current_state.get("true_config") or {}
+            if current_true.get("camera", {}).get("sync_mode") == "server":
                 fps = camera_section.get("fps")
                 sensor_mode_index = camera_section.get("sensor_mode_index")
                 if fps is not None or sensor_mode_index is not None:
-                    client_ids = self.facade.get_sync_client_camera_ids()
                     all_configs = self.facade.get_module_configs()
-                    for client_id in client_ids:
-                        client_true = dict((all_configs.get(client_id) or {}).get("true_config") or {})
+                    for client_id, client_cfg in all_configs.items():
+                        if client_id == module_id:
+                            continue
+                        client_true = dict((client_cfg or {}).get("true_config") or {})
+                        if client_true.get("camera", {}).get("sync_mode") != "client":
+                            continue
                         client_camera = dict(client_true.get("camera", {}))
                         if fps is not None:
                             client_camera["fps"] = fps
@@ -938,7 +947,8 @@ class Web(ABC):
                             client_camera["sensor_mode_index"] = sensor_mode_index
                         client_true["camera"] = client_camera
                         self.logger.info(
-                            f"Propagating server fps/sensor_mode_index to sync client {client_id}"
+                            "Propagating server fps/sensor_mode_index to "
+                            f"sync client {client_id}"
                         )
                         self.facade.set_target_module_config(client_id, client_true)
                         self.facade.send_command(client_id, "set_config", client_true)
@@ -2071,6 +2081,33 @@ class Web(ABC):
                     self.socketio.emit('module_status', {
                         'module_id': module_id,
                         'status': status
+                    })
+
+                # The module itself detected it couldn't start/stop recording (e.g. a
+                # racing double-start, or a module-specific stop failure). Previously
+                # unmatched here — fell through to handle_special_module_status(),
+                # which every non-APA variant treats as a no-op — so this was silently
+                # dropped instead of reaching the operator. Route it into the same
+                # session-fault path used for offline-module detection, which already
+                # drives FaultAlertModal and the Teams alert.
+                case ('recording_start_failed' | 'recording_stop_failed'):
+                    error = status.get("error", "unknown error")
+                    self.logger.warning(f"{status_type} for module {module_id}: {error}")
+                    self.facade.report_module_fault(module_id, f"{status_type}: {error}")
+
+                # Generic failure path: Command._handle_error() sends this on any
+                # unhandled exception (or unknown command) while executing a command.
+                # Previously silently dropped the same way as above. Not escalated to
+                # a session fault here — "error" covers every command, not just
+                # recording ones, so blindly faulting the session would misfire on
+                # unrelated failures (e.g. a failed trigger_autofocus). At minimum it
+                # must stop disappearing: log it and hand it to the frontend.
+                case "error":
+                    error = status.get("error", "unknown error")
+                    self.logger.warning(f"Module {module_id} reported an error: {error}")
+                    self.socketio.emit('module_error', {
+                        'module_id': module_id,
+                        'error': error,
                     })
 
                 case "heartbeat":

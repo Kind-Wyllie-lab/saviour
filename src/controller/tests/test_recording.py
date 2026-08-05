@@ -400,6 +400,29 @@ class TestModuleOffline:
         assert "cam1" in session.error_message
 
 
+class TestReportModuleFault:
+    def test_no_session_for_module_is_a_no_op(self):
+        rec, facade = _make_recording()
+        rec.report_module_fault("cam1", "recording_start_failed: Already recording")
+        facade.update_sessions.assert_not_called()
+
+    def test_marks_session_errored_with_module_and_message(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(modules=["cam1"])
+        rec.report_module_fault("cam1", "recording_start_failed: Already recording")
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.ERROR
+        assert "cam1" in session.error_message
+        assert "recording_start_failed" in session.error_message
+        facade.update_sessions.assert_called_once()
+
+    def test_stopped_session_is_a_no_op(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, modules=["cam1"])
+        rec.report_module_fault("cam1", "recording_stop_failed: boom")
+        facade.update_sessions.assert_not_called()
+
+
 class TestModuleBackOnline:
     def test_resumes_recording_for_errored_session(self):
         rec, facade = _make_recording()

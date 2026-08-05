@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import socket from "/src/socket";
+import useModules from "/src/hooks/useModules";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
+import LivestreamSelector from "/src/basic/components/LivestreamSelector/LivestreamSelector";
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
@@ -65,6 +67,7 @@ function detectPreset(presetList, width, height, fps) {
 
 function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { moduleList } = useModules();
   const [sensorModes, setSensorModes] = useState([]);
   const [sensorModel, setSensorModel] = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
@@ -215,6 +218,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                   Set ROI / Line
                 </button>
               </div>
+            )}
+            {module.type === "loom_camera" && (
+              <>
+                <div className="config-section-divider" />
+                <LivestreamSelector modules={moduleList.filter(m => m.id !== module.id)} heading="Other Camera" />
+              </>
             )}
           </>
         }

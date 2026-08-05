@@ -20,7 +20,9 @@
     "overlay_framerate_on_preview": false,
     "bitrate_mb": 2,
     "autofocus_mode": "manual",
-    "lens_position": 0.0
+    "lens_position": 0.0,
+    "sync_mode": "none",
+    "framesync_enabled": false
   },
   "loom_tracking": {
     "enabled": true,

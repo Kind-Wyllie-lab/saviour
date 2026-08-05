@@ -345,6 +345,12 @@ class Modules:
                 state.target_config = self._filter_private_keys(config)
                 state.status = ConfigSyncStatus.SYNCED
 
+        # Outside the lock — reconcile_framesync() calls back into
+        # set_target_module_config(), which re-acquires it.
+        module = self._modules.get(module_id)
+        if module and "camera" in module.type and self.facade:
+            self.facade.reconcile_framesync()
+
         self.broadcast_updated_modules()
 
 

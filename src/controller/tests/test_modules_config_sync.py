@@ -6,6 +6,7 @@ received_module_config / set_target_module_config running concurrently.
 """
 
 import threading
+from unittest.mock import MagicMock
 
 from src.controller.modules import ConfigSyncStatus, Module, Modules
 
@@ -78,6 +79,38 @@ class TestConfigSyncTransitions:
         mgr = _make_modules()
         mgr.received_module_config("ghost_module", {"camera": {"fps": 25}})
         assert "ghost_module" in mgr._modules
+
+
+# ---------------------------------------------------------------------------
+# FrameSync reconciliation hook
+# ---------------------------------------------------------------------------
+
+class TestReceivedModuleConfigFramesyncHook:
+    def test_camera_config_triggers_reconcile(self):
+        mgr = _make_modules()
+        mgr.facade = MagicMock()
+        _register(mgr, "camera_abc")
+
+        mgr.received_module_config("camera_abc", {"camera": {"fps": 30}})
+
+        mgr.facade.reconcile_framesync.assert_called_once()
+
+    def test_non_camera_module_does_not_trigger_reconcile(self):
+        mgr = _make_modules()
+        mgr.facade = MagicMock()
+        mgr.add_module(Module(id="ttl_1", name="ttl_1", type="ttl", version="1.0", ip="10.0.0.3"))
+
+        mgr.received_module_config("ttl_1", {"ttl": {"pin": 4}})
+
+        mgr.facade.reconcile_framesync.assert_not_called()
+
+    def test_no_facade_does_not_crash(self):
+        """facade is None in a bare Modules() before the controller wires it
+        up post-construction -- the hook must guard against that, not crash
+        the very first config fetch during startup."""
+        mgr = _make_modules()
+        _register(mgr, "camera_abc")
+        mgr.received_module_config("camera_abc", {"camera": {"fps": 30}})  # must not raise
 
 
 # ---------------------------------------------------------------------------

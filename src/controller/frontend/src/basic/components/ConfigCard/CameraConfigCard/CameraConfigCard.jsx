@@ -174,9 +174,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const bitrateMb        = cam.bitrate_mb ?? 0;
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
-  const isThisServer     = syncServerModule?.id === module.id;
-  const otherIsServer    = syncServerModule != null && !isThisServer;
   const currentSyncMode  = cam.sync_mode ?? "none";
+  const framesyncEnabled = cam.framesync_enabled ?? false;
+  const isRecording      = module.status === "RECORDING";
   const syncExposureLocked = currentSyncMode === "client" && cam.sync_lock_exposure;
   const aeEnabled        = (cam.ae_enable ?? false) && !syncExposureLocked;
   const serverCam        = syncServerModule?.config?.camera ?? {};
@@ -438,32 +438,34 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         {activeTab === "record" && (
           <>
             <div className="form-field">
-              <label>Frame sync:</label>
-              <select value={currentSyncMode}
-                onChange={e => handleChange(["camera", "sync_mode"], e)}>
-                <option value="none">None</option>
-                <option value="server" disabled={otherIsServer}>
-                  Server (broadcasts timing){otherIsServer ? ` — ${syncServerModule.name} is already server` : ""}
-                </option>
-                <option value="client" disabled={!otherIsServer}>
-                  Client (follows server){!otherIsServer ? " — set another camera to Server first" : ""}
-                </option>
-              </select>
+              <label>Enable FrameSync:</label>
+              <input type="checkbox"
+                checked={framesyncEnabled}
+                disabled={isRecording}
+                onChange={e => handleChange(["camera", "framesync_enabled"], e)} />
             </div>
-            {currentSyncMode === "server" && (
+            {isRecording && (
+              <div className="sensor-mode-info sensor-mode-info--muted">
+                Stop recording to change FrameSync.
+              </div>
+            )}
+            {framesyncEnabled && currentSyncMode === "server" && (
               <div className="sensor-mode-info">
-                This camera broadcasts sync timing. Start client cameras first, then this one.
+                This camera is the FrameSync transmitter — it broadcasts timing to every
+                other FrameSync-enabled camera. The controller assigns this automatically;
+                start client cameras first, then this one.
               </div>
             )}
-            {currentSyncMode === "client" && !syncServerModule && (
-              <div className="fov-label fov-cropped">
-                No server camera configured — set another camera to Server first.
-              </div>
-            )}
-            {currentSyncMode === "client" && syncServerModule && (
+            {framesyncEnabled && currentSyncMode === "client" && syncServerModule && (
               <div className="sensor-mode-info">
                 Syncing to {syncServerModule.name} ({syncServerModule.id}).
                 {serverFps != null && <> FPS locked to {serverFps} fps.</>}
+              </div>
+            )}
+            {framesyncEnabled && currentSyncMode === "none" && (
+              <div className="sensor-mode-info sensor-mode-info--muted">
+                Waiting for the controller to assign a FrameSync role — this camera
+                may be offline, or has just been enabled and hasn't been reconciled yet.
               </div>
             )}
             {fpsMismatch && (

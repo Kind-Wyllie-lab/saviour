@@ -198,33 +198,92 @@ class ControllerFacade:
         )
 
 
-    def get_sync_server_camera_params(self) -> dict | None:
-        """Return fps and sensor_mode_index of the camera with sync_mode='server', or None."""
+    def _camera_config_states(self) -> dict:
+        """Return {module_id: ModuleConfigState} for every known camera-type module."""
         modules = self.controller.modules
-        for mid, state in modules._config_states.items():
-            module = modules._modules.get(mid)
-            if not module or "camera" not in module.type:
-                continue
-            camera = (state.true_config or {}).get("camera", {})
-            if camera.get("sync_mode") == "server":
-                fps = camera.get("fps")
-                sensor_mode_index = camera.get("sensor_mode_index")
-                if fps is not None and sensor_mode_index is not None:
-                    return {"fps": fps, "sensor_mode_index": sensor_mode_index, "module_id": mid}
-        return None
+        return {
+            mid: state
+            for mid, state in modules._config_states.items()
+            if (module := modules._modules.get(mid)) and "camera" in module.type
+        }
 
-    def get_sync_client_camera_ids(self) -> list:
-        """Return module IDs of all cameras with sync_mode='client'."""
+    def reconcile_framesync(self) -> dict:
+        """Ensure exactly one online, FrameSync-enabled camera is the sync
+        transmitter ('server'), every other online enabled camera is a
+        'client' pinned to its fps/sensor_mode_index, and any camera that is
+        no longer enabled (or has gone offline) is corrected to 'none' once
+        reachable.
+
+        Deterministic and stateless by design: the elected transmitter is
+        always the lowest module_id among currently online+enabled cameras,
+        recomputed fresh on every call — it never trusts a camera's own
+        self-reported `sync_mode` as an input, only `framesync_enabled`
+        (user intent, stable across reconnects) and liveness. This is what
+        prevents a module that reconnects still locally believing it's the
+        transmitter from ever being treated as one: its stale `sync_mode`
+        is only ever compared against, never read as a vote.
+
+        Called whenever a camera's config is confirmed (so a toggled
+        checkbox or a reconnecting module's fresh config gets picked up)
+        and whenever any module's online status changes (so a dropped
+        transmitter is replaced promptly rather than waiting on an
+        unrelated config echo). Safe to call redundantly — a no-op once
+        every online camera's sync_mode already matches its target role.
+        """
         modules = self.controller.modules
-        clients = []
-        for mid, state in modules._config_states.items():
+        states = self._camera_config_states()
+
+        def online(mid: str) -> bool:
             module = modules._modules.get(mid)
-            if not module or "camera" not in module.type:
+            return bool(module and module.online)
+
+        def camera_cfg(mid: str) -> dict:
+            return (states[mid].true_config or {}).get("camera", {})
+
+        candidates = sorted(
+            mid for mid in states
+            if online(mid) and camera_cfg(mid).get("framesync_enabled")
+        )
+        transmitter_id = candidates[0] if candidates else None
+
+        transmitter_params = None
+        if transmitter_id:
+            tcam = camera_cfg(transmitter_id)
+            transmitter_params = {
+                "fps": tcam.get("fps"),
+                "sensor_mode_index": tcam.get("sensor_mode_index"),
+            }
+
+        roles = {}
+        for mid, state in states.items():
+            if not online(mid):
                 continue
-            camera = (state.true_config or {}).get("camera", {})
-            if camera.get("sync_mode") == "client":
-                clients.append(mid)
-        return clients
+            target_role = (
+                "server" if mid == transmitter_id
+                else "client" if mid in candidates
+                else "none"
+            )
+            roles[mid] = target_role
+            if camera_cfg(mid).get("sync_mode", "none") == target_role:
+                continue
+
+            new_camera = dict(camera_cfg(mid))
+            new_camera["sync_mode"] = target_role
+            if target_role == "client" and transmitter_params:
+                if transmitter_params["fps"] is not None:
+                    new_camera["fps"] = transmitter_params["fps"]
+                if transmitter_params["sensor_mode_index"] is not None:
+                    new_camera["sensor_mode_index"] = (
+                        transmitter_params["sensor_mode_index"]
+                    )
+
+            new_config = dict(state.true_config or {})
+            new_config["camera"] = new_camera
+            self.logger.info(f"FrameSync reconcile: {mid} -> sync_mode={target_role}")
+            self.set_target_module_config(mid, new_config)
+            self.send_command(mid, "set_config", new_config)
+
+        return roles
 
     def sync_export_to_module(self, module_id: str) -> dict:
         """Push this controller's saved export credentials to a single module."""

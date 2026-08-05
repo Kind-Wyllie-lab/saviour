@@ -140,6 +140,40 @@ class TestReconcileFramesync:
         pushed_roles = [cfg["camera"]["sync_mode"] for cfg in pushed.values()]
         assert pushed_roles.count("server") <= 1
 
+    def test_pushed_config_strips_private_keys(self):
+        """A module's true_config carries its internal/private (_-prefixed)
+        keys verbatim (e.g. _codec, _heartbeat_interval). Every other caller
+        of set_target_module_config sends only the filtered public view, so
+        reconcile pushing an unfiltered target_config would make the
+        module's next echo look like a mismatch on every single field the
+        module itself didn't report back (e.g. a whole section that's
+        entirely private keys, like 'communication', disappears from the
+        echo and gets misread as FAILED sync) -- a real bug caught on
+        hardware, not hypothetical."""
+        facade, modules, controller = _make_facade_with_modules()
+        modules.add_module(Module(
+            id="camera_a", name="camera_a", type="camera", version="1.0",
+            ip="10.0.0.2", online=True,
+        ))
+        modules._config_states["camera_a"] = ModuleConfigState(true_config={
+            "communication": {"_command_socket_port": 5555, "_status_socket_port": 5556},
+            "camera": {
+                "framesync_enabled": True,
+                "sync_mode": "none",
+                "fps": 30,
+                "sensor_mode_index": 0,
+                "_codec": "h264",
+            },
+        })
+
+        facade.reconcile_framesync()
+
+        pushed_config = controller.communication.send_command.call_args.args[2]
+        assert "communication" not in pushed_config
+        assert "_codec" not in pushed_config["camera"]
+        assert pushed_config["camera"]["sync_mode"] == "server"
+        assert pushed_config["camera"]["framesync_enabled"] is True
+
     def test_idempotent_once_confirmed(self):
         """Once every camera's true_config already matches its target role
         (simulating the module having echoed the applied config back), a

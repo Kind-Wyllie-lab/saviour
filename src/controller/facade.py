@@ -279,6 +279,13 @@ class ControllerFacade:
 
             new_config = dict(state.true_config or {})
             new_config["camera"] = new_camera
+            # true_config carries the module's internal/private (_-prefixed) keys
+            # verbatim; every other caller of set_target_module_config sends only
+            # the filtered, public view (that's what a module's echoed-back
+            # true_config is compared against in received_module_config), so an
+            # unfiltered target_config here would show as a spurious mismatch on
+            # every single reconcile push.
+            new_config = modules._filter_private_keys(new_config)
             self.logger.info(f"FrameSync reconcile: {mid} -> sync_mode={target_role}")
             self.set_target_module_config(mid, new_config)
             self.send_command(mid, "set_config", new_config)

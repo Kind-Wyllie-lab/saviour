@@ -54,6 +54,13 @@ const GRID_GAP_PX = 12;
 // per-row height budget so the fitted grid doesn't overshoot by a few
 // pixels per row and reintroduce a scrollbar.
 const CARD_CHROME_PX = 40;
+// .mjpeg-stream-card's left+right padding (8px each side, see
+// MJPEGStreamCard.css). The card is width:fit-content clamped to the grid
+// column via max-width:100%, but the video box inside it gets an explicit
+// px width — without subtracting this, that width leaves no room for the
+// card's own padding and the video overflows the card by this amount,
+// producing a horizontal scrollbar inside the card.
+const CARD_PADDING_X = 16;
 
 // Largest (width, height) matching `ratio` that still fits `cols` columns x
 // `rows` rows inside a `containerW` x `containerH` box — so the camera grid
@@ -61,7 +68,7 @@ const CARD_CHROME_PX = 40;
 // dashboard to scroll.
 function fitCellSize(containerW, containerH, cols, rows, ratio) {
   if (!containerW || !containerH || cols < 1 || rows < 1) return null;
-  const availW = containerW - GRID_GAP_PX * (cols - 1);
+  const availW = containerW - GRID_GAP_PX * (cols - 1) - CARD_PADDING_X * cols;
   const availH = containerH - GRID_GAP_PX * (rows - 1) - CARD_CHROME_PX * rows;
   if (availW <= 0 || availH <= 0) return null;
   let width = availW / cols;
@@ -131,14 +138,17 @@ function Dashboard() {
     ...cameraModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.camera,
       label: m.name, isRecording: m.status === "RECORDING",
+      syncStatus: m.config_sync_status,
     })),
     ...micModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.microphone,
       label: `${m.name} — Audio`, isRecording: m.status === "RECORDING",
+      syncStatus: m.config_sync_status,
     })),
     ...ttlModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.ttl,
       label: `${m.name} — TTL`, isRecording: m.status === "RECORDING",
+      syncStatus: m.config_sync_status,
     })),
   ], [cameraModules, micModules, ttlModules]);
 
@@ -178,6 +188,7 @@ function Dashboard() {
                   port={s.port}
                   label={s.label}
                   isRecording={s.isRecording}
+                  syncStatus={s.syncStatus}
                 />
               ))}
             </div>
@@ -213,6 +224,7 @@ function Dashboard() {
                   label={m.name}
                   isRecording={m.status === "RECORDING"}
                   onAspectRatio={setStreamRatio}
+                  syncStatus={m.config_sync_status}
                 />
               ))
             )}
@@ -228,6 +240,7 @@ function Dashboard() {
                 port={STREAM_PORTS.microphone}
                 label={`${m.name} — Audio`}
                 isRecording={m.status === "RECORDING"}
+                syncStatus={m.config_sync_status}
               />
             ))}
             {ttlModules.map(m => (
@@ -237,6 +250,7 @@ function Dashboard() {
                 port={STREAM_PORTS.ttl}
                 label={`${m.name} — TTL`}
                 isRecording={m.status === "RECORDING"}
+                syncStatus={m.config_sync_status}
               />
             ))}
           </div>

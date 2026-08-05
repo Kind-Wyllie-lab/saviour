@@ -406,6 +406,91 @@ class TestAuthGatedHandlers:
             facade.remove_module.assert_called_once_with("cam1")
 
 
+class TestSaveModuleConfig:
+    """save_module_config: blocked while the target module is recording,
+    and propagates the transmitter's fps/sensor_mode_index to its FrameSync
+    clients when saving the currently-elected transmitter's own config."""
+
+    def test_blocked_while_module_is_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = True
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_module_config", {
+                "id": "camera_a", "config": {"camera": {"framesync_enabled": True}}
+            })
+
+            facade.set_target_module_config.assert_not_called()
+            facade.send_command.assert_not_called()
+            received = client.get_received()
+            assert received[-1]["name"] == "module_config_error"
+            assert received[-1]["args"][0]["module_id"] == "camera_a"
+
+    def test_allowed_when_not_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = False
+            facade.get_module_configs.return_value = {}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_module_config", {
+                "id": "camera_a", "config": {"camera": {"framesync_enabled": True}}
+            })
+
+            facade.set_target_module_config.assert_called_once_with(
+                "camera_a", {"camera": {"framesync_enabled": True}}
+            )
+            facade.send_command.assert_called_once_with(
+                "camera_a", "set_config", {"camera": {"framesync_enabled": True}}
+            )
+
+    def test_saving_current_transmitter_propagates_fps_to_clients(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = False
+            facade.get_module_configs.return_value = {
+                "camera_a": {"true_config": {"camera": {"sync_mode": "server", "fps": 30}}},
+                "camera_b": {"true_config": {"camera": {"sync_mode": "client", "fps": 30}}},
+                "camera_c": {"true_config": {"camera": {"sync_mode": "none", "fps": 30}}},
+            }
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_module_config", {
+                "id": "camera_a", "config": {"camera": {"fps": 60, "sensor_mode_index": 3}}
+            })
+
+            propagate_calls = [
+                c for c in facade.send_command.call_args_list if c.args[0] == "camera_b"
+            ]
+            assert len(propagate_calls) == 1
+            pushed_config = propagate_calls[0].args[2]
+            assert pushed_config["camera"]["fps"] == 60
+            assert pushed_config["camera"]["sensor_mode_index"] == 3
+            # camera_c is not a client -- must not receive a propagated push
+            assert not any(c.args[0] == "camera_c" for c in facade.send_command.call_args_list)
+
+    def test_saving_a_non_transmitter_does_not_propagate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = False
+            facade.get_module_configs.return_value = {
+                "camera_a": {"true_config": {"camera": {"sync_mode": "client", "fps": 30}}},
+                "camera_b": {"true_config": {"camera": {"sync_mode": "client", "fps": 30}}},
+            }
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_module_config", {
+                "id": "camera_a", "config": {"camera": {"fps": 60}}
+            })
+
+            assert not any(c.args[0] == "camera_b" for c in facade.send_command.call_args_list)
+
+
 class TestSendCommandDispatch:
     """The generic 'send_command' event -- routes to one module or broadcasts
     to every connected module when module_id == 'all'."""

@@ -306,6 +306,13 @@ class Controller(ABC):
             self.facade.module_offline(module_id)
 
         self.modules.notify_module_online_update(module_id, online)
+        # A camera going offline may have been the FrameSync transmitter (needs a
+        # replacement elected promptly) or a client (doesn't affect anyone else).
+        # A camera coming back online may need correcting away from whatever role
+        # it locally still remembers holding before it dropped. Safe to call
+        # unconditionally — a no-op once every online camera's sync_mode already
+        # matches its target.
+        self.facade.reconcile_framesync()
         # Push updated health (including status field) so the frontend status dot
         # reflects the new state without waiting for the next get_health poll.
         self.web.broadcast_module_health()

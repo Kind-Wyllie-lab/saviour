@@ -487,10 +487,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Only takes effect while this camera is frame-synced (server or client, above).
-              Fixes exposure/gain instead of letting auto-exposure drift, so brightness stays
-              matched across synced cameras — overrides the "Auto gain/exposure" setting on
-              the Image tab whenever FrameSync is active.
+              While frame-synced: fixes exposure/gain so brightness matches across cameras —
+              overrides Image tab's "Auto gain/exposure".
             </div>
             <div className="form-field">
               <label>Lock white balance:</label>
@@ -499,10 +497,8 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "sync_lock_awb"], e)} />
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Only takes effect while this camera is frame-synced. Fixes white balance instead
-              of letting it auto-adjust per camera, so colour stays matched across synced
-              cameras. There's no separate manual white-balance control on the Image tab —
-              white balance is otherwise always automatic.
+              While frame-synced: fixes white balance so colour matches across cameras
+              (no manual control for this elsewhere).
             </div>
 
             <div className="config-section-divider" />

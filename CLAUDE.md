@@ -61,6 +61,13 @@ python3 tools/analyse_framesync.py /home/pi/controller_share/my-session/20260703
 python3 tools/make_aligned_video.py /path/to/session [--output out.mp4] [--layout side|stack|grid]
 # e.g.:
 python3 tools/make_aligned_video.py /home/pi/controller_share/my-session
+
+# Compose a layout video from a session's cameras — no PTP sync_mode required, aligns by
+# each camera's own per-frame timestamp instead (works on unsynced sessions too); no
+# ffmpeg dependency (OpenCV only). Prototype for the frontend feature idea below.
+python3 src/controller/video_compose.py /path/to/session/date_dir [--output out.mp4] [--layout auto|loom]
+# e.g.:
+python3 src/controller/video_compose.py /home/pi/controller_share/my-session/20260703
 ```
 
 ### Installation & role assignment
@@ -293,6 +300,14 @@ These are larger structural issues that require significant refactoring. Recorde
 - [ ] **Samba is the wrong export transport** — designed for Windows interoperability; adds credential management, mount failure modes, and an unreliable driver stack on a homogenous Linux PoE network. `rsync` over SSH or a simple HTTP PUT endpoint would be simpler and easier to debug. The complexity of `export.py` (PENDING rename, staged lists, thread locks) partly compensates for Samba fragility. High effort — requires rewriting all export logic.
 - [x] **Health schema is duplicated** — canonical `ModuleHealthSnapshot` dataclass lives in `src/shared/health.py`; both `src/modules/health.py` and `src/controller/health.py` import from it.
 - [ ] **No authentication on the command bus** — see the Security section (2026-07-27 review) above for the full detail, including the identity-hijack path and the unauthenticated-RCE chain this enables via `update_saviour`.
+
+### Feature ideas
+
+- [ ] **Frontend: session-detail "compose aggregated video" tool** (proposed 2026-08-05) — `SessionList.jsx` currently only offers raw file downloads (individual files or a zip, via `web.py`'s `/api/sessions/<name>/download[...]` routes) for a stopped session; there is no in-browser preview or compositing of a session's multiple camera feeds into one video. Idea: let an operator pick a layout (which camera goes where, how large) from the session-detail view and have the controller render a single composited video server-side, plus optionally overlay a microphone recording's spectrogram and/or a TTL/event module's timeseries as additional panes/tracks. This is genuinely three separate pieces of new infrastructure, not one feature:
+  - **Video layout compositing** — the bounded, reusable part. `src/controller/video_compose.py` (added 2026-08-05) is a standalone CLI prototype: it discovers each camera module's `.ts`/`.mp4` + `*_timestamps.csv` under a session's date directory, resamples every stream onto one common wall-clock grid built from each frame's real `timestamp_ns` (not raw frame index — cameras in a session can run at genuinely different real framerates, see Hardware gotchas), and composites them via OpenCV (no ffmpeg dependency, works even on a dev machine with no system ffmpeg). It has an `auto` grid layout for an arbitrary camera count plus a named `loom` preset (LoomCam large-left / Home top-right / ScreenCam bottom-right) matching the loom rig's actual 3-camera set. Not yet wired into `web.py` — no Flask route, no frontend layout picker, no job queue/progress reporting for a render that could take a while on a Pi. Next steps if this gets picked up: (1) a POST endpoint that takes a layout spec and kicks off a background render (reuse the `export_queue.py`/threaded-job patterns already in this codebase rather than blocking a request); (2) a minimal frontend layout picker (even a fixed set of named presets to start, rather than full drag-resize); (3) generalize `_loom_regions`'s named-preset approach into something manifest-driven once there's a second real preset to justify it, rather than guessing the right abstraction from one example.
+  - **Audio/spectrogram overlay** — not reusable from existing code despite appearances. `src/modules/examples/microphone/microphone_module.py` already renders a spectrogram, but only live (cv2+numpy FFT, MJPEG monitoring stream during recording) — turning that into a post-hoc renderer from a saved audio file is new work, not a wire-up.
+  - **TTL/event timeseries plot** — genuinely from zero. No charting library exists anywhere in the frontend (`package.json` has no Chart.js/Plotly/D3/recharts); picking one and building a first timeseries component is its own small design decision, independent of the video work.
+  Recommendation if this moves forward: ship video-layout compositing as its own PR first (it already has a working prototype and reuses nothing speculative), then treat spectrogram overlay and TTL charting as separate follow-on PRs — bundling all three into one v1 risks stalling on the two components that don't have a head start.
 
 ### Tests
 

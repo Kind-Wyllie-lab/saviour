@@ -78,13 +78,14 @@
 /* Home cam is portrait (rotated 90°) -- give it most of the column's
    height so it isn't squeezed; object-fit: contain on the <img> letterboxes
    the rest either way. */
-.loom-tile-home {
-  flex: 2;
+.loom-tile-home { flex: 2; }
+
+/* ScreenCam: least important feed, deliberately small; sits above Home in
+   the column, hence the border-bottom lives here now. */
+.loom-tile-screen {
+  flex: 1;
   border-bottom: 1px solid var(--border-color);
 }
-
-/* ScreenCam: least important feed, deliberately small */
-.loom-tile-screen { flex: 1; }
 
 /* Microphone: full bottom row width */
 .loom-tile-mic { flex: 1; }

@@ -216,20 +216,6 @@ function LoomDashboard() {
             </div>
 
             <div className="loom-tile-side-col">
-              <div className="loom-tile-wrap loom-tile-home">
-                {homeCam ? (
-                  <StreamTile
-                    key={homeCam.id}
-                    ip={homeCam.ip}
-                    port={CAMERA_PORT}
-                    label={homeCam.name}
-                    isRecording={homeCam.status === "RECORDING"}
-                    syncStatus={homeCam.config_sync_status}
-                  />
-                ) : (
-                  <TilePlaceholder label="No home camera connected" />
-                )}
-              </div>
               <div className="loom-tile-wrap loom-tile-screen">
                 {screenCam ? (
                   <StreamTile
@@ -242,6 +228,20 @@ function LoomDashboard() {
                   />
                 ) : (
                   <TilePlaceholder label="No screen camera connected" />
+                )}
+              </div>
+              <div className="loom-tile-wrap loom-tile-home">
+                {homeCam ? (
+                  <StreamTile
+                    key={homeCam.id}
+                    ip={homeCam.ip}
+                    port={CAMERA_PORT}
+                    label={homeCam.name}
+                    isRecording={homeCam.status === "RECORDING"}
+                    syncStatus={homeCam.config_sync_status}
+                  />
+                ) : (
+                  <TilePlaceholder label="No home camera connected" />
                 )}
               </div>
             </div>

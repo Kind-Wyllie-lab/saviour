@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import "./LoomDashboard.css";
 
 import useModules from "/src/hooks/useModules";
@@ -7,6 +7,7 @@ import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/Healt
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import LoomStimulusControl from "/src/loom/components/LoomStimulusControl/LoomStimulusControl";
+import LoomRecordingTimer from "/src/loom/components/LoomRecordingTimer/LoomRecordingTimer";
 import { StageToggle } from "/src/loom/LoomStageContext";
 
 const CAMERA_PORT  = 8080;
@@ -159,18 +160,32 @@ function TilePlaceholder({ label }) {
 
 function LoomDashboard() {
   const { moduleList } = useModules();
-  const [sideCamIdx, setSideCamIdx] = useState(0);
-  const [micIdx,     setMicIdx]     = useState(0);
+  const [micIdx, setMicIdx] = useState(0);
 
   const loomCam  = moduleList.find((m) => m.type === "loom_camera");
   const sideCams = moduleList.filter((m) => m.type === "camera");
   const mics     = moduleList.filter((m) => m.type === "microphone");
 
-  // Clamp stored indices when modules disconnect
-  const safeSideCamIdx = sideCams.length ? Math.min(sideCamIdx, sideCams.length - 1) : 0;
-  const safeMicIdx     = mics.length     ? Math.min(micIdx,     mics.length     - 1) : 0;
-  const sideCam = sideCams[safeSideCamIdx] ?? null;
-  const mic     = mics[safeMicIdx]         ?? null;
+  // Home and ScreenCam are both plain "camera"-type modules -- there's no
+  // dedicated module type per role -- so they're told apart by name, the
+  // same convention video_compose.py's _loom_regions() already uses for the
+  // post-hoc composited video. Falls back to positional order if a rig's
+  // cameras aren't named this way, so it still renders *something* sane.
+  const homeCam = useMemo(
+    () => sideCams.find((m) => /home/i.test(m.name)) ?? sideCams[0] ?? null,
+    [sideCams]
+  );
+  const screenCam = useMemo(
+    () =>
+      sideCams.find((m) => /screen/i.test(m.name) && m.id !== homeCam?.id) ??
+      sideCams.find((m) => m.id !== homeCam?.id) ??
+      null,
+    [sideCams, homeCam]
+  );
+
+  // Clamp stored index when modules disconnect
+  const safeMicIdx = mics.length ? Math.min(micIdx, mics.length - 1) : 0;
+  const mic = mics[safeMicIdx] ?? null;
 
   return (
     <div className="loom-dashboard">
@@ -182,9 +197,11 @@ function LoomDashboard() {
       <div className="loom-dashboard-main">
         <div className="loom-dashboard-cameras">
 
-          {/* Top row: loom cam (wide, left) + selectable side cam (right) */}
+          {/* Top row: loom cam (large, left) + Home/ScreenCam column (right).
+              All three are shown at once, sized by how much they matter for
+              monitoring -- not cycled through, unlike the mic strip below. */}
           <div className="loom-cameras-top">
-            <div className="loom-tile-wrap loom-tile-main">
+            <div className="loom-tile-wrap loom-tile-loom">
               {loomCam ? (
                 <StreamTile
                   ip={loomCam.ip}
@@ -197,20 +214,36 @@ function LoomDashboard() {
                 <TilePlaceholder label="No loom camera connected" />
               )}
             </div>
-            <div className="loom-tile-wrap loom-tile-side">
-              <TileSelector modules={sideCams} selectedIndex={safeSideCamIdx} onSelect={setSideCamIdx} />
-              {sideCam ? (
-                <StreamTile
-                  key={sideCam.id}
-                  ip={sideCam.ip}
-                  port={CAMERA_PORT}
-                  label={sideCam.name}
-                  isRecording={sideCam.status === "RECORDING"}
-                  syncStatus={sideCam.config_sync_status}
-                />
-              ) : (
-                <TilePlaceholder label="No side camera connected" />
-              )}
+
+            <div className="loom-tile-side-col">
+              <div className="loom-tile-wrap loom-tile-home">
+                {homeCam ? (
+                  <StreamTile
+                    key={homeCam.id}
+                    ip={homeCam.ip}
+                    port={CAMERA_PORT}
+                    label={homeCam.name}
+                    isRecording={homeCam.status === "RECORDING"}
+                    syncStatus={homeCam.config_sync_status}
+                  />
+                ) : (
+                  <TilePlaceholder label="No home camera connected" />
+                )}
+              </div>
+              <div className="loom-tile-wrap loom-tile-screen">
+                {screenCam ? (
+                  <StreamTile
+                    key={screenCam.id}
+                    ip={screenCam.ip}
+                    port={CAMERA_PORT}
+                    label={screenCam.name}
+                    isRecording={screenCam.status === "RECORDING"}
+                    syncStatus={screenCam.config_sync_status}
+                  />
+                ) : (
+                  <TilePlaceholder label="No screen camera connected" />
+                )}
+              </div>
             </div>
           </div>
 
@@ -237,6 +270,7 @@ function LoomDashboard() {
 
         {/* Right panel */}
         <div className="loom-dashboard-panel">
+          <LoomRecordingTimer />
           <HealthSummaryWidget />
           <ModuleList modules={moduleList} />
           <LoomStimulusControl />

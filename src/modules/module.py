@@ -1053,6 +1053,13 @@ class Module(ABC):
         username   = self.config.get("export.share_username", "saviour_module")
         mount_point = self.export.mount_point
         _CHECK_TIMEOUT_S = 8
+        # Several modules pressing "Check Ready" at once all hit the controller's
+        # Samba server within the same instant; smbd can transiently refuse or
+        # stall a connection under that simultaneous-connect burst even though
+        # the share is otherwise healthy. A single attempt made a random one or
+        # two modules fail every time; retry like export.py's _mount_share does.
+        _CHECK_MOUNT_MAX_ATTEMPTS = 3
+        _CHECK_MOUNT_RETRY_DELAY_S = 1.5
 
         os.makedirs(mount_point, exist_ok=True)
 
@@ -1060,22 +1067,27 @@ class Module(ABC):
         mounted_for_check = False
 
         def _mount() -> tuple[bool, str]:
-            """Mount the share; return (success, error_msg)."""
+            """Mount the share, retrying transient failures; return (success, err)."""
             auth = f"username={username},password={password}"
-            r = subprocess.run(
-                [
-                    "sudo", "mount", "-t", "cifs",
-                    f"//{share_ip}/{share_path}", mount_point,
-                    "-o", f"{auth},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
-                ],
-                capture_output=True, text=True, timeout=_CHECK_TIMEOUT_S,
-            )
-            if r.returncode != 0:
-                return False, (
-                    f"Cannot mount //{share_ip}/{share_path}: "
-                    f"{r.stderr.strip() or 'unknown error'}"
-                )
-            return True, ""
+            last_err = "unknown error"
+            for attempt in range(1, _CHECK_MOUNT_MAX_ATTEMPTS + 1):
+                try:
+                    r = subprocess.run(
+                        [
+                            "sudo", "mount", "-t", "cifs",
+                            f"//{share_ip}/{share_path}", mount_point,
+                            "-o", f"{auth},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none",
+                        ],
+                        capture_output=True, text=True, timeout=_CHECK_TIMEOUT_S,
+                    )
+                    if r.returncode == 0:
+                        return True, ""
+                    last_err = r.stderr.strip() or "unknown error"
+                except subprocess.TimeoutExpired:
+                    last_err = f"mount timed out after {_CHECK_TIMEOUT_S}s"
+                if attempt < _CHECK_MOUNT_MAX_ATTEMPTS:
+                    time.sleep(_CHECK_MOUNT_RETRY_DELAY_S)
+            return False, f"Cannot mount //{share_ip}/{share_path}: {last_err}"
 
         def _test_write() -> bool:
             test_path = os.path.join(mount_point, ".saviour_check")

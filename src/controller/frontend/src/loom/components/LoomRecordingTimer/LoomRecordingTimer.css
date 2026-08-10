@@ -1,0 +1,91 @@
+.loom-timer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 16px;
+  text-align: center;
+}
+
+.loom-timer--idle {
+  opacity: 0.6;
+}
+
+.loom-timer--recording {
+  background-color: color-mix(in srgb, #2e7d32 14%, var(--card-bg-color));
+  border-color: color-mix(in srgb, #2e7d32 45%, var(--border-color));
+}
+
+.loom-timer--near-end {
+  background-color: color-mix(in srgb, #c0580a 16%, var(--card-bg-color));
+  border-color: color-mix(in srgb, #c0580a 50%, var(--border-color));
+}
+
+.loom-timer-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 0.8em;
+}
+
+.loom-timer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #2e7d32;
+  flex-shrink: 0;
+  animation: loom-timer-pulse 1.4s ease-in-out infinite;
+}
+
+.loom-timer--near-end .loom-timer-dot {
+  background-color: #c0580a;
+}
+
+@keyframes loom-timer-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+.loom-timer-session-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loom-timer-extra {
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.loom-timer-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.loom-timer-label {
+  font-size: 0.82em;
+  opacity: 0.75;
+}
+
+.loom-timer-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-color) 12%, transparent);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.loom-timer-bar-fill {
+  height: 100%;
+  background-color: #2e7d32;
+  transition: width 1s linear;
+}
+
+.loom-timer--near-end .loom-timer-bar-fill {
+  background-color: #c0580a;
+}

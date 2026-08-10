@@ -57,6 +57,61 @@
   word-break: break-all;
 }
 
+/* ── Timed recording ────────────────────────────────────────────────────── */
+
+.loom-recording-duration {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85em;
+}
+
+.loom-recording-duration-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.loom-recording-duration-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Matches .duration-input/.duration-unit in
+   basic/pages/Recording/NewSessionForm/NewSessionForm.css — see the
+   .primary-button/.secondary-button note above for why this is duplicated
+   rather than imported. */
+.duration-input {
+  width: 60px;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  font-size: 0.9rem;
+  background: var(--bg-color);
+  color: var(--text-color);
+  text-align: center;
+  transition: border 0.15s ease;
+}
+
+.duration-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.duration-input:disabled {
+  opacity: 0.4;
+}
+
+.duration-unit {
+  font-size: 0.88rem;
+  color: var(--text-color);
+  opacity: 0.7;
+}
+
 /* ── Warnings ───────────────────────────────────────────────────────────── */
 
 .loom-recording-warning {

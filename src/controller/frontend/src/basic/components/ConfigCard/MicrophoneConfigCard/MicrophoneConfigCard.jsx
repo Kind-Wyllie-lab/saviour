@@ -262,13 +262,14 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
         <div className="monitor-controls__row">
           <span className="monitor-controls__label">Plot</span>
           {[
-            ["spectrogram",    "Spectrogram"],
-            ["spectrum",       "Spectrum"],
-            ["peaks",          "Peaks"],
-            ["compact_peaks",  "Compact Peaks"],
-            ["waveform",       "Waveform"],
-            ["history",        "History"],
-            ["band_power",     "Band Power"],
+            ["spectrogram",         "Spectrogram"],
+            ["spectrogram_compact", "Spectrogram (no meter)"],
+            ["spectrum",            "Spectrum"],
+            ["peaks",               "Peaks"],
+            ["compact_peaks",       "Compact Peaks"],
+            ["waveform",            "Waveform"],
+            ["history",             "History"],
+            ["band_power",          "Band Power"],
           ].map(([val, lbl]) => (
             <button key={val} type="button"
               className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
@@ -277,7 +278,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             </button>
           ))}
         </div>
-        {(plotMode === "spectrogram" || plotMode === "spectrum") && (
+        {(plotMode === "spectrogram" || plotMode === "spectrogram_compact" || plotMode === "spectrum") && (
           <div className="monitor-controls__row">
             <span className="monitor-controls__label">Range</span>
             {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
@@ -497,12 +498,13 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
             <div className="monitor-controls__row">
               <span className="monitor-controls__label">Plot</span>
               {[
-                ["spectrogram", "Spectrogram"],
-                ["spectrum",    "Spectrum"],
-                ["peaks",       "Peaks"],
-                ["waveform",    "Waveform"],
-                ["history",     "History"],
-                ["band_power",  "Band Power"],
+                ["spectrogram",         "Spectrogram"],
+                ["spectrogram_compact", "Spectrogram (no meter)"],
+                ["spectrum",            "Spectrum"],
+                ["peaks",               "Peaks"],
+                ["waveform",            "Waveform"],
+                ["history",             "History"],
+                ["band_power",          "Band Power"],
               ].map(([val, lbl]) => (
                 <button key={val} type="button"
                   className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
@@ -511,7 +513,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
                 </button>
               ))}
             </div>
-            {(plotMode === "spectrogram" || plotMode === "spectrum") && (
+            {(plotMode === "spectrogram" || plotMode === "spectrogram_compact" || plotMode === "spectrum") && (
               <div className="monitor-controls__row">
                 <span className="monitor-controls__label">Range</span>
                 {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (

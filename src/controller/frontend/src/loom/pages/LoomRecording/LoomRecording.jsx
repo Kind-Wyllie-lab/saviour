@@ -20,6 +20,8 @@ function safeName(str) {
   return (str || "").replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");
 }
 
+const DEFAULT_DURATION_MINUTES = 12;
+
 export default function LoomRecording() {
   const { stage } = useLoomStage();
   const { moduleList } = useModules();
@@ -32,6 +34,10 @@ export default function LoomRecording() {
     return () => clearInterval(id);
   }, []);
 
+  const [timedEnabled, setTimedEnabled] = useState(true);
+  const [durationMinutes, setDurationMinutes] = useState(String(DEFAULT_DURATION_MINUTES));
+  const durationValid = !timedEnabled || parseInt(durationMinutes || 0) > 0;
+
   const cameraModules = useMemo(
     () => moduleList.filter((m) => CAMERA_TYPES.has(m.type)),
     [moduleList]
@@ -42,7 +48,7 @@ export default function LoomRecording() {
 
   const allReady     = targetModules.length > 0 && targetModules.every((m) => m.status === "READY");
   const anyRecording = targetModules.some((m) => m.status === "RECORDING");
-  const canStart     = !!experimentName && allReady && !anyRecording;
+  const canStart     = !!experimentName && allReady && !anyRecording && durationValid;
   const notReadyModules = targetModules.filter((m) => m.status === "NOT_READY");
 
   const nameAlreadyUsed = experimentName
@@ -65,6 +71,7 @@ export default function LoomRecording() {
     socket.emit("create_session", {
       target,
       session_name: `${safeName(experimentName)}-${formatTs(now)}`,
+      duration_minutes: timedEnabled ? parseInt(durationMinutes || 0) : null,
       researcher: experimenter || null,
     });
   };
@@ -96,6 +103,32 @@ export default function LoomRecording() {
           <div className="loom-recording-preview">
             Session name: <strong>{sessionPreview}</strong>
           </div>
+
+          <div className="loom-recording-duration">
+            <label className="loom-recording-duration-toggle">
+              <input
+                type="checkbox"
+                checked={timedEnabled}
+                onChange={(e) => setTimedEnabled(e.target.checked)}
+              />
+              Timed recording — auto-stop after
+            </label>
+            <div className="loom-recording-duration-inputs">
+              <input
+                type="number"
+                min="1"
+                max="999"
+                disabled={!timedEnabled}
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(e.target.value)}
+                className="duration-input"
+              />
+              <span className="duration-unit">min</span>
+            </div>
+          </div>
+          {!durationValid && (
+            <p className="loom-recording-warning">Enter a duration greater than 0.</p>
+          )}
 
           {nameAlreadyUsed && (
             <p className="loom-recording-warning">

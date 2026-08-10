@@ -146,8 +146,20 @@ class Modules:
 
     def module_discovery(self, module: Module) -> None:
         """Called by Network when zeroconf reports a new or updated module."""
-        action = "Updating" if module.id in self._modules else "Adding new"
-        self.logger.info(f"{action} module {module.id}")
+        if module.id in self._modules:
+            # Already-known module re-announcing over mDNS (e.g. an avahi TTL
+            # refresh) -- update_service() in network.py calls
+            # facade.module_rediscovered() immediately before this, which
+            # deliberately preserves a RECORDING status; add_module()'s
+            # wholesale replace with this freshly-constructed, mostly-default
+            # Module (status=WAITING, config={}, last_heartbeat_time=0.0, ...)
+            # would immediately undo that protection. Nothing here needs
+            # re-onboarding: name/version/ip freshness is already handled via
+            # the narrower update_module_version()/module_ip_changed() paths
+            # triggered by the module's own status/health reports.
+            self.logger.info(f"{module.id} re-announced via mDNS — no state change")
+            return
+        self.logger.info(f"Adding new module {module.id}")
         self.add_module(module)
         self.broadcast_updated_modules()
         # Kick off a retry loop — the immediate get_config in facade.module_discovery

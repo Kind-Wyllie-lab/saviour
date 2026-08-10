@@ -1458,6 +1458,7 @@ class Recording:
                                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                                 session.state = SessionState.ERROR
                                 self.facade.update_sessions(self.sessions)
+                                self._log_session_event(session_name, "FAULT", msg)
                                 if self._notify_enabled("notify_session_faults"):
                                     self.facade.send_alert(
                                         key=f"session_error_{session_name}",
@@ -1471,6 +1472,11 @@ class Recording:
                             # All modules we were actively checking are now recording — recover.
                             # Guard: if should_be_recording is empty (e.g. all states are "unknown"
                             # after a restart) we cannot confirm recovery, so leave the ERROR state.
+                            reason = session.error_message or "faulted modules"
+                            recovery_msg = f"Recovered — {reason} now recording"
+                            self._log_session_event(
+                                session_name, "RECOVERY", recovery_msg
+                            )
                             session.error_message = ""
                             session.state = SessionState.ACTIVE
                             for m in session.modules:

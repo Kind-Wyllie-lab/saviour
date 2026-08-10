@@ -308,13 +308,17 @@ class TestCheckExport:
 
             with patch("src.modules.module.os.path.ismount", return_value=False), \
                  patch("src.modules.module.subprocess.run",
-                       return_value=MagicMock(returncode=1, stderr="no route to host")) as mock_run:
+                       return_value=MagicMock(returncode=1, stderr="no route to host")) as mock_run, \
+                 patch("src.modules.module.time.sleep"):
                 result, message = m._check_export()
 
         assert result is False
         assert "Cannot mount" in message
         assert "no route to host" in message
-        mock_run.assert_called_once()  # the failed mount only -- never marked mounted_for_check
+        # Transient-failure retry (see _check_export's _mount()) means every
+        # attempt fails the same way here -- all 3 get exhausted, never marked
+        # mounted_for_check either way.
+        assert mock_run.call_count == 3
 
     def test_mount_timeout_reports_clear_message(self):
         with tempfile.TemporaryDirectory() as mount_point:
@@ -358,9 +362,13 @@ class TestCheckExport:
                  patch("src.modules.module.subprocess.run",
                        side_effect=[
                            MagicMock(returncode=0),  # lazy umount
-                           MagicMock(returncode=1, stderr="still busy"),  # remount fails
+                           # remount fails on all 3 retry attempts
+                           MagicMock(returncode=1, stderr="still busy"),
+                           MagicMock(returncode=1, stderr="still busy"),
+                           MagicMock(returncode=1, stderr="still busy"),
                        ]), \
-                 patch("builtins.open", side_effect=OSError("stale CIFS handle")):
+                 patch("builtins.open", side_effect=OSError("stale CIFS handle")), \
+                 patch("src.modules.module.time.sleep"):
                 result, message = m._check_export()
 
         assert result is False

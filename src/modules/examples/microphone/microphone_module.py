@@ -473,10 +473,18 @@ class AudiomothModule(Module):
                      mode: str, freq_range: str, sample_rate: int) -> np.ndarray:
         """Render one AudioMoth panel onto a (cell_h, cell_w, 3) uint8 array.
 
-        mode:       'spectrogram' | 'spectrum' | 'peaks'
+        mode:       'spectrogram' | 'spectrogram_compact' | 'spectrum' | 'peaks'
         freq_range: 'band' (configured lo–hi) | 'full' (0–Nyquist)  (ignored for peaks)
         """
-        PLOT_H   = cell_h - 115  # header 30 + gap 25 + meter 30 + labels 20 + breathing room
+        # 'spectrogram_compact' drops the level/gain meter strip entirely (see
+        # the meter block below) to leave more room for the spectrogram itself
+        # — meant for space-constrained dashboard tiles where only the
+        # vocalisation content matters, not the input gain.
+        if mode == 'spectrogram_compact':
+            PLOT_H = cell_h - 45  # header 30 + breathing room, no meter/labels strip
+        else:
+            # header 30 + gap 25 + meter 30 + labels 20 + breathing room
+            PLOT_H = cell_h - 115
         PADDING  = 12
         LABEL_W  = 28
         DB_MIN, DB_MAX = -80, 0
@@ -755,34 +763,37 @@ class AudiomothModule(Module):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.28, (110, 110, 110), 1)
 
         # ── Peak meter with peak hold ────────────────────────────────────────
-        bx0, bx1 = PADDING, cell_w - PADDING
-        by0, by1 = py1 + 25, py1 + 53
-        bw = bx1 - bx0
+        # Skipped for 'spectrogram_compact' — that mode exists specifically to
+        # not spend vertical space on gain/level information.
+        if mode != 'spectrogram_compact':
+            bx0, bx1 = PADDING, cell_w - PADDING
+            by0, by1 = py1 + 25, py1 + 53
+            bw = bx1 - bx0
 
-        now  = time.time()
-        hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
-        if peak_db >= hold['value_db'] or (now - hold['time']) > PEAK_HOLD_DURATION:
-            self.peak_hold_data[serial] = {'value_db': peak_db, 'time': now}
-            hold_db = peak_db
-        else:
-            hold_db = hold['value_db']
+            now  = time.time()
+            hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
+            if peak_db >= hold['value_db'] or (now - hold['time']) > PEAK_HOLD_DURATION:
+                self.peak_hold_data[serial] = {'value_db': peak_db, 'time': now}
+                hold_db = peak_db
+            else:
+                hold_db = hold['value_db']
 
-        level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
-        bar_w = int(level_norm * bw)
-        bar_colour = (0, 50, 220) if level_norm > 0.85 else (0, 140, 230) if level_norm > 0.65 else (0, 200, 80)
-        cv2.rectangle(cell, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
-        cv2.rectangle(cell, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
+            level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
+            bar_w = int(level_norm * bw)
+            bar_colour = (0, 50, 220) if level_norm > 0.85 else (0, 140, 230) if level_norm > 0.65 else (0, 200, 80)
+            cv2.rectangle(cell, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
+            cv2.rectangle(cell, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
 
-        hold_x = bx0 + int(max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN))) * bw)
-        cv2.line(cell, (hold_x, by0), (hold_x, by1), (255, 255, 255), 2)
+            hold_x = bx0 + int(max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN))) * bw)
+            cv2.line(cell, (hold_x, by0), (hold_x, by1), (255, 255, 255), 2)
 
-        cv2.putText(cell, "Level (dBFS)", (bx0, by0 - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.30, (100, 100, 100), 1)
-        for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
-            tx = bx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * bw)
-            cv2.line(cell, (tx, by1), (tx, by1 + 4), (100, 100, 100), 1)
-            cv2.putText(cell, str(db_tick), (tx - 6, by1 + 13),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.26, (100, 100, 100), 1)
+            cv2.putText(cell, "Level (dBFS)", (bx0, by0 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.30, (100, 100, 100), 1)
+            for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
+                tx = bx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * bw)
+                cv2.line(cell, (tx, by1), (tx, by1 + 4), (100, 100, 100), 1)
+                cv2.putText(cell, str(db_tick), (tx - 6, by1 + 13),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.26, (100, 100, 100), 1)
 
         return cell
 
@@ -796,8 +807,9 @@ class AudiomothModule(Module):
                               layout: str = 'stacked') -> bytes | None:
         """Compose a JPEG frame for all connected audiomoths.
 
-        mode:       'spectrogram' | 'spectrum' | 'peaks' | 'waveform' | 'history' | 'band_power'
-        freq_range: 'band' | 'full'  (only used by spectrogram/spectrum)
+        mode:       'spectrogram' | 'spectrogram_compact' | 'spectrum' | 'peaks' |
+                    'waveform' | 'history' | 'band_power'
+        freq_range: 'band' | 'full'  (only used by spectrogram/spectrum/spectrogram_compact)
         layout:     'stacked' | 'grid'  (grid = 2-column when n > 1)
         """
         try:
@@ -810,7 +822,7 @@ class AudiomothModule(Module):
             sample_rate = self.config.get("audiomoth.sample_rate", 192000)
             WIDTH = 800
             ROW_H = {'peaks': 90, 'waveform': 120, 'history': 120,
-                     'band_power': 130}.get(mode, 315)
+                     'band_power': 130, 'spectrogram_compact': 200}.get(mode, 315)
 
             if not data_snapshot:
                 frame = np.zeros((200, WIDTH, 3), dtype=np.uint8)

@@ -5,7 +5,6 @@ import useModules from "/src/hooks/useModules";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
-import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
 // MJPEG stream port by module type
 const STREAM_PORTS = {
@@ -156,8 +155,6 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      <RecordingStatusWidget />
-
       {groups.length > 0 && (
         <div className="dashboard-group-filter">
           <label htmlFor="group-select">Group:</label>

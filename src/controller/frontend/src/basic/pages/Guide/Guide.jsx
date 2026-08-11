@@ -174,7 +174,6 @@ function Guide() {
   return (
     <main className="guide-page">
       <div className="guide-header">
-        <h2>Guide</h2>
         <p className="guide-intro">
           Instructions and video walkthroughs for setting up and running SAVIOUR.
         </p>

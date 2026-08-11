@@ -10,6 +10,7 @@ import System from "/src/basic/pages/System/System";
 import Guide from "/src/basic/pages/Guide/Guide";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
+import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import useSessions from "/src/hooks/useSessions";
 import { LoomStageProvider } from "/src/loom/LoomStageContext";
 
@@ -60,6 +61,7 @@ function App() {
       <div className="app">
         <Sidebar navItems={pages} />
         <div className="content">
+          <RecordingStatusWidget />
           <Routes>
             <Route path="/"          element={<Dashboard />} />
             <Route path="/settings"  element={<Settings />} />

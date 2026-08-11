@@ -6,10 +6,6 @@
   margin-bottom: 16px;
 }
 
-.guide-header h2 {
-  margin: 0 0 4px;
-}
-
 .guide-intro {
   color: var(--secondary-text-color);
   margin: 0;

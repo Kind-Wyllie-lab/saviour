@@ -275,7 +275,6 @@ export default function System() {
   return (
     <main className="system-page">
       <div className="system-header">
-        <h2>System Health</h2>
         <div className="system-header-actions">
           <button className="refresh-btn" type="button" onClick={() => {
             refresh();

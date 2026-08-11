@@ -85,8 +85,6 @@ function Settings() {
 
   return (
     <main className="settings">
-      <h2>Module Settings</h2>
-
       <label className="settings-label">
         <select
           value={selectedId}

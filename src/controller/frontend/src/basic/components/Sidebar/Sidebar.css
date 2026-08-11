@@ -39,6 +39,9 @@
         flex-direction: column;
         gap: 10px;
         width: 100%;
+        /* Floor so the title-to-nav gap stays generous even when hostname
+           is unset and .sidebar-hostname's own bottom margin doesn't render. */
+        margin-top: 10px;
     }
 
     .sidebar-title {
@@ -60,9 +63,11 @@
         /* Tight against the title above (subtitle-like) via the title's own
            2px bottom margin — flex children's margins don't collapse, so
            this stays exactly 2px, not added to. Bottom margin is deliberately
-           larger than .main-nav's own 10px inter-link gap, so the nav reads
-           as its own group rather than an extension of the title block. */
-        margin: 0 0 20px;
+           much larger than .main-nav's own 10px inter-link gap (and stacks
+           with .main-nav's own margin-top, since flex-child margins don't
+           collapse), so the nav reads as its own group rather than an
+           extension of the title block. */
+        margin: 0 0 32px;
         word-break: break-all;
         padding: 0 8px;
     }
@@ -228,6 +233,32 @@
 
     .footer a:hover {
         color: var(--accent-color);
+    }
+
+    .footer-links {
+        display: flex;
+        flex-direction: row;
+        gap: 14px;
+        justify-content: center;
+    }
+
+    .footer-link {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        opacity: 0.75;
+        transition: opacity 0.15s;
+    }
+
+    .footer-link:hover {
+        opacity: 1;
+    }
+
+    .footer-link svg {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
     }
 
 /* Update modal ────────────────────────────────────────────── */

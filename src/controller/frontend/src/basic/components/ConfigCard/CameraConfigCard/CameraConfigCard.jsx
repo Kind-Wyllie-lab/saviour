@@ -626,9 +626,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="sensor-mode-info sensor-mode-info--muted">
               Opens a window on each detected physical monitor, picked by GLFW's
               raw detection order. There's no way to know in advance which is
-              Monitor 0 vs 1 — use the "Near screen" test flash button below to
+              Monitor 0 vs 1 — use the "Test screens" flash button below to
               check, and switch this if it's backwards. If a second monitor is
-              detected it automatically gets the keepalive/near-test display.
+              detected it automatically gets the near/keepalive-only display.
             </div>
             <div className="form-field">
               <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>
@@ -756,7 +756,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["loom_stimulus", "photodiode_y_ndc"], e)} />
             </div>
             <div className="config-section-divider" />
-            <div className="sensor-mode-info sensor-mode-info--muted">Near screen</div>
+            <div className="sensor-mode-info sensor-mode-info--muted">Keep-alive (both screens)</div>
             <div className="form-field">
               <label>Keep-alive mode:</label>
               <select value={formData?.loom_stimulus?.keepalive_mode ?? "corner"}
@@ -772,10 +772,15 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.loom_stimulus?.keepalive_interval_s ?? 10}
                 onChange={e => handleChange(["loom_stimulus", "keepalive_interval_s"], e)} />
             </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Applies to the near screen at all times, and to the stimulus screen
+              only between trials — a tick never fires mid-loom, so it can't
+              blank the animation or the photodiode marker.
+            </div>
             <div className="form-field">
-              <label>Near screen:</label>
+              <label>Test screens:</label>
               <button className="btn btn--small"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_near_screen", params: { duration_s: 2.0 } })}>
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_screens", params: { duration_s: 2.0 } })}>
                 Test (2 s flash)
               </button>
             </div>

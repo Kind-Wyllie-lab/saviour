@@ -12,4 +12,10 @@
   .content {
     flex: 1;
     overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .content > .recording-status-widget {
+    flex-shrink: 0;
   }

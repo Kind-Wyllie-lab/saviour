@@ -11,13 +11,6 @@
   align-items: center;   /* CENTER CONTENT */
 }
 
-.settings h2 {
-  margin: 12px;
-  font-size: 22px;
-  font-weight: 600;
-  text-align: center;
-}
-
 .settings-label {
   display: flex;
   flex-direction: column;

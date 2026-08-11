@@ -141,12 +141,12 @@ function Dashboard() {
     })),
     ...micModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.microphone,
-      label: `${m.name} — Audio`, isRecording: m.status === "RECORDING",
+      label: `${m.name} - Audio`, isRecording: m.status === "RECORDING",
       syncStatus: m.config_sync_status,
     })),
     ...ttlModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.ttl,
-      label: `${m.name} — TTL`, isRecording: m.status === "RECORDING",
+      label: `${m.name} - TTL`, isRecording: m.status === "RECORDING",
       syncStatus: m.config_sync_status,
     })),
   ], [cameraModules, micModules, ttlModules]);
@@ -235,7 +235,7 @@ function Dashboard() {
                 key={m.id}
                 ip={m.ip}
                 port={STREAM_PORTS.microphone}
-                label={`${m.name} — Audio`}
+                label={`${m.name} - Audio`}
                 isRecording={m.status === "RECORDING"}
                 syncStatus={m.config_sync_status}
               />
@@ -245,7 +245,7 @@ function Dashboard() {
                 key={m.id}
                 ip={m.ip}
                 port={STREAM_PORTS.ttl}
-                label={`${m.name} — TTL`}
+                label={`${m.name} - TTL`}
                 isRecording={m.status === "RECORDING"}
                 syncStatus={m.config_sync_status}
               />

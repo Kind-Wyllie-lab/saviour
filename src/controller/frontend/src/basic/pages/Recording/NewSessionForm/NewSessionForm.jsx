@@ -19,7 +19,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
   }, []);
 
   const sessionNamePreview = useMemo(() => {
-    if (!experimentName) return "—";
+    if (!experimentName) return "-";
     const p = (n) => String(n).padStart(2, "0");
     const ts = `${now.getFullYear()}${p(now.getMonth()+1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
     const safe = experimentName.replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");
@@ -202,9 +202,9 @@ function NewSessionForm({ modules, sessionList = {} }) {
             value={recordingMode}
             onChange={(e) => setRecordingMode(e.target.value)}
           >
-            <option value="immediate">Immediate — manual stop</option>
-            <option value="timed">Timed — auto-stop after duration</option>
-            <option value="scheduled">Scheduled — daily time window</option>
+            <option value="immediate">Immediate - manual stop</option>
+            <option value="timed">Timed - auto-stop after duration</option>
+            <option value="scheduled">Scheduled - daily time window</option>
           </select>
         </div>
 
@@ -275,7 +275,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
           <p className="form-warning">{submitError}</p>
         )}
         {nameAlreadyUsed && (
-          <p className="form-warning">Session name already used — previous recordings exist with this name. Consider updating the trial or rat ID.</p>
+          <p className="form-warning">Session name already used - previous recordings exist with this name. Consider updating the trial or rat ID.</p>
         )}
         {recordingMode !== "scheduled" && !canStart && anyTargetRecording && (
           <p className="form-warning">One or more target modules are already recording.</p>
@@ -288,7 +288,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
         )}
         {recordingMode !== "scheduled" && ptpSyncStatus !== null && !ptpSyncStatus.ok && (
           <p className="form-warning">
-            PTP not synchronised —{" "}
+            PTP not synchronised -{" "}
             {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
           </p>
         )}

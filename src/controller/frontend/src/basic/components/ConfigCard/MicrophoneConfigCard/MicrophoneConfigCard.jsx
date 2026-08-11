@@ -383,7 +383,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               <label>Gain:</label>
               <select value={amGain} onChange={e => handleChange(["audiomoth", "gain"], e)}>
                 {GAIN_LABELS.map((label, i) => (
-                  <option key={i} value={i}>{i} — {label}</option>
+                  <option key={i} value={i}>{i} - {label}</option>
                 ))}
               </select>
             </div>
@@ -553,7 +553,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
         <>
           {allSerials.length === 0 ? (
             <div className="sensor-mode-info sensor-mode-info--muted">
-              No AudioMoths discovered — connect devices and refresh
+              No AudioMoths discovered - connect devices and refresh
             </div>
           ) : allSerials.map(serial => (
             <div key={serial} className="form-field">

@@ -84,24 +84,26 @@ function Settings() {
       .find(m => m.config?.camera?.sync_mode === "server") ?? null;
 
   return (
-    <main className="settings">
-      <label className="settings-label">
-        <select
-          value={selectedId}
-          onChange={(e) => trySelectId(e.target.value)}
-        >
-          {moduleOptions.map((opt) => (
-            <option key={opt.id} value={opt.id}>
-              {opt.name}
-            </option>
-          ))}
-        </select>
-      </label>
+    <main className="settings-page">
+      <div className="settings-toolbar">
+        <label className="settings-label">
+          <span className="settings-label-text">Device:</span>
+          <select
+            value={selectedId}
+            onChange={(e) => trySelectId(e.target.value)}
+          >
+            {moduleOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       <div className="module-grid">
         <ConfigCard id={selectedId} module={selectedModule} clipboard={clipboard} onCopy={setClipboard} syncServerModule={syncServerModule} />
       </div>
-
     </main>
   );
 }

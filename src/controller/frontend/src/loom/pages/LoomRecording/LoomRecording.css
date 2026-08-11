@@ -1,7 +1,9 @@
 .loom-recording-page {
   width: 100%;
   min-height: 100%;
-  padding: 24px 32px;
+  /* Matches System/Guide's page padding so all routed pages read as one
+     family instead of each inventing its own value. */
+  padding: 16px 24px;
   box-sizing: border-box;
   overflow-y: auto;
 }
@@ -117,7 +119,7 @@
 .loom-recording-warning {
   margin: 0;
   font-size: 0.85em;
-  color: #c0580a;
+  color: var(--warning-color, #c0580a);
 }
 
 /* ── Action buttons ─────────────────────────────────────────────────────── */
@@ -128,48 +130,7 @@
   justify-content: flex-end;
 }
 
-/* Matches .primary-button / .secondary-button in
-   basic/pages/Recording/NewSessionForm/NewSessionForm.css — every other
-   variant's recording page renders through NewSessionForm and picks those
-   up for free, but LoomRecording is a standalone page that never loads
-   that file, so it needs its own copy to look the same. */
-.primary-button {
-  padding: 0.5rem 1.1rem;
-  border-radius: 6px;
-  border: none;
-  font-weight: 600;
-  font-size: 0.9rem;
-  cursor: pointer;
-  background-color: var(--accent-color);
-  color: white;
-  transition: filter 0.15s ease;
-}
-
-.primary-button:hover:not(:disabled) {
-  filter: brightness(0.88);
-}
-
-.primary-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.secondary-button {
-  padding: 0.5rem 1.1rem;
-  border-radius: 6px;
-  border: 1px solid var(--border-color);
-  background-color: transparent;
-  color: var(--text-color);
-  font-weight: 500;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-
-.secondary-button:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
-}
+/* .primary-button / .secondary-button now live in the shared index.css. */
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 

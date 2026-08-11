@@ -31,7 +31,7 @@ function ModuleList({ modules }) {
 
   // Shorten "v0.1.6-8-gabcd1234" to "v0.1.6 +8" so it fits the column.
   const formatVersion = (v) => {
-    if (v == null || typeof v !== "string" || v === "UNKNOWN_VERSION") return "—";
+    if (v == null || typeof v !== "string" || v === "UNKNOWN_VERSION") return "-";
     const parts = v.split("-");
     if (parts.length === 1) return parts[0]; // clean tag e.g. "v0.1.6"
     return `${parts[0]} +${parts[1]}`;       // e.g. "v0.1.6 +8"
@@ -92,7 +92,7 @@ function ModuleList({ modules }) {
                 <span className="module-group-cell">
                   {group
                     ? <span className="module-group-badge">{group}</span>
-                    : <span className="cell--muted">—</span>
+                    : <span className="cell--muted">-</span>
                   }
                 </span>
                 <span className="module-ip">{module.ip}</span>

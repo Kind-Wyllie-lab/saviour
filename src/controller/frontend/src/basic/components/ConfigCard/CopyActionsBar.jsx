@@ -14,7 +14,7 @@ function CopyActionsBar({ activeTab, tabSectionMap, formData, moduleType, module
       {hasSection && (
         <>
           <button type="button" className="config-action-pill"
-            onClick={() => onCopy?.({ label: `${section.label} — ${moduleName}`, data: { [section.key]: sectionData } })}>
+            onClick={() => onCopy?.({ label: `${section.label} - ${moduleName}`, data: { [section.key]: sectionData } })}>
             Copy {section.label}
           </button>
           {moduleType && (
@@ -32,7 +32,7 @@ function CopyActionsBar({ activeTab, tabSectionMap, formData, moduleType, module
         </>
       )}
       <button type="button" className="config-action-pill"
-        onClick={() => onCopy?.({ label: `All — ${moduleName}`, data: filterPrivateKeys(formData) })}>
+        onClick={() => onCopy?.({ label: `All - ${moduleName}`, data: filterPrivateKeys(formData) })}>
         Copy all
       </button>
     </div>

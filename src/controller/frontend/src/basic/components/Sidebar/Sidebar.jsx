@@ -116,7 +116,7 @@ function Sidebar({ navItems }) {
   useEffect(() => {
     const onStatus = ({ stage, count }) => {
       if (stage === "modules_notified") {
-        setDeployStatus(`Notified ${count} module${count !== 1 ? "s" : ""} — applying to controller…`);
+        setDeployStatus(`Notified ${count} module${count !== 1 ? "s" : ""} - applying to controller…`);
       }
     };
     const onError = ({ error }) => {
@@ -217,18 +217,9 @@ function Sidebar({ navItems }) {
         <h1 className="sidebar-title">{document.title}</h1>
         {hostname && <p className="sidebar-hostname">{hostname}</p>}
 
-        <nav className="main-nav">
-          {navItems.map(({ label, path, disabled }) =>
-            disabled ? (
-              <span key={path} className="nav-link disabled">{label}</span>
-            ) : (
-              <NavLink key={path} to={path} className="nav-link" onClick={handleNavClick(path)}>{label}</NavLink>
-            )
-          )}
-        </nav>
-      </div>
-
-      <div className="footer">
+        {/* Admin/Guest badge — lives here (below the title) rather than in
+            .footer below; class names keep the "footer-" prefix since the
+            styling itself is unchanged, only its position moved. */}
         <div className="footer-role-wrap">
           <button
             className={`footer-role-btn ${loggedIn ? "footer-role-btn--admin" : "footer-role-btn--guest"}`}
@@ -257,6 +248,19 @@ function Sidebar({ navItems }) {
             </div>
           )}
         </div>
+
+        <nav className="main-nav">
+          {navItems.map(({ label, path, disabled }) =>
+            disabled ? (
+              <span key={path} className="nav-link disabled">{label}</span>
+            ) : (
+              <NavLink key={path} to={path} className="nav-link" onClick={handleNavClick(path)}>{label}</NavLink>
+            )
+          )}
+        </nav>
+      </div>
+
+      <div className="footer">
         <button
           className="footer-version-btn"
           title="Go to System page to deploy updates"
@@ -420,7 +424,7 @@ function Sidebar({ navItems }) {
               <p>Power action for <strong>all modules and controller</strong></p>
               <p className="modal-subtext">
                 Reboot will restart all devices and reconnect automatically.<br />
-                Shutdown will power off all devices — manual restart required.
+                Shutdown will power off all devices - manual restart required.
               </p>
               <div className="modal-buttons">
                 <button className="save-button" type="button" onClick={handleRebootAll}>Reboot All</button>

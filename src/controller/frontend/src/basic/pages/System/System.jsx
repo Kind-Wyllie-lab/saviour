@@ -10,7 +10,7 @@ import "./System.css";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function timeAgo(ts) {
-  if (!ts) return "—";
+  if (!ts) return "-";
   const secs = Math.floor(Date.now() / 1000 - ts);
   if (secs < 5)   return "just now";
   if (secs < 60)  return `${secs}s ago`;
@@ -19,30 +19,30 @@ function timeAgo(ts) {
 }
 
 function fmt(val, unit, decimals = 0) {
-  if (val == null) return <span className="cell--muted">—</span>;
+  if (val == null) return <span className="cell--muted">-</span>;
   return `${Number(val).toFixed(decimals)}${unit}`;
 }
 
 function tempCell(t) {
-  if (t == null) return <span className="cell--muted">—</span>;
+  if (t == null) return <span className="cell--muted">-</span>;
   const cls = t >= 75 ? "val--danger" : t >= 60 ? "val--warn" : "val--ok";
   return <span className={cls}>{t.toFixed(1)}°C</span>;
 }
 
 function pctCell(pct, warnAt = 70, dangerAt = 85) {
-  if (pct == null) return <span className="cell--muted">—</span>;
+  if (pct == null) return <span className="cell--muted">-</span>;
   const cls = pct >= dangerAt ? "val--danger" : pct >= warnAt ? "val--warn" : "";
   return <span className={cls}>{pct.toFixed(1)}%</span>;
 }
 
 function cpuCell(pct) {
-  if (pct == null) return <span className="cell--muted">—</span>;
+  if (pct == null) return <span className="cell--muted">-</span>;
   const cls = pct >= 80 ? "val--danger" : pct >= 60 ? "val--warn" : "";
   return <span className={cls}>{pct.toFixed(1)}%</span>;
 }
 
 function memoryCell(usagePct, totalGb) {
-  if (usagePct == null) return <span className="cell--muted">—</span>;
+  if (usagePct == null) return <span className="cell--muted">-</span>;
   const cls = usagePct >= 85 ? "val--danger" : usagePct >= 70 ? "val--warn" : "";
   if (totalGb != null) {
     const usedGb = (totalGb * usagePct / 100).toFixed(1);
@@ -52,7 +52,7 @@ function memoryCell(usagePct, totalGb) {
 }
 
 function diskCell(usedPct, usedGb, totalGb) {
-  if (usedPct == null && usedGb == null) return <span className="cell--muted">—</span>;
+  if (usedPct == null && usedGb == null) return <span className="cell--muted">-</span>;
   const cls = (usedPct ?? 0) >= 90 ? "val--danger" : (usedPct ?? 0) >= 75 ? "val--warn" : "";
   if (usedGb != null && totalGb != null) {
     return <span className={cls || undefined}>{`${usedGb.toFixed(1)} / ${totalGb.toFixed(1)} GB`}</span>;
@@ -61,7 +61,7 @@ function diskCell(usedPct, usedGb, totalGb) {
 }
 
 function ptpVal(ns) {
-  if (ns == null) return <span className="cell--muted">—</span>;
+  if (ns == null) return <span className="cell--muted">-</span>;
   const abs = Math.abs(ns);
   const cls = abs >= 10000 ? "val--danger" : abs >= 1000 ? "val--warn" : "val--ok";
   const display = abs >= 1000
@@ -98,7 +98,7 @@ function connectionCell(status) {
 }
 
 function activityCell(status) {
-  if (!status) return <span className="cell--muted">—</span>;
+  if (!status) return <span className="cell--muted">-</span>;
   const cls = status === "RECORDING" ? "activity-badge--recording"
             : status === "READY"     ? "activity-badge--ready"
             : status === "NOT_READY" ? "activity-badge--warn"
@@ -309,7 +309,7 @@ export default function System() {
                   type="button"
                   onClick={() => window.dispatchEvent(new CustomEvent("saviour:open-update-modal"))}
                   disabled={!loggedIn || Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")}
-                  title={!loggedIn ? "Login required for this action" : stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} — click to open update panel` : "Open update panel"}
+                  title={!loggedIn ? "Login required for this action" : stagedMeta ? `Staged: ${stagedMeta.version ?? "update"} - click to open update panel` : "Open update panel"}
                 >
                   {Object.values(deviceStatuses).some(s => s === "updating" || s === "restarting")
                     ? "Deploying…"
@@ -332,9 +332,9 @@ export default function System() {
                 <span className="device-name">Controller</span>
               </td>
               <td>{connectionCell(controllerHealth ? "online" : "suspected")}</td>
-              <td><span className="cell--muted">—</span></td>
-              <td className="cell--muted">{controllerHealth?.ip ?? "—"}</td>
-              <td className="cell--muted">{controllerHealth?.version ?? "—"}</td>
+              <td><span className="cell--muted">-</span></td>
+              <td className="cell--muted">{controllerHealth?.ip ?? "-"}</td>
+              <td className="cell--muted">{controllerHealth?.version ?? "-"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
               <td>{tempCell(controllerHealth?.cpu_temp)}</td>
               <td>{memoryCell(controllerHealth?.memory_usage, controllerHealth?.memory_total_gb)}</td>
@@ -357,10 +357,10 @@ export default function System() {
                     </span>
                   </>
                 ) : (
-                  <span className="cell--muted">—</span>
+                  <span className="cell--muted">-</span>
                 )}
               </td>
-              <td className="cell--muted">—</td>
+              <td className="cell--muted">-</td>
               <td>
                 <button
                   type="button"
@@ -376,7 +376,7 @@ export default function System() {
             {groupedModuleRows.length === 0 ? (
               <tr>
                 <td colSpan={12} className="system-table__empty">
-                  No module health data yet — waiting for first heartbeat
+                  No module health data yet - waiting for first heartbeat
                 </td>
               </tr>
             ) : groupedModuleRows.map(({ group, rows }) => [
@@ -394,14 +394,14 @@ export default function System() {
                       <span className="device-id">{row.id}</span>
                     </td>
                     <td>{connectionCell(connStatus)}</td>
-                    <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">—</span>}</td>
-                    <td className="cell--muted">{modules[row.id]?.ip ?? "—"}</td>
-                    <td className="cell--muted">{modules[row.id]?.version ?? "—"}</td>
-                    <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">—</span>}</td>
-                    <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">—</span>}</td>
-                    <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">—</span>}</td>
-                    <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">—</span>}</td>
-                    <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">—</span>}</td>
+                    <td>{isOnline ? activityCell(moduleStatus) : <span className="cell--muted">-</span>}</td>
+                    <td className="cell--muted">{modules[row.id]?.ip ?? "-"}</td>
+                    <td className="cell--muted">{modules[row.id]?.version ?? "-"}</td>
+                    <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">-</span>}</td>
+                    <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">-</span>}</td>
+                    <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">-</span>}</td>
+                    <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">-</span>}</td>
+                    <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">-</span>}</td>
                     <td className="cell--muted">{timeAgo(row.last_heartbeat)}</td>
                     <td>
                       <ModuleActionsMenu id={row.id} name={row.name} isOnline={isOnline} />
@@ -475,20 +475,20 @@ export default function System() {
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
                 <span>Restart service</span>
-                <span className="actions-modal__hint">Restarts the SAVIOUR program — controller does not reboot, reconnects automatically</span>
+                <span className="actions-modal__hint">Restarts the SAVIOUR program - controller does not reboot, reconnects automatically</span>
               </button>
               <button type="button" className="actions-modal__item" disabled={!loggedIn}
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("reboot"); setShowControllerActions(false); }}>
                 <span>Reboot</span>
-                <span className="actions-modal__hint">Reboots the controller Pi — reconnects automatically</span>
+                <span className="actions-modal__hint">Reboots the controller Pi - reconnects automatically</span>
               </button>
               <div className="actions-modal__divider" />
               <button type="button" className="actions-modal__item actions-modal__item--danger" disabled={!loggedIn}
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("shutdown"); setShowControllerActions(false); }}>
                 <span>Shutdown</span>
-                <span className="actions-modal__hint">Powers off the controller — requires manual power cycle to restart</span>
+                <span className="actions-modal__hint">Powers off the controller - requires manual power cycle to restart</span>
               </button>
             </div>
             <div className="modal-buttons" style={{ marginTop: "8px" }}>

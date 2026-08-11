@@ -41,7 +41,7 @@ function Dashboard() {
             key={m.id}
             ip={m.ip}
             port={STREAM_PORTS.ttl}
-            label={`${m.name} — TTL`}
+            label={`${m.name} - TTL`}
             isRecording={m.status === "RECORDING"}
           />
         ))}

@@ -81,6 +81,48 @@ body.dark-mode {
   text-align: center;
 }
 
+/* Shared form action buttons — was duplicated identically between
+   NewSessionForm.css and LoomRecording.css (every other variant's
+   recording page renders through NewSessionForm and got these for free;
+   LoomRecording is standalone and needed its own copy). */
+.primary-button {
+  padding: 0.5rem 1.1rem;
+  border-radius: 6px;
+  border: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  background-color: var(--accent-color);
+  color: white;
+  transition: filter 0.15s ease;
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: brightness(0.88);
+}
+
+.primary-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  padding: 0.5rem 1.1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background-color: transparent;
+  color: var(--text-color);
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.secondary-button:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
 /* ── Shared modal ── */
 .modal-overlay {
   position: fixed;

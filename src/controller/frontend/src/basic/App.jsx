@@ -94,7 +94,7 @@ function App() {
         <RecordingStatusWidget />
         {nasHealth?.status === "error" && (
           <div className="nas-warning-banner">
-            NAS unreachable — exports will queue locally until the share is restored.
+            NAS unreachable - exports will queue locally until the share is restored.
             {nasHealth.error && <span className="nas-warning-detail"> ({nasHealth.error})</span>}
           </div>
         )}

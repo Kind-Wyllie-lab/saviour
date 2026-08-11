@@ -75,7 +75,7 @@ export default function LoomRecordingTimer() {
           <span className="loom-timer-label">{formatClock(remainingSeconds)} remaining</span>
         </>
       ) : (
-        <span className="loom-timer-label">Elapsed — manual stop</span>
+        <span className="loom-timer-label">Elapsed - manual stop</span>
       )}
     </div>
   );

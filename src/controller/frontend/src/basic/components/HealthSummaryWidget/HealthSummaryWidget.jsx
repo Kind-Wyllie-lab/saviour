@@ -197,7 +197,7 @@ export default function HealthSummaryWidget() {
         <div className="hsw-row">
           <span className="hsw-label">Hottest device</span>
           <span className={`hsw-value ${tempClass(maxTemp)}`}>
-            {maxTemp}°C — {maxTempId}
+            {maxTemp}°C - {maxTempId}
           </span>
         </div>
       )}
@@ -206,7 +206,7 @@ export default function HealthSummaryWidget() {
         <div className="hsw-row">
           <span className="hsw-label">Fullest disk</span>
           <span className={`hsw-value ${diskClass(maxDisk)}`}>
-            {maxDisk}% — {maxDiskId}
+            {maxDisk}% - {maxDiskId}
           </span>
         </div>
       )}
@@ -215,7 +215,7 @@ export default function HealthSummaryWidget() {
         <div className="hsw-row">
           <span className="hsw-label">PTP sync (worst)</span>
           <span className={`hsw-value ${ptpClass(worstPtp)}`}>
-            {ptpDisplay(worstPtp)} — {worstPtpId}
+            {ptpDisplay(worstPtp)} - {worstPtpId}
           </span>
         </div>
       )}

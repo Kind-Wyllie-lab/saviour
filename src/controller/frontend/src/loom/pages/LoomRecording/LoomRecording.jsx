@@ -59,7 +59,7 @@ export default function LoomRecording() {
   const target = stage === "habituation" ? HABITUATION_GROUP : "all";
 
   const sessionPreview = useMemo(() => {
-    if (!experimentName) return "—";
+    if (!experimentName) return "-";
     const base = safeName(experimentName);
     const ts = formatTs(now);
     // Match backend _format_session_name: append target when not "all".
@@ -81,8 +81,8 @@ export default function LoomRecording() {
   };
 
   const stageLabel = stage === "habituation"
-    ? `Camera modules (group: "${HABITUATION_GROUP}") — loom stimulus disabled`
-    : `All modules — loom stimulus active`;
+    ? `Camera modules (group: "${HABITUATION_GROUP}") - loom stimulus disabled`
+    : `All modules - loom stimulus active`;
 
   return (
     <div className="loom-recording-page">
@@ -111,7 +111,7 @@ export default function LoomRecording() {
                 checked={timedEnabled}
                 onChange={(e) => setTimedEnabled(e.target.checked)}
               />
-              Timed recording — auto-stop after
+              Timed recording - auto-stop after
             </label>
             <div className="loom-recording-duration-inputs">
               <input
@@ -132,7 +132,7 @@ export default function LoomRecording() {
 
           {nameAlreadyUsed && (
             <p className="loom-recording-warning">
-              Session name already used — previous recordings exist with this name.
+              Session name already used - previous recordings exist with this name.
             </p>
           )}
           {!canStart && anyRecording && (

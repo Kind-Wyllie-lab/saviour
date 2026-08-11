@@ -10,7 +10,7 @@ function parseTimestamp(str) {
 }
 
 function formatDateTime(date) {
-  if (!date) return "—";
+  if (!date) return "-";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
@@ -40,7 +40,7 @@ export default function FaultAlertModal({ faultedSessions, onAcknowledge }) {
   const title = faultedSessions.length === 1
     ? (faultedSessions[0].state === "error"
         ? "Recording Fault Detected"
-        : "Recording Fault — Session Recovered")
+        : "Recording Fault - Session Recovered")
     : "Recording Faults Detected";
 
   return (

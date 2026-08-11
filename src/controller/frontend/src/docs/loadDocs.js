@@ -1,3 +1,5 @@
+import GithubSlugger from "github-slugger";
+
 // docs/readthedocs/ at the repo root is the single source of truth for user
 // docs (also published in full at https://saviour.readthedocs.io via
 // mkdocs) — this pulls the raw markdown and images in at build time so the
@@ -74,4 +76,56 @@ export function resolveDocImage(src, currentDocId) {
   const url = new URL(src, `https://docs.local/${currentDir}`);
   const path = url.pathname.replace(/^\//, "");
   return docImages[path] ?? src;
+}
+
+const HEADING_RE = /^(#{1,3})\s+(.+)$/;
+
+function stripInlineMarkdown(text) {
+  return text
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .trim();
+}
+
+// Builds an "on this page" outline for the given docIds, in the order
+// they're rendered. Slugging must exactly match what rehype-slug produces
+// in the actual DOM (react-markdown's own pass), or the jump-links below
+// point at nothing:
+//   - each docId gets its own fresh GithubSlugger instance, since each
+//     DocPage is a separate <ReactMarkdown> render with its own fresh
+//     rehype-slug scope (duplicate heading text within ONE doc gets -1/-2
+//     suffixes; across docs it doesn't).
+//   - slug() is called for every heading line regardless of level, since
+//     rehype-slug slugs every heading (H1-H6) it sees — skipping a level
+//     here without still calling slug() would desync the counter from what
+//     actually happened in the render.
+// H1s are only included when multiple docIds are passed (the "About" tab
+// combines 3 separate documents, so each one's own title is a meaningful,
+// distinct anchor); for a single doc the H1 just repeats the tab label.
+export function extractOutline(docIds) {
+  const entries = [];
+  const minLevel = docIds.length > 1 ? 1 : 2;
+  for (const docId of docIds) {
+    const content = docs[docId];
+    if (content == null) continue;
+    const slugger = new GithubSlugger();
+    let inFence = false;
+    for (const rawLine of content.split("\n")) {
+      if (/^```/.test(rawLine.trim())) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) continue;
+      const m = HEADING_RE.exec(rawLine);
+      if (!m) continue;
+      const level = m[1].length;
+      const text = stripInlineMarkdown(m[2]);
+      const id = slugger.slug(text);
+      if (level < minLevel) continue;
+      entries.push({ level, text, id, docId });
+    }
+  }
+  return entries;
 }

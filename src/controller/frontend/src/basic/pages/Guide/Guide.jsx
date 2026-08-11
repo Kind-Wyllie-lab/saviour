@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSlug from "rehype-slug";
 import "./Guide.css";
-import { docs, resolveDocLink, resolveDocImage } from "/src/docs/loadDocs.js";
+import { docs, resolveDocLink, resolveDocImage, extractOutline } from "/src/docs/loadDocs.js";
 
 // Mirrors mkdocs.yml's nav — the RTD site's structure is this page's
 // structure too, so there's one source of truth for both.
@@ -77,14 +77,26 @@ function DocPage({ docId, onNavigate }) {
 
 function Guide() {
   const [activeTab, setActiveTab] = useState(TABS[0].id);
+  const pageRef = useRef(null);
+
+  const outline = useMemo(
+    () => extractOutline(activeTab === "about" ? ABOUT_DOC_IDS : [activeTab]),
+    [activeTab]
+  );
 
   const handleNavigate = useCallback((tabId) => {
     setActiveTab(tabId);
-    window.scrollTo({ top: 0 });
+    // .guide-page is its own scroll container (see Guide.css), not the
+    // window, now that it's contained rather than growing the outer shell.
+    pageRef.current?.scrollTo({ top: 0 });
+  }, []);
+
+  const handleJumpTo = useCallback((id) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
   return (
-    <main className="guide-page">
+    <main className="guide-page" ref={pageRef}>
       <nav className="guide-contents">
         <div className="guide-contents-title">Contents</div>
         <ul className="guide-contents-list">
@@ -117,6 +129,30 @@ function Guide() {
           )}
         </div>
       </div>
+
+      {outline.length > 0 && (
+        <nav className="guide-outline">
+          <div className="guide-outline-title">On this page</div>
+          <ul className="guide-outline-list">
+            {outline.map((entry) => (
+              <li
+                key={`${entry.docId}-${entry.id}`}
+                className={`guide-outline-item guide-outline-item--level${entry.level}`}
+              >
+                <a
+                  href={`#${entry.id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleJumpTo(entry.id);
+                  }}
+                >
+                  {entry.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
     </main>
   );
 }

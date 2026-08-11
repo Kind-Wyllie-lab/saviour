@@ -1,8 +1,28 @@
 # Getting Started
 
+## Before you start
+
+This guide assumes:
+
+- You have the hardware together: a PoE+ switch, one controller, and one or more modules, all on the same network. See [Hardware](hardware.md) for what to buy and how to size your switch.
+- Every device already has Raspberry Pi OS flashed to its SD card (or NVMe, for the controller) and boots normally - a plain [Raspberry Pi Imager](https://www.raspberrypi.com/software/) install, nothing SAVIOUR-specific needed at that stage.
+- SAVIOUR itself is installed on each device. If it isn't yet, see below.
+
+### Installing SAVIOUR
+
+On a fresh Raspberry Pi OS install, run:
+
+```
+curl -fsSL https://raw.githubusercontent.com/Kind-Wyllie-lab/saviour/main/install.sh | bash
+```
+
+This clones the repo to `/usr/local/src/saviour` and runs `setup.sh`, which installs everything SAVIOUR needs (PTP, ffmpeg, Picamera2, Samba, etc.). It doesn't assign a role by itself - that's the next step, below.
+
+Doing this one device at a time works fine but is slow for a big rig - once you've got one device fully configured, it's usually faster to clone its SD card/NVMe image onto the rest instead (`scripts/multiclone.sh` in the repo).
+
 ## Assigning a device role
 
-1. Flash the SD card and boot the Raspberry Pi 5 on the PoE network.
+1. Boot the device on the PoE network (SAVIOUR should already be installed - see above).
 2. Run `sudo saviour-config` on the device.
 3. Choose Controller (one per system) or Module, then pick the module type (camera, microphone, TTL, RFID, ...).
 4. The device reboots into its assigned role and appears automatically once discovered.

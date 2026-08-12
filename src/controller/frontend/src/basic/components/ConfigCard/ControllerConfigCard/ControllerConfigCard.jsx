@@ -231,7 +231,7 @@ function ControllerConfigCard() {
                     onChange={e => handleChange(["frontend", "accent_color"], e)}
                   />
                   <span className="frontend-accent-hint">
-                    Applied live across every dashboard variant on save — buttons, links, and highlights.
+                    Applied live across every dashboard variant on save - buttons, links, and highlights.
                   </span>
                 </div>
                 <div className="form-field">

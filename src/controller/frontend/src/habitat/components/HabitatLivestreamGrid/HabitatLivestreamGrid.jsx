@@ -83,7 +83,7 @@ function HabitatLivestreamGrid({ modules }) {
                   mods.length > 1 ? (
                     <div className="duplicate-modules">
                       <p>Multiple modules named {mods[0].name}</p>
-                      {mods.map(m => <p key={m.id}>{m.id} — {m.ip}</p>)}
+                      {mods.map(m => <p key={m.id}>{m.id} - {m.ip}</p>)}
                       <p>Fix in <NavLink to="/settings">Settings</NavLink></p>
                     </div>
                   ) : (
@@ -123,14 +123,14 @@ function HabitatLivestreamGrid({ modules }) {
               <label>
                 From
                 <select value={startCell} onChange={e => setStartCell(e.target.value)}>
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {ALL_CELLS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>
               <label>
                 To
                 <select value={endCell} onChange={e => setEndCell(e.target.value)}>
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {ALL_CELLS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>

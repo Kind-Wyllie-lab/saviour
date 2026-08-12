@@ -275,7 +275,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
               }}>
               {presets.map(p => (
                 <option key={p.key} value={p.key}>
-                  {p.label}{p.sub ? ` — ${p.sub}` : ""}
+                  {p.label}{p.sub ? ` - ${p.sub}` : ""}
                 </option>
               ))}
             </select>
@@ -312,12 +312,12 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
             <div className="sensor-mode-info">Sensor mode: {selectedMode.label}</div>
           ) : (
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Sensor modes not yet loaded — click Refresh
+              Sensor modes not yet loaded - click Refresh
             </div>
           )}
           {fpsOverMax && (
             <div className="fov-label fov-cropped">
-              {cam.fps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
+              {cam.fps} fps exceeds mode max ({maxFps} fps) - will be clamped on apply
             </div>
           )}
         </>

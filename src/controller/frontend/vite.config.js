@@ -26,5 +26,14 @@ export default defineConfig(({ mode }) => {
         'virtual:active-app': path.resolve(__dirname, `src/${variant}/App.jsx`),
       },
     },
+    server: {
+      fs: {
+        // Guide.jsx (src/docs/loadDocs.js) globs docs/readthedocs/ at the
+        // repo root, outside this package — only affects `vite`'s dev-server
+        // file-serving middleware; `vite build` reads files directly via
+        // Node and isn't subject to this allowlist.
+        allow: [path.resolve(__dirname, '../../..')],
+      },
+    },
   }
 })

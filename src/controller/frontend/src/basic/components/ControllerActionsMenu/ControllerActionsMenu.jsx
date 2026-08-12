@@ -45,18 +45,18 @@ function ControllerActionsMenu({ onAction }) {
               <button type="button" className="actions-modal__item"
                 onClick={() => { setConfirmTarget("restart_service"); setShowActions(false); }}>
                 <span>Restart service</span>
-                <span className="actions-modal__hint">Restarts the SAVIOUR program — controller does not reboot, reconnects automatically</span>
+                <span className="actions-modal__hint">Restarts the SAVIOUR program - controller does not reboot, reconnects automatically</span>
               </button>
               <button type="button" className="actions-modal__item"
                 onClick={() => { setConfirmTarget("reboot"); setShowActions(false); }}>
                 <span>Reboot</span>
-                <span className="actions-modal__hint">Reboots the controller Pi — reconnects automatically</span>
+                <span className="actions-modal__hint">Reboots the controller Pi - reconnects automatically</span>
               </button>
               <div className="actions-modal__divider" />
               <button type="button" className="actions-modal__item actions-modal__item--danger"
                 onClick={() => { setConfirmTarget("shutdown"); setShowActions(false); }}>
                 <span>Shutdown</span>
-                <span className="actions-modal__hint">Powers off the controller — requires manual power cycle to restart</span>
+                <span className="actions-modal__hint">Powers off the controller - requires manual power cycle to restart</span>
               </button>
             </div>
             <div className="modal-buttons" style={{ marginTop: "8px" }}>

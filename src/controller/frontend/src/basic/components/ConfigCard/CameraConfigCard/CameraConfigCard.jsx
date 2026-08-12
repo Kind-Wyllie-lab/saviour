@@ -261,7 +261,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                   }}>
                   {presets.map(p => (
                     <option key={p.key} value={p.key}>
-                      {p.label}{p.sub ? ` — ${p.sub}` : ""}
+                      {p.label}{p.sub ? ` - ${p.sub}` : ""}
                     </option>
                   ))}
                 </select>
@@ -298,7 +298,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             )}
             {currentSyncMode === "client" && serverFps != null && (
               <div className="sensor-mode-info">
-                FPS locked to {serverFps} fps via frame sync — resolution can be changed freely.
+                FPS locked to {serverFps} fps via frame sync - resolution can be changed freely.
               </div>
             )}
             {selectedMode && currentSyncMode !== "client" && (
@@ -311,7 +311,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             )}
             {fpsOverMax && (
               <div className="fov-label fov-cropped">
-                {currentFps} fps exceeds mode max ({maxFps} fps) — will be clamped on apply
+                {currentFps} fps exceeds mode max ({maxFps} fps) - will be clamped on apply
               </div>
             )}
 
@@ -475,7 +475,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             )}
             {framesyncEnabled && currentSyncMode === "server" && (
               <div className="sensor-mode-info">
-                This camera is the FrameSync transmitter — it broadcasts timing to every
+                This camera is the FrameSync transmitter - it broadcasts timing to every
                 other FrameSync-enabled camera. The controller assigns this automatically;
                 start client cameras first, then this one.
               </div>
@@ -488,18 +488,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             )}
             {framesyncEnabled && currentSyncMode === "none" && (
               <div className="sensor-mode-info sensor-mode-info--muted">
-                Waiting for the controller to assign a FrameSync role — this camera
+                Waiting for the controller to assign a FrameSync role - this camera
                 may be offline, or has just been enabled and hasn't been reconciled yet.
               </div>
             )}
             {fpsMismatch && (
               <div className="fov-label fov-cropped">
-                FPS mismatch: this camera is {cam.fps} fps but server {syncServerModule.name} is {serverFps} fps — frame sync will not be 1:1.
+                FPS mismatch: this camera is {cam.fps} fps but server {syncServerModule.name} is {serverFps} fps - frame sync will not be 1:1.
               </div>
             )}
             {exposureMismatch && !fpsMismatch && (
               <div className="fov-label fov-cropped" style={{ opacity: 0.8 }}>
-                Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server — brightness will differ.
+                Exposure mismatch: {clientExposureUs}µs here vs {serverExposureUs}µs on server - brightness will differ.
               </div>
             )}
             <div className="form-field">
@@ -509,7 +509,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "sync_lock_exposure"], e)} />
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              While frame-synced: fixes exposure/gain so brightness matches across cameras —
+              While frame-synced: fixes exposure/gain so brightness matches across cameras -
               overrides Image tab's "Auto gain/exposure".
             </div>
             <div className="form-field">
@@ -551,7 +551,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "overlay_framerate_on_preview"], e)} />
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Live monitoring stream only — never on saved videos.
+              Live monitoring stream only - never on saved videos.
             </div>
             <div className="form-field">
               <label>Livestream quality:</label>
@@ -626,9 +626,9 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="sensor-mode-info sensor-mode-info--muted">
               Opens a window on each detected physical monitor, picked by GLFW's
               raw detection order. There's no way to know in advance which is
-              Monitor 0 vs 1 — use the "Near screen" test flash button below to
+              Monitor 0 vs 1 - use the "Test screens" flash button below to
               check, and switch this if it's backwards. If a second monitor is
-              detected it automatically gets the keepalive/near-test display.
+              detected it automatically gets the near/keepalive-only display.
             </div>
             <div className="form-field">
               <label>Background brightness: {Number(formData?.loom_stimulus?.background_rgba?.[0] ?? 0.5).toFixed(2)}</label>
@@ -756,7 +756,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["loom_stimulus", "photodiode_y_ndc"], e)} />
             </div>
             <div className="config-section-divider" />
-            <div className="sensor-mode-info sensor-mode-info--muted">Near screen</div>
+            <div className="sensor-mode-info sensor-mode-info--muted">Keep-alive (both screens)</div>
             <div className="form-field">
               <label>Keep-alive mode:</label>
               <select value={formData?.loom_stimulus?.keepalive_mode ?? "corner"}
@@ -772,10 +772,15 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.loom_stimulus?.keepalive_interval_s ?? 10}
                 onChange={e => handleChange(["loom_stimulus", "keepalive_interval_s"], e)} />
             </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Applies to the near screen at all times, and to the stimulus screen
+              only between trials - a tick never fires mid-loom, so it can't
+              blank the animation or the photodiode marker.
+            </div>
             <div className="form-field">
-              <label>Near screen:</label>
+              <label>Test screens:</label>
               <button className="btn btn--small"
-                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_near_screen", params: { duration_s: 2.0 } })}>
+                onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_screens", params: { duration_s: 2.0 } })}>
                 Test (2 s flash)
               </button>
             </div>

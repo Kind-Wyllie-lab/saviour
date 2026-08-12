@@ -1,18 +1,15 @@
 .loom-dashboard {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
-/* ── Top bar: recording status ───────────────────────────────────────────── */
+/* ── Top bar: stage toggle ───────────────────────────────────────────────── */
 
 .loom-dashboard-topbar {
   flex-shrink: 0;
-}
-
-.loom-dashboard-topbar .recording-status-widget {
-  border-bottom: 1px solid var(--border-color);
 }
 
 /* ── Main body ───────────────────────────────────────────────────────────── */

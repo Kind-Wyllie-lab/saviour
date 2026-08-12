@@ -118,7 +118,7 @@ function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
             value={selectedId}
             onChange={e => setSelectedId(e.target.value)}
           >
-            <option value="">— select a module —</option>
+            <option value="">- select a module -</option>
             {candidates.map(m => (
               <option key={m.id} value={m.id}>{m.name || m.id}</option>
             ))}
@@ -279,7 +279,7 @@ function SessionList({ sessionList, modules = [] }) {
       </div>
 
       {sessions.length === 0 ? (
-        <p className="session-list__empty">No sessions yet — create one to begin recording.</p>
+        <p className="session-list__empty">No sessions yet - create one to begin recording.</p>
       ) : (
         sessions.map((session) => {
           const state = session.state;
@@ -323,7 +323,7 @@ function SessionList({ sessionList, modules = [] }) {
               >
                 <div className="session-header__left">
                   {isStarting && (
-                    <span className="status-dot status-dot--starting" title="Starting — waiting for modules" />
+                    <span className="status-dot status-dot--starting" title="Starting - waiting for modules" />
                   )}
                   {isActive && !isStarting && (
                     <span className="status-dot status-dot--recording" title="Recording" />
@@ -371,7 +371,7 @@ function SessionList({ sessionList, modules = [] }) {
                     <span>{session.modules.join(", ")}</span>
 
                     <span className="session-meta-label">Start</span>
-                    <span>{session.start_time || "—"}</span>
+                    <span>{session.start_time || "-"}</span>
 
                     {session.end_time && (
                       <>
@@ -414,7 +414,7 @@ function SessionList({ sessionList, modules = [] }) {
                       Fault recorded at {session.error_time.replace(
                         /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/,
                         "$4:$5"
-                      )}{session.error_message ? ` — ${session.error_message}` : ""}
+                      )}{session.error_message ? ` - ${session.error_message}` : ""}
                     </p>
                   )}
 
@@ -436,7 +436,7 @@ function SessionList({ sessionList, modules = [] }) {
                             fi.total_bytes > DOWNLOAD_ALL_MAX_BYTES ? (
                               <span
                                 className="session-file-dl session-file-dl--all session-file-dl--disabled"
-                                title={`Too large to download via browser (${formatBytes(fi.total_bytes)}) — use the NAS share below`}
+                                title={`Too large to download via browser (${formatBytes(fi.total_bytes)}) - use the NAS share below`}
                               >
                                 Download all
                               </span>
@@ -558,7 +558,7 @@ function SessionList({ sessionList, modules = [] }) {
                               <>
                                 {log.truncated && (
                                   <div className="session-log-truncation">
-                                    {log.total} events total — showing last 200
+                                    {log.total} events total - showing last 200
                                   </div>
                                 )}
                                 {log.lines.map((line, i) => (

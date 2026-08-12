@@ -16,6 +16,10 @@
     flex-direction: column;
   }
 
+  .content > .recording-status-widget {
+    flex-shrink: 0;
+  }
+
 .nas-warning-banner {
   background: color-mix(in srgb, var(--error-color, #e74c3c) 15%, var(--card-bg-color));
   color: var(--error-color, #e74c3c);

@@ -341,7 +341,7 @@ def run_loom_stimulus_with_ipc(
                 near_monitor = monitors[near_idx]
                 # Independent context (no share) — near_window only ever does
                 # raw glClearColor/glScissor/glClear (see
-                # _draw_near_monitor_effects), never a shader/VAO/texture
+                # _draw_keepalive_effects), never a shader/VAO/texture
                 # draw call, so it has no need of the stim window's shared
                 # GL object namespace.
                 near_window, _ = _create_positioned_window(near_monitor, "Loom Stimulus (near)")
@@ -504,19 +504,27 @@ def run_loom_stimulus_with_ipc(
         animation_t0 = time.time()
         prev_elapsed = 0.0
 
-        # Keep-alive: prevent TV auto-dimming by drawing one imperceptible pixel
-        # on the near TV at the configured interval.
+        # Keep-alive: prevent monitor auto-dimming by drawing a small,
+        # near-imperceptible patch at the configured interval. Runs
+        # unconditionally on the near monitor (nothing else is ever drawn
+        # there); on the stimulus monitor it only runs while idle
+        # (batch.active is False, gated at the call site in the render loop)
+        # so a tick can never blank an in-progress loom animation or the
+        # photodiode marker mid-trial.
         _keepalive_t0    = time.time()
         _keepalive_phase = 0  # toggles between two visually identical grey values
 
-        # Near screen test flash (from "test_near_screen" command).
-        _near_test_until = 0.0
+        # Screen test flash (from "test_screens" command) — shared trigger
+        # for both monitors; the stim monitor obeys the same idle-only gate.
+        _test_flash_until = 0.0
 
-        def _draw_near_monitor_effects(mon_w_px: int, mon_h_px: int, now: float) -> None:
-            """Test-flash + keep-alive drawing into the near_window's own
-            framebuffer (whatever GL context is currently bound)."""
-            nonlocal _keepalive_t0, _keepalive_phase
-            if now < _near_test_until:
+        def _draw_keepalive_effects(mon_w_px: int, mon_h_px: int, now: float,
+                                     do_tick: bool, phase: int) -> None:
+            """Test-flash + keep-alive drawing into whatever GL context is
+            currently bound (near_window or the main stim window). `do_tick`/
+            `phase` are computed once per frame by the caller so both
+            monitors flash on the same tick in lockstep."""
+            if now < _test_flash_until:
                 glEnable(GL_SCISSOR_TEST)
                 glClearColor(0.85, 0.85, 0.85, 1.0)
                 glScissor(0, 0, mon_w_px, mon_h_px)
@@ -524,18 +532,16 @@ def run_loom_stimulus_with_ipc(
                 glDisable(GL_SCISSOR_TEST)
                 glClearColor(*background_rgba)
 
-            if keepalive_interval_s > 0 and now - _keepalive_t0 >= keepalive_interval_s:
-                _keepalive_phase ^= 1
-                _keepalive_t0 = now
+            if do_tick:
                 _bg = background_rgba[0]
                 glEnable(GL_SCISSOR_TEST)
                 if keepalive_mode == "pulse":
-                    _kv = min(1.0, _bg + 3/255) if _keepalive_phase else max(0.0, _bg - 3/255)
+                    _kv = min(1.0, _bg + 3/255) if phase else max(0.0, _bg - 3/255)
                     glClearColor(_kv, _kv, _kv, 1.0)
                     glScissor(0, 0, mon_w_px, mon_h_px)
                     glClear(GL_COLOR_BUFFER_BIT)
                 elif keepalive_mode == "distributed":
-                    _kv = min(1.0, _bg + 5/255) if _keepalive_phase else max(0.0, _bg - 5/255)
+                    _kv = min(1.0, _bg + 5/255) if phase else max(0.0, _bg - 5/255)
                     glClearColor(_kv, _kv, _kv, 1.0)
                     for _px, _py in [
                         (0,                  0),
@@ -547,7 +553,7 @@ def run_loom_stimulus_with_ipc(
                         glScissor(_px, _py, 16, 16)
                         glClear(GL_COLOR_BUFFER_BIT)
                 else:  # "corner" (default)
-                    _kv = min(1.0, _bg + 8/255) if _keepalive_phase else max(0.0, _bg - 8/255)
+                    _kv = min(1.0, _bg + 8/255) if phase else max(0.0, _bg - 8/255)
                     glClearColor(_kv, _kv, _kv, 1.0)
                     glScissor(0, 0, 16, 16)
                     glClear(GL_COLOR_BUFFER_BIT)
@@ -585,9 +591,9 @@ def run_loom_stimulus_with_ipc(
                         _status({"type": "shutdown_received"})
                     elif cmd == "ping":
                         _status({"type": "pong"})
-                    elif cmd == "test_near_screen":
-                        _near_test_until = time.time() + float(payload.get("duration_s", 2.0))
-                        _status({"type": "near_screen_test_started"})
+                    elif cmd == "test_screens":
+                        _test_flash_until = time.time() + float(payload.get("duration_s", 2.0))
+                        _status({"type": "screens_test_started"})
                     elif cmd == "reconfigure":
                         # Hot-patch stimulus params without restarting the GL window.
                         # stimulus_monitor_index is intentionally excluded — that
@@ -790,6 +796,18 @@ def run_loom_stimulus_with_ipc(
                 glClearColor(*background_rgba)
 
             _now = time.time()
+            _keepalive_due = _now - _keepalive_t0 >= keepalive_interval_s
+            _keepalive_tick = keepalive_interval_s > 0 and _keepalive_due
+            if _keepalive_tick:
+                _keepalive_t0 = _now
+                _keepalive_phase ^= 1
+
+            # Stim monitor keepalive/test-flash: idle-only (see the comment
+            # above the keepalive state block) so it can never blank an
+            # in-progress loom animation or the photodiode marker.
+            if not batch.active:
+                _draw_keepalive_effects(current_window_width, current_window_height,
+                                         _now, _keepalive_tick, _keepalive_phase)
 
             glfw.swap_buffers(window)
 
@@ -802,7 +820,8 @@ def run_loom_stimulus_with_ipc(
                 glViewport(0, 0, _near_w, _near_h)
                 glClearColor(*background_rgba)
                 glClear(GL_COLOR_BUFFER_BIT)
-                _draw_near_monitor_effects(_near_w, _near_h, _now)
+                _draw_keepalive_effects(
+                    _near_w, _near_h, _now, _keepalive_tick, _keepalive_phase)
                 glfw.swap_buffers(near_window)
                 glfw.make_context_current(window)  # restore for next frame's drawing
 

@@ -5,7 +5,6 @@ import useModules from "/src/hooks/useModules";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
-import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
 // MJPEG stream port by module type
 const STREAM_PORTS = {
@@ -142,12 +141,12 @@ function Dashboard() {
     })),
     ...micModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.microphone,
-      label: `${m.name} — Audio`, isRecording: m.status === "RECORDING",
+      label: `${m.name} - Audio`, isRecording: m.status === "RECORDING",
       syncStatus: m.config_sync_status,
     })),
     ...ttlModules.map(m => ({
       id: m.id, ip: m.ip, port: STREAM_PORTS.ttl,
-      label: `${m.name} — TTL`, isRecording: m.status === "RECORDING",
+      label: `${m.name} - TTL`, isRecording: m.status === "RECORDING",
       syncStatus: m.config_sync_status,
     })),
   ], [cameraModules, micModules, ttlModules]);
@@ -156,8 +155,6 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      <RecordingStatusWidget />
-
       {groups.length > 0 && (
         <div className="dashboard-group-filter">
           <label htmlFor="group-select">Group:</label>
@@ -238,7 +235,7 @@ function Dashboard() {
                 key={m.id}
                 ip={m.ip}
                 port={STREAM_PORTS.microphone}
-                label={`${m.name} — Audio`}
+                label={`${m.name} - Audio`}
                 isRecording={m.status === "RECORDING"}
                 syncStatus={m.config_sync_status}
               />
@@ -248,7 +245,7 @@ function Dashboard() {
                 key={m.id}
                 ip={m.ip}
                 port={STREAM_PORTS.ttl}
-                label={`${m.name} — TTL`}
+                label={`${m.name} - TTL`}
                 isRecording={m.status === "RECORDING"}
                 syncStatus={m.config_sync_status}
               />

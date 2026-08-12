@@ -12,11 +12,11 @@ export const CAMERA_TYPES = new Set(["camera", "loom_camera", "apa_camera"]);
 export const HABITUATION_GROUP = "cameras";
 
 function pushStageConfig(stage) {
-  // Enable/disable loom stimulus on loom_camera modules.
+  // Arm/disarm loom stimulus on loom_camera modules.
   socket.emit("apply_section_to_type", {
     module_type: "loom_camera",
     section: "loom_stimulus",
-    data: { enabled: stage === "loom" },
+    data: { armed: stage === "loom" },
   });
 
   // In habituation, assign all camera-type modules to the "cameras" group so

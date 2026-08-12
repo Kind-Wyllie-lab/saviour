@@ -5,7 +5,6 @@ import useModules from "/src/hooks/useModules";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
-import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import LoomStimulusControl from "/src/loom/components/LoomStimulusControl/LoomStimulusControl";
 import LoomRecordingTimer from "/src/loom/components/LoomRecordingTimer/LoomRecordingTimer";
 import { StageToggle } from "/src/loom/LoomStageContext";
@@ -190,7 +189,6 @@ function LoomDashboard() {
   return (
     <div className="loom-dashboard">
       <div className="loom-dashboard-topbar">
-        <RecordingStatusWidget />
         <StageToggle />
       </div>
 

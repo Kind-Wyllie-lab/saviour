@@ -4,7 +4,7 @@ import socket from "/src/socket";
 import "./HabitatRecordingControl.css";
 
 function formatTime(t) {
-  if (!t) return "—";
+  if (!t) return "-";
   const m = t.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
   if (!m) return t;
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];

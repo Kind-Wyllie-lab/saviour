@@ -14,6 +14,7 @@ import Guide from "./pages/Guide/Guide";
 import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "./components/ConnectionOverlay/ConnectionOverlay";
+import RecordingStatusWidget from "./components/RecordingStatusWidget/RecordingStatusWidget";
 import useClockOnce from "/src/hooks/useClockOnce";
 import useSessions from "/src/hooks/useSessions";
 import socket from "/src/socket";
@@ -90,9 +91,10 @@ function App() {
     <div className="app">
       <Sidebar navItems={pages} />
       <div className="content">
+        <RecordingStatusWidget />
         {nasHealth?.status === "error" && (
           <div className="nas-warning-banner">
-            NAS unreachable — exports will queue locally until the share is restored.
+            NAS unreachable - exports will queue locally until the share is restored.
             {nasHealth.error && <span className="nas-warning-detail"> ({nasHealth.error})</span>}
           </div>
         )}

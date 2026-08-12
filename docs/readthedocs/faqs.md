@@ -21,3 +21,18 @@ Primarily behavioural neuroscience labs, though the same approach suits any expe
 
 ***Why was SAVIOUR made?***<br>
 SAVIOUR was developed in response to many one-off data gathering rigs being created that did similar things in a messy, expensive, and hard to reproduce way.
+
+***How do I know if PTP sync is good enough to start recording?***<br>
+Click "Check Ready" on the Recording page - it checks ptp4l and phc2sys offset on every module against a threshold (50 µs by default) and reports which modules aren't ready. The System page also shows live per-module PTP offset if you want to watch it settle after a reboot.
+
+***A camera was just rebooted - can I record straight away?***<br>
+Give it 5–10 minutes first. phc2sys needs that long to converge its frequency estimate for that crystal; recording immediately after a reboot can leave a larger-than-usual (but still bounded) inter-camera phase offset.
+
+***What happens to a recording if the NAS/export share goes down?***<br>
+Files are staged locally on the module and export is retried with backoff once the share comes back - recordings aren't lost, but they won't appear on the share until the export queue catches up.
+
+***Can I change which rig UI (basic / loom / apa / habitat / acoustic startle) a controller shows?***<br>
+The frontend variant is selected by which App is imported in `src/controller/frontend/src/main.jsx`. Switching rigs means editing that import and rebuilding the frontend - it isn't a runtime setting yet.
+
+***Do all modules need to be the same type?***<br>
+No - a system is any mix of camera, microphone, TTL, RFID and rig-specific module types (loom camera, APA camera/arduino) all reporting to one controller. Add or remove modules freely; the controller discovers them automatically over mDNS.

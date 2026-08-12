@@ -1,34 +1,38 @@
-.settings {
+.settings-page {
   margin: 0;
-  padding: 0;
-  height: 94vh;
+  /* Matches System/Guide's page padding so all three read as one family;
+     top padding also keeps the toolbar clear of the global topbar above. */
+  padding: 24px;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 
   font-family: Arial, sans-serif;
   background-color: var(--bg-color);
   color: var(--text-color);
   display: flex;
   flex-direction: column;
-  align-items: center;   /* CENTER CONTENT */
+  align-items: center;
 }
 
-.settings h2 {
-  margin: 12px;
-  font-size: 22px;
-  font-weight: 600;
-  text-align: center;
+.settings-toolbar {
+  margin-bottom: 20px;
 }
 
 .settings-label {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   font-size: 14px;
-  width: 100%;
-  max-width: 480px;
 }
 
-.settings select {
-  width: 100%;
+.settings-label-text {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.settings-page select {
   padding: 10px 12px;
   font-size: 14px;
   border: 1px solid var(--border-color);
@@ -39,14 +43,12 @@
   transition: border-color 0.2s ease;
 }
 
-.settings select:focus {
+.settings-page select:focus {
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
 }
 
 .module-grid {
   width: 100%;
-  padding: 0 16px;
-  margin-top: 16px;
   display: flex;
   justify-content: center;
   box-sizing: border-box;

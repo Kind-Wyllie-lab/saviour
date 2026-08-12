@@ -1103,10 +1103,12 @@ class LoomCameraModule(CameraBase):
         return {"status": "stopped"}
 
     @command()
-    def loom_stimulus_test_near_screen(self, duration_s: float = 2.0) -> dict:
-        """Flash the near TV briefly so the user can confirm GL reaches it."""
-        self._loom_stimulus._cmd_q.put(("test_near_screen", {"duration_s": duration_s}))
-        self.logger.info("loom_stimulus: near screen test (duration=%.1fs)", duration_s)
+    def loom_stimulus_test_screens(self, duration_s: float = 2.0) -> dict:
+        """Flash both the stim and near monitors briefly so the user can
+        confirm GL reaches them. The stim-monitor flash only shows while no
+        loom trial is in progress — see loom_stimulus.py's keepalive comment."""
+        self._loom_stimulus._cmd_q.put(("test_screens", {"duration_s": duration_s}))
+        self.logger.info("loom_stimulus: screen test (duration=%.1fs)", duration_s)
         return {"status": "test_started", "duration_s": duration_s}
 
 

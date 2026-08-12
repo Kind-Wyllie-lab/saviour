@@ -405,7 +405,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             </p>
             <p className="modal-subtext">
               This will overwrite the {applyAllConfirm.label.toLowerCase()} config on every{" "}
-              {applyAllConfirm.moduleType ?? "module"} and save immediately — unsaved changes on other modules will be lost.
+              {applyAllConfirm.moduleType ?? "module"} and save immediately - unsaved changes on other modules will be lost.
             </p>
             <div className="modal-buttons">
               <button className="save-button" type="button" onClick={confirmApplyToAll}

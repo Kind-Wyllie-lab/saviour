@@ -118,18 +118,18 @@ function ModuleActionsMenu({ id, name, isOnline }) {
                 <button type="button" className="actions-modal__item"
                   onClick={() => { setRestartTarget(true); setShowActions(false); }}>
                   <span>Restart service</span>
-                  <span className="actions-modal__hint">Restarts the SAVIOUR program — module does not reboot, reconnects automatically</span>
+                  <span className="actions-modal__hint">Restarts the SAVIOUR program - module does not reboot, reconnects automatically</span>
                 </button>
                 <button type="button" className="actions-modal__item"
                   onClick={() => { setRebootTarget(true); setShowActions(false); }}>
                   <span>Reboot</span>
-                  <span className="actions-modal__hint">Reboots the module — reconnects automatically</span>
+                  <span className="actions-modal__hint">Reboots the module - reconnects automatically</span>
                 </button>
                 <div className="actions-modal__divider" />
                 <button type="button" className="actions-modal__item actions-modal__item--danger"
                   onClick={() => { setShutdownTarget(true); setShowActions(false); }}>
                   <span>Shutdown</span>
-                  <span className="actions-modal__hint">Powers off — reconnects when switched back on</span>
+                  <span className="actions-modal__hint">Powers off - reconnects when switched back on</span>
                 </button>
               </>) : (
                 <button type="button" className="actions-modal__item actions-modal__item--danger"

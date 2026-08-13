@@ -336,6 +336,14 @@ class ControllerFacade:
         self.controller.recording.report_module_fault(module_id, message)
 
 
+    def handle_recording_health_status(self, module_id: str, status: str, message: str | None) -> None:
+        # A module's self-monitor reported its recording capture is
+        # unhealthy/recovered (see Recording._monitor_recording_health on
+        # the module side) — softer than report_module_fault above, surfaced
+        # as a warning rather than a session ERROR.
+        self.controller.recording.handle_recording_health_status(module_id, status, message)
+
+
     def module_back_online(self, module_id: str) -> None:
         # What to do when a module comes back online
         self.controller.recording.module_back_online(module_id)

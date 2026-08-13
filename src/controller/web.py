@@ -2095,6 +2095,15 @@ class Web(ABC):
                     self.logger.warning(f"{status_type} for module {module_id}: {error}")
                     self.facade.report_module_fault(module_id, f"{status_type}: {error}")
 
+                # A module's own self-monitor thread (Recording._monitor_recording_health)
+                # reports its capture (e.g. a dead AudioMoth thread, a stalled camera
+                # pipeline) looks unhealthy or has recovered. Softer than the fault path
+                # above — surfaced as a session warning, not an ERROR.
+                case "recording_health_warning":
+                    health_status = status.get("status", "unhealthy")
+                    message = status.get("message")
+                    self.facade.handle_recording_health_status(module_id, health_status, message)
+
                 # Generic failure path: Command._handle_error() sends this on any
                 # unhandled exception (or unknown command) while executing a command.
                 # Previously silently dropped the same way as above. Not escalated to

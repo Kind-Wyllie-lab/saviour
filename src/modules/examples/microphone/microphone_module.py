@@ -309,6 +309,20 @@ class AudiomothModule(Module):
         self.logger.info(f"Recording thread finished for audiomoth {serial}")
 
 
+    def _check_recording_alive(self) -> tuple[bool, str | None]:
+        """Report any audiomoth whose recording thread has died unexpectedly
+        (e.g. a USB dropout) while the module still believes it's recording.
+        self.audiomoth_threads briefly holds already-finished thread objects
+        or is briefly empty during segment rotation -- that's why the caller
+        (Recording._monitor_recording_health) requires multiple consecutive
+        failures before reporting, rather than this method trying to
+        distinguish "rotating" from "actually dead" itself."""
+        dead = [t.name for t in self.audiomoth_threads if not t.is_alive()]
+        if dead:
+            return False, f"recording thread(s) not running: {', '.join(dead)}"
+        return True, None
+
+
     def _stop_recording(self) -> bool:
         """Stop continuous recording with audiomoth-specific code"""
         try:

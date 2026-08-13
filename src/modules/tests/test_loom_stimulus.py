@@ -1,5 +1,5 @@
 """
-Tests for src/modules/examples/loom_camera/loom_stimulus.py.
+Tests for src/modules/variants/loom_camera/loom_stimulus.py.
 
 Covers LoomBatchRunState (a pure enter/leave/round-completion state machine)
 and LoomStimulusController's process-lifecycle orchestration. The renderer
@@ -13,7 +13,7 @@ and let the tests verify actual put/get behaviour rather than a mock of it.
 import time
 from unittest.mock import MagicMock, patch
 
-from src.modules.examples.loom_camera.loom_stimulus import (
+from src.modules.variants.loom_camera.loom_stimulus import (
     LoomBatchRunState,
     LoomStimulusConfig,
     LoomStimulusController,
@@ -100,7 +100,7 @@ class TestLoomStimulusControllerStart:
         controller = LoomStimulusController(cfg)
 
         with patch(
-            "src.modules.examples.loom_camera.loom_stimulus.mp.Process"
+            "src.modules.variants.loom_camera.loom_stimulus.mp.Process"
         ) as mock_process_cls:
             mock_proc = MagicMock(is_alive=MagicMock(return_value=False))
             mock_process_cls.return_value = mock_proc
@@ -119,7 +119,7 @@ class TestLoomStimulusControllerStart:
         controller._proc = MagicMock(is_alive=MagicMock(return_value=True))
 
         with patch(
-            "src.modules.examples.loom_camera.loom_stimulus.mp.Process"
+            "src.modules.variants.loom_camera.loom_stimulus.mp.Process"
         ) as mock_process_cls:
             controller.start()
             mock_process_cls.assert_not_called()

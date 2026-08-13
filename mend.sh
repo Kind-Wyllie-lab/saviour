@@ -11,7 +11,7 @@
 #   4. Rebuilds AudioMoth-USB-Microphone if missing or binary is stale
 #   5. Installs / refreshes the saviour-config symlink
 #   6. Applies logging and NTP configuration
-#   7. Restarts the saviour service if it is running
+#   7. Regenerates the saviour.service systemd unit and restarts it if running
 #
 # What it does NOT do:
 #   - Pull or otherwise change the SAVIOUR code itself -- code version is
@@ -268,6 +268,28 @@ fi
 # ── 7. Restart service ─────────────────────────────────────────────────────────
 
 section "7/7  Service restart"
+
+# saviour-config bakes the current code layout (e.g. src/*/variants/<type>)
+# into /etc/systemd/system/saviour.service as literal text; a plain code
+# update (this script never touches the unit file otherwise) leaves a
+# device's unit file pointing at wherever the layout was when
+# configure_service() last ran. Regenerating it here means mend.sh alone is
+# enough to recover a device after a code-layout change, without a full
+# interactive `sudo saviour-config` run.
+if [ -f /etc/saviour/config ]; then
+    # shellcheck source=/dev/null
+    source /etc/saviour/config
+    if [ "${ROLE:-none}" != "none" ] && [ "${TYPE:-none}" != "none" ]; then
+        if [ -x "$SAVIOUR_CONFIG_LINK" ]; then
+            fix "Regenerating saviour.service unit"
+            "$SAVIOUR_CONFIG_LINK" --regenerate-service >> "$LOG" 2>&1 \
+                && ok "saviour.service unit regenerated" \
+                || warn "Could not regenerate saviour.service unit — run 'sudo saviour-config' manually"
+        else
+            warn "saviour-config not installed yet (see step 5 above) — skipping unit regeneration"
+        fi
+    fi
+fi
 
 if systemctl is-active --quiet saviour.service; then
     fix "Restarting saviour.service to pick up code changes"

@@ -2,6 +2,8 @@
 # saviour-config — TUI for SAVIOUR device configuration
 #
 # Usage: sudo saviour-config
+#        sudo saviour-config --apply                 (non-interactive, boot-time provisioning)
+#        sudo saviour-config --regenerate-service     (rewrite the systemd unit only, e.g. after a code-layout change)
 #
 # Requires whiptail (pre-installed on Raspberry Pi OS).
 # Run after install.sh to assign a role, or any time to reconfigure.
@@ -125,9 +127,9 @@ generate_hostname() {
 get_python_path() {
     local device="${DEVICE_TYPE}_${DEVICE_ROLE}"
     if [ "$DEVICE_ROLE" = "controller" ]; then
-        PYTHON_PATH="src/controller/examples/${DEVICE_TYPE}"
+        PYTHON_PATH="src/controller/variants/${DEVICE_TYPE}"
     else
-        PYTHON_PATH="src/modules/examples/${DEVICE_TYPE}"
+        PYTHON_PATH="src/modules/variants/${DEVICE_TYPE}"
     fi
     PYTHON_FILE="${device}.py"
 }
@@ -1535,6 +1537,30 @@ apply_from_config() {
 if [ "${1:-}" = "--apply" ]; then
     apply_from_config
     exit $?
+fi
+
+# Rewrites /etc/systemd/system/saviour.service from the current role/type --
+# does not restart it, matching configure_service()'s own contract elsewhere
+# in this file (callers restart when they're ready to). Exists because
+# configure_service() bakes PYTHON_PATH (derived from get_python_path(),
+# which encodes the current src/controller|modules/variants/ layout) as
+# literal text into the unit file, and update_saviour() (module.py) only
+# rsyncs new code over the install directory -- it never regenerates the
+# unit file. A device whose unit file still points at an old code layout
+# (e.g. the pre-rename src/*/examples/ path) needs this to self-heal
+# without a full interactive sudo saviour-config run. mend.sh calls this
+# on every run for exactly that reason.
+if [ "${1:-}" = "--regenerate-service" ]; then
+    get_current_config
+    if [ "$CURRENT_ROLE" = "none" ] || [ "$CURRENT_TYPE" = "none" ]; then
+        echo "No role/type configured yet -- nothing to regenerate. Run: sudo saviour-config" >&2
+        exit 1
+    fi
+    DEVICE_ROLE="$CURRENT_ROLE"
+    DEVICE_TYPE="$CURRENT_TYPE"
+    configure_service
+    echo "saviour.service unit regenerated for ${DEVICE_TYPE} ${DEVICE_ROLE} (not restarted -- run 'sudo systemctl restart saviour.service')"
+    exit 0
 fi
 
 main_menu

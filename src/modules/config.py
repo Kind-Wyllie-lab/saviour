@@ -33,7 +33,7 @@ class Config:
 
     def __init__(
         self,
-        base_config_path: str | None = "/usr/local/src/saviour/src/modules/config/base_config.json",
+        base_config_path: str | None = "/usr/local/src/saviour/src/modules/base_config.json",
         active_config_path: str | None = "/etc/saviour/module/active_config.json"
     ):
         """

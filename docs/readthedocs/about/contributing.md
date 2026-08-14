@@ -7,9 +7,9 @@ For a deeper understanding of how the SAVIOUR software works, please refer to [H
 ## New Modules
 The basic steps for creating the new module "AmazingNewModule":
 
-1. Create the folder src/modules/examples/amazing_new_module
+1. Create the folder src/modules/variants/amazing_new_module
 2. In that folder, create the files amazing_new_module.py, amazing_new_module_config.json
-3. Following the example of src/modules/examples/template_module, create your new module
+3. Following the example of src/modules/variants/template, create your new module
 4. Modify the saviour-config script to be able to configure a pi to run as your module
 5. Use saviour-config to deploy your AmazingNewModule on a network with a controller and test its behaviour
 
@@ -18,7 +18,7 @@ Many experiments are able to use the basic SAVIOUR GUI, but sometimes novel vari
 
 The SAVIOUR frontend is built with React, meaning that there is a library of reusable components (e.g. livestream cards, a sidebar) that can be used for creating the appropriate GUI for your use case. 
 
-Some experiments also require the implementation of specific logic, either to make the GUI work properly (new websocket routes) or to enable experimental logic (e.g. in APA, if apa_camera_module detects rat in shock zone, tell apa_arduino_module to activate shock grid). In this case, a new controller / web program should be added in src/controllers/examples, following the pattern in other controllers found there.
+Some experiments also require the implementation of specific logic, either to make the GUI work properly (new websocket routes) or to enable experimental logic (e.g. in APA, if apa_camera_module detects rat in shock zone, tell apa_arduino_module to activate shock grid). In this case, a new controller / web program should be added in src/controller/variants, following the pattern in other controllers found there.
 
 More details to come soon here as a refactor is planned around how controllers and frontends are implemented!
 

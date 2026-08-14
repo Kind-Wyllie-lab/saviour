@@ -1,6 +1,6 @@
 """
 Tests for the loom crossing-zone state machine in
-src/modules/examples/loom_camera/loom_camera_module.py
+src/modules/variants/loom_camera/loom_camera_module.py
 
 Covers the enter-confirm-frames debounce: a real, sustained entry must
 still fire 'enter', while a transient blob (a hand withdrawing, a shadow,
@@ -8,7 +8,7 @@ a lighting flicker) that only touches the 'in' side for a frame or two
 must not.
 """
 
-from src.modules.examples.loom_camera.loom_camera_module import (
+from src.modules.variants.loom_camera.loom_camera_module import (
     LoomCrossingState,
     loom_update_crossing_state,
 )

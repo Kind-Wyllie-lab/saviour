@@ -1,5 +1,5 @@
 """
-Tests for src/modules/examples/loom_camera/loom_camera_module.py.
+Tests for src/modules/variants/loom_camera/loom_camera_module.py.
 
 Covers LoomBlobDiffTracker (abs-diff blob detection on real synthetic
 numpy/cv2 frames -- no hardware needed) and loom_load_roi_and_line (pure
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.modules.examples.loom_camera.loom_camera_module import (
+from src.modules.variants.loom_camera.loom_camera_module import (
     LoomBlobDiffTracker,
     loom_load_roi_and_line,
 )

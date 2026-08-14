@@ -270,9 +270,9 @@ Modules can specify readiness validation parameters:
 
 ## Configuration File Locations
 
-- **Base configs:** `src/habitat/src/modules/config/`
-- **APA configs:** `src/modules/`
-- **Controller config:** `src/controller/config.json`
+- **Module base config:** `src/modules/base_config.json`
+- **Controller base config:** `src/controller/base_config.json`
+- **Per-variant configs:** `src/modules/variants/<type>/<type>_config.json`, `src/controller/variants/<type>/<type>_controller_config.json`
 
 ## Readiness Validation Parameters
 

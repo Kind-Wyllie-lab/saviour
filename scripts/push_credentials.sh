@@ -15,7 +15,7 @@ trap 'rc=$?; echo "push_credentials.sh failed at line $LINENO (exit $rc)"' ERR
 
 INSTALL_DIR="/usr/local/src/saviour"
 CREDS_FILE="/etc/saviour/samba_credentials"
-BASE_CONFIG="${INSTALL_DIR}/src/modules/config/base_config.json"
+BASE_CONFIG="${INSTALL_DIR}/src/modules/base_config.json"
 SSH_USER="pi"
 
 if [ "$#" -eq 0 ]; then

@@ -272,7 +272,7 @@ if [ "$DEL_SRC" = "yes" ]; then
     echo "  Deleted ${INSTALL_DIR}"
 else
     # Clear generated Samba credentials from base_config.json if source dir is kept
-    BASE_CONFIG="${INSTALL_DIR}/src/modules/config/base_config.json"
+    BASE_CONFIG="${INSTALL_DIR}/src/modules/base_config.json"
     if [ -f "$BASE_CONFIG" ]; then
         python3 - "$BASE_CONFIG" <<'PYEOF' 2>/dev/null && \
             echo "  Cleared Samba credentials from base_config.json" || \

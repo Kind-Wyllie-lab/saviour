@@ -26,7 +26,7 @@
   },
   "loom_tracking": {
     "enabled": true,
-    "roi_json_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_roi_and_line.json",
+    "roi_json_path": "/usr/local/src/saviour/src/modules/variants/loom_camera/loom_roi_and_line.json",
     "max_full_rate_fps": 60,
     "process_width": 256,
     "thr_hi": 10.0,
@@ -55,7 +55,7 @@
   },
   "loom_stimulus": {
     "armed": false,
-    "texture_path": "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png",
+    "texture_path": "/usr/local/src/saviour/src/modules/variants/loom_camera/loom_circle.png",
     "initial_size_cm": 6.0,
     "final_size_cm": 40.0,
     "initial_pos_ndc": [0.5, 0.0],

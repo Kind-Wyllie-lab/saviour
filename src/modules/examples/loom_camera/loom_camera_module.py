@@ -760,8 +760,15 @@ class LoomCameraModule(CameraBase):
     # ---------------------------------------------------------------------
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
+        # Tracking runs here (it drives shock-zone/crossing events and the CSV
+        # columns below), but the ROI/line/centroid overlay is deliberately
+        # NOT drawn on this stream -- this is the stream that gets recorded to
+        # disk, and the overlay is a live-monitoring aid, not something that
+        # should be permanently baked into the research recording. It's still
+        # drawn on the lores/preview stream in _process_lores_frame. The base
+        # per-frame timestamp overlay (shared with every other camera type) is
+        # applied separately by the caller, after this hook returns.
         tracking_enabled = self._tracking_enabled
-        overlay_enabled = self._overlay_enabled
 
         cx = cy = None
         zone_state = self.crossing_state.state
@@ -841,9 +848,6 @@ class LoomCameraModule(CameraBase):
                 # overlay/CSV stay populated between tracked frames.
                 cx, cy = self.last_center_src
 
-        if overlay_enabled:
-            self._loom_draw_overlays_on_frame(m)
-
         return {
             "cx": "" if cx is None else f"{cx:.2f}",
             "cy": "" if cy is None else f"{cy:.2f}",
@@ -856,8 +860,7 @@ class LoomCameraModule(CameraBase):
         # make_array copy, which works for non-square images). The timestamp is
         # stamped there too, after rotation, so it lands on the correctly
         # -oriented final frame rather than being baked in at the wrong edge.
-        overlay_enabled = bool(self.config.get("loom_tracking.overlay.enabled", True))
-        if overlay_enabled:
+        if self._overlay_enabled:
             self._loom_draw_overlays_on_frame(m, lores=True)
 
     def _after_frame_hook(self, timing) -> None:

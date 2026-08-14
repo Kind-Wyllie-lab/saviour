@@ -76,6 +76,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [activePreset, setActivePreset] = useState("custom");
   const [activeTab, setActiveTab] = useHashTab("basic");
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
+  const [roiInfo, setRoiInfo] = useState(null);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -115,6 +116,32 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData?.camera?.width, formData?.camera?.height, formData?.camera?.fps, presets]);
+
+  // Track what resolution the saved ROI (arena polygon) was drawn at, so a
+  // later resolution change can be flagged -- the module rescales the ROI
+  // proportionally on load (see loom_load_roi_and_line), but that assumes a
+  // uniform resize; a sensor-mode change can shift the actual cropped field
+  // of view, silently making a "successfully rescaled" ROI wrong rather than
+  // erroring. Re-fetched when the editor modal closes, since that's when a
+  // save (and a fresh image_size) can happen.
+  useEffect(() => {
+    if (module.type !== "loom_camera" || !module.ip || showLoomRoiEditor) return;
+    let cancelled = false;
+    fetch(`http://${module.ip}:8080/roi`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (cancelled) return;
+        if (!data) { setRoiInfo(null); return; }
+        const poly = data.arena_polygon ?? data.points;
+        setRoiInfo({
+          width: data.image_size?.width,
+          height: data.image_size?.height,
+          hasPolygon: Array.isArray(poly) && poly.length >= 3,
+        });
+      })
+      .catch(() => { if (!cancelled) setRoiInfo(null); });
+    return () => { cancelled = true; };
+  }, [module.type, module.ip, showLoomRoiEditor]);
 
   const handlePresetSelect = (preset) => {
     setActivePreset(preset.key);
@@ -312,6 +339,15 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             {fpsOverMax && (
               <div className="fov-label fov-cropped">
                 {currentFps} fps exceeds mode max ({maxFps} fps) - will be clamped on apply
+              </div>
+            )}
+            {module.type === "loom_camera" && roiInfo?.hasPolygon && roiInfo.width && roiInfo.height &&
+              (Number(roiInfo.width) !== Number(currentWidth) || Number(roiInfo.height) !== Number(currentHeight)) && (
+              <div className="fov-label fov-cropped">
+                ROI was drawn at {roiInfo.width}×{roiInfo.height}, current resolution is {currentWidth}×{currentHeight} -
+                it will be rescaled proportionally but may no longer line up with the physical arena,
+                especially if this changed sensor mode rather than just resolution.
+                Re-open "Set ROI / Line" to redraw it.
               </div>
             )}
 

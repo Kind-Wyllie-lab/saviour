@@ -6,12 +6,6 @@
   overflow: hidden;
 }
 
-/* ── Top bar: stage toggle ───────────────────────────────────────────────── */
-
-.loom-dashboard-topbar {
-  flex-shrink: 0;
-}
-
 /* ── Main body ───────────────────────────────────────────────────────────── */
 
 .loom-dashboard-main {

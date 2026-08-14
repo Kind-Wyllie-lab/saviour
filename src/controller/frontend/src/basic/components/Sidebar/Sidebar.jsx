@@ -20,13 +20,15 @@ function Sidebar({ navItems }) {
   const location = useLocation();
 
   // Update modal state
-  const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged }
+  const [updateInfo, setUpdateInfo]           = useState(null); // { running_version, staged, git }
+  const [updateMode, setUpdateMode]           = useState(null); // null | "zip" | "git" -- null shows the picker
   const [uploadProgress, setUploadProgress]   = useState(null); // { received, total }
   const [uploadError, setUploadError]         = useState(null);
   const [stagedMeta, setStagedMeta]           = useState(null); // completed upload metadata
   const [deployStatus, setDeployStatus]       = useState(null); // null | "deploying" | "done" | "error"
   const [deployError, setDeployError]         = useState(null);
   const [stagingCurrent, setStagingCurrent]   = useState(false);
+  const [gitPullStatus, setGitPullStatus]     = useState(null); // null | { stage, branch, commit }
   const [loggedIn, setLoggedIn]               = useState(() => isLoggedIn());
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const fileInputRef = useRef(null);
@@ -112,6 +114,13 @@ function Sidebar({ navItems }) {
     };
   }, []);
 
+  // Git pull socket listener
+  useEffect(() => {
+    const onGitStatus = (data) => setGitPullStatus(data);
+    socket.on("git_pull_status", onGitStatus);
+    return () => socket.off("git_pull_status", onGitStatus);
+  }, []);
+
   // Deploy socket listeners
   useEffect(() => {
     const onStatus = ({ stage, count }) => {
@@ -147,11 +156,13 @@ function Sidebar({ navItems }) {
       return;
     }
     setUpdateInfo(null);
+    setUpdateMode(null);
     setStagedMeta(null);
     setUploadProgress(null);
     setUploadError(null);
     setDeployStatus(null);
     setDeployError(null);
+    setGitPullStatus(null);
     setShowUpdateModal(true);
   };
 
@@ -204,7 +215,23 @@ function Sidebar({ navItems }) {
     socket.emit("stage_current_version");
   };
 
+  const handleGitPull = () => {
+    setGitPullStatus({ stage: "fetching" });
+    setUploadError(null);
+    setStagedMeta(null);
+    setDeployStatus(null);
+    setDeployError(null);
+    socket.emit("git_pull_update");
+  };
+
   const staged = stagedMeta || updateInfo?.staged;
+  const gitInfo = updateInfo?.git;
+  const gitPullInProgress = !!gitPullStatus && !staged && !uploadError;
+  const GIT_STAGE_LABEL = {
+    fetching:  "Fetching from origin…",
+    resetting: "Resetting to latest commit…",
+    staging:   "Packaging update…",
+  };
 
   return (
     <header className="sidebar">
@@ -319,14 +346,6 @@ function Sidebar({ navItems }) {
               <code className="update-version-value">
                 {updateInfo ? updateInfo.running_version : "…"}
               </code>
-              <button
-                className="update-stage-btn"
-                onClick={handleStageCurrent}
-                disabled={stagingCurrent || !!uploadProgress}
-                title="Package the currently-running code as the staged update"
-              >
-                {stagingCurrent ? "Staging…" : "Stage"}
-              </button>
             </div>
             {staged && (
               <div className="update-version-row">
@@ -337,49 +356,123 @@ function Sidebar({ navItems }) {
               </div>
             )}
 
-            {/* Drop zone — always shown unless an upload is in flight */}
-            {!uploadProgress && (
-              <div
-                className="update-dropzone"
-                onDragOver={e => e.preventDefault()}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="update-dropzone-icon">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                <span>Drop a <code>.zip</code> package here or click to browse</span>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".zip"
-                  style={{ display: "none" }}
-                  onChange={e => handleFileSelect(e.target.files[0])}
-                />
+            {/* ── Picker: choose how to get the update onto this controller ── */}
+            {updateMode === null && (
+              <div className="update-mode-picker">
+                <button
+                  type="button"
+                  className="update-mode-btn"
+                  onClick={() => { setUploadError(null); setUpdateMode("zip"); }}
+                >
+                  <span className="update-mode-btn-title">Zip Upload</span>
+                  <span className="update-mode-btn-hint">
+                    Upload a package, or stage the code currently running here
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="update-mode-btn"
+                  disabled={!gitInfo?.available}
+                  title={gitInfo?.available ? undefined : (gitInfo?.reason || "Not available on this device")}
+                  onClick={() => { setUploadError(null); setGitPullStatus(null); setUpdateMode("git"); }}
+                >
+                  <span className="update-mode-btn-title">Git Pull</span>
+                  <span className="update-mode-btn-hint">
+                    {gitInfo?.available
+                      ? `Pull latest from origin/${gitInfo.branch} and stage it`
+                      : (gitInfo?.reason || "Not available on this device")}
+                  </span>
+                </button>
               </div>
             )}
 
-            {uploadProgress && !stagedMeta && (
-              <div className="update-progress-wrap">
-                <div className="update-progress-bar">
-                  <div
-                    className="update-progress-fill"
-                    style={{
-                      width: uploadProgress.total
-                        ? `${Math.round((uploadProgress.received / uploadProgress.total) * 100)}%`
-                        : "0%"
-                    }}
+            {/* ── Zip Upload ── */}
+            {updateMode === "zip" && (<>
+              <div className="update-version-row">
+                <span className="update-version-label">Current</span>
+                <button
+                  className="update-stage-btn"
+                  onClick={handleStageCurrent}
+                  disabled={stagingCurrent || !!uploadProgress}
+                  title="Package the currently-running code as the staged update"
+                >
+                  {stagingCurrent ? "Staging…" : "Stage running code"}
+                </button>
+              </div>
+
+              {!uploadProgress && (
+                <div
+                  className="update-dropzone"
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="update-dropzone-icon">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <span>Drop a <code>.zip</code> package here or click to browse</span>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".zip"
+                    style={{ display: "none" }}
+                    onChange={e => handleFileSelect(e.target.files[0])}
                   />
                 </div>
-                <span className="update-progress-label">
-                  Uploading… {uploadProgress.total
-                    ? `${uploadProgress.received} / ${uploadProgress.total} chunks`
-                    : "starting"}
-                </span>
+              )}
+
+              {uploadProgress && !stagedMeta && (
+                <div className="update-progress-wrap">
+                  <div className="update-progress-bar">
+                    <div
+                      className="update-progress-fill"
+                      style={{
+                        width: uploadProgress.total
+                          ? `${Math.round((uploadProgress.received / uploadProgress.total) * 100)}%`
+                          : "0%"
+                      }}
+                    />
+                  </div>
+                  <span className="update-progress-label">
+                    Uploading… {uploadProgress.total
+                      ? `${uploadProgress.received} / ${uploadProgress.total} chunks`
+                      : "starting"}
+                  </span>
+                </div>
+              )}
+            </>)}
+
+            {/* ── Git Pull ── */}
+            {updateMode === "git" && (<>
+              <div className="update-version-row">
+                <span className="update-version-label">Branch</span>
+                <code className="update-version-value">{gitInfo?.branch ?? "-"}</code>
               </div>
-            )}
+              <p className="update-git-warning">
+                Fetches <code>origin/{gitInfo?.branch}</code> and hard-resets this
+                controller's checkout to match it — any local changes on the
+                controller are discarded — then stages the result.
+              </p>
+              <div className="update-git-pull-row">
+                <button
+                  className="save-button"
+                  type="button"
+                  onClick={handleGitPull}
+                  disabled={gitPullInProgress}
+                >
+                  {gitPullInProgress
+                    ? (GIT_STAGE_LABEL[gitPullStatus.stage] || "Pulling…")
+                    : "Pull latest & stage"}
+                </button>
+              </div>
+              {gitPullStatus?.commit && (
+                <p className="update-git-info">
+                  Now at <code>{gitPullStatus.commit}</code> ({gitPullStatus.branch})
+                </p>
+              )}
+            </>)}
 
             {uploadError && (
               <p className="update-error">{uploadError}</p>
@@ -396,6 +489,11 @@ function Sidebar({ navItems }) {
               {staged && !deployStatus && (
                 <button className="save-button" type="button" onClick={handleDeploy}>
                   Deploy to All
+                </button>
+              )}
+              {updateMode !== null && !deployStatus && (
+                <button className="save-button" type="button" onClick={() => setUpdateMode(null)}>
+                  ← Back
                 </button>
               )}
               <button

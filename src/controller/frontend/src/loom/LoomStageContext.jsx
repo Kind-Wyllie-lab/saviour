@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import socket from "/src/socket";
+import useSessions from "/src/hooks/useSessions";
 import "./LoomStageContext.css";
 
 const LoomStageContext = createContext(null);
@@ -68,22 +69,62 @@ export function useLoomStage() {
   return useContext(LoomStageContext);
 }
 
+// Changing stage re-arms/disarms the loom stimulus and reassigns camera
+// groups (see pushStageConfig above) -- mutating that mid-recording would
+// change what an active session is doing out from under the operator, so
+// every stage control locks while any session is actively recording.
+function useStageLocked() {
+  const { sessionList } = useSessions();
+  return useMemo(() => sessionList.some((s) => s.state === "active"), [sessionList]);
+}
+
 export function StageToggle() {
   const { stage, setStage } = useLoomStage();
+  const locked = useStageLocked();
   return (
-    <div className="stage-toggle" role="group" aria-label="Experiment stage">
+    <div
+      className="stage-toggle"
+      role="group"
+      aria-label="Experiment stage"
+      title={locked ? "Locked while recording" : undefined}
+    >
       <button
         className={`stage-toggle__btn${stage === "habituation" ? " stage-toggle__btn--active stage-toggle__btn--hab" : ""}`}
+        disabled={locked}
         onClick={() => setStage("habituation")}
       >
         Habituation
       </button>
       <button
         className={`stage-toggle__btn${stage === "loom" ? " stage-toggle__btn--active stage-toggle__btn--loom" : ""}`}
+        disabled={locked}
         onClick={() => setStage("loom")}
       >
         Loom
       </button>
+    </div>
+  );
+}
+
+// Dropdown variant for tighter spots (e.g. under the dashboard's recording
+// timer) where the two-button toggle doesn't fit as naturally.
+export function StageDropdown() {
+  const { stage, setStage } = useLoomStage();
+  const locked = useStageLocked();
+  return (
+    <div className="stage-dropdown">
+      <label htmlFor="loom-stage-select" className="stage-dropdown__label">Stage</label>
+      <select
+        id="loom-stage-select"
+        className={`stage-dropdown__select stage-dropdown__select--${stage}`}
+        value={stage}
+        disabled={locked}
+        title={locked ? "Locked while recording" : undefined}
+        onChange={(e) => setStage(e.target.value)}
+      >
+        <option value="habituation">Habituation</option>
+        <option value="loom">Loom</option>
+      </select>
     </div>
   );
 }

@@ -2110,6 +2110,17 @@ class Web(ABC):
                         'error': error,
                     })
 
+                # Camera-family status, common to every camera variant (CameraBase
+                # itself, not a variant subclass) -- handled here directly rather
+                # than delegated to handle_special_module_status, same reasoning as
+                # recording_started/stopped above. Without this it fell to
+                # case _ -> handle_special_module_status(), which every variant
+                # (loom_controller.py etc.) either doesn't override or logs
+                # "No logic for ..." and drops -- the crop editor's "Saving..."
+                # status would never resolve to saved/failed.
+                case "camera_crop_updated":
+                    self.socketio.emit('module_status', {**status, 'module_id': module_id})
+
                 case "heartbeat":
                     version = status.get("version")
                     if version:

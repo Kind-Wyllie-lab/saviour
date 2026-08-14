@@ -111,12 +111,21 @@ export default function CropEditorModal({ moduleIp, moduleId, open, onClose, ini
       if (!msg || msg.module_id !== moduleId) return;
       if (msg.type === "camera_crop_updated") {
         setStatus(msg.crop_rect ? "Saved. Crop will apply immediately." : "Crop cleared.");
-      } else if (msg.type === "error") {
-        setStatus(`Save failed: ${msg.error ?? "unknown error"}`);
       }
     };
+    // Command failures (Command._handle_error's generic "error" status) are
+    // routed by web.py to a separate "module_error" event, not "module_status"
+    // -- see handle_module_status's "error" case.
+    const onModuleError = (msg) => {
+      if (!msg || msg.module_id !== moduleId) return;
+      setStatus(`Save failed: ${msg.error ?? "unknown error"}`);
+    };
     socket.on("module_status", onModuleStatus);
-    return () => socket.off("module_status", onModuleStatus);
+    socket.on("module_error", onModuleError);
+    return () => {
+      socket.off("module_status", onModuleStatus);
+      socket.off("module_error", onModuleError);
+    };
   }, [moduleId]);
 
   const handleMouseDown = (e) => {

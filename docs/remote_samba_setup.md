@@ -72,12 +72,12 @@ Edit `/var/lib/saviour/active_config.json` (or set via the controller GUI) to po
 }
 ```
 
-Or update `src/modules/config/base_config.json` before flashing so the default is already correct:
+Or update `src/modules/base_config.json` before flashing so the default is already correct:
 
 ```bash
 python3 - <<'EOF'
 import json
-path = "src/modules/config/base_config.json"
+path = "src/modules/base_config.json"
 with open(path) as f:
     cfg = json.load(f)
 cfg["export"]["share_ip"] = "10.0.0.2"

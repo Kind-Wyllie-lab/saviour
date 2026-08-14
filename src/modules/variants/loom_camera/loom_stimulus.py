@@ -51,7 +51,7 @@ from OpenGL.raw.GL.VERSION.GL_2_0 import (
 )
 from OpenGL.raw.GL.VERSION.GL_3_0 import glBindVertexArray, glDeleteVertexArrays
 
-from modules.examples.loom_camera.utils import (
+from modules.variants.loom_camera.utils import (
     framebuffer_size_callback,
     load_texture,
     scale_matrix_seperate,

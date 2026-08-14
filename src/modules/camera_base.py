@@ -86,6 +86,7 @@ class CameraBase(Module):
         "camera.gain", "camera.brightness", "camera.contrast", "camera.exposure_time",
         "camera.manual_exposure", "camera.ae_enable",
         "camera.lens_position", "camera.autofocus_mode",
+        "camera.crop_rect",
     }
 
     def __init__(self, module_type: str):
@@ -114,6 +115,15 @@ class CameraBase(Module):
         self.last_frame_timestamp = None
         self._last_stream_encode_time = 0.0
         self._stream_interval_s = 0.0
+        # Wall-clock time _frame_precallback last ran at all -- distinct from
+        # last_frame_timestamp (the frame's own hardware timestamp, used for
+        # delta_ms/fps math). Used by _check_recording_alive() to detect the
+        # capture pipeline going silent; updated unconditionally regardless
+        # of streaming/recording state, since _frame_precallback itself is
+        # never overridden by subclasses (unlike the smaller per-frame
+        # hooks), so this is a reliable proxy for "is libcamera still
+        # delivering frames at all" for every camera variant.
+        self._last_frame_wall_time = None
 
         # Configure camera
         time.sleep(0.1)
@@ -201,6 +211,83 @@ class CameraBase(Module):
             "sensor_model": self.sensor_model,
             "has_autofocus": self.has_autofocus,
         }
+
+
+    @command()
+    def set_camera_crop(self, crop_rect: dict | None) -> dict:
+        """Save a crop/digital-zoom rectangle from the web UI's crop editor
+        and apply it live via ScalerCrop. Pass None to clear an existing crop.
+
+        Expected shape when setting:
+            {"x": int, "y": int, "width": int, "height": int,
+             "preview_width": int, "preview_height": int}
+        x/y/width/height are in the *displayed preview's* pixel space -- the
+        same space the crop editor's snapshot is shown in (i.e.
+        camera.width x camera.height at the moment the rect was drawn).
+        preview_width/preview_height record what camera.width/camera.height
+        were at that moment, so _compute_scaler_crop_rect() can convert
+        correctly even if the live camera.width/height have since changed,
+        and so the frontend can detect staleness (a crop drawn against a
+        since-changed sensor mode/output size) by comparing them to the
+        current values -- see CLAUDE.md's crop feature design note for why
+        that's a UI warning rather than something enforced here.
+        """
+        self.config.set("camera.crop_rect", crop_rect)
+        self.communication.send_status({
+            "type": "camera_crop_updated",
+            "crop_rect": crop_rect,
+        })
+        return {"result": "success"}
+
+
+    def _compute_scaler_crop_rect(self) -> tuple[int, int, int, int] | None:
+        """Convert the stored preview-pixel-space camera.crop_rect into a
+        sensor-native ScalerCrop rectangle (x, y, w, h), anchored to the
+        active sensor mode's crop_limits. Returns None if no crop is set or
+        it can't be computed (e.g. sensor modes not yet available).
+
+        Deliberately does not try to detect/reject a stale crop_rect (drawn
+        against a since-changed sensor mode or output size) -- per the
+        design note in CLAUDE.md, a stale crop is applied as best-effort
+        rather than blocked; the operator is expected to notice the UI's
+        staleness warning and redraw. The clamp below only guards against
+        picam2.set_controls() erroring out on an out-of-range rectangle, not
+        against the crop looking wrong.
+        """
+        crop_rect = self.config.get("camera.crop_rect")
+        if not crop_rect:
+            return None
+        try:
+            mode = self.mode
+            if not mode and self.sensor_modes:
+                mode_index = self.config.get("camera.sensor_mode_index", 0)
+                mode = self.sensor_modes[max(0, min(int(mode_index), len(self.sensor_modes) - 1))]
+            if not mode:
+                return None
+
+            limit_x, limit_y, limit_w, limit_h = mode["crop_limits"]
+            preview_w = crop_rect.get("preview_width") or self.width or limit_w
+            preview_h = crop_rect.get("preview_height") or self.height or limit_h
+            if not preview_w or not preview_h:
+                return None
+
+            scale_x = limit_w / preview_w
+            scale_y = limit_h / preview_h
+            x = limit_x + round(crop_rect["x"] * scale_x)
+            y = limit_y + round(crop_rect["y"] * scale_y)
+            w = round(crop_rect["width"] * scale_x)
+            h = round(crop_rect["height"] * scale_y)
+
+            # Clamp inside the mode's crop_limits so a stale or malformed
+            # rect can't request an out-of-range ScalerCrop.
+            x = max(limit_x, min(x, limit_x + limit_w - 1))
+            y = max(limit_y, min(y, limit_y + limit_h - 1))
+            w = max(1, min(w, limit_x + limit_w - x))
+            h = max(1, min(h, limit_y + limit_h - y))
+            return (x, y, w, h)
+        except Exception as e:
+            self.logger.warning(f"Could not compute ScalerCrop from stored crop_rect: {e}")
+            return None
 
 
     @command()
@@ -296,6 +383,11 @@ class CameraBase(Module):
                 live_controls["AfMode"] = af_mode
                 if af_mode == 0:
                     live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
+
+            scaler_crop = self._compute_scaler_crop_rect()
+            if scaler_crop is not None:
+                live_controls["ScalerCrop"] = scaler_crop
+
             try:
                 self.picam2.set_controls(live_controls)
             except Exception as e:
@@ -435,6 +527,10 @@ class CameraBase(Module):
                     self.logger.info("AWB disabled (sync_lock_awb)")
             else:
                 controls["SyncMode"] = lc.rpi.SyncModeEnum.Off
+
+            scaler_crop = self._compute_scaler_crop_rect()
+            if scaler_crop is not None:
+                controls["ScalerCrop"] = scaler_crop
 
             if self.config.get("camera.monochrome") is True:
                 self.logger.info("Camera configured for grayscale - applying grayscale conversion in pre-callback.")
@@ -660,6 +756,22 @@ class CameraBase(Module):
             return False
 
 
+    def _check_recording_alive(self) -> tuple[bool, str | None]:
+        """Report if the capture pipeline has gone silent -- no frames
+        processed recently despite an active recording. Distinct from the
+        per-frame dropped_before count in the CSV sidecar (occasional missed
+        frames): this catches the pipeline stalling or the encoder dying
+        outright, which dropped_before can't, since it's only ever computed
+        from frames that did arrive."""
+        if self._last_frame_wall_time is None:
+            return True, None
+        silence_secs = time.time() - self._last_frame_wall_time
+        max_silence_secs = self.config.get("recording._health_check_camera_silence_secs", 5.0)
+        if silence_secs > max_silence_secs:
+            return False, f"no frames processed in {silence_secs:.1f}s"
+        return True, None
+
+
     """Timestamping frames"""
     # Cached wall-clock minus monotonic offset in nanoseconds.
     # Recomputed at most once per second; drift between recomputations is <1 µs.
@@ -718,6 +830,8 @@ class CameraBase(Module):
 
     def _frame_precallback(self, req) -> None:
         try:
+            self._last_frame_wall_time = time.time()
+
             # Single metadata fetch — reused for timestamp, CSV fields, and overlays.
             meta = req.get_metadata()
 
@@ -1007,6 +1121,17 @@ class CameraBase(Module):
                 raise RuntimeError('Not running with the Werkzeug Server')
             func()
             return 'Server shutting down...'
+
+        @self.monitor_stream.app.route('/snapshot.jpg', methods=['GET'])
+        def snapshot():
+            """Return a single JPEG snapshot from the latest preview frame --
+            same bytes the MJPEG stream is currently pushing, no extra
+            encode. Used by the crop editor (every camera variant, not just
+            loom) to have a still frame to draw a crop rectangle on."""
+            jpeg = self.monitor_stream.get_latest_frame()
+            if jpeg is None:
+                return ("No frame available", 503)
+            return (jpeg, 200, {"Content-Type": "image/jpeg"})
 
     @command()
     def stop_streaming(self) -> bool:

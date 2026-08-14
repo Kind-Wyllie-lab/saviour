@@ -1,0 +1,100 @@
+/* Big modal dedicated to crop editing -- same layout approach as
+   LoomRoiLineEditorModal.css, renamed to this modal's own class so both
+   can be styled independently if they diverge later. */
+.crop-editor-modal {
+  width: min(96vw, 1600px) !important;
+  max-width: min(96vw, 1600px) !important;
+  height: min(92vh, 950px) !important;
+  max-height: min(92vh, 950px) !important;
+  overflow: hidden;
+  padding: 16px;
+}
+
+.crop-editor-modal__content {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 14px;
+  height: calc(100% - 80px);
+}
+
+.crop-editor-modal__viewer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #111;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.crop-editor-modal__viewer img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.crop-editor-modal__viewer canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.crop-editor-modal__sidebar {
+  overflow: auto;
+}
+
+.modal.crop-editor-modal {
+  width: 98vw !important;
+  max-width: 98vw !important;
+  height: 94vh !important;
+  max-height: 94vh !important;
+  overflow: hidden !important;
+  padding: 16px !important;
+  transform: none !important;
+  left: auto !important;
+  top: auto !important;
+}
+
+.modal.crop-editor-modal .crop-editor-modal__content {
+  display: grid !important;
+  grid-template-columns: 1fr 360px !important;
+  gap: 14px !important;
+  height: calc(94vh - 120px) !important;
+  min-height: 400px !important;
+}
+
+.modal.crop-editor-modal .crop-editor-modal__viewer {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: #111 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+.modal.crop-editor-modal .crop-editor-modal__viewer img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  display: block !important;
+}
+
+.modal.crop-editor-modal .crop-editor-modal__viewer canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.modal.crop-editor-modal .crop-editor-modal__sidebar {
+  overflow: auto !important;
+  max-height: 100% !important;
+}
+
+.modal-overlay:has(.modal.crop-editor-modal) {
+  align-items: flex-start !important;
+  justify-content: center !important;
+  padding-top: 2vh !important;
+}

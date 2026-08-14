@@ -51,6 +51,8 @@ class AcousticStartleController(Controller):
     def _register_special_socket_events(self, socketio):
         @socketio.on("play_sound")
         def handle_play_sound(data):
+            if not self.web._require_auth("auth_required"):
+                return
             module_id = data.get("module_id")
             self.logger.info(f"Playing sound on {module_id}")
             self.facade.send_command(module_id, "play_sound", {})
@@ -65,6 +67,8 @@ class AcousticStartleController(Controller):
 
         @socketio.on("change_sound_file")
         def change_sound_file(data):
+            if not self.web._require_auth("auth_required"):
+                return
             self.logger.info(f"change sound file received {data}")
             module_id = data.get("module_id")
             target_file = data.get("selected_file")

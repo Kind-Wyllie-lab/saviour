@@ -33,7 +33,7 @@ class Config:
 
     def __init__(
         self,
-        base_config_path: str | None = "/usr/local/src/saviour/src/modules/config/base_config.json",
+        base_config_path: str | None = "/usr/local/src/saviour/src/modules/base_config.json",
         active_config_path: str | None = "/etc/saviour/module/active_config.json"
     ):
         """
@@ -332,7 +332,15 @@ class Config:
             self.save_active()
 
         if self._check_if_module_config_updated(key_path):
-            self.on_module_config_change([key_path])
+            # NB: not self.on_module_config_change -- that attribute is never
+            # actually assigned anywhere in production (only set_all() below
+            # gets wired correctly, via self.config.configure_module =
+            # self.configure_module in Module.__init__). Calling it here
+            # unconditionally raised AttributeError on the first single-key
+            # set() of any module-config key -- previously unreachable since
+            # nothing in the codebase called set() for a module-config key
+            # until the camera crop feature's set_camera_crop() did.
+            self.configure_module([key_path])
 
         return True
 

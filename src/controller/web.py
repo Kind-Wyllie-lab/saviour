@@ -545,6 +545,8 @@ class Web(ABC):
 
         @self.socketio.on("check_ready")
         def handle_check_ready(data):
+            if not self._require_auth("auth_required"):
+                return
             target = data.get("target")
             modules = list(self.facade.get_modules_by_target(target).keys())
             for mid in modules:
@@ -2095,6 +2097,15 @@ class Web(ABC):
                     self.logger.warning(f"{status_type} for module {module_id}: {error}")
                     self.facade.report_module_fault(module_id, f"{status_type}: {error}")
 
+                # A module's own self-monitor thread (Recording._monitor_recording_health)
+                # reports its capture (e.g. a dead AudioMoth thread, a stalled camera
+                # pipeline) looks unhealthy or has recovered. Softer than the fault path
+                # above — surfaced as a session warning, not an ERROR.
+                case "recording_health_warning":
+                    health_status = status.get("status", "unhealthy")
+                    message = status.get("message")
+                    self.facade.handle_recording_health_status(module_id, health_status, message)
+
                 # Generic failure path: Command._handle_error() sends this on any
                 # unhandled exception (or unknown command) while executing a command.
                 # Previously silently dropped the same way as above. Not escalated to
@@ -2109,6 +2120,27 @@ class Web(ABC):
                         'module_id': module_id,
                         'error': error,
                     })
+
+                # Camera-family status, common to every camera variant (CameraBase
+                # itself, not a variant subclass) -- handled here directly rather
+                # than delegated to handle_special_module_status, same reasoning as
+                # recording_started/stopped above. Without this it fell to
+                # case _ -> handle_special_module_status(), which every variant
+                # (loom_controller.py etc.) either doesn't override or logs
+                # "No logic for ..." and drops -- the crop editor's "Saving..."
+                # status would never resolve to saved/failed.
+                case "camera_crop_updated":
+                    self.socketio.emit('module_status', {**status, 'module_id': module_id})
+
+                # loom_camera_module.py's set_loom_roi() sends this directly via
+                # communication.send_status() on a successful save. Previously
+                # unmatched here -- fell to case _ -> handle_special_module_status(),
+                # which loom_controller.py doesn't override for this type (logs
+                # "No logic for loom_roi_updated" and drops), so
+                # LoomRoiLineEditorModal.jsx's "Saving..." status never resolved to
+                # "Saved" even on success.
+                case "loom_roi_updated":
+                    self.socketio.emit('module_status', {**status, 'module_id': module_id})
 
                 case "heartbeat":
                     version = status.get("version")
@@ -2140,6 +2172,20 @@ class Web(ABC):
                             })
                     elif command == "shutdown":
                         self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
+                    elif command == "set_loom_roi" and status.get("status") == "error":
+                        # set_loom_roi's validation failures (bad polygon/line, or a
+                        # write error) come back as the command's own return value,
+                        # not a communication.send_status() call, so they surface
+                        # here as a cmd_ack rather than through the
+                        # loom_roi_updated case above. Previously fell to the
+                        # "no web-layer action" debug log below and was silently
+                        # dropped -- translated into the shape
+                        # LoomRoiLineEditorModal.jsx already listens for.
+                        self.socketio.emit('module_status', {
+                            'type': 'loom_roi_update_failed',
+                            'module_id': module_id,
+                            'error': status.get('error', 'unknown error'),
+                        })
                     else:
                         self.logger.debug(f"cmd_ack for '{command}' from {module_id} — no web-layer action")
 

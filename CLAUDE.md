@@ -153,6 +153,25 @@ Phased plan derived from a full codebase review. Detailed items live in the TODO
 
 **Not scale-dependent, do sooner than phase 4**: the 2026-07-27 security review (see the Security section in TODO) found items that are risks today regardless of lab size — two hardcoded fleet-wide Samba passwords already committed to the repo, and an unauthenticated-ZMQ path to full RCE-as-root via `update_saviour` that doesn't require ever touching the web UI's login. The web UI *does* already have a real (if limited) auth system, contrary to this roadmap's original "auth on... web UI" framing — what it actually needs is TLS, rate-limiting, and closing the unauthenticated endpoints, not auth from scratch.
 
+## v1.0 Milestone (proposed 2026-08-13, currently v0.6)
+
+Scope for calling this v1.0: **safe to run unattended on a closed lab LAN without silent data loss or easy compromise** — not "fully hardened for internet exposure." Deliberately excludes the big structural refactors (they're real debt, but don't block correctness/safety): `web.py` blueprint split, the `examples/`→`variants/` manifest rename, Samba→rsync, and the module god-object composition refactor all stay post-1.0.
+
+- [ ] **Correctness gate** — the small, already-diagnosed bugs still open from the 2026-07-31/08-03 reviews:
+  - [ ] `modules.py` heartbeat-timeout offline path bypasses `on_status_change()` (mid-recording dropout alert doesn't fire for this path)
+  - [ ] `controller/config.py` `set_all()`/`_recursive_update()` has no lock (racing reads see half-merged config)
+  - [ ] `controller/config.py` `set_all()` raises `KeyError` on a genuinely new config key (crashes controller-settings save)
+  - [ ] `health.py` `get_ptp_sync()` treats a perfect `0` offset as missing data
+  - [ ] `health.py` `get_health_summary()` crashes on any online module with a `None` metric
+  - [ ] `recording.py` `create_session()` busy-module overlap check is unlocked (double-submit/scheduler race can double-start a session)
+- [ ] **Security floor** — the items that are real regardless of LAN-vs-WAN exposure, per the 2026-07-27 review:
+  - [ ] `update_saviour` / `deploy_update`: add package signature or checksum verification before rsync-over-install (currently only checks `zipfile.is_zipfile()`)
+  - [ ] Session recording downloads (`/api/sessions/<name>/download...`) have no auth check at all — add `_require_auth`, matching every other handler
+  - [ ] Gate the other unauthenticated data-leak endpoints: `/facade/list_modules`, `/facade/module_health`, `/facade/exported_recordings`, `/update/package`, `get_bug_report` (and fix `bug_report_ready` broadcasting to every socket instead of `room=request.sid`)
+  - [ ] ZMQ identity-hijack: either disable `ROUTER_HANDOVER` or require a shared pre-shared secret on `"hello"` so a spoofed `module_id` can't silently steal another module's command stream
+- [ ] **Explicitly deferred, documented as known limitation for v1.0**: ZMQ CURVE auth/encryption, web UI TLS, Samba SMB3 sealing, fleet SSH-key/password rotation on clone — the roadmap already frames these as "closed-LAN only" caveats; v1.0 ships with that caveat stated plainly rather than blocked on the multi-day transport-layer work.
+- [ ] **Process**: wire the existing `python-app.yml` CI job up as a *required* status check on `main`/`staging` before tagging v1.0 (see GitHub repo settings section below) — a tagged release should not be possible to cut from a red build.
+
 ## TODO
 
 Known issues and planned improvements, grouped by priority. Check these off (`- [x]`) as they are completed.

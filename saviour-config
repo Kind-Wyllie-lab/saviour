@@ -52,8 +52,32 @@ OCTET_A=""; OCTET_B=""; OCTET_C=""
 # 3>&1 1>&2 2>&3 swaps fd1 and fd2 so $() captures the selection.
 wt() { whiptail "$@" 3>&1 1>&2 2>&3; }
 
+# ── Progress reporting ───────────────────────────────────────────────────────
+# Plain status lines, not a whiptail dialog. This used to be
+# `whiptail --title "Configuring…" --infobox "\n  $1" 7 $W` -- an
+# eye-catching box, but each call is its own short-lived newt session: on
+# terminals that support smcup/rmcup (virtually every SSH client -- PuTTY,
+# xterm-256color, etc.) newt switches to the alternate screen to draw the
+# box and switches straight back to the primary screen the instant it
+# exits, which for a fire-and-forget infobox is near instantaneous. Between
+# calls -- especially during multi-minute steps like `npm install`/
+# `apt-get install`, which print nothing to the terminal at all (see
+# run_logged) -- the primary screen shows whatever was there before the
+# flow started (blank, since configure_device() clears it right before this
+# phase begins), which looks like the whole TUI has vanished until the next
+# call flashes it back into view. Over SSH specifically this reads as the
+# session going completely black for the whole run, with no way to tell
+# progress from a hang.
+#
+# Plain echo has none of that: nothing here touches terminal modes, so nothing
+# to flash or restore. It's also unconditionally safe with no controlling
+# terminal at all -- e.g. saviour-provision.service invoking
+# `saviour-config --apply` at boot, fully headless -- where whiptail would
+# fail outright with no tty and, under run_configuration()'s `set -e`, abort
+# the entire boot-time provisioning run on its very first progress() call.
 progress() {
-    whiptail --title "Configuring…" --infobox "\n  $1" 7 $W
+    echo
+    echo "==> $1"
 }
 
 log() {
@@ -586,10 +610,10 @@ configure_device() {
         return
     fi
 
-    # run_configuration()'s progress() infoboxes don't block or get
-    # dismissed -- the last one shown just stays on screen (whiptail/newt
-    # never clears between dialogs) until something bigger happens to paint
-    # over the same region. Explicit clear so it can't linger.
+    # run_configuration() prints plain progress lines (see progress() above)
+    # rather than whiptail dialogs, so there's a scrollback's worth of that
+    # sitting above wherever the cursor is now -- explicit clear so the
+    # credentials/reboot dialogs below get a clean screen.
     clear
 
     # Step 6b: surface first-time login credentials while the operator is
@@ -1473,6 +1497,12 @@ run_configuration() {
 
     systemctl restart saviour.service >> "$LOG" 2>&1 || true
     log "Configuration complete"
+
+    # Matches run_clone_fix()'s own set -e/set +e bracketing above -- set -e
+    # is a global shell option, not function-scoped, so without this a
+    # successful run left errexit switched on for the rest of the script
+    # (the main_menu loop, any later reconfiguration, etc.).
+    set +e
 }
 
 # ── Non-interactive apply (boot-time provisioning) ─────────────────────────────
@@ -1566,6 +1596,6 @@ fi
 main_menu
 # whiptail/newt dialogs paint their own box without a full-screen clear, and
 # never clear on the way out either -- whatever was last drawn (the main
-# menu, or a lingering progress/infobox from a prior step) would otherwise
-# still be sitting on screen once control returns to the shell prompt.
+# menu) would otherwise still be sitting on screen once control returns to
+# the shell prompt.
 clear

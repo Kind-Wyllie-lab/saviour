@@ -51,12 +51,12 @@ src/
     communication.py    # ZMQ hub
     network.py          # Zeroconf
     health.py / ptp.py / recording.py / export_queue.py
-    examples/           # basic, habitat, apa, acoustic_startle controllers
+    variants/            # basic, habitat, apa, acoustic_startle controllers
   modules/
     module.py           # Abstract base Module class
     communication.py / network.py / health.py / ptp.py
     recording.py / export.py / command.py
-    examples/           # camera, microphone, ttl, sound, rfid, apa_camera, arduino, template
+    variants/           # camera, microphone, ttl, sound, rfid, apa_camera, arduino, template
 docs/
   PROTOCOL_V1.md        # ZMQ message protocol spec
   CONFIG_STRUCTURE.md   # Config schema
@@ -67,6 +67,6 @@ docs/
 
 ## Extending SAVIOUR
 
-**New module type:** subclass `Module`, implement the three abstract recording methods + `configure_module_special`. Use `examples/template/` as a starting point.
+**New module type:** subclass `Module`, implement the three abstract recording methods + `configure_module_special`. Use `variants/template/` as a starting point.
 
-**New experiment controller:** subclass `Controller`, implement `configure_controller` and `_register_special_socket_events`. See any `examples/` directory.
+**New experiment controller:** subclass `Controller`, implement `configure_controller` and `_register_special_socket_events`. See any `variants/` directory.

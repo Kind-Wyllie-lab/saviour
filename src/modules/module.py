@@ -608,6 +608,22 @@ class Module(ABC):
         pass
 
 
+    def _check_recording_alive(self) -> tuple[bool, str | None]:
+        """Module-specific liveness check for an in-progress recording --
+        e.g. a capture thread that died unexpectedly (microphone) or the
+        capture pipeline having gone silent (camera). Distinct from the
+        readiness checks in self.checks, which only run pre-flight and
+        actively fail while recording (see _check_recording).
+
+        Default: nothing to check. Override in a subclass that owns
+        something worth watching; not abstract because most module types
+        (TTL, RFID) have no equivalent signal.
+
+        Returns (True, None) if healthy, or (False, detail) if not.
+        """
+        return True, None
+
+
     """File IO"""
     def _check_file_exists(self, filename: str) -> bool:
         """Check if a file exists in the recording folder."""

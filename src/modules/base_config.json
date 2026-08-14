@@ -22,7 +22,10 @@
     "local_min_free_pct": 10,
     "_recording_folder": "/var/lib/saviour/recordings",
     "_record_health_metadata": true,
-    "_health_metadata_recording_interval": 5
+    "_health_metadata_recording_interval": 5,
+    "_health_check_interval_secs": 10,
+    "_health_check_strikes": 2,
+    "_health_check_camera_silence_secs": 5
   },
   "export": {
     "export_target": "controller",

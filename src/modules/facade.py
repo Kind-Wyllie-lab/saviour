@@ -163,6 +163,13 @@ class ModuleFacade:
         return self.module._stop_recording()
 
 
+    def check_recording_alive(self) -> tuple[bool, str | None]:
+        """Ask the module-specific implementation whether the recording is
+        still actually happening (e.g. a capture thread/process alive),
+        not just that stop_recording() hasn't been called yet."""
+        return self.module._check_recording_alive()
+
+
     """File Export"""
     def get_current_session_name(self) -> str:
         return self.module.recording.current_session_name

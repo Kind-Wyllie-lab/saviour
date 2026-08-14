@@ -6,6 +6,7 @@ import LivestreamSelector from "/src/basic/components/LivestreamSelector/Livestr
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import LoomRoiLineEditorModal from "/src/basic/components/LoomRoiLineEditorModal/LoomRoiLineEditorModal";
+import CropEditorModal from "/src/basic/components/CropEditorModal/CropEditorModal";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigFields from "../ConfigFields";
 import ConfigCardShell from "../ConfigCardShell";
@@ -77,6 +78,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [activeTab, setActiveTab] = useHashTab("basic");
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
   const [roiInfo, setRoiInfo] = useState(null);
+  const [showCropEditor, setShowCropEditor] = useState(false);
 
   const presets = hasAutofocus ? CM3_PRESETS : HQ_PRESETS;
 
@@ -203,6 +205,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const bitrateMb        = cam.bitrate_mb ?? 0;
   const gbPerHour        = (bitrateMb * 3600 / 8 / 1000).toFixed(2);
 
+  const cropRect         = cam.crop_rect ?? null;
+  const cropStale        = cropRect != null
+    && (cropRect.preview_width !== currentWidth || cropRect.preview_height !== currentHeight);
+
   const currentSyncMode  = cam.sync_mode ?? "none";
   const framesyncEnabled = cam.framesync_enabled ?? true;
   const isRecording      = module.status === "RECORDING";
@@ -241,6 +247,16 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         sidebar={
           <>
             <LivestreamCard module={module} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", marginTop: "8px" }}>
+              <button type="button" className="copy-btn" onClick={() => setShowCropEditor(true)}>
+                {cropRect ? "Edit Crop" : "Set Crop / Zoom"}
+              </button>
+              {cropStale && (
+                <div className="fov-label fov-cropped">
+                  Saved crop was drawn at {cropRect.preview_width}×{cropRect.preview_height}, current output is {currentWidth}×{currentHeight} — redraw to match.
+                </div>
+              )}
+            </div>
             {module.type === "loom_camera" && (
               <div style={{ display: "flex", justifyContent: "center", marginTop: "8px" }}>
                 <button type="button" className="copy-btn" onClick={() => setShowLoomRoiEditor(true)}>
@@ -838,6 +854,14 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         moduleId={module.id}
         open={showLoomRoiEditor}
         onClose={() => setShowLoomRoiEditor(false)}
+      />
+
+      <CropEditorModal
+        moduleIp={module.ip}
+        moduleId={module.id}
+        open={showCropEditor}
+        onClose={() => setShowCropEditor(false)}
+        initialCropRect={cropStale ? null : cropRect}
       />
     </>
   );

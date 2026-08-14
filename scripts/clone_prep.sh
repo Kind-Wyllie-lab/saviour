@@ -121,8 +121,8 @@ fi
 
 # ── 7. SAVIOUR active config files ───────────────────────────────────────────
 echo "[7/8] Removing stale active config files..."
-MODULE_ACTIVE="${INSTALL_DIR}/src/modules/config/active_config.json"
-CONTROLLER_ACTIVE="${INSTALL_DIR}/src/controller/config/active_config.json"
+MODULE_ACTIVE="${INSTALL_DIR}/src/modules/active_config.json"
+CONTROLLER_ACTIVE="${INSTALL_DIR}/src/controller/active_config.json"
 for cfg in "$MODULE_ACTIVE" "$CONTROLLER_ACTIVE"; do
     if [ -f "$cfg" ]; then
         sudo rm -f "$cfg"
@@ -178,7 +178,7 @@ echo "  - Python venv (${INSTALL_DIR}/env)"
 echo "  - SSH authorised keys (~/.ssh/authorized_keys)"
 echo "  - base_config.json — if this device will be a module connecting to the"
 echo "    same controller as the source device, the Samba credentials in"
-echo "    src/modules/config/base_config.json are still valid."
+echo "    src/modules/base_config.json are still valid."
 echo "    If it's a new controller, run switch_role.sh (controller) first — it"
 echo "    writes fresh credentials — then switch_role.sh on each module."
 echo "  - wlan0 / Wi-Fi configuration"

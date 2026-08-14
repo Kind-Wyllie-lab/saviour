@@ -24,7 +24,7 @@ import numpy as np
 from flask import jsonify, request
 from picamera2 import MappedArray
 
-from modules.examples.loom_camera.loom_stimulus import (
+from modules.variants.loom_camera.loom_stimulus import (
     LoomStimulusConfig,
     LoomStimulusController,
 )
@@ -573,7 +573,7 @@ class LoomCameraModule(CameraBase):
 
     def _build_stimulus_config(self) -> LoomStimulusConfig:
         cfg = LoomStimulusConfig(
-            texture_path=str(self.config.get("loom_stimulus.texture_path", "/usr/local/src/saviour/src/modules/examples/loom_camera/loom_circle.png")),
+            texture_path=str(self.config.get("loom_stimulus.texture_path", "/usr/local/src/saviour/src/modules/variants/loom_camera/loom_circle.png")),
             initial_size_cm=float(self.config.get("loom_stimulus.initial_size_cm", 6.0)),
             final_size_cm=float(self.config.get("loom_stimulus.final_size_cm", 40.0)),
             initial_pos_ndc=tuple(self.config.get("loom_stimulus.initial_pos_ndc", [0.5, 0.0])),

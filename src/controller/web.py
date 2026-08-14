@@ -2110,6 +2110,16 @@ class Web(ABC):
                         'error': error,
                     })
 
+                # loom_camera_module.py's set_loom_roi() sends this directly via
+                # communication.send_status() on a successful save. Previously
+                # unmatched here -- fell to case _ -> handle_special_module_status(),
+                # which loom_controller.py doesn't override for this type (logs
+                # "No logic for loom_roi_updated" and drops), so
+                # LoomRoiLineEditorModal.jsx's "Saving..." status never resolved to
+                # "Saved" even on success.
+                case "loom_roi_updated":
+                    self.socketio.emit('module_status', {**status, 'module_id': module_id})
+
                 case "heartbeat":
                     version = status.get("version")
                     if version:
@@ -2140,6 +2150,20 @@ class Web(ABC):
                             })
                     elif command == "shutdown":
                         self.socketio.emit("module_shutdown_ack", {"module_id": module_id})
+                    elif command == "set_loom_roi" and status.get("status") == "error":
+                        # set_loom_roi's validation failures (bad polygon/line, or a
+                        # write error) come back as the command's own return value,
+                        # not a communication.send_status() call, so they surface
+                        # here as a cmd_ack rather than through the
+                        # loom_roi_updated case above. Previously fell to the
+                        # "no web-layer action" debug log below and was silently
+                        # dropped -- translated into the shape
+                        # LoomRoiLineEditorModal.jsx already listens for.
+                        self.socketio.emit('module_status', {
+                            'type': 'loom_roi_update_failed',
+                            'module_id': module_id,
+                            'error': status.get('error', 'unknown error'),
+                        })
                     else:
                         self.logger.debug(f"cmd_ack for '{command}' from {module_id} — no web-layer action")
 

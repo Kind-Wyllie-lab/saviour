@@ -16,7 +16,7 @@ Requirements:
 
 Usage:
     python tools/convert_to_hailo.py
-    python tools/convert_to_hailo.py --model src/modules/examples/apa_camera/ratnet.pt
+    python tools/convert_to_hailo.py --model src/modules/variants/apa_camera/ratnet.pt
     python tools/convert_to_hailo.py --imgsz 416 --hw-arch hailo8l
     python tools/convert_to_hailo.py --calib-dir /path/to/calibration/images
     python tools/convert_to_hailo.py --onnx-only   # stop after ONNX export (can run on Pi)
@@ -203,7 +203,7 @@ image_dims=[{imgsz}, {imgsz}], classes={num_classes})
 
 def main():
     src_dir = Path(__file__).resolve().parent.parent
-    default_model = src_dir / "src/modules/examples/apa_camera/ratnet.pt"
+    default_model = src_dir / "src/modules/variants/apa_camera/ratnet.pt"
 
     parser = argparse.ArgumentParser(
         description="Convert YOLOv8/YOLO11 .pt → Hailo HEF"
@@ -218,7 +218,7 @@ def main():
     parser.add_argument("--calib-dir", type=Path, default=None,
                         help="Directory of calibration images (jpg/png)")
     parser.add_argument("--out-dir",   type=Path,
-                        default=src_dir / "src/modules/examples/apa_camera",
+                        default=src_dir / "src/modules/variants/apa_camera",
                         help="Output directory for .onnx, .har, .hef")
     parser.add_argument("--onnx-only", action="store_true",
                         help="Stop after ONNX export (safe to run on Pi/ARM)")

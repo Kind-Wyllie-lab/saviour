@@ -545,6 +545,8 @@ class Web(ABC):
 
         @self.socketio.on("check_ready")
         def handle_check_ready(data):
+            if not self._require_auth("auth_required"):
+                return
             target = data.get("target")
             modules = list(self.facade.get_modules_by_target(target).keys())
             for mid in modules:

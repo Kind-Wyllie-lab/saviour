@@ -456,7 +456,11 @@ function SessionList({ sessionList, modules = [] }) {
                   })()}
 
                   {isActive && session.ptp_warning && (
-                    <p className="session-ptp-warning">{session.ptp_warning}</p>
+                    <p className="session-warning-text">{session.ptp_warning}</p>
+                  )}
+
+                  {isActive && session.recording_health_warning && (
+                    <p className="session-warning-text">{session.recording_health_warning}</p>
                   )}
 
                   {stillStopping > 0 && (

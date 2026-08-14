@@ -115,6 +115,15 @@ class CameraBase(Module):
         self.last_frame_timestamp = None
         self._last_stream_encode_time = 0.0
         self._stream_interval_s = 0.0
+        # Wall-clock time _frame_precallback last ran at all -- distinct from
+        # last_frame_timestamp (the frame's own hardware timestamp, used for
+        # delta_ms/fps math). Used by _check_recording_alive() to detect the
+        # capture pipeline going silent; updated unconditionally regardless
+        # of streaming/recording state, since _frame_precallback itself is
+        # never overridden by subclasses (unlike the smaller per-frame
+        # hooks), so this is a reliable proxy for "is libcamera still
+        # delivering frames at all" for every camera variant.
+        self._last_frame_wall_time = None
 
         # Configure camera
         time.sleep(0.1)
@@ -747,6 +756,22 @@ class CameraBase(Module):
             return False
 
 
+    def _check_recording_alive(self) -> tuple[bool, str | None]:
+        """Report if the capture pipeline has gone silent -- no frames
+        processed recently despite an active recording. Distinct from the
+        per-frame dropped_before count in the CSV sidecar (occasional missed
+        frames): this catches the pipeline stalling or the encoder dying
+        outright, which dropped_before can't, since it's only ever computed
+        from frames that did arrive."""
+        if self._last_frame_wall_time is None:
+            return True, None
+        silence_secs = time.time() - self._last_frame_wall_time
+        max_silence_secs = self.config.get("recording._health_check_camera_silence_secs", 5.0)
+        if silence_secs > max_silence_secs:
+            return False, f"no frames processed in {silence_secs:.1f}s"
+        return True, None
+
+
     """Timestamping frames"""
     # Cached wall-clock minus monotonic offset in nanoseconds.
     # Recomputed at most once per second; drift between recomputations is <1 µs.
@@ -805,6 +830,8 @@ class CameraBase(Module):
 
     def _frame_precallback(self, req) -> None:
         try:
+            self._last_frame_wall_time = time.time()
+
             # Single metadata fetch — reused for timestamp, CSV fields, and overlays.
             meta = req.get_metadata()
 

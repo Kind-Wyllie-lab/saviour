@@ -88,6 +88,9 @@ class RecordingSession:
     researcher:                str | None = None
     # Set while PTP offset exceeds threshold on any recording module; cleared on recovery.
     ptp_warning:               str | None = None
+    # Set while a module self-reports its recording capture has gone unhealthy
+    # (e.g. a dead AudioMoth thread, a stalled camera pipeline); cleared on recovery.
+    recording_health_warning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +106,7 @@ class Recording:
         self._health_probe_times: dict = {}  # module_id → timestamp of last get_health probe
         self._not_recording_strikes: dict = {}  # (session_name, module_id) → consecutive miss count
         self._ptp_degraded: dict[str, set] = {}  # session_name → set of currently-degraded module IDs
+        self._recording_health_degraded: dict[str, set] = {}  # session_name → set of module IDs currently self-reporting unhealthy
         self._last_export_success: dict[str, float] = {}   # module_id → epoch of last successful export
         self._export_failure_streak: dict[str, int] = {}   # module_id → consecutive export failures
         self._daily_run_export_start: dict[str, tuple] = {} # session_name → (complete, failed) at day-start
@@ -291,6 +295,8 @@ class Recording:
         ]
         if session.ptp_warning:
             lines.append(f"- PTP warning at stop: {session.ptp_warning}")
+        if session.recording_health_warning:
+            lines.append(f"- Recording health warning at stop: {session.recording_health_warning}")
 
         if self._notify_enabled("notify_daily_summary"):
             self.facade.send_alert(
@@ -738,6 +744,60 @@ class Recording:
                 title=f"Recording error — {session_name}",
                 message=f"Module **{module_id}** reported a recording fault in session **{session_name}**: {message}",
             )
+
+
+    def handle_recording_health_status(self, module_id: str, status: str, message: str | None) -> None:
+        """Module self-reported recording-capture liveness (see
+        Module._check_recording_alive / Recording._monitor_recording_health
+        on the module side) -- a soft warning, same severity tier as
+        _check_ptp_mid_recording's ptp_warning below: surfaces on the
+        session card and optionally alerts, but doesn't stop the session or
+        other modules, since a self-monitor's detection could itself be a
+        transient false positive (e.g. a brief USB hiccup that recovers).
+
+        Unlike _check_ptp_mid_recording, this isn't polled from the monitor
+        loop against heartbeat data -- it reacts directly to the module's
+        own "unhealthy"/"recovered" status push.
+        """
+        session_name = self.get_session_name_from_target(module_id)
+        if not session_name:
+            return
+        session = self.sessions[session_name]
+        if session.state == SessionState.STOPPED:
+            return
+
+        degraded = self._recording_health_degraded.setdefault(session_name, set())
+
+        if status == "unhealthy":
+            if module_id in degraded:
+                return  # already warned for this module — avoid duplicate alerts
+            degraded.add(module_id)
+            detail = f"{module_id}: {message}" if message else module_id
+            warning = f"Recording health warning — {detail}"
+            self.logger.warning(f"Session '{session_name}': {warning}")
+            with self._lock:
+                session.recording_health_warning = warning
+            self._log_session_event(session_name, "WARNING", warning)
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+            if self._notify_enabled("notify_recording_health"):
+                self.facade.send_alert(
+                    key=f"recording_health_{module_id}",
+                    title=f"Recording health warning — {session_name}",
+                    message=warning,
+                    severity="warning",
+                )
+        elif status == "recovered":
+            degraded.discard(module_id)
+            if degraded:
+                return  # still warned for other module(s) in this session
+            self.logger.info(f"Session '{session_name}': recording health recovered ({module_id})")
+            with self._lock:
+                session.recording_health_warning = None
+            self._log_session_event(session_name, "RECOVERY",
+                f"Recording health recovered — {module_id}")
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
 
 
     def module_back_online(self, module_id: str) -> None:

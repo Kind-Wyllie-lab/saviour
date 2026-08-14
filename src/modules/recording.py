@@ -52,6 +52,13 @@ class Recording:
         self.last_health_segment = None
         self.current_health_segment = None
 
+        # Recording self-monitor thread — distinct from health metadata above
+        # (which just logs whatever get_health() returns to a CSV): this asks
+        # the module-specific implementation whether it's actually still
+        # capturing data, and reports to the controller if not.
+        self.recording_health_thread = None
+        self.recording_health_stop_flag = threading.Event()
+
         # Tracking files for export
         self.current_filename_prefix = None
         # Set by _scheduled_start to avoid when_recording_starts() running twice
@@ -219,6 +226,7 @@ class Recording:
         self._create_initial_recording_segment()
         self._start_recording_segment_monitoring()
         self._start_new_health_recording()
+        self._start_recording_health_monitoring()
 
         if self._recording_duration_thread:
             self._recording_duration_thread.start()
@@ -250,6 +258,7 @@ class Recording:
 
             # Stop monitoring recording segment length
             self._stop_recording_segment_monitoring()
+            self._stop_recording_health_monitoring()
 
             # Stop recording in general
             if not self.facade.stop_recording(): # Module specific implementation of stop_recording
@@ -404,6 +413,75 @@ class Recording:
             return True
         except Exception as e:
             self.logger.error(f"Error stopping recording segment monitoring thread: {e}")
+            return False
+
+
+    """Recording self-monitoring"""
+    def _monitor_recording_health(self):
+        """
+        Runs in a thread for the whole recording (not per-segment, unlike
+        the health-metadata thread). Periodically asks the module-specific
+        implementation whether it's still actually capturing data -- e.g. a
+        dead AudioMoth thread or a camera pipeline that's gone silent --
+        which _monitor_recording_length never checks: that thread only
+        tracks segment-rotation timing and disk space.
+
+        Requires `strikes` consecutive failed checks before reporting, to
+        absorb brief timing races rather than false-alarm on them -- e.g.
+        the short window during segment rotation where a module's capture
+        threads are legitimately down while old ones are joined and new
+        ones started.
+        """
+        interval = self.config.get("recording._health_check_interval_secs", 10)
+        strikes_threshold = self.config.get("recording._health_check_strikes", 2)
+        strikes = 0
+        was_unhealthy = False
+
+        while not self.recording_health_stop_flag.wait(timeout=interval):
+            try:
+                alive, detail = self.facade.check_recording_alive()
+            except Exception as e:
+                self.logger.warning(f"Recording health check raised an exception: {e}")
+                continue
+
+            if not alive:
+                strikes += 1
+                self.logger.warning(
+                    f"Recording health check failed ({strikes}/{strikes_threshold}): {detail}"
+                )
+                if strikes >= strikes_threshold and not was_unhealthy:
+                    was_unhealthy = True
+                    self.facade.send_status({
+                        "type": "recording_health_warning",
+                        "status": "unhealthy",
+                        "message": detail or "Recording health check failed",
+                    })
+            else:
+                if was_unhealthy:
+                    self.logger.info("Recording health check recovered")
+                    self.facade.send_status({
+                        "type": "recording_health_warning",
+                        "status": "recovered",
+                    })
+                strikes = 0
+                was_unhealthy = False
+
+
+    def _start_recording_health_monitoring(self):
+        self.recording_health_stop_flag.clear()
+        self.recording_health_thread = threading.Thread(target=self._monitor_recording_health, daemon=True)
+        self.recording_health_thread.start()
+
+
+    def _stop_recording_health_monitoring(self):
+        self.logger.info("Stopping recording health monitoring.")
+        try:
+            self.recording_health_stop_flag.set()
+            if self.recording_health_thread:
+                self.recording_health_thread.join(timeout=5)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error stopping recording health monitoring thread: {e}")
             return False
 
 

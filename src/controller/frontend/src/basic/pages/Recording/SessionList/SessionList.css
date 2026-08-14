@@ -531,7 +531,7 @@
   border-color: var(--accent-color, #4a90d9);
 }
 
-.session-ptp-warning {
+.session-warning-text {
   font-size: 0.82rem;
   color: #b45309;
   background: rgba(180, 83, 9, 0.07);

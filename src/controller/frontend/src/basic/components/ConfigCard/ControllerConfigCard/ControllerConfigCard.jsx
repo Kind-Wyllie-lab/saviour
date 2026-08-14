@@ -92,6 +92,7 @@ function ControllerConfigCard() {
     { key: "notify_module_offline",    label: "Module goes offline" },
     { key: "notify_module_online",     label: "Module comes back online" },
     { key: "notify_ptp_degraded",      label: "PTP sync degrades mid-recording" },
+    { key: "notify_recording_health",  label: "A module self-reports its recording as unhealthy" },
     { key: "notify_disk_space",        label: "Low disk space (local & NAS)" },
   ];
 

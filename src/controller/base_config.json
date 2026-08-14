@@ -65,6 +65,7 @@
         "notify_module_offline": true,
         "notify_module_online": false,
         "notify_ptp_degraded": true,
+        "notify_recording_health": true,
         "notify_disk_space": true
     },
     "frontend": {

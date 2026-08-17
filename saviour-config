@@ -489,7 +489,7 @@ select_controller_type() {
 select_module_type() {
     wt --title "Module Type" \
         --menu "\nWhat type of module is this device?" \
-        $H $W 8 \
+        $H $W 9 \
         "camera"       "Basic camera" \
         "microphone"   "AudioMoth (up to 4 microphones)" \
         "ttl"          "TTL pulse generator / capture  (Open Ephys sync)" \
@@ -497,7 +497,8 @@ select_module_type() {
         "apa_camera"   "APA top-camera with Hailo AI tracking" \
         "apa_arduino"  "APA Arduino rig  (motor + shock)" \
         "sound"        "HifiBerry audio output" \
-        "loom_camera"  "Loom top-camera with tracking"
+        "loom_camera"  "Loom top-camera with tracking" \
+        "lightning_camera" "Lightning Pose top-camera with Hailo pose tracking"
 }
 
 select_gateway_mode() {
@@ -1295,6 +1296,16 @@ configure_apa_camera() {
     done
 }
 
+configure_lightning_camera() {
+    # Hailo AI HAT only -- unlike apa_camera, this rig has no Sony IMX500
+    # on-sensor AI camera, so imx500-all is deliberately not installed here.
+    progress "Installing Lightning Pose camera (Hailo) dependencies…"
+    log "Configuring lightning_camera module"
+    if ! is_installed "hailo-all"; then
+        run_logged apt-get install -y "hailo-all"
+    fi
+}
+
 build_frontend() {
     progress "Building frontend for $DEVICE_TYPE  (this may take a few minutes)…"
     log "Building frontend: $DEVICE_TYPE"
@@ -1489,6 +1500,7 @@ run_configuration() {
 
     [ "$DEVICE_TYPE" = "microphone" ] && configure_microphone
     [ "$DEVICE_TYPE" = "apa_camera"  ] && configure_apa_camera
+    [ "$DEVICE_TYPE" = "lightning_camera" ] && configure_lightning_camera
 
     progress "Writing configuration and restarting service…"
     write_config

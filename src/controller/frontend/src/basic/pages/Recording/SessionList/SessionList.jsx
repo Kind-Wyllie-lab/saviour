@@ -483,6 +483,18 @@ function SessionList({ sessionList, modules = [] }) {
                     </p>
                   )}
 
+                  {isStopped && (session.pending_exports ?? 0) > 0 && (
+                    <p className="session-warning-text">
+                      ⏳ {session.pending_exports} export{session.pending_exports !== 1 ? "s" : ""} not yet confirmed on the share
+                    </p>
+                  )}
+
+                  {isStopped && (session.pending_exports ?? 0) === 0 && totalComplete > 0 && (
+                    <p className="session-info-text">
+                      ✓ All exports confirmed on the share
+                    </p>
+                  )}
+
                   {isStopped && shareInfo && (
                     <div className="session-share-notice">
                       <p className="session-share-notice__instruction">

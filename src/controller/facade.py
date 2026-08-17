@@ -323,8 +323,8 @@ class ControllerFacade:
         self.controller.recording.module_export_update(module_id, export_path, "complete")
 
     def export_failed(self, module_id: str, export_path: str = "") -> None:
-        self.controller.export_queue.on_export_failed(module_id)
-        self.controller.recording.module_export_update(module_id, export_path, "failed")
+        is_final = self.controller.export_queue.on_export_failed(module_id)
+        self.controller.recording.module_export_update(module_id, export_path, "failed", final=is_final)
 
     def module_offline(self, module_id: str) -> None:
         # Tell anyone who cares that a module has gone offline

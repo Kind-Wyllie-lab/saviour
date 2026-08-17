@@ -148,16 +148,33 @@ class Modules:
         """Called by Network when zeroconf reports a new or updated module."""
         if module.id in self._modules:
             # Already-known module re-announcing over mDNS (e.g. an avahi TTL
-            # refresh) -- update_service() in network.py calls
-            # facade.module_rediscovered() immediately before this, which
-            # deliberately preserves a RECORDING status; add_module()'s
-            # wholesale replace with this freshly-constructed, mostly-default
-            # Module (status=WAITING, config={}, last_heartbeat_time=0.0, ...)
-            # would immediately undo that protection. Nothing here needs
-            # re-onboarding: name/version/ip freshness is already handled via
-            # the narrower update_module_version()/module_ip_changed() paths
-            # triggered by the module's own status/health reports.
-            self.logger.info(f"{module.id} re-announced via mDNS — no state change")
+            # refresh, or the first real mDNS sighting of a module that was
+            # auto-registered via received_module_config() with ip="" before
+            # its mDNS broadcast was ever seen) -- update_service() in
+            # network.py calls facade.module_rediscovered() immediately
+            # before this, which deliberately preserves a RECORDING status;
+            # add_module()'s wholesale replace with this freshly-constructed,
+            # mostly-default Module (status=WAITING, config={},
+            # last_heartbeat_time=0.0, ...) would immediately undo that
+            # protection. But mDNS is the only source of network identity
+            # (ip/port/zeroconf_name) -- module_ip_changed() is never called
+            # from anywhere else -- so refresh exactly those fields rather
+            # than no-op'ing entirely; everything else (status/config/
+            # last_heartbeat_time/etc.) is left untouched.
+            existing = self._modules[module.id]
+            identity = (existing.ip, existing.port, existing.zeroconf_name)
+            new_identity = (module.ip, module.port, module.zeroconf_name)
+            if identity != new_identity:
+                existing.ip = module.ip
+                existing.port = module.port
+                existing.zeroconf_name = module.zeroconf_name
+                self.logger.info(
+                    f"{module.id} re-announced via mDNS — refreshed network identity "
+                    f"({identity} -> {new_identity})"
+                )
+                self.broadcast_updated_modules()
+            else:
+                self.logger.info(f"{module.id} re-announced via mDNS — no state change")
             return
         self.logger.info(f"Adding new module {module.id}")
         self.add_module(module)

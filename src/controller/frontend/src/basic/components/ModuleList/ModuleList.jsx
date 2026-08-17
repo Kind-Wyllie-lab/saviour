@@ -29,12 +29,19 @@ function ModuleList({ modules }) {
     setShowRebootConfirm(false);
   };
 
-  // Shorten "v0.1.6-8-gabcd1234" to "v0.1.6 +8" so it fits the column.
+  // Full IP is available via tooltip; the column only needs the last octet
+  // to tell same-subnet devices apart at a glance.
+  const lastOctet = (ip) => {
+    if (!ip || typeof ip !== "string") return "-";
+    const parts = ip.split(".");
+    return parts.length === 4 ? `.${parts[3]}` : ip;
+  };
+
+  // Minimised version: just the tag, no "+N commits"/hash suffix — full
+  // string is still available via the title tooltip.
   const formatVersion = (v) => {
     if (v == null || typeof v !== "string" || v === "UNKNOWN_VERSION") return "-";
-    const parts = v.split("-");
-    if (parts.length === 1) return parts[0]; // clean tag e.g. "v0.1.6"
-    return `${parts[0]} +${parts[1]}`;       // e.g. "v0.1.6 +8"
+    return v.split("-")[0];
   };
 
   // Sort modules: grouped ones first (alphabetically by group then name),
@@ -64,7 +71,7 @@ function ModuleList({ modules }) {
           <span>Status</span>
           <span>Group</span>
           <span>IP</span>
-          <span>Version</span>
+          <span>Ver</span>
         </div>
 
         {sortedModules.map((module) => {
@@ -86,7 +93,7 @@ function ModuleList({ modules }) {
               <div className="module-list-item">
                 <div className="module-list-item-start">
                   <div className={`status-icon ${module.status?.toLowerCase()}`} />
-                  <span>{module.name} ({module.type})</span>
+                  <span>{module.name}</span>
                 </div>
                 <span>{module.status}</span>
                 <span className="module-group-cell">
@@ -95,7 +102,7 @@ function ModuleList({ modules }) {
                     : <span className="cell--muted">-</span>
                   }
                 </span>
-                <span className="module-ip">{module.ip}</span>
+                <span className="module-ip" title={module.ip}>{lastOctet(module.ip)}</span>
                 <span className="module-version" title={module.version}>
                   {formatVersion(module.version)}
                 </span>

@@ -43,6 +43,8 @@ npm run build
 npm run lint
 ```
 
+**After making any frontend change, run `npm run build`** so the user can review the result (they don't run a dev server themselves). If it fails with `EACCES`/`unlink` errors under `dist/`, that's the known root-owned-`dist/` issue (see the `saviour-config`/`mend.sh` TODO item below) — `sudo chown -R $(whoami) src/controller/frontend/dist` then rebuild, rather than deleting `dist/` outright.
+
 ### Analysis tools
 
 ```bash

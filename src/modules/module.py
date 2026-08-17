@@ -1062,7 +1062,10 @@ class Module(ABC):
 
         password = self.config.get("export.share_password", "")
         if not password:
-            return False, "Export credentials not set — use 'Sync Export' on the controller"
+            return False, (
+                "Export credentials not set — use 'Sync Export' in Controller Settings "
+                "(Settings page → Controller)"
+            )
 
         share_ip   = self.config.get("export.share_ip", "")
         share_path = self.config.get("export.share_path", "controller_share")

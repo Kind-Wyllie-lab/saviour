@@ -1,17 +1,24 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import socket from "/src/socket";
+import usePersistedState from "/src/hooks/usePersistedState";
 import "./SessionName.css";
 
+const DEFAULT_METADATA = {
+  experimenter: "",
+  experiment: "Not Set",
+  rat_id: "",
+  strain: "",
+  batch: "",
+  stage: "",
+  trial: "",
+};
+
 function SessionName({ stageOverride }) {
-  const [metadata, setMetadata] = useState({
-    experimenter: "",
-    experiment: "Not Set",
-    rat_id: "",
-    strain: "",
-    batch: "",
-    stage: "",
-    trial: "",
-  });
+  // Seeded from sessionStorage (not just blank defaults) so navigating away
+  // and back shows the last-known values immediately, without waiting on
+  // (or depending on) a round trip to the server, which is the source of
+  // truth but not the only thing keeping this form from looking cleared.
+  const [metadata, setMetadata] = usePersistedState("saviour_experiment_metadata", DEFAULT_METADATA);
 
   // When an external stage is provided (e.g. loom stage toggle), keep the
   // metadata in sync and emit the update so the server recomputes experiment_name.

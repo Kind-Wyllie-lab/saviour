@@ -7,7 +7,7 @@ import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/Healt
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import LoomStimulusControl from "/src/loom/components/LoomStimulusControl/LoomStimulusControl";
 import LoomRecordingTimer from "/src/loom/components/LoomRecordingTimer/LoomRecordingTimer";
-import { StageToggle } from "/src/loom/LoomStageContext";
+import { StageDropdown } from "/src/loom/LoomStageContext";
 
 const CAMERA_PORT  = 8080;
 const MIC_PORT     = 8081;
@@ -188,10 +188,6 @@ function LoomDashboard() {
 
   return (
     <div className="loom-dashboard">
-      <div className="loom-dashboard-topbar">
-        <StageToggle />
-      </div>
-
       <div className="loom-dashboard-main">
         <div className="loom-dashboard-cameras">
 
@@ -269,6 +265,7 @@ function LoomDashboard() {
         {/* Right panel */}
         <div className="loom-dashboard-panel">
           <LoomRecordingTimer />
+          <StageDropdown />
           <HealthSummaryWidget />
           <ModuleList modules={moduleList} />
           <LoomStimulusControl />

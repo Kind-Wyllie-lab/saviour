@@ -6,6 +6,7 @@ import { useLoomStage, StageToggle, CAMERA_TYPES, HABITUATION_GROUP } from "/src
 import useModules from "/src/hooks/useModules";
 import useSessions from "/src/hooks/useSessions";
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
+import usePersistedState from "/src/hooks/usePersistedState";
 import SessionList from "/src/basic/pages/Recording/SessionList/SessionList";
 import SessionName from "/src/basic/pages/Recording/SessionName/SessionName";
 import ModuleList from "/src/basic/components/ModuleList/ModuleList";
@@ -34,8 +35,11 @@ export default function LoomRecording() {
     return () => clearInterval(id);
   }, []);
 
-  const [timedEnabled, setTimedEnabled] = useState(true);
-  const [durationMinutes, setDurationMinutes] = useState(String(DEFAULT_DURATION_MINUTES));
+  const [timedEnabled, setTimedEnabled] = usePersistedState("saviour_loom_form_timed_enabled", true);
+  const [durationMinutes, setDurationMinutes] = usePersistedState(
+    "saviour_loom_form_duration_m",
+    String(DEFAULT_DURATION_MINUTES)
+  );
   const durationValid = !timedEnabled || parseInt(durationMinutes || 0) > 0;
 
   const cameraModules = useMemo(

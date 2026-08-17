@@ -394,3 +394,64 @@
     margin: 8px 0 0;
     text-align: center;
 }
+
+.update-mode-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 14px 0 4px;
+}
+
+.update-mode-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1.5px solid color-mix(in srgb, var(--text-color) 20%, transparent);
+    background: transparent;
+    color: var(--text-color);
+    cursor: pointer;
+    text-align: left;
+    transition: opacity 0.15s, border-color 0.15s;
+}
+
+.update-mode-btn:hover:not(:disabled) {
+    border-color: var(--accent-color, #3b82f6);
+}
+
+.update-mode-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.update-mode-btn-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.update-mode-btn-hint {
+    font-size: 11px;
+    opacity: 0.65;
+}
+
+.update-git-warning {
+    font-size: 11px;
+    opacity: 0.7;
+    margin: 10px 0;
+    line-height: 1.5;
+}
+
+.update-git-pull-row {
+    display: flex;
+    justify-content: center;
+    margin: 4px 0 8px;
+}
+
+.update-git-info {
+    font-size: 12px;
+    opacity: 0.7;
+    margin: 8px 0 0;
+    text-align: center;
+}

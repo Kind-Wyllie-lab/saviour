@@ -1196,6 +1196,86 @@ class Web(ABC):
         _UPDATE_STORE = "/var/lib/saviour/updates"
         _UPDATE_ZIP   = os.path.join(_UPDATE_STORE, "saviour-latest.zip")
         _UPDATE_META  = os.path.join(_UPDATE_STORE, "update_meta.json")
+        _SRC_ROOT     = "/usr/local/src/saviour"
+        _STAGE_SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
+                            '.pytest_cache', 'dist', '.eggs'}
+
+        def _stage_current_version_zip() -> dict:
+            """Zip up _SRC_ROOT's current working tree and write it as the
+            staged update package + metadata. Shared by "Stage Current" (the
+            ZIP tab, packages whatever is on disk right now) and "Git Pull"
+            (packages the tree immediately after a pull lands new code)."""
+            src_root = _SRC_ROOT
+            version = _read_running_version()
+            self.logger.info(f"Staging current version {version} from {src_root}")
+            os.makedirs(_UPDATE_STORE, exist_ok=True)
+            tmp = _UPDATE_ZIP + ".tmp"
+            skipped = 0
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+                for dirpath, dirnames, filenames in os.walk(src_root):
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if d not in _STAGE_SKIP_DIRS and not d.endswith('.egg-info')
+                    ]
+                    for filename in filenames:
+                        if filename.endswith('.pyc'):
+                            continue
+                        abs_path = os.path.join(dirpath, filename)
+                        rel_path = os.path.relpath(abs_path, src_root)
+                        try:
+                            zf.write(abs_path, rel_path)
+                        except Exception as _fe:
+                            self.logger.warning(f"Skipping {rel_path}: {_fe}")
+                            skipped += 1
+            size = os.path.getsize(tmp)
+            os.replace(tmp, _UPDATE_ZIP)
+            meta = {
+                "version":     version,
+                "filename":    f"saviour-{version}.zip",
+                "size_bytes":  size,
+                "uploaded_at": datetime.now().isoformat(),
+            }
+            with open(_UPDATE_META, "w") as f:
+                json.dump(meta, f, indent=2)
+            self.logger.info(
+                f"Staged current version {version} "
+                f"({size // 1024} KiB, {skipped} files skipped)"
+            )
+            return meta
+
+        def _git_checkout_info() -> dict:
+            """Whether _SRC_ROOT is a usable git checkout to pull updates
+            from, and which branch/remote it would use. Gates the "Git Pull"
+            update option -- most deployed devices only ever receive code via
+            the ZIP update path, which explicitly excludes .git from the
+            rsync (see _read_running_version's comment above), so their
+            .git, if present at all, is stale relative to the actual deployed
+            content until a pull resyncs it."""
+            git_dir = os.path.join(_SRC_ROOT, ".git")
+            if not os.path.isdir(git_dir):
+                return {"available": False, "reason": "No git checkout on this device"}
+            try:
+                branch = subprocess.run(
+                    ["git", "-C", _SRC_ROOT, "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, timeout=10, check=False,
+                ).stdout.strip()
+                if not branch or branch == "HEAD":
+                    return {
+                        "available": False,
+                        "reason": "Detached HEAD — checkout a branch first",
+                    }
+                remote = subprocess.run(
+                    ["git", "-C", _SRC_ROOT, "remote", "get-url", "origin"],
+                    capture_output=True, text=True, timeout=10, check=False,
+                ).stdout.strip()
+                if not remote:
+                    return {
+                        "available": False,
+                        "reason": "No 'origin' remote configured",
+                    }
+                return {"available": True, "branch": branch, "remote": remote}
+            except Exception as e:
+                return {"available": False, "reason": str(e)}
 
         @self.app.route("/update/package")
         def serve_update_package():
@@ -1216,7 +1296,11 @@ class Web(ABC):
                         staged = json.load(f)
                 except Exception:
                     pass
-            _emit("update_info", {"running_version": running, "staged": staged})
+            _emit("update_info", {
+                "running_version": running,
+                "staged": staged,
+                "git": _git_checkout_info(),
+            })
 
         @self.socketio.on("upload_update_start")
         def handle_upload_update_start(data):
@@ -1408,54 +1492,14 @@ class Web(ABC):
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
-            import zipfile as _zf
-            if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
+            if not self._require_auth(
+                "upload_update_error", {"error": "Login required for this action"},
+            ):
                 return
-            _SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
-                          '.pytest_cache', 'dist', '.eggs'}
 
             def _do_stage():
-                src_root = "/usr/local/src/saviour"
-                version = _read_running_version()
-                self.logger.info(f"Staging current version {version} from {src_root}")
                 try:
-                    os.makedirs(_UPDATE_STORE, exist_ok=True)
-                    tmp = _UPDATE_ZIP + ".tmp"
-                    skipped = 0
-                    with _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED,
-                                     compresslevel=1) as zf:
-                        for dirpath, dirnames, filenames in os.walk(src_root):
-                            dirnames[:] = [
-                                d for d in dirnames
-                                if d not in _SKIP_DIRS
-                                and not d.endswith('.egg-info')
-                            ]
-                            for filename in filenames:
-                                if filename.endswith('.pyc'):
-                                    continue
-                                abs_path = os.path.join(dirpath, filename)
-                                rel_path = os.path.relpath(abs_path, src_root)
-                                try:
-                                    zf.write(abs_path, rel_path)
-                                except Exception as _fe:
-                                    self.logger.warning(
-                                        f"Skipping {rel_path}: {_fe}"
-                                    )
-                                    skipped += 1
-                    size = os.path.getsize(tmp)
-                    os.replace(tmp, _UPDATE_ZIP)
-                    meta = {
-                        "version":     version,
-                        "filename":    f"saviour-{version}.zip",
-                        "size_bytes":  size,
-                        "uploaded_at": datetime.now().isoformat(),
-                    }
-                    with open(_UPDATE_META, "w") as f:
-                        json.dump(meta, f, indent=2)
-                    self.logger.info(
-                        f"Staged current version {version} "
-                        f"({size // 1024} KiB, {skipped} files skipped)"
-                    )
+                    meta = _stage_current_version_zip()
                     self.socketio.emit("upload_update_complete", meta)
                 except Exception as e:
                     self.logger.error(f"Stage current version failed: {e}")
@@ -1463,6 +1507,75 @@ class Web(ABC):
 
             threading.Thread(target=_do_stage, daemon=True,
                              name="saviour-stage").start()
+
+        @self.socketio.on("git_pull_update")
+        def handle_git_pull_update(data=None):
+            """Fetch + hard-reset the current branch from 'origin', then
+            stage the result the same way "Stage Current" does. Deliberately
+            only ever pulls from the checkout's own already-configured
+            origin/branch -- never a caller-supplied URL or ref -- so this
+            doesn't add a new untrusted-input path the way update_saviour's
+            caller-supplied controller_url does (see CLAUDE.md's security
+            notes on that command).
+
+            A hard reset (not a merge-based pull) is deliberate: a device
+            that has ever received a ZIP-based update has a working tree
+            that no longer matches what git last checked out (ZIP deploys
+            explicitly rsync over .git-tracked files without going through
+            git at all), so a merge could spuriously conflict against drift
+            git never asked for. Hard reset always lands exactly on
+            origin/<branch> regardless of that drift.
+            """
+            if not self._require_auth(
+                "upload_update_error", {"error": "Login required for this action"},
+            ):
+                return
+            info = _git_checkout_info()
+            if not info.get("available"):
+                self.socketio.emit("upload_update_error", {
+                    "error": info.get("reason", "Git checkout not available"),
+                })
+                return
+            branch = info["branch"]
+
+            def _do_pull():
+                try:
+                    self.socketio.emit(
+                        "git_pull_status", {"stage": "fetching", "branch": branch},
+                    )
+                    subprocess.run(
+                        ["git", "-C", _SRC_ROOT, "fetch", "--prune", "origin", branch],
+                        check=True, capture_output=True, text=True, timeout=120,
+                    )
+                    self.socketio.emit(
+                        "git_pull_status", {"stage": "resetting", "branch": branch},
+                    )
+                    subprocess.run(
+                        ["git", "-C", _SRC_ROOT, "reset", "--hard", f"origin/{branch}"],
+                        check=True, capture_output=True, text=True, timeout=30,
+                    )
+                    commit = subprocess.run(
+                        ["git", "-C", _SRC_ROOT, "rev-parse", "--short", "HEAD"],
+                        capture_output=True, text=True, timeout=10, check=False,
+                    ).stdout.strip()
+                    self.logger.info(f"Git pull update: {branch} now at {commit}")
+                    self.socketio.emit("git_pull_status", {
+                        "stage": "staging", "branch": branch, "commit": commit,
+                    })
+                    meta = _stage_current_version_zip()
+                    self.socketio.emit("upload_update_complete", meta)
+                except subprocess.CalledProcessError as e:
+                    err = (e.stderr or str(e)).strip()
+                    self.logger.error(f"Git pull update failed: {err}")
+                    self.socketio.emit(
+                        "upload_update_error", {"error": f"git failed: {err}"},
+                    )
+                except Exception as e:
+                    self.logger.error(f"Git pull update failed: {e}")
+                    self.socketio.emit("upload_update_error", {"error": str(e)})
+
+            threading.Thread(target=_do_pull, daemon=True,
+                             name="saviour-git-pull").start()
 
         @self.socketio.on("deploy_update_to_module")
         def handle_deploy_update_to_module(data):

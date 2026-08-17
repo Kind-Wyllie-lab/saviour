@@ -40,3 +40,50 @@
   background: color-mix(in srgb, #c08010 18%, var(--card-bg-color));
   color: #d4950a;
 }
+
+.stage-toggle__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ── Dropdown variant ────────────────────────────────────────────────────── */
+
+.stage-dropdown {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stage-dropdown__label {
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--secondary-text-color);
+  letter-spacing: 0.02em;
+}
+
+.stage-dropdown__select {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 0.88em;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg-color);
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.stage-dropdown__select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.stage-dropdown__select--habituation {
+  border-color: color-mix(in srgb, #2d6ab4 45%, var(--border-color));
+  color: #4a8fd4;
+}
+
+.stage-dropdown__select--loom {
+  border-color: color-mix(in srgb, #c08010 45%, var(--border-color));
+  color: #d4950a;
+}

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Regenerates src/__version__.py from `git describe` and stages it, so every
+# commit carries the human-readable version SAVIOUR devices report at
+# runtime and that ZIP deploys embed.
+#
+# Git hooks live in .git/hooks/, which is NOT tracked by git and is never
+# populated on a fresh clone -- so this script must be pointed at explicitly,
+# once per clone/machine:
+#
+#     git config core.hooksPath scripts/git-hooks
+#
+# (see docs/readthedocs/about/contributing.md). Without that, this file
+# silently never runs and src/__version__.py just goes stale -- which is
+# exactly what happened for ~3 weeks / 196 commits before this hook was
+# tracked here; the previous hook only ever existed locally on one dev's
+# machine and was lost the moment commits started coming from anywhere else.
+#
+# The version is necessarily "one commit behind": git describe here reflects
+# HEAD *before* the commit currently being made, since that commit doesn't
+# exist yet. This is expected and fine -- don't "fix" it with a manual bump,
+# that just reintroduces staleness the next time this hook doesn't run.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+VERSION="$(git -C "$REPO_ROOT" describe --tags --always)"
+
+echo "__version__ = \"$VERSION\"" > "$REPO_ROOT/src/__version__.py"
+git -C "$REPO_ROOT" add "$REPO_ROOT/src/__version__.py"

@@ -3,14 +3,18 @@ import socket from "/src/socket";
 import "./NewSessionForm.css";
 
 import useExperimentTitle from "/src/hooks/useExperimentTitle";
+import usePersistedState from "/src/hooks/usePersistedState";
 import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 
+const daysSerialize = (days) => JSON.stringify([...days]);
+const daysDeserialize = (str) => new Set(JSON.parse(str));
+
 function NewSessionForm({ modules, sessionList = {} }) {
-  const [target, setTarget] = useState("all");
+  const [target, setTarget] = usePersistedState("saviour_session_form_target", "all");
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -26,7 +30,7 @@ function NewSessionForm({ modules, sessionList = {} }) {
     return target !== "all" ? `${safe}-${target}-${ts}` : `${safe}-${ts}`;
   }, [experimentName, target, now]);
 
-  const [recordingMode, setRecordingMode] = useState("immediate");
+  const [recordingMode, setRecordingMode] = usePersistedState("saviour_session_form_mode", "immediate");
   const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
   const [submitError, setSubmitError] = useState(null);
 
@@ -53,15 +57,19 @@ function NewSessionForm({ modules, sessionList = {} }) {
   }, []);
 
   // Timed mode
-  const [durationHours, setDurationHours]     = useState("0");
-  const [durationMinutes, setDurationMinutes] = useState("10");
+  const [durationHours, setDurationHours]     = usePersistedState("saviour_session_form_duration_h", "0");
+  const [durationMinutes, setDurationMinutes] = usePersistedState("saviour_session_form_duration_m", "10");
 
   // Scheduled mode
-  const [startHour, setStartHour]     = useState("19");
-  const [startMinute, setStartMinute] = useState("00");
-  const [endHour, setEndHour]         = useState("23");
-  const [endMinute, setEndMinute]     = useState("00");
-  const [scheduledDays, setScheduledDays] = useState(new Set(ALL_DAYS));
+  const [startHour, setStartHour]     = usePersistedState("saviour_session_form_start_h", "19");
+  const [startMinute, setStartMinute] = usePersistedState("saviour_session_form_start_m", "00");
+  const [endHour, setEndHour]         = usePersistedState("saviour_session_form_end_h", "23");
+  const [endMinute, setEndMinute]     = usePersistedState("saviour_session_form_end_m", "00");
+  const [scheduledDays, setScheduledDays] = usePersistedState(
+    "saviour_session_form_days",
+    new Set(ALL_DAYS),
+    { serialize: daysSerialize, deserialize: daysDeserialize }
+  );
 
   // Derive groups from module list
   const groups = useMemo(() => {

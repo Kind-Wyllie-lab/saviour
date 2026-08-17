@@ -872,17 +872,31 @@ class CameraBase(Module):
 
             extra = {}
             with MappedArray(req, 'main') as m:
+                rotated_in_place = False
                 if rotation:
                     _rot_k = rotation // 90
                     if m.array.shape[0] == m.array.shape[1] or rotation == 180:
                         m.array[:] = np.rot90(m.array, _rot_k)
+                        rotated_in_place = True
                 if self._cb_flip_code is not None:
                     m.array[:] = cv2.flip(m.array, self._cb_flip_code)
                 if monochrome:
                     self._apply_grayscale(m)
                 extra = self._process_main_frame(m, timing)
                 if overlay_timestamp:
-                    self._apply_timestamp(m.array, ts_label, "main")
+                    # 90°/270° rotation on a non-square resolution can't be
+                    # applied to the frame content itself in place (see the
+                    # comment on the guard above), so the recorded video stays
+                    # in its unrotated capture orientation. The timestamp still
+                    # needs to read correctly once a viewer rotates the file
+                    # for playback, so it's pre-rotated by the same quarter
+                    # turns and placed on the edge that becomes "top" — see
+                    # _apply_timestamp's compensate_k handling.
+                    skipped_rotation = rotation and not rotated_in_place
+                    compensate_k = rotation // 90 if skipped_rotation else 0
+                    self._apply_timestamp(
+                        m.array, ts_label, "main", compensate_k=compensate_k,
+                    )
 
             # Buffer CSV row for off-thread write — no file I/O on the capture thread.
             if self._timestamp_csv_writer is not None:
@@ -965,39 +979,91 @@ class CameraBase(Module):
             fontScale=font_scale, color=(255, 255, 0), thickness=thickness,  # BGR cyan
         )
 
-    def _apply_timestamp(self, arr, timestamp: str, stream: str = "main") -> None:
+    def _apply_timestamp(
+        self, arr, timestamp: str, stream: str = "main", compensate_k: int = 0,
+    ) -> None:
         """Apply the frame timestamp to the image.
 
         Layout is cached per (stream, size_preset) and recomputed whenever the
         text_size config changes or the actual frame dimensions differ from the cache.
-        `arr` must already be in its final (post-rotation) orientation.
+        `arr` must already be in its final (post-rotation) orientation, UNLESS
+        compensate_k is nonzero.
+
+        compensate_k: number of un-applied 90° CCW quarter turns (1 or 3) —
+        set when `arr` itself was NOT physically rotated (a 90°/270° rotation
+        on a non-square main stream can't be done in place; see
+        _frame_precallback). The text is rendered upright on a small canvas,
+        pre-rotated by the inverse of that rotation, and pasted onto the edge
+        of the unrotated frame that becomes "top" once a viewer later rotates
+        the recorded file for playback — so it reads correctly there, even
+        though the frame content itself stays unrotated.
         """
         size_preset = self.config.get("camera.text_size", "medium")
         cache_attr = f"_ts_layout_{stream}"
         cached = getattr(self, cache_attr, None)
 
         actual_height, actual_width = arr.shape[:2]
+        # Font scale is computed against the eventual *viewed* width, which is
+        # swapped from the raw frame's width when compensating for a skipped
+        # 90°/270° rotation.
+        view_width = actual_height if compensate_k in (1, 3) else actual_width
+        view_height = actual_width if compensate_k in (1, 3) else actual_height
         text_len = len(timestamp)
 
-        if (cached is None or cached[0] != size_preset or cached[1] != actual_height
-                or cached[2] != actual_width or cached[3] != text_len):
+        cache_key = (size_preset, view_height, view_width, text_len, compensate_k)
+        if cached is None or cached[:5] != cache_key:
             font = cv2.FONT_HERSHEY_SIMPLEX
             target_fraction = self._TIMESTAMP_WIDTH_FRACTIONS.get(size_preset, 0.72)
             thickness = 2 if size_preset == "large" else 1
             ref_width, _ = cv2.getTextSize(timestamp, font, 1.0, thickness)[0]
-            font_scale = max(0.3, (target_fraction * actual_width) / ref_width)
+            font_scale = max(0.3, (target_fraction * view_width) / ref_width)
             text_width, text_height = cv2.getTextSize(timestamp, font, font_scale, thickness)[0]
-            x = int((actual_width - text_width) / 2)
-            padding = max(4, int(actual_height * 0.01))
-            y = text_height + padding
-            cached = (size_preset, actual_height, actual_width, text_len, font_scale, thickness, x, y)
+            padding = max(4, int(view_height * 0.01))
+            if compensate_k == 0:
+                x = int((view_width - text_width) / 2)
+                y = text_height + padding
+            else:
+                x = y = None
+            cached = (
+                *cache_key, font_scale, thickness, text_width, text_height, padding, x, y,
+            )
             setattr(self, cache_attr, cached)
 
-        _, _, _, _, font_scale, thickness, x, y = cached
+        (*_, font_scale, thickness, text_width, text_height, padding, x, y) = cached
+
+        if compensate_k == 0:
+            cv2.putText(
+                img=arr, text=timestamp, org=(x, y), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                fontScale=font_scale, color=(50, 255, 50), thickness=thickness,
+            )
+            return
+
+        # Render upright on a tight canvas, then rotate the canvas by the
+        # inverse of the frame's un-applied rotation so it lands correctly
+        # oriented once the frame itself is later rotated for viewing.
+        canvas_h = text_height + 2 * padding
+        canvas_w = text_width + 2 * padding
+        canvas = np.zeros((canvas_h, canvas_w, 3), dtype=arr.dtype)
         cv2.putText(
-            img=arr, text=timestamp, org=(x, y), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-            fontScale=font_scale, color=(50, 255, 50), thickness=thickness,
+            img=canvas, text=timestamp, org=(padding, text_height + padding),
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=font_scale,
+            color=(50, 255, 50), thickness=thickness,
         )
+        patch = np.rot90(canvas, (4 - compensate_k) % 4)
+        ph, pw = patch.shape[:2]
+
+        if compensate_k == 1:
+            # Final top edge == this unrotated frame's right edge.
+            px = actual_width - pw - padding
+        else:  # compensate_k == 3
+            # Final top edge == this unrotated frame's left edge.
+            px = padding
+        py = (actual_height - ph) // 2
+
+        px = max(0, min(px, actual_width - pw))
+        py = max(0, min(py, actual_height - ph))
+        region = arr[py:py + ph, px:px + pw]
+        np.maximum(region, patch, out=region)
 
 
     """Video streaming"""

@@ -22,6 +22,20 @@ Some experiments also require the implementation of specific logic, either to ma
 
 More details to come soon here as a refactor is planned around how controllers and frontends are implemented!
 
+## Development setup
+
+After cloning, point git at this repo's tracked hooks so `src/__version__.py`
+stays current (it's regenerated from `git describe` on every commit):
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+This is a per-clone/per-machine setting (`.git/hooks/` itself is never
+tracked by git), so it needs to be run once on every machine you commit
+from — skipping it doesn't break anything immediately, it just means
+`src/__version__.py` silently stops updating again.
+
 ## Branches
 
 - main - The latest release of saviour e.g. v1.2

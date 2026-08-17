@@ -79,3 +79,53 @@ class TestModuleDiscoveryRediscovery:
 
         assert mgr._modules["camera_new"] is new_module
         assert "camera_new" in mgr._config_states
+
+
+class TestModuleDiscoveryRefreshesNetworkIdentity:
+    """Regression coverage for a bug found 2026-08-17: a module whose
+    received_module_config() auto-registered it with ip="" (its ZMQ hello/config
+    reached the controller before mDNS ever discovered it) stayed at ip="" forever
+    -- module_discovery()'s early-return for already-known IDs discarded every
+    subsequent real mDNS announcement's ip/port/zeroconf_name, and
+    module_ip_changed() (the only other writer of .ip) is never called from
+    anywhere. Symptom: module shows online with heartbeats but no IP in the
+    frontend, and the livestream URL (built directly from module.ip) breaks."""
+
+    def test_blank_ip_is_corrected_by_a_real_mdns_announcement(self):
+        mgr = _make_modules()
+        existing = Module(
+            id="camera_abc", name="camera_abc", type="camera", version="", ip=""
+        )
+        mgr.add_module(existing)
+        existing.status = ModuleStatus.RECORDING  # must survive the refresh
+
+        real_announcement = Module(
+            id="camera_abc", name="camera_abc", type="camera", version="1.0",
+            ip="10.0.0.237", port=5353, zeroconf_name="camera_abc._module._tcp.local.",
+        )
+        mgr.module_discovery(real_announcement)
+
+        tracked = mgr._modules["camera_abc"]
+        assert tracked.ip == "10.0.0.237"
+        assert tracked.port == 5353
+        assert tracked.zeroconf_name == "camera_abc._module._tcp.local."
+        assert tracked.status == ModuleStatus.RECORDING
+        assert tracked is existing
+
+    def test_dhcp_reassigned_ip_is_refreshed_on_re_announcement(self):
+        mgr = _make_modules()
+        existing = _register(mgr)  # ip="10.0.0.2"
+        existing.status = ModuleStatus.RECORDING
+        existing.config = {"camera": {"fps": 30}}
+
+        reannounced = Module(
+            id="camera_abc", name="camera_abc", type="camera",
+            version="1.0", ip="10.0.0.55",
+        )
+        mgr.module_discovery(reannounced)
+
+        tracked = mgr._modules["camera_abc"]
+        assert tracked.ip == "10.0.0.55"
+        # Non-identity state must still be preserved
+        assert tracked.status == ModuleStatus.RECORDING
+        assert tracked.config == {"camera": {"fps": 30}}

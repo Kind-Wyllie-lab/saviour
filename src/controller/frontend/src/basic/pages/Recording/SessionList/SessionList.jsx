@@ -498,7 +498,9 @@ function SessionList({ sessionList, modules = [] }) {
                   {isStopped && shareInfo && (
                     <div className="session-share-notice">
                       <p className="session-share-notice__instruction">
-                        Copy this path into your file explorer to access files:
+                        Prefer the <strong>Download all</strong> button above. For direct file
+                        explorer access instead (e.g. sessions too large to download), copy this
+                        path:
                       </p>
                       <div className="session-share-notice__path-row">
                         <p className="session-share-notice__path">
@@ -506,10 +508,10 @@ function SessionList({ sessionList, modules = [] }) {
                         </p>
                         <CopyButton text={`\\\\${shareInfo.share_ip}\\${shareInfo.share_path}`} />
                       </div>
-                      <div className="session-share-notice__creds">
-                        <span>Username: <strong>researcher</strong></span>
-                        <span>Password: <strong>getmyfiles</strong></span>
-                      </div>
+                      <p className="session-share-notice__creds">
+                        Need the share login? On the controller, run <code>sudo saviour-config</code>{" "}
+                        → "Reset Samba share password" to view or set it.
+                      </p>
                       <p className="session-share-notice__warning">
                         ⚠ Always check files are present after a recording, and export them to a safe long-term storage location!
                       </p>

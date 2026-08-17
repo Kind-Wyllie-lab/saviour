@@ -137,6 +137,44 @@ read_config_value() {
     grep -E "^${2}=" "$1" | tail -n1 | cut -d= -f2-
 }
 
+# Same as read_config_value, but strips one layer of surrounding double
+# quotes -- variant.conf files are hand-written and quoting a value with
+# spaces (NAME="Loom Camera") reads far more naturally than requiring the
+# author to know read_config_value never sources the file, so quotes are
+# unnecessary. Not needed for machine-written files like
+# /etc/saviour/config, which is why read_config_value itself doesn't do this.
+read_variant_value() {
+    local value
+    value=$(read_config_value "$1" "$2")
+    value="${value%\"}"
+    value="${value#\"}"
+    echo "$value"
+}
+
+# Globs src/{controller,modules}/variants/*/variant.conf for the given role
+# and prints "slug\tNAME\tDESCRIPTION" rows, one per variant -- the source
+# of truth select_controller_type()/select_module_type() build their
+# whiptail menus from, and configure_module_dependencies() reads
+# APT_PACKAGES from. A variant folder with no variant.conf simply doesn't
+# appear -- matches today's behaviour for arduino/template, which were
+# never in the old hardcoded menus either.
+list_variants() {
+    local role="$1" base
+    if [ "$role" = "controller" ]; then
+        base="$DIR/src/controller/variants"
+    else
+        base="$DIR/src/modules/variants"
+    fi
+    local conf slug name desc
+    for conf in "$base"/*/variant.conf; do
+        [ -f "$conf" ] || continue
+        slug=$(basename "$(dirname "$conf")")
+        name=$(read_variant_value "$conf" NAME)
+        desc=$(read_variant_value "$conf" DESCRIPTION)
+        printf '%s\t%s\t%s\n' "$slug" "$name" "${desc:-$name}"
+    done
+}
+
 get_mac_suffix() {
     local mac clean
     mac=$(cat /sys/class/net/eth0/address 2>/dev/null || echo "00:00:00:00:00:00")
@@ -475,30 +513,29 @@ select_role() {
         "module"     "Peripheral device — records data, reports to controller"
 }
 
+# Builds the "tag" "item" \ ... args wt --menu needs from list_variants(),
+# so adding a variant is purely "add a folder + variant.conf" -- no edit
+# here required. Menu height is the actual variant count, not a hardcoded
+# number that has to be bumped by hand each time.
+select_variant_type() {
+    local role="$1" title="$2" prompt="$3"
+    local slug name desc args=() count=0
+    while IFS=$'\t' read -r slug name desc; do
+        args+=("$slug" "$desc")
+        count=$((count + 1))
+    done < <(list_variants "$role")
+
+    wt --title "$title" --menu "$prompt" $H $W "$count" "${args[@]}"
+}
+
 select_controller_type() {
-    wt --title "Controller Type" \
-        --menu "\nWhich experiment type does this controller run?" \
-        $H $W 5 \
-        "basic"            "Basic SAVIOUR" \
-        "apa"              "Active Place Avoidance" \
-        "habitat"          "Habitat monitoring" \
-        "acoustic_startle" "Acoustic Startle" \
-        "loom"             "Loom task"
+    select_variant_type controller "Controller Type" \
+        "\nWhich experiment type does this controller run?"
 }
 
 select_module_type() {
-    wt --title "Module Type" \
-        --menu "\nWhat type of module is this device?" \
-        $H $W 9 \
-        "camera"       "Basic camera" \
-        "microphone"   "AudioMoth (up to 4 microphones)" \
-        "ttl"          "TTL pulse generator / capture  (Open Ephys sync)" \
-        "rfid"         "RFID transponder reader" \
-        "apa_camera"   "APA top-camera with Hailo AI tracking" \
-        "apa_arduino"  "APA Arduino rig  (motor + shock)" \
-        "sound"        "HifiBerry audio output" \
-        "loom_camera"  "Loom top-camera with tracking" \
-        "lightning_camera" "Lightning Pose top-camera with Hailo pose tracking"
+    select_variant_type module "Module Type" \
+        "\nWhat type of module is this device?"
 }
 
 select_gateway_mode() {
@@ -1286,29 +1323,46 @@ EOF
     sudo -u "$actual_user" systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
 }
 
-configure_apa_camera() {
-    progress "Installing APA camera (IMX500 + Hailo) dependencies…"
-    log "Configuring apa_camera module"
-    for pkg in python3-openexr imx500-all hailo-all; do
+# Reads APT_PACKAGES from the selected module's variant.conf and installs
+# whatever isn't already present -- replaces the old per-variant
+# configure_apa_camera()/configure_lightning_camera() functions, which did
+# nothing but this (apa_camera's used to also install imx500-all +
+# python3-openexr, both unused dead weight from an earlier Sony IMX500
+# on-sensor-AI approach the module never actually uses -- grepped, no
+# "imx500"/"openexr" reference anywhere in apa_camera_module.py or its
+# config; dropped rather than carried into its variant.conf).
+# configure_microphone() stays a dedicated function -- it does udev rules
+# + PipeWire config, not just package installs, so it doesn't fit this.
+configure_module_dependencies() {
+    local conf="$DIR/src/modules/variants/${DEVICE_TYPE}/variant.conf"
+    local packages
+    packages=$(read_variant_value "$conf" APT_PACKAGES)
+    [ -n "$packages" ] || return 0
+
+    progress "Installing ${DEVICE_TYPE} dependencies…"
+    log "Installing packages for ${DEVICE_TYPE}: ${packages}"
+    local pkg
+    for pkg in $packages; do
         if ! is_installed "$pkg"; then
             run_logged apt-get install -y "$pkg"
         fi
     done
 }
 
-configure_lightning_camera() {
-    # Hailo AI HAT only -- unlike apa_camera, this rig has no Sony IMX500
-    # on-sensor AI camera, so imx500-all is deliberately not installed here.
-    progress "Installing Lightning Pose camera (Hailo) dependencies…"
-    log "Configuring lightning_camera module"
-    if ! is_installed "hailo-all"; then
-        run_logged apt-get install -y "hailo-all"
-    fi
-}
-
 build_frontend() {
-    progress "Building frontend for $DEVICE_TYPE  (this may take a few minutes)…"
-    log "Building frontend: $DEVICE_TYPE"
+    # FRONTEND in the controller variant's manifest lets a variant reuse
+    # another variant's frontend (e.g. a new controller class with no UI
+    # changes of its own) instead of forcing a 1:1 pairing with
+    # DEVICE_TYPE. Falls back to DEVICE_TYPE when absent or the manifest
+    # itself is missing -- every variant shipped today has FRONTEND set to
+    # its own slug anyway, so this is a no-op change for all of them.
+    local conf="$DIR/src/controller/variants/${DEVICE_TYPE}/variant.conf"
+    local frontend_variant
+    frontend_variant=$(read_variant_value "$conf" FRONTEND)
+    frontend_variant="${frontend_variant:-$DEVICE_TYPE}"
+
+    progress "Building frontend for $frontend_variant  (this may take a few minutes)…"
+    log "Building frontend: $frontend_variant (controller type: $DEVICE_TYPE)"
 
     local nvm_dir="/home/${SUDO_USER:-pi}/.nvm"
     export NVM_DIR="$nvm_dir"
@@ -1321,7 +1375,7 @@ build_frontend() {
     # creates commit noise or gets clobbered on pull the way overwriting
     # main.jsx directly used to.
     tee "${DIR}/src/controller/frontend/.env.local" > /dev/null <<EOF
-VITE_VARIANT=${DEVICE_TYPE}
+VITE_VARIANT=${frontend_variant}
 EOF
 
     cd "${DIR}/src/controller/frontend"
@@ -1499,8 +1553,7 @@ run_configuration() {
     configure_service
 
     [ "$DEVICE_TYPE" = "microphone" ] && configure_microphone
-    [ "$DEVICE_TYPE" = "apa_camera"  ] && configure_apa_camera
-    [ "$DEVICE_TYPE" = "lightning_camera" ] && configure_lightning_camera
+    [ "$DEVICE_ROLE" = "module" ] && configure_module_dependencies
 
     progress "Writing configuration and restarting service…"
     write_config

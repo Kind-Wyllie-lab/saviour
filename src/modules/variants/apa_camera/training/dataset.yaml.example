@@ -1,0 +1,9 @@
+# Ultralytics YOLO dataset config -- copy to dataset.yaml and adjust `path`.
+# Standard format: https://docs.ultralytics.com/datasets/detect/
+
+path: /absolute/path/to/your/labelled/dataset   # dataset root
+train: images/train                              # relative to `path`
+val: images/val                                  # relative to `path`
+
+names:
+  0: rat

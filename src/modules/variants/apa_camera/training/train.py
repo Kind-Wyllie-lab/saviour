@@ -72,7 +72,10 @@ def train_model(data: Path | None = None, base: str = "yolo11n.pt", epochs: int 
     if resume:
         print(f"Resuming interrupted run from {resume}")
         model = YOLO(str(resume))
-        results = model.train(resume=True)
+        # device is safe to override on resume (a runtime setting, not part
+        # of the saved run state) -- everything else comes from args.yaml
+        resume_kwargs = {"device": device} if device is not None else {}
+        results = model.train(resume=True, **resume_kwargs)
     else:
         model = YOLO(base)
         print(f"Training on {data} ({epochs} epochs, imgsz={imgsz})")
@@ -159,7 +162,7 @@ def main():
         except ImportError:
             print("[ERROR] ultralytics not installed: pip install 'ultralytics>=8.3'")
             return
-        train_model(resume=args.resume, out_dir=args.out_dir)
+        train_model(resume=args.resume, out_dir=args.out_dir, device=args.device)
         return
 
     if args.data and args.roboflow_workspace:

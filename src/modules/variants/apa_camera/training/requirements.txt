@@ -1,0 +1,22 @@
+# Dependencies for the apa_camera rat-detector training pipeline
+# (extract_frames.py, download_roboflow_dataset.py, train.py,
+# train_rat_detector.ipynb). Install on a GPU workstation or Colab, not
+# the Pi -- this is a separate environment from the main SAVIOUR install.
+#
+#   pip install -r requirements.txt
+#
+# Hailo conversion (tools/convert_to_hailo.py, repo root) has its own
+# separate requirements (needs the Hailo Dataflow Compiler on x86-64
+# Linux) -- not covered here, see that script's own docstring.
+
+ultralytics>=8.3
+roboflow
+pyyaml
+opencv-python>=4.0.0
+numpy>=2.2.4
+
+# Jupyter itself isn't listed above -- Colab already provides it, so
+# installing it there via this file would be redundant. Running the
+# notebook locally instead? Uncomment the line below, or just:
+#   pip install jupyter
+# jupyter

@@ -7,6 +7,14 @@
 > pass-through on real hardware before this stops being a draft — see the
 > callouts marked ⚠️ for the specific parts most likely to need correcting.
 
+General Hailo conversion mechanics that apply to every model type, not
+just this one (x86-64-only requirement, calibration image guidance,
+`--hw-arch` choice, verifying compiled output before trusting it live,
+and why a heatmap/keypoint model like this one is inherently a riskier
+Hailo compile path than a detector) are covered once in
+[Training a model and deploying it to Hailo](hailo_model_deployment.md).
+This page covers only what's specific to Lightning Pose.
+
 ## Why this isn't a one-step conversion
 
 `lightning_camera` is built for **single-view 2D pose extraction on-device**,
@@ -67,8 +75,9 @@ the output shape down, you'll need it in Step 3.
 
 ## Step 2 — ONNX → HEF
 
-**Must run on x86-64 Linux** with the Hailo Dataflow Compiler (DFC)
-installed — it does not run on ARM, so not on the Pi itself.
+Run on x86-64 Linux with the DFC installed — see the shared page for the
+general requirement/install and why `--calib-dir` matters even more here
+than for a detector:
 
 ```bash
 pip install hailo_dataflow_compiler   # wheel from https://developer.hailo.ai
@@ -81,18 +90,11 @@ python tools/convert_lp_pose_to_hailo.py compile-hef \
     --calib-dir path/to/calibration_images/
 ```
 
-- `--hw-arch hailo8l` for the Raspberry Pi AI HAT; `hailo8` for a full
-  Hailo-8.
-- `--calib-dir`: 64–128 real frames from the actual camera/arena
-  (with and without the animal) significantly improve quantization
-  accuracy over the random-data fallback — more so for a heatmap model than
-  a simpler detector, since the keypoint peak is sensitive to exact pixel
-  intensities.
-
 This mirrors the same parse → quantize → compile shape already proven for
 object detection in `tools/convert_to_hailo.py`, minus that tool's
 YOLO-specific NMS postprocessing step (a pose heatmap head doesn't need
-one — just input normalization).
+one — just input normalization; postprocessing instead happens host-side
+in Step 3/4 below, see the shared page's explanation of why).
 
 ⚠️ **Not yet verified against a real DFC run.** The parse/quantize/compile
 calls (`ClientRunner.translate_onnx_model` / `.optimize` / `.compile`) are

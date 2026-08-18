@@ -479,6 +479,109 @@ class TestModuleExportUpdate:
         rec.module_export_update("cam1", "ghost_session/20260803/cam1", "complete")
         facade.update_sessions.assert_not_called()
 
+    def test_pending_increments_and_complete_decrements(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session()
+
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        assert rec.sessions["exp1"].pending_exports == 1
+
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+        assert rec.sessions["exp1"].pending_exports == 0
+
+    def test_final_failure_decrements_pending(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session()
+
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=True)
+
+        assert rec.sessions["exp1"].pending_exports == 0
+
+    def test_retrying_failure_leaves_pending_outstanding(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session()
+
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "pending")
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "failed", final=False)
+
+        assert rec.sessions["exp1"].pending_exports == 1
+
+    def test_pending_never_goes_negative(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session()
+        rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+        assert rec.sessions["exp1"].pending_exports == 0
+
+    def test_recovery_logged_when_pending_clears_after_stall_alert(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED, pending_exports=1, export_stall_alerted=True,
+        )
+        with patch.object(rec, "_log_session_event") as mock_log:
+            rec.module_export_update("cam1", "exp1/20260803/cam1", "complete")
+
+        assert rec.sessions["exp1"].export_stall_alerted is False
+        assert any(c.args[1] == "RECOVERY" for c in mock_log.call_args_list)
+
+
+class TestCheckExportStallAfterStop:
+    def test_alerts_when_stopped_session_has_pending_exports_past_threshold(self):
+        rec, facade = _make_recording(recording={"export_stall_after_stop_mins": 15})
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED,
+            pending_exports=2,
+            stopped_epoch=time.time() - 20 * 60,
+        )
+        rec._check_export_stall_after_stop()
+
+        assert rec.sessions["exp1"].export_stall_alerted is True
+        facade.send_alert.assert_called_once()
+        assert facade.send_alert.call_args.kwargs["severity"] == "warning"
+
+    def test_no_alert_before_threshold_elapsed(self):
+        rec, facade = _make_recording(recording={"export_stall_after_stop_mins": 15})
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED,
+            pending_exports=2,
+            stopped_epoch=time.time() - 5 * 60,
+        )
+        rec._check_export_stall_after_stop()
+
+        assert rec.sessions["exp1"].export_stall_alerted is False
+        facade.send_alert.assert_not_called()
+
+    def test_no_alert_when_nothing_pending(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED,
+            pending_exports=0,
+            stopped_epoch=time.time() - 60 * 60,
+        )
+        rec._check_export_stall_after_stop()
+        facade.send_alert.assert_not_called()
+
+    def test_does_not_realert_once_already_flagged(self):
+        rec, facade = _make_recording(recording={"export_stall_after_stop_mins": 15})
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED,
+            pending_exports=2,
+            stopped_epoch=time.time() - 60 * 60,
+            export_stall_alerted=True,
+        )
+        rec._check_export_stall_after_stop()
+        facade.send_alert.assert_not_called()
+
+    def test_active_sessions_are_not_considered(self):
+        rec, facade = _make_recording(recording={"export_stall_after_stop_mins": 15})
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE,
+            pending_exports=5,
+            stopped_epoch=time.time() - 60 * 60,
+        )
+        rec._check_export_stall_after_stop()
+        facade.send_alert.assert_not_called()
+
 
 class TestCheckAllStopped:
     def test_transitions_to_stopped_when_nothing_still_stopping(self):

@@ -1062,7 +1062,10 @@ class Module(ABC):
 
         password = self.config.get("export.share_password", "")
         if not password:
-            return False, "Export credentials not set — use 'Sync Export' on the controller"
+            return False, (
+                "Export credentials not set — use 'Sync Export' in Controller Settings "
+                "(Settings page → Controller)"
+            )
 
         share_ip   = self.config.get("export.share_ip", "")
         share_path = self.config.get("export.share_path", "controller_share")
@@ -1123,10 +1126,13 @@ class Module(ABC):
                 _test_write()
                 return True, f"Controller share //{share_ip}/{share_path} reachable and writable"
             except OSError:
-                # Write failed — likely a stale CIFS connection left over from a previous
-                # export session.  Attempt a lazy unmount and fresh remount, but only if
-                # no export is currently active (we must not pull the rug from live I/O).
-                if already_mounted and not self.export.exporting:
+                # Write failed — either a stale CIFS connection left over from a
+                # previous export session, or a mount that reported success but
+                # isn't actually serving a working share yet (e.g. controller's
+                # Samba was mid-restart). Attempt a lazy unmount and fresh remount
+                # either way, but only if no export is currently active (we must
+                # not pull the rug from live I/O).
+                if not self.export.exporting:
                     subprocess.run(
                         ["sudo", "umount", "-l", mount_point],
                         capture_output=True, timeout=5,
@@ -1140,7 +1146,7 @@ class Module(ABC):
                         f"Controller share //{share_ip}/{share_path} reachable "
                         f"and writable (remounted stale connection)"
                     )
-                raise  # already mounted and export active — re-raise for outer handler
+                raise  # export active — re-raise for outer handler
 
         except subprocess.TimeoutExpired:
             return False, f"Mount timed out after {_CHECK_TIMEOUT_S}s — controller unreachable?"

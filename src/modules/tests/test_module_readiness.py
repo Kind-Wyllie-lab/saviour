@@ -374,6 +374,29 @@ class TestCheckExport:
         assert result is False
         assert "Stale mount, remount failed" in message
 
+    def test_freshly_mounted_write_failure_also_triggers_remount_and_retry(self):
+        """A mount command can report success while the share isn't actually
+        serving I/O yet (e.g. controller's Samba mid-restart). Previously the
+        remount-recovery path only ran when the mount point was *already*
+        mounted before this check -- a write failure straight after a fresh
+        mount just raised. It should get the same recovery attempt."""
+        with tempfile.TemporaryDirectory() as mount_point:
+            m = _bare_module(config=_export_config())
+            m.export.mount_point = mount_point
+            m.export.exporting = False
+
+            with patch("src.modules.module.os.path.ismount", side_effect=[False, True]), \
+                 patch("src.modules.module.subprocess.run",
+                       return_value=MagicMock(returncode=0)) as mock_run, \
+                 patch("builtins.open", side_effect=[OSError("share not ready"), MagicMock()]), \
+                 patch("src.modules.module.os.remove"):
+                result, message = m._check_export()
+
+        assert result is True
+        assert "remounted stale connection" in message
+        # initial mount, lazy umount, remount, final cleanup umount
+        assert mock_run.call_count == 4
+
     def test_write_failure_while_export_in_progress_is_not_treated_as_stale(self):
         """When export.exporting is True we must not unmount/remount out from
         under a live export -- the OSError should just propagate as a failure."""

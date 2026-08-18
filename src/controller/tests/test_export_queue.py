@@ -106,6 +106,17 @@ class TestRetryOnFailure:
         # Call on_export_failed for a module that was never enqueued
         q.on_export_failed("ghost_module")  # should not raise
 
+    def test_on_export_failed_return_value_signals_final_vs_retrying(self):
+        q, facade = _make_queue(max_concurrent=1)
+        q.enqueue("mod_a", "path_a")
+        for _ in range(ExportQueue.MAX_RETRIES - 1):
+            assert q.on_export_failed("mod_a") is False  # still retrying
+        assert q.on_export_failed("mod_a") is True  # retries exhausted
+
+    def test_on_export_failed_without_metadata_returns_final(self):
+        q, facade = _make_queue()
+        assert q.on_export_failed("ghost_module") is True
+
 
 # ---------------------------------------------------------------------------
 # Concurrency cap

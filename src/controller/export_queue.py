@@ -125,15 +125,21 @@ class ExportQueue:
             self._dispatch_next()
             self._save()
 
-    def on_export_failed(self, module_id: str) -> None:
+    def on_export_failed(self, module_id: str) -> bool:
         """Call when a module reports export_failed.
 
         Re-enqueues the export up to MAX_RETRIES times before giving up,
         so a transient NAS outage does not silently lose data.
+
+        Returns True if this was a *final* failure (retries exhausted, or no
+        retry metadata was held for this module) — callers use this to know
+        whether the export is truly done-with-loss rather than still pending
+        a retry.
         """
         with self._lock:
             self._active.discard(module_id)
             meta = self._active_meta.pop(module_id, None)
+            is_final = True
             if meta:
                 export_path, attempt, *_ = meta
                 if attempt < self.MAX_RETRIES:
@@ -142,6 +148,7 @@ class ExportQueue:
                         f"— re-queuing. Queue depth: {len(self._queue)}"
                     )
                     self._queue.append((module_id, export_path, attempt + 1))
+                    is_final = False
                 else:
                     self.logger.error(
                         f"Export failed for {module_id} after {self.MAX_RETRIES} attempts "
@@ -154,6 +161,7 @@ class ExportQueue:
                 )
             self._dispatch_next()
             self._save()
+            return is_final
 
     # -----------------------------------------------------------------------
     # Internal

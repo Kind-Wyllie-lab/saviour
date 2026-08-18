@@ -10,7 +10,7 @@ The basic steps for creating the new module "AmazingNewModule":
 1. Create the folder src/modules/variants/amazing_new_module
 2. In that folder, create the files amazing_new_module.py, amazing_new_module_config.json
 3. Following the example of src/modules/variants/template, create your new module
-4. Modify the saviour-config script to be able to configure a pi to run as your module
+4. Add a `variant.conf` in the same folder (see [Variant manifests](#variant-manifests-variantconf) below) — this is what makes `saviour-config` offer your module as a selectable type. No `saviour-config` code changes needed for a normal module.
 5. Use saviour-config to deploy your AmazingNewModule on a network with a controller and test its behaviour
 
 ## New Controllers / GUIs
@@ -18,9 +18,48 @@ Many experiments are able to use the basic SAVIOUR GUI, but sometimes novel vari
 
 The SAVIOUR frontend is built with React, meaning that there is a library of reusable components (e.g. livestream cards, a sidebar) that can be used for creating the appropriate GUI for your use case. 
 
-Some experiments also require the implementation of specific logic, either to make the GUI work properly (new websocket routes) or to enable experimental logic (e.g. in APA, if apa_camera_module detects rat in shock zone, tell apa_arduino_module to activate shock grid). In this case, a new controller / web program should be added in src/controller/variants, following the pattern in other controllers found there.
+Some experiments also require the implementation of specific logic, either to make the GUI work properly (new websocket routes) or to enable experimental logic (e.g. in APA, if apa_camera_module detects rat in shock zone, tell apa_arduino_module to activate shock grid). In this case, a new controller / web program should be added in src/controller/variants, following the pattern in other controllers found there — and needs its own `variant.conf` too, same as a module.
 
 More details to come soon here as a refactor is planned around how controllers and frontends are implemented!
+
+## Variant manifests (`variant.conf`)
+
+Every folder under `src/controller/variants/` and `src/modules/variants/` needs a
+`variant.conf` — a flat `KEY=value` file `saviour-config` reads (via
+`list_variants()`) to build its type-selection menus. Without one, your
+variant exists on disk but never shows up as a selectable option.
+
+```bash
+# src/modules/variants/amazing_new_module/variant.conf
+NAME="Amazing New Module"
+DESCRIPTION="One-line description shown in the saviour-config menu"
+APT_PACKAGES="some-apt-package another-package"   # optional, space-separated
+```
+
+```bash
+# src/controller/variants/amazing_new_task/variant.conf
+NAME="Amazing New Task"
+DESCRIPTION="One-line description shown in the saviour-config menu"
+FRONTEND="amazing_new_task"   # optional, defaults to the folder's own slug
+```
+
+- `NAME` / `DESCRIPTION` are required — these populate the whiptail menu.
+- `APT_PACKAGES` (module-side only) — space-separated apt packages
+  `saviour-config` installs automatically when that module type is selected
+  (e.g. `hailo-all` for a Hailo-accelerated camera). Skip it if your module
+  needs nothing beyond what `setup.sh`'s base install already covers.
+- `FRONTEND` (controller-side only) — which frontend variant
+  (`src/controller/frontend/src/<slug>/`) this controller uses. Only needed
+  if it differs from your controller's own folder name.
+- Quote values with spaces — `read_variant_value` strips one layer of
+  surrounding double quotes.
+
+Not yet supported: overriding the Python entrypoint filename or config
+filename via the manifest (`ENTRYPOINT`/`CONFIG_FILE`) — every variant
+today follows the `<slug>_<role>.py` / `<slug>_<role>_config.json`
+convention, and there's no way to deviate from it yet. See CLAUDE.md's
+"Architectural concerns" section if you need this — it's a deliberately
+unbuilt follow-on, blocked on a separate systemd/config-loading fix.
 
 ## Development setup
 

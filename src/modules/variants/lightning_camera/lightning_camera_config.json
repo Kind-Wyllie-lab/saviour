@@ -1,0 +1,63 @@
+{
+    "module": {
+        "group": "camera"
+    },
+    "camera": {
+        "monochrome": false,
+        "rotation": 0,
+        "crop_rect": null,
+        "sensor_mode_index": 0,
+        "width": 1080,
+        "height": 1080,
+        "fps": 30,
+        "overlay_timestamp": true,
+        "text_size": "medium",
+        "gain": 1,
+        "manual_exposure": false,
+        "exposure_time": 10000,
+        "ae_enable": false,
+        "brightness": 0,
+        "contrast": 1.0,
+        "overlay_framerate_on_preview": false,
+        "bitrate_mb": 2,
+        "autofocus_mode": "manual",
+        "lens_position": 0.0,
+        "sync_mode": "none",
+        "framesync_enabled": true,
+        "_codec": "h264",
+        "_profile": "high",
+        "_level": 4.2
+    },
+    "pose_estimation": {
+        "enabled": false,
+        "backend": "stub",
+        "model_path": "",
+        "threshold": 0.3,
+        "view_name": "",
+        "keypoint_names": [
+            "nose",
+            "left_ear",
+            "right_ear",
+            "neck",
+            "shoulder_mid",
+            "hip_mid",
+            "tail_base",
+            "left_forepaw",
+            "right_forepaw",
+            "left_hindpaw",
+            "right_hindpaw"
+        ],
+        "skeleton": [
+            ["nose", "neck"],
+            ["neck", "shoulder_mid"],
+            ["shoulder_mid", "hip_mid"],
+            ["hip_mid", "tail_base"]
+        ],
+        "overlay": {
+            "enabled": true,
+            "dot_bgr": [0, 0, 255],
+            "line_bgr": [0, 255, 0],
+            "thickness": 2
+        }
+    }
+}

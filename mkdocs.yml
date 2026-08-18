@@ -10,6 +10,9 @@ nav:
   - Using SAVIOUR with ephys: open_ephys.md
   - How it Works: how_it_works.md 
   - Hardware: hardware.md
+  - Training a Model and Deploying it to Hailo: hailo_model_deployment.md
+  - APA Rat Detector Training: apa_rat_detector_training.md
+  - Hailo Pose Conversion: hailo_pose_conversion.md
   - CAD/3D Prints: cad.md
   - About:
     - License: about/license.md

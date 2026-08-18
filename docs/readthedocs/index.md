@@ -21,5 +21,3 @@ To learn about developing modules, GUIs, and the process of contributing to SAVI
 - [Contributing to SAVIOUR](about/contributing.md)
 - [License](about/license.md)
 - [Acknowledgements](about/acknowledgements.md)
-
-These pages are also published in full at [saviour.readthedocs.io](https://saviour.readthedocs.io) - the same content shown here in the SAVIOUR GUI is the single source for both.

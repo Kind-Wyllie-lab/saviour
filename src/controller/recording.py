@@ -68,6 +68,16 @@ class RecordingSession:
     # Cumulative count of completed exports across all segments
     total_exports_complete:    int  = 0
     total_exports_failed:      int  = 0
+    # Outstanding export_ready signals not yet resolved (complete, or a final
+    # give-up after retries) — the "certainty" signal for whether every file
+    # this session produced has actually landed on the controller's share.
+    pending_exports:           int  = 0
+    # Epoch when the session transitioned to STOPPED; used to time the
+    # export-stall check below. None until stopped.
+    stopped_epoch:              float | None = None
+    # Set once a stale-pending-export alert has fired for this stopped session,
+    # so the monitor loop doesn't re-alert every cycle.
+    export_stall_alerted:      bool = False
     # UTC epoch at which modules are scheduled to begin recording (time.time() + LEAD_SECS).
     # None for immediate starts (e.g. module_back_online).
     recording_start_at:        float | None = None
@@ -575,29 +585,51 @@ class Recording:
         )
 
 
-    def module_export_update(self, module_id: str, export_path: str, state: str) -> None:
+    def module_export_update(self, module_id: str, export_path: str, state: str,
+                              final: bool = True) -> None:
         """Update export state for a module.
 
         The session is identified from the first path component of export_path,
         which is always the session_name (e.g. 'myexp-20260312/20260312/camera_d61e').
+
+        `pending_exports` counts export_ready signals not yet resolved, so it
+        goes up on "pending" and back down on "complete" or a *final* "failed"
+        (retries exhausted — see export_queue.py). A "failed" that will still
+        be retried leaves it outstanding. This is what lets the operator know
+        with certainty whether every file a stopped session produced has
+        actually landed on the share, rather than just that recording stopped.
         """
         session_name = export_path.split('/', maxsplit=1)[0] if export_path else None
         if not session_name or session_name not in self.sessions:
             return
 
         with self._lock:
-            self.sessions[session_name].module_export_states[module_id] = state
-            if state == "complete":
-                self.sessions[session_name].total_exports_complete += 1
+            session = self.sessions[session_name]
+            session.module_export_states[module_id] = state
+            if state == "pending":
+                session.pending_exports += 1
+            elif state == "complete":
+                session.pending_exports = max(0, session.pending_exports - 1)
+                session.total_exports_complete += 1
                 self._last_export_success[module_id] = time.time()
                 self._export_failure_streak[module_id] = 0
             elif state == "failed":
-                self.sessions[session_name].total_exports_failed += 1
+                session.total_exports_failed += 1
                 streak = self._export_failure_streak.get(module_id, 0) + 1
                 self._export_failure_streak[module_id] = streak
                 self._log_session_event(session_name, "WARNING",
                     f"Export failed for {module_id} — path: {export_path}"
-                    + (f" ({streak} consecutive failures)" if streak > 1 else ""))
+                    + (f" ({streak} consecutive failures)" if streak > 1 else "")
+                    + ("" if final else " — will retry"))
+                if final:
+                    session.pending_exports = max(0, session.pending_exports - 1)
+
+            if (session.state == SessionState.STOPPED and session.pending_exports == 0
+                    and session.export_stall_alerted):
+                # Recovered after a stall alert — record the all-clear.
+                self._log_session_event(session_name, "RECOVERY",
+                    "All pending exports for this stopped session now confirmed")
+                session.export_stall_alerted = False
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -919,6 +951,7 @@ class Recording:
             else:
                 session.state = SessionState.STOPPED
                 session.end_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                session.stopped_epoch = time.time()
                 new_state = SessionState.STOPPED
 
         self.logger.info(
@@ -1342,6 +1375,44 @@ class Recording:
                         )
 
 
+    def _check_export_stall_after_stop(self) -> None:
+        """Alert when a STOPPED session still has unresolved exports well after
+        stopping — recording having stopped says nothing about whether every
+        file actually made it to the share; this closes that gap."""
+        config = self.facade.get_config()
+        stall_mins = config.get("recording", {}).get("export_stall_after_stop_mins", 15)
+        stall_secs = stall_mins * 60
+        now = time.time()
+
+        for session_name, session in list(self.sessions.items()):
+            if session.state != SessionState.STOPPED or session.pending_exports <= 0:
+                continue
+            if session.export_stall_alerted:
+                continue
+            if session.stopped_epoch is None or now - session.stopped_epoch < stall_secs:
+                continue
+
+            age_mins = int((now - session.stopped_epoch) / 60)
+            self._log_session_event(session_name, "WARNING",
+                f"Session stopped {age_mins} min ago with "
+                f"{session.pending_exports} export(s) still unresolved")
+            if self._notify_enabled("notify_session_faults"):
+                self.facade.send_alert(
+                    key=f"export_stall_stopped_{session_name}",
+                    title=f"Export not confirmed — {session_name}",
+                    message=(
+                        f"Session **{session_name}** stopped {age_mins} min ago but "
+                        f"{session.pending_exports} export(s) are still not confirmed on "
+                        f"the controller share. Check module connectivity and the export queue."
+                    ),
+                    severity="warning",
+                )
+            with self._lock:
+                session.export_stall_alerted = True
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+
+
     def _check_session_gaps(self, today: str) -> None:
         """Alert if a scheduled session missed its previous run.
 
@@ -1435,6 +1506,7 @@ class Recording:
             if self._monitor_cycle % 60 == 0:
                 self._check_nas_space_periodic()
                 self._check_export_staleness()
+                self._check_export_stall_after_stop()
 
             # ── Daily gap detection (once per calendar day) ───────────────────
             if self._gap_check_date != today:

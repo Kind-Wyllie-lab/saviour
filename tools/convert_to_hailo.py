@@ -154,10 +154,18 @@ def compile_hef(onnx_path: Path, num_classes: int, imgsz: int,
 
     input_name, output_names = inspect_onnx(onnx_path)
 
+    # Cut the graph before Ultralytics' own box-decode ops (Transpose/Sub/Add
+    # around /model.23/...) -- Hailo's parser can't translate those, and they'd
+    # be redundant anyway: nms_postprocess(meta_arch=yolov8, ...) below expects
+    # raw per-scale outputs and does the decode + NMS itself. /model.23 is the
+    # Detect head (see the printed model summary during export) -- these node
+    # names come from YOLO11's own module structure, not this specific model's
+    # weights, so they're stable for any YOLO11n export from this pipeline.
     hn, npz = runner.translate_onnx_model(
         str(onnx_path),
         model_name,
         net_input_shapes={input_name: [1, 3, imgsz, imgsz]},
+        end_node_names=["/model.23/Sigmoid", "/model.23/dfl/Reshape"],
     )
     runner.save_har(str(har_path))
     print(f"      Saved HAR: {har_path}")

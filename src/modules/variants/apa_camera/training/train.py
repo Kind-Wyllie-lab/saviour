@@ -49,7 +49,7 @@ from download_roboflow_dataset import download_dataset, get_project, list_versio
 
 
 def train_model(data: Path | None = None, base: str = "yolo11n.pt", epochs: int = 150,
-                 imgsz: int = 640, batch: int = 16, device: str | None = None,
+                 imgsz: int = 640, batch: int | None = None, device: str | None = None,
                  resume: Path | None = None, out_dir: Path | None = None) -> Path | None:
     """Train/fine-tune the detector and copy the best checkpoint to
     out_dir/ratnet.pt. Returns that path, or None if training didn't
@@ -72,9 +72,14 @@ def train_model(data: Path | None = None, base: str = "yolo11n.pt", epochs: int 
     if resume:
         print(f"Resuming interrupted run from {resume}")
         model = YOLO(str(resume))
-        # device is safe to override on resume (a runtime setting, not part
-        # of the saved run state) -- everything else comes from args.yaml
-        resume_kwargs = {"device": device} if device is not None else {}
+        # device and batch are safe to override on resume (runtime/hardware-fit
+        # settings, not part of the saved training state) -- everything else
+        # comes from args.yaml
+        resume_kwargs = {}
+        if device is not None:
+            resume_kwargs["device"] = device
+        if batch is not None:
+            resume_kwargs["batch"] = batch
         results = model.train(resume=True, **resume_kwargs)
     else:
         model = YOLO(base)
@@ -83,7 +88,7 @@ def train_model(data: Path | None = None, base: str = "yolo11n.pt", epochs: int 
             data=str(data),
             epochs=epochs,
             imgsz=imgsz,
-            batch=batch,
+            batch=batch if batch is not None else 16,
             device=device,
             single_cls=True,  # one class: "rat" -- see dataset.yaml.example
         )
@@ -135,7 +140,12 @@ def main():
     parser.add_argument("--imgsz", type=int, default=640,
                          help="Must match what you'll later pass to "
                               "tools/convert_to_hailo.py's --imgsz")
-    parser.add_argument("--batch", type=int, default=16)
+    parser.add_argument("--batch", type=int, default=None,
+                         help="Batch size (default: 16 for a new run; on "
+                              "--resume, omit to keep the original run's "
+                              "batch size, or pass a value to override it "
+                              "-- e.g. after a CUDA-OOM auto-retry settled "
+                              "on a smaller size, skip that retry next time)")
     parser.add_argument("--device", default=None,
                          help="e.g. 0 for first GPU, cpu for CPU "
                               "(default: Ultralytics auto-picks)")
@@ -162,7 +172,7 @@ def main():
         except ImportError:
             print("[ERROR] ultralytics not installed: pip install 'ultralytics>=8.3'")
             return
-        train_model(resume=args.resume, out_dir=args.out_dir, device=args.device)
+        train_model(resume=args.resume, out_dir=args.out_dir, device=args.device, batch=args.batch)
         return
 
     if args.data and args.roboflow_workspace:

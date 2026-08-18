@@ -154,18 +154,34 @@ def compile_hef(onnx_path: Path, num_classes: int, imgsz: int,
 
     input_name, output_names = inspect_onnx(onnx_path)
 
-    # Cut the graph before Ultralytics' own box-decode ops (Transpose/Sub/Add
-    # around /model.23/...) -- Hailo's parser can't translate those, and they'd
-    # be redundant anyway: nms_postprocess(meta_arch=yolov8, ...) below expects
-    # raw per-scale outputs and does the decode + NMS itself. /model.23 is the
-    # Detect head (see the printed model summary during export) -- these node
-    # names come from YOLO11's own module structure, not this specific model's
-    # weights, so they're stable for any YOLO11n export from this pipeline.
+    # Cut the graph before Ultralytics' own box-decode ops -- Hailo's parser
+    # can't translate those, and they'd be redundant anyway:
+    # nms_postprocess(meta_arch=yolov8, ...) below expects raw per-scale
+    # outputs and does the DFL decode + box math + NMS itself on-chip.
+    # /model.23 is the Detect head (see the printed model summary during
+    # export); its three detection scales (cv2.0/1/2 = box, cv3.0/1/2 =
+    # class) each end in a raw Conv, get reshaped, then concatenate:
+    #   /model.23/Concat   -- raw box distributions (64ch DFL logits),
+    #                         BEFORE any DFL softmax/decode starts
+    #   /model.23/Sigmoid  -- class scores, AFTER sigmoid (applied to the
+    #                         concatenated class logits)
+    # Confirmed against a real exported graph (2026-08-18) -- the DFC's own
+    # auto-suggested end node for the box branch, /model.23/dfl/Reshape, is
+    # actually *inside* the DFL decode subgraph (Concat -> dfl/Reshape ->
+    # Transpose -> Softmax -> dfl/conv/Conv -> ...) and crashes the parser
+    # (IndexError in is_null_reshape()) rather than just failing to
+    # translate -- /model.23/Concat is the correct pre-decode cut point.
+    # These node names come from YOLO11's own module structure, not this
+    # specific model's weights, so they're stable for any YOLO11n export
+    # from this pipeline -- but if a future Ultralytics version renames
+    # them, re-inspect with:
+    #   python -c "import onnx; m = onnx.load('x.onnx')
+    #   [print(n.op_type, n.name) for n in m.graph.node if 'model.23' in n.name]"
     hn, npz = runner.translate_onnx_model(
         str(onnx_path),
         model_name,
         net_input_shapes={input_name: [1, 3, imgsz, imgsz]},
-        end_node_names=["/model.23/Sigmoid", "/model.23/dfl/Reshape"],
+        end_node_names=["/model.23/Sigmoid", "/model.23/Concat"],
     )
     runner.save_har(str(har_path))
     print(f"      Saved HAR: {har_path}")

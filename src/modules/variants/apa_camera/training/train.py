@@ -130,7 +130,7 @@ def main():
         try:
             project = get_project(args.roboflow_workspace, args.roboflow_project)
             if args.roboflow_version is None:
-                list_versions(project)
+                list_versions(project, flag_name="--roboflow-version")
                 return
             args.data = download_dataset(
                 project, args.roboflow_version, args.roboflow_format, args.roboflow_out)

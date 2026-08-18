@@ -27,9 +27,14 @@ record footage → extract frames → label → train (this page)
 
 Everything up to and including `train.py` lives in
 `src/modules/variants/apa_camera/training/` (also see that folder's own
-`README.md` for the terse version of this page). The conversion step
+`README.md` for the terse version of this page, and its `requirements.txt`
+for what to install — a separate environment from the main SAVIOUR install,
+meant for a GPU workstation or Colab, not the Pi). The conversion step
 (`tools/convert_to_hailo.py`, repo root) already existed and is documented
 in its own docstring — this page only summarizes it in [Step 5](#step-5-convert-to-a-hailo-hef).
+The Hailo conversion/deployment mechanics that are the same for every
+Hailo-backed SAVIOUR module (not just this one) live on their own page:
+[Training a model and deploying it to Hailo](hailo_model_deployment.md).
 
 ## Step 1 — collect footage
 
@@ -91,6 +96,20 @@ higher fraction of "hard" cases (partial occlusion, corner of frame, rat
 near arena edge/shock zone boundary) rather than easy centre-of-arena shots
 — the easy cases are what the model is least likely to need help with.
 
+**Box convention**: since the detection is used as a centroid-in-zone test
+(`_draw_detections`/shock-zone logic reads the box centre, not its extent),
+draw boxes around the rat's **body only, excluding the tail**. The tail
+articulates independently of the body — it curls, extends, or tucks in ways
+that shift where a tail-inclusive box's centroid lands without the animal
+actually moving, which is exactly the wrong kind of noise right at a
+shock-zone boundary where accuracy matters most. Whichever convention you
+pick, apply it consistently across every labelled frame — an inconsistent
+mix hurts training more than either convention alone would.
+
+If you already have a labelled Roboflow project, skip straight to the
+Roboflow path in [Step 4](#step-4-assemble-the-dataset-and-train) instead
+of hand-arranging files.
+
 ## Step 4 — assemble the dataset and train
 
 ```
@@ -110,19 +129,48 @@ Copy `dataset.yaml.example` → `dataset.yaml`, point `path` at
 python train.py --data training_data/dataset.yaml
 ```
 
-Defaults to `yolo11n.pt` (smallest YOLO11 checkpoint, a good fit for
-`hailo8l`) for 150 epochs at 640×640 — matching `convert_to_hailo.py`'s own
-`--imgsz` default, since that has to match later. Produces
-`ratnet.pt` in the `training/` folder.
+**Already labelled in Roboflow?** One command downloads the dataset and
+trains — no manual arranging needed, since Roboflow's own YOLO export
+already matches the Ultralytics layout above. Use your Roboflow **Private
+API Key** (Workspace Settings → API Keys), not the Publishable one — the
+Publishable key is meant for embedding in client-side hosted-inference
+widgets and can't pull a full dataset export (images + annotations):
 
-Needs a GPU workstation or a Colab-style notebook — nothing about this step
-touches Hailo or needs to run on the Pi. `--device cpu` works but will be
-slow for more than a quick smoke-test run.
+```bash
+pip install -r requirements.txt
+export ROBOFLOW_API_KEY=...   # the Private key, from https://app.roboflow.com/settings/api
+
+# list available versions for a project, then exit
+python train.py --roboflow-workspace <ws> --roboflow-project <proj>
+
+# download the given version and train on it
+python train.py --roboflow-workspace <ws> --roboflow-project <proj> --roboflow-version <N>
+```
+
+(`download_roboflow_dataset.py` also works standalone — same workspace/
+project/version args — if you just want the dataset without training yet;
+`train.py` calls into the same code underneath.)
+
+Prefer a notebook? `training/train_rat_detector.ipynb` walks through the
+same download → train flow cell-by-cell, with a `getpass` prompt for the
+API key so it isn't saved into the notebook file.
+
+Runs entirely on your own machine either way — nothing here requires
+Colab or any hosted compute (though Colab's free GPU runtime works fine
+too, especially for the notebook). Defaults to `yolo11n.pt` (smallest
+YOLO11 checkpoint, a good fit for `hailo8l`) for 150 epochs at 640×640 —
+matching `convert_to_hailo.py`'s own `--imgsz` default, since that has to
+match later. Produces `ratnet.pt` in the `training/` folder.
+`--device cpu` works with no local GPU but will be slow for more than a
+quick smoke-test run.
 
 ## Step 5 — convert to a Hailo HEF
 
-From the repo root, on **x86-64 Linux** (the Hailo Dataflow Compiler
-doesn't run on ARM — not on the Pi):
+General Hailo conversion mechanics (x86-64-only requirement, calibration
+image guidance, `--hw-arch` choice, verifying the compiled output before
+trusting it live) are covered once in
+[Training a model and deploying it to Hailo](hailo_model_deployment.md) —
+this is the apa-specific command. From the repo root, on x86-64 Linux:
 
 ```bash
 pip install "ultralytics>=8.3" hailo_dataflow_compiler onnx onnxruntime
@@ -131,12 +179,9 @@ python tools/convert_to_hailo.py \
     --calib-dir /path/to/64-128/representative/arena/images
 ```
 
-`--calib-dir` matters for accuracy — supply real arena frames (a subset of
-your labelled images works fine) rather than relying on the random-data
-fallback. See that script's own docstring for the full option list
-(`--imgsz`, `--hw-arch hailo8`/`hailo8l`, `--onnx-only` for a two-machine
-split if your training machine isn't the same x86 box with the DFC
-installed).
+See that script's own docstring for the full option list (`--imgsz`,
+`--hw-arch hailo8`/`hailo8l`, `--onnx-only` for a two-machine split if
+your training machine isn't the same x86 box with the DFC installed).
 
 ## Step 6 — deploy and verify
 
@@ -152,8 +197,9 @@ Copy the resulting `.hef` to the Pi and update the module config:
 ```
 
 Watch the live MJPEG preview with detection on before trusting it in a real
-session — the drawn detection dot (`_draw_detections`) makes it obvious at
-a glance whether the box is landing on the rat consistently, including at
+session (see the shared page's "verify before trusting it live" section)
+— the drawn detection dot (`_draw_detections`) makes it obvious at a
+glance whether the box is landing on the rat consistently, including at
 the arena edges and shock-zone boundary where accuracy matters most for
 the actual shock logic. If it's noticeably worse than `BlobTracker`
 (`object_detection.backend: "blob"`, the no-model fallback already in the

@@ -41,16 +41,21 @@ const LOOM_TABS = [
   { key: "stimulus", label: "Stimulus" },
 ];
 
+const HABITAT_TABS = [
+  { key: "motion", label: "Motion" },
+];
+
 const EXPORT_TAB = { key: "export", label: "Export" };
 
 const TAB_COPY_SECTION = {
-  basic:    { key: "module",        label: "Basic"    },
-  image:    { key: "camera",        label: "Image"    },
-  record:   { key: "camera",        label: "Record"   },
-  preview:  { key: "camera",        label: "Preview"  },
-  tracking: { key: "loom_tracking", label: "Tracking" },
-  stimulus: { key: "loom_stimulus", label: "Stimulus" },
-  export:   { key: "export",        label: "Export"   },
+  basic:    { key: "module",         label: "Basic"    },
+  image:    { key: "camera",         label: "Image"    },
+  record:   { key: "camera",         label: "Record"   },
+  preview:  { key: "camera",         label: "Preview"  },
+  tracking: { key: "loom_tracking",  label: "Tracking" },
+  stimulus: { key: "loom_stimulus",  label: "Stimulus" },
+  motion:   { key: "habitat_motion", label: "Motion"   },
+  export:   { key: "export",         label: "Export"   },
 };
 
 function bestSensorMode(sensorModes, width, height, fps) {
@@ -226,7 +231,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const exposureMismatch = currentSyncMode === "client" && syncServerModule && serverExposureUs != null && clientExposureUs != null && clientExposureUs !== serverExposureUs;
   const hasSyncWarning   = fpsMismatch || exposureMismatch || (currentSyncMode === "client" && !syncServerModule);
 
-  const tabs = [...BASE_TABS, ...(module.type === "loom_camera" ? LOOM_TABS : []), EXPORT_TAB];
+  const tabs = [
+    ...BASE_TABS,
+    ...(module.type === "loom_camera" ? LOOM_TABS : []),
+    ...(module.type === "habitat_camera" ? HABITAT_TABS : []),
+    EXPORT_TAB,
+  ];
 
   return (
     <>
@@ -835,6 +845,51 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onClick={() => socket.emit("send_command", { module_id: id, type: "loom_stimulus_test_screens", params: { duration_s: 2.0 } })}>
                 Test (2 s flash)
               </button>
+            </div>
+          </>
+        )}
+
+        {/* HABITAT MOTION */}
+        {activeTab === "motion" && (
+          <>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Shadow mode only for now: the activity score below is computed
+              every frame and logged to the timestamp CSV (and shown live on
+              the preview) whenever this module is recording, but it doesn't
+              yet start or stop anything — use it to find a good threshold
+              from real data first.
+            </div>
+            <div className="form-field">
+              <label>Motion algorithm:</label>
+              <select value={formData?.habitat_motion?.algorithm ?? "frame_diff"}
+                onChange={e => handleChange(["habitat_motion", "algorithm"], e)}>
+                <option value="frame_diff">Frame differencing (fast, simple)</option>
+                <option value="mog2">Background subtraction — MOG2 (more robust to lighting drift)</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Activity threshold (0–1, fraction of frame changed):</label>
+              <input type="number" min="0" max="1" step="0.001"
+                value={formData?.habitat_motion?.activity_threshold ?? 0.02}
+                onChange={e => handleChange(["habitat_motion", "activity_threshold"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Min activity duration before triggering (s):</label>
+              <input type="number" min="0" step="0.1"
+                value={formData?.habitat_motion?.activity_min_duration_s ?? 1.0}
+                onChange={e => handleChange(["habitat_motion", "activity_min_duration_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Min inactivity duration before clearing (s):</label>
+              <input type="number" min="0" step="1"
+                value={formData?.habitat_motion?.inactivity_min_duration_s ?? 120}
+                onChange={e => handleChange(["habitat_motion", "inactivity_min_duration_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Processing width (px, downscaled before detection):</label>
+              <input type="number" min="32" max="1280" step="1"
+                value={formData?.habitat_motion?.process_width ?? 256}
+                onChange={e => handleChange(["habitat_motion", "process_width"], e)} />
             </div>
           </>
         )}

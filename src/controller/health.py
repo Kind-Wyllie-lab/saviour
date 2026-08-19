@@ -302,7 +302,9 @@ class Health:
                 values = []
                 for module_id in online_modules:
                     if module_id in self.module_health and metric in self.module_health[module_id]:
-                        values.append(self.module_health[module_id][metric])
+                        value = self.module_health[module_id][metric]
+                        if value is not None:
+                            values.append(value)
                 if values:
                     avg_metrics[f'avg_{metric}'] = sum(values) / len(values)
 
@@ -320,7 +322,7 @@ class Health:
         max_ptp_sync = 0
         for module_id in self.module_health:
             ptp_sync = self.module_health[module_id]["ptp4l_offset_ns"]
-            if not ptp_sync:
+            if ptp_sync is None:
                 return None
             max_ptp_sync = max(max_ptp_sync, abs(ptp_sync))
         return int(max_ptp_sync)

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 from typing import Any
 
 _OLD_ACTIVE_CONFIG_PATH = "/usr/local/src/saviour/src/controller/config/active_config.json"
@@ -43,6 +44,7 @@ class Config:
         self.base_config_path = os.path.abspath(base_config_path)
         self.active_config_path = os.path.abspath(active_config_path)
         self.config: dict[str, Any] = {}
+        self._lock = threading.Lock()
 
         # One-time migration: copy active config from old in-tree location if needed
         if (not os.path.exists(self.active_config_path)
@@ -299,8 +301,10 @@ class Config:
                 full_key = f"{parent_key}.{k}" if parent_key else k
                 if isinstance(v, dict) and isinstance(target.get(k), dict):
                     _recursive_update(target[k], v, full_key)
-                # Update the value
-                elif target[k] != v:
+                # Update the value. Use .get() so a genuinely new key (e.g. a
+                # field not yet present in an existing device's active_config.json)
+                # doesn't raise KeyError.
+                elif target.get(k) != v:
                     target[k] = v
                     # Track controller-specific changes
                     if hasattr(self, "controller_config_keys") and full_key in self.controller_config_keys:
@@ -310,7 +314,8 @@ class Config:
                 else:
                     pass
 
-        _recursive_update(self.config, updates)
+        with self._lock:
+            _recursive_update(self.config, updates)
 
         if controller_config_updated == True:
             self.on_controller_config_change(controller_config_updated_keys)

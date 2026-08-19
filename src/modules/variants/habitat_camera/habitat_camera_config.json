@@ -35,5 +35,14 @@
     },
     "recording": {
         "_recording_filetype": "ts"
+    },
+    "habitat_motion": {
+        "algorithm": "frame_diff",
+        "activity_threshold": 0.02,
+        "activity_min_duration_s": 1.0,
+        "inactivity_min_duration_s": 120.0,
+        "process_width": 256,
+        "_mog2_history": 500,
+        "_mog2_var_threshold": 16
     }
 }

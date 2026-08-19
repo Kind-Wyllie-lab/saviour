@@ -14,8 +14,6 @@ import os
 import tempfile
 from unittest.mock import patch
 
-import pytest
-
 from src.controller.config import Config
 
 # ---------------------------------------------------------------------------
@@ -169,24 +167,21 @@ class TestSetAll:
         with open(cfg.active_config_path) as f:
             assert json.load(f)["camera"]["fps"] == 60
 
-    def test_raises_keyerror_on_a_genuinely_new_top_level_key(self):
-        """Real bug, not a designed edge case: `elif target[k] != v` (~line
-        303) indexes target[k] directly instead of using .get(k), unlike
-        the module-side Config.set_all (src/modules/config.py), whose
-        equivalent branch explicitly uses target.get(k) "so new keys ...
-        don't raise KeyError" per its own comment. This is reachable live:
-        web.py's save_controller_config handler calls
-        facade.set_config -> Config.set_all with whatever the frontend
-        sends, so a config key that doesn't exist yet in an existing
-        device's active_config.json crashes the save instead of adding it."""
+    def test_accepts_a_genuinely_new_top_level_key(self):
+        """`elif target.get(k) != v` (~line 303) uses .get(k), matching the
+        module-side Config.set_all (src/modules/config.py) fix — a config key
+        that doesn't exist yet in an existing device's active_config.json is
+        added rather than raising KeyError. Reachable live: web.py's
+        save_controller_config handler calls facade.set_config ->
+        Config.set_all with whatever the frontend sends."""
         cfg = _make_config(active={"camera": {"fps": 30}})
-        with pytest.raises(KeyError):
-            cfg.set_all({"brand_new_top_level_key": True})
+        cfg.set_all({"brand_new_top_level_key": True})
+        assert cfg.get("brand_new_top_level_key") is True
 
-    def test_raises_keyerror_on_a_genuinely_new_nested_key(self):
+    def test_accepts_a_genuinely_new_nested_key(self):
         cfg = _make_config(active={"camera": {"fps": 30}})
-        with pytest.raises(KeyError):
-            cfg.set_all({"camera": {"brand_new_nested_key": True}})
+        cfg.set_all({"camera": {"brand_new_nested_key": True}})
+        assert cfg.get("camera.brand_new_nested_key") is True
 
 
 # ---------------------------------------------------------------------------

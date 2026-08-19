@@ -759,18 +759,36 @@ class Web(ABC):
                 return
             session_name = data.get("session_name")
             delete_files = data.get("delete_files", True)
-            self.logger.info(f"Received request to delete session '{session_name}' (delete_files={delete_files})")
-            result = self.facade.delete_session(session_name, delete_files)
+            force = data.get("force", False)
+            self.logger.info(
+                f"Received request to delete session '{session_name}' "
+                f"(delete_files={delete_files}, force={force})"
+            )
+            result = self.facade.delete_session(session_name, delete_files, force)
             if "error" in result:
-                self.socketio.emit("session_error", {"error": result["error"]})
+                self.socketio.emit("session_error", result)
 
         @self.socketio.on("clear_ended_sessions")
         def handle_clear_ended_sessions(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):
                 return
             delete_files = data.get("delete_files", False) if data else False
-            self.logger.info(f"Received request to clear ended sessions (delete_files={delete_files})")
-            self.facade.clear_ended_sessions(delete_files)
+            force = data.get("force", False) if data else False
+            self.logger.info(
+                f"Received request to clear ended sessions (delete_files={delete_files}, force={force})"
+            )
+            result = self.facade.clear_ended_sessions(delete_files, force)
+            if result.get("skipped"):
+                names = ", ".join(result["skipped_sessions"])
+                self.socketio.emit("session_error", {
+                    "error": (
+                        f"Cleared {result['cleared']} session(s). Skipped "
+                        f"{result['skipped']} with unresolved or failed exports: {names}. "
+                        f"They'll stay listed until exports resolve, or force-clear them."
+                    ),
+                    "export_warning": True,
+                    "skipped_sessions": result["skipped_sessions"],
+                })
 
         @self.socketio.on("add_module_to_session")
         def handle_add_module_to_session(data):

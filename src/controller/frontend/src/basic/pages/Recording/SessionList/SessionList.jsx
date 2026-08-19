@@ -148,6 +148,9 @@ function SessionList({ sessionList, modules = [] }) {
   const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
   const [shareInfo, setShareInfo] = useState(null);
   const [pendingClearAll, setPendingClearAll] = useState(false);
+  const [pendingForceDelete, setPendingForceDelete] = useState(null); // session_name whose delete was refused
+  const [deleteWarnings, setDeleteWarnings] = useState({}); // session_name → export warning string
+  const [clearAllWarning, setClearAllWarning] = useState(null); // { message, skippedSessions } | null
   const [forceStartErrors, setForceStartErrors] = useState({}); // session_name → error string
   const [sessionLogs, setSessionLogs] = useState({}); // session_name → string[] | "loading"
   const [sessionFileInfo, setSessionFileInfo] = useState({}); // session_name → info | "loading"
@@ -175,6 +178,22 @@ function SessionList({ sessionList, modules = [] }) {
     };
     socket.on("force_start_result", handler);
     return () => socket.off("force_start_result", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (data) => {
+      if (!data.export_warning) return;
+      if (data.skipped_sessions) {
+        // Bulk clear was partially refused — offer a force-clear follow-up.
+        setClearAllWarning({ message: data.error, skippedSessions: data.skipped_sessions });
+      } else if (data.session_name) {
+        // A single delete was refused — offer a "delete anyway" follow-up.
+        setDeleteWarnings(prev => ({ ...prev, [data.session_name]: data.error }));
+        setPendingForceDelete(data.session_name);
+      }
+    };
+    socket.on("session_error", handler);
+    return () => socket.off("session_error", handler);
   }, []);
 
   useEffect(() => {
@@ -225,9 +244,21 @@ function SessionList({ sessionList, modules = [] }) {
     setPendingDelete(null);
   };
 
+  const handleForceDeleteConfirm = (sessionName) => {
+    socket.emit("delete_session", { session_name: sessionName, delete_files: true, force: true });
+    setPendingForceDelete(null);
+    setDeleteWarnings(prev => { const n = { ...prev }; delete n[sessionName]; return n; });
+  };
+
   const handleClearAllConfirm = () => {
     socket.emit("clear_ended_sessions", { delete_files: true });
     setPendingClearAll(false);
+    setClearAllWarning(null);
+  };
+
+  const handleForceClearAllConfirm = () => {
+    socket.emit("clear_ended_sessions", { delete_files: true, force: true });
+    setClearAllWarning(null);
   };
 
   const handleAddModuleConfirm = (sessionName, moduleId) => {
@@ -277,6 +308,28 @@ function SessionList({ sessionList, modules = [] }) {
           </span>
         )}
       </div>
+
+      {clearAllWarning && (
+        <div className="session-list__export-warning">
+          <span>
+            ⚠ {clearAllWarning.message}
+          </span>
+          <button
+            type="button"
+            className="session-btn session-btn--delete-confirm"
+            onClick={handleForceClearAllConfirm}
+          >
+            Force clear {clearAllWarning.skippedSessions.length} anyway
+          </button>
+          <button
+            type="button"
+            className="session-btn session-btn--cancel"
+            onClick={() => setClearAllWarning(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {sessions.length === 0 ? (
         <p className="session-list__empty">No sessions yet - create one to begin recording.</p>
@@ -634,7 +687,23 @@ function SessionList({ sessionList, modules = [] }) {
                       </button>
                     )}
                     {isStopped && (
-                      pendingDelete === session.session_name ? (
+                      pendingForceDelete === session.session_name ? (
+                        <div className="delete-confirm delete-confirm--export-warning">
+                          <span>⚠ {deleteWarnings[session.session_name]}</span>
+                          <button className="session-btn session-btn--delete-confirm" onClick={() => handleForceDeleteConfirm(session.session_name)}>
+                            Delete anyway
+                          </button>
+                          <button
+                            className="session-btn session-btn--cancel"
+                            onClick={() => {
+                              setPendingForceDelete(null);
+                              setDeleteWarnings(prev => { const n = { ...prev }; delete n[session.session_name]; return n; });
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : pendingDelete === session.session_name ? (
                         <div className="delete-confirm">
                           <span>Delete session and all files?</span>
                           <button className="session-btn session-btn--delete-confirm" onClick={() => handleDeleteConfirm(session.session_name)}>

@@ -146,11 +146,12 @@ class ControllerFacade:
     def force_start_scheduled_session(self, session_name: str) -> dict:
         return self.controller.recording.force_start_scheduled_session(session_name)
 
-    def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
-        return self.controller.recording.delete_session(session_name, delete_files)
+    def delete_session(self, session_name: str, delete_files: bool = True,
+                       force: bool = False) -> dict:
+        return self.controller.recording.delete_session(session_name, delete_files, force)
 
-    def clear_ended_sessions(self, delete_files: bool = False) -> dict:
-        return self.controller.recording.clear_ended_sessions(delete_files)
+    def clear_ended_sessions(self, delete_files: bool = False, force: bool = False) -> dict:
+        return self.controller.recording.clear_ended_sessions(delete_files, force)
 
     def add_module_to_session(self, session_name: str, module_id: str) -> dict:
         return self.controller.recording.add_module_to_session(session_name, module_id)

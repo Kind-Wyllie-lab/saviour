@@ -339,11 +339,6 @@ class Recording:
             self.logger.warning(f"create_session: no modules for target '{target}'")
             return {"success": False, "error": f"No online modules found for target '{target}'"}
 
-        overlap = self._busy_modules() & set(modules)
-        if overlap:
-            self.logger.warning(f"create_session: modules already recording: {overlap}")
-            return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
-
         ptp = self._check_ptp_sync(modules)
         if not ptp["ok"]:
             self.logger.warning(f"create_session blocked by PTP check: {ptp['error']}")
@@ -370,6 +365,10 @@ class Recording:
         )
 
         with self._lock:
+            overlap = self._busy_modules() & set(modules)
+            if overlap:
+                self.logger.warning(f"create_session: modules already recording: {overlap}")
+                return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
             self.sessions[session_name] = session
 
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
@@ -445,10 +444,18 @@ class Recording:
         return {"success": True, "session_name": session_name}
 
 
-    def delete_session(self, session_name: str, delete_files: bool = True) -> dict:
+    def delete_session(self, session_name: str, delete_files: bool = True,
+                       force: bool = False) -> dict:
         """Remove a stopped/error session from the list and optionally delete its files.
 
         Active and scheduled sessions cannot be deleted; stop them first.
+
+        Refuses (unless force=True) to delete a session with exports that never
+        confirmed landing on the share — clearing the session record is the only
+        evidence an operator has that a module's files went missing, and once
+        it's gone a straggler module's later export-complete signal has no
+        session left to attach to (module_export_update() no-ops on an unknown
+        session_name).
         """
         if session_name not in self.sessions:
             return {"error": f"Unknown session '{session_name}'"}
@@ -456,6 +463,18 @@ class Recording:
         session = self.sessions[session_name]
         if session.state in (SessionState.ACTIVE, SessionState.SCHEDULED):
             return {"error": f"Cannot delete a session in state '{session.state}' — stop it first"}
+
+        if not force and (session.pending_exports > 0 or session.total_exports_failed > 0):
+            return {
+                "error": (
+                    f"Session '{session_name}' has {session.pending_exports} unresolved "
+                    f"and {session.total_exports_failed} failed export(s) — delete anyway?"
+                ),
+                "export_warning": True,
+                "session_name": session_name,
+                "pending_exports": session.pending_exports,
+                "total_exports_failed": session.total_exports_failed,
+            }
 
         if delete_files:
             share_dir = os.path.join(self._get_share_root(), session_name)
@@ -475,15 +494,27 @@ class Recording:
         self.logger.info(f"Session '{session_name}' deleted (delete_files={delete_files})")
         return {"success": True}
 
-    def clear_ended_sessions(self, delete_files: bool = False) -> dict:
-        """Remove all stopped/error sessions. Files are not deleted by default."""
+    def clear_ended_sessions(self, delete_files: bool = False, force: bool = False) -> dict:
+        """Remove all stopped/error sessions. Files are not deleted by default.
+
+        Unless force=True, sessions with unresolved or permanently-failed
+        exports are left in place rather than swept away — see delete_session()
+        for why. They stay visible (and clearable individually with force) until
+        either the export resolves or an operator explicitly force-clears.
+        """
         ended = [
             name for name, s in list(self.sessions.items())
             if s.state not in (SessionState.ACTIVE, SessionState.SCHEDULED)
         ]
+        cleared = []
+        skipped = []
         for name in ended:
-            self.delete_session(name, delete_files=delete_files)
-        return {"cleared": len(ended)}
+            result = self.delete_session(name, delete_files=delete_files, force=force)
+            if result.get("export_warning"):
+                skipped.append(name)
+            else:
+                cleared.append(name)
+        return {"cleared": len(cleared), "skipped": len(skipped), "skipped_sessions": skipped}
 
     def stop_session(self, session_name: str) -> None:
         """Stop a recording session.

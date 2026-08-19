@@ -317,6 +317,24 @@
   color: #c62828;
 }
 
+.delete-confirm--export-warning {
+  color: #b45309;
+}
+
+.session-list__export-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  background: #fff8ec;
+  border: 1px solid #f0c674;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #b45309;
+}
+
 /* ── Add module to session ─────────────────────────────────────────────── */
 
 .session-btn--join {

@@ -248,21 +248,22 @@ class TestGetters:
         assert summary["average_metrics"]["avg_cpu_usage"] == 15.0
         assert summary["average_metrics"]["avg_cpu_temp"] == 45.0
 
-    def test_get_health_summary_crashes_when_an_online_module_has_a_none_metric(self):
-        """Real bug, not a designed edge case: every field on
-        ModuleHealthSnapshot (src/shared/health.py) defaults to None, and a
-        freshly-online module commonly hasn't reported e.g. ptp4l_freq yet.
-        get_health_summary()'s averaging only checks the key EXISTS
-        (`metric in self.module_health[module_id]`), not that its value is
-        non-None, so `sum(values)` blows up on the first None it collects.
-        This is reachable live: web.py's 'get_health_summary' Socket.IO
-        handler calls straight through to this with no try/except. Documents
-        the current crash rather than papering over it with cleaner fixtures."""
+    def test_get_health_summary_skips_none_metrics_from_a_freshly_online_module(self):
+        """Every field on ModuleHealthSnapshot (src/shared/health.py) defaults
+        to None, and a freshly-online module commonly hasn't reported e.g.
+        ptp4l_freq yet. get_health_summary()'s averaging now filters out None
+        values rather than feeding them to sum(), so a module still missing
+        some metrics doesn't crash the whole summary — it's just excluded
+        from that metric's average. Reachable live: web.py's
+        'get_health_summary' Socket.IO handler calls straight through to
+        this with no try/except."""
         health, _facade = _make_health()
-        _seed_module(health, "cam1", status="online", ptp4l_freq=None)
+        _seed_module(health, "cam1", status="online", cpu_usage=50, ptp4l_freq=None)
 
-        with pytest.raises(TypeError):
-            health.get_health_summary()
+        summary = health.get_health_summary()
+
+        assert summary["average_metrics"]["avg_cpu_usage"] == 50
+        assert "avg_ptp4l_freq" not in summary["average_metrics"]
 
     def test_get_health_summary_with_no_modules_has_empty_averages(self):
         health, _facade = _make_health()
@@ -275,13 +276,13 @@ class TestGetters:
         _seed_module(health, "cam2", ptp4l_offset_ns=45)
         assert health.get_ptp_sync() == 45
 
-    def test_get_ptp_sync_treats_perfect_zero_offset_as_missing_data(self):
-        """Known bug (see CLAUDE.md TODO): `if not ptp_sync` is falsy for a
-        genuine 0ns offset, so a fully-synced module makes this return None
-        instead of 0. Documents current behaviour, not the intended one."""
+    def test_get_ptp_sync_treats_perfect_zero_offset_as_real_data(self):
+        """`if ptp_sync is None` (not a truthiness check) so a genuine 0ns
+        offset — a fully-synced module — is treated as real data, not as
+        missing data."""
         health, _facade = _make_health()
         _seed_module(health, "cam1", ptp4l_offset_ns=0)
-        assert health.get_ptp_sync() is None
+        assert health.get_ptp_sync() == 0
 
 
 class TestClearAllHealth:

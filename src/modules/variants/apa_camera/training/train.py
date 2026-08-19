@@ -22,10 +22,18 @@ Two ways to point this at a dataset:
      pyyaml` and ROBOFLOW_API_KEY set in the environment. Omit --roboflow-version
      to list available versions for the project and exit.
 
+Interrupted (SSH dropped, Ctrl+C, machine rebooted, etc.)? --resume
+continues the exact same run -- same epoch count, LR schedule position,
+optimizer state -- rather than starting over:
+    python train.py --resume runs/detect/train/weights/last.pt
+(don't pass --data/--roboflow-* alongside --resume -- Ultralytics reads
+the original run's own settings back from its saved args.yaml, which has
+to still be sitting next to that checkpoint in its original run directory)
+
 Usage:
     python train.py --data dataset.yaml
     python train.py --data dataset.yaml --base yolo11n.pt --epochs 150 --imgsz 640
-    python train.py --data dataset.yaml --resume runs/detect/train/weights/last.pt
+    python train.py --resume runs/detect/train/weights/last.pt
 
     python train.py --roboflow-workspace sidb-workshop \
         --roboflow-project rat-tracker-zh4ex   # lists versions, then exit
@@ -40,27 +48,50 @@ from pathlib import Path
 from download_roboflow_dataset import download_dataset, get_project, list_versions
 
 
-def train_model(data: Path, base: str = "yolo11n.pt", epochs: int = 150,
-                 imgsz: int = 640, batch: int = 16, device: str | None = None,
+def train_model(data: Path | None = None, base: str = "yolo11n.pt", epochs: int = 150,
+                 imgsz: int = 640, batch: int | None = None, device: str | None = None,
                  resume: Path | None = None, out_dir: Path | None = None) -> Path | None:
     """Train/fine-tune the detector and copy the best checkpoint to
     out_dir/ratnet.pt. Returns that path, or None if training didn't
     produce a checkpoint. Importable directly (e.g. from a notebook) as
-    well as used by this script's own CLI."""
+    well as used by this script's own CLI.
+
+    If `resume` is given, this does a true Ultralytics resume -- continues
+    the exact interrupted run (same epoch counter, LR schedule position,
+    optimizer state), reading its settings back from that run's own saved
+    args.yaml rather than data/epochs/imgsz/etc. passed here. `resume` must
+    still be sitting in its original run directory (e.g.
+    runs/detect/train/weights/last.pt) for that to work -- Ultralytics
+    needs the sibling args.yaml, so a copy of just the .pt file elsewhere
+    won't resume correctly.
+    """
     from ultralytics import YOLO
 
     out_dir = out_dir or Path(__file__).resolve().parent
-    model = YOLO(str(resume) if resume else base)
 
-    print(f"Training on {data} ({epochs} epochs, imgsz={imgsz})")
-    results = model.train(
-        data=str(data),
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        device=device,
-        single_cls=True,  # one class: "rat" -- see dataset.yaml.example
-    )
+    if resume:
+        print(f"Resuming interrupted run from {resume}")
+        model = YOLO(str(resume))
+        # device and batch are safe to override on resume (runtime/hardware-fit
+        # settings, not part of the saved training state) -- everything else
+        # comes from args.yaml
+        resume_kwargs = {}
+        if device is not None:
+            resume_kwargs["device"] = device
+        if batch is not None:
+            resume_kwargs["batch"] = batch
+        results = model.train(resume=True, **resume_kwargs)
+    else:
+        model = YOLO(base)
+        print(f"Training on {data} ({epochs} epochs, imgsz={imgsz})")
+        results = model.train(
+            data=str(data),
+            epochs=epochs,
+            imgsz=imgsz,
+            batch=batch if batch is not None else 16,
+            device=device,
+            single_cls=True,  # one class: "rat" -- see dataset.yaml.example
+        )
 
     best = Path(results.save_dir) / "weights" / "best.pt"
     if not best.exists():
@@ -109,15 +140,40 @@ def main():
     parser.add_argument("--imgsz", type=int, default=640,
                          help="Must match what you'll later pass to "
                               "tools/convert_to_hailo.py's --imgsz")
-    parser.add_argument("--batch", type=int, default=16)
+    parser.add_argument("--batch", type=int, default=None,
+                         help="Batch size (default: 16 for a new run; on "
+                              "--resume, omit to keep the original run's "
+                              "batch size, or pass a value to override it "
+                              "-- e.g. after a CUDA-OOM auto-retry settled "
+                              "on a smaller size, skip that retry next time)")
     parser.add_argument("--device", default=None,
                          help="e.g. 0 for first GPU, cpu for CPU "
                               "(default: Ultralytics auto-picks)")
     parser.add_argument("--resume", type=Path, default=None,
-                         help="Resume/continue training from an existing checkpoint")
+                         help="Continue an interrupted run from its last.pt "
+                              "(e.g. runs/detect/train/weights/last.pt) -- "
+                              "true resume: same epoch count, LR schedule, "
+                              "optimizer state. Use alone, not with --data "
+                              "or --roboflow-*.")
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent,
                          help="Where to copy the final best.pt (default: this folder)")
     args = parser.parse_args()
+
+    if args.resume:
+        if args.data or args.roboflow_workspace:
+            print("[ERROR] --resume continues an interrupted run using its own "
+                  "saved settings -- don't also pass --data or --roboflow-*")
+            sys.exit(1)
+        if not args.resume.exists():
+            print(f"[ERROR] Checkpoint not found: {args.resume}")
+            sys.exit(1)
+        try:
+            from ultralytics import YOLO  # noqa: F401 -- import checked here, used inside train_model
+        except ImportError:
+            print("[ERROR] ultralytics not installed: pip install 'ultralytics>=8.3'")
+            return
+        train_model(resume=args.resume, out_dir=args.out_dir, device=args.device, batch=args.batch)
+        return
 
     if args.data and args.roboflow_workspace:
         print("[ERROR] Pass either --data or --roboflow-workspace/--roboflow-project, not both")
@@ -130,7 +186,7 @@ def main():
         try:
             project = get_project(args.roboflow_workspace, args.roboflow_project)
             if args.roboflow_version is None:
-                list_versions(project)
+                list_versions(project, flag_name="--roboflow-version")
                 return
             args.data = download_dataset(
                 project, args.roboflow_version, args.roboflow_format, args.roboflow_out)

@@ -649,6 +649,10 @@ class Modules:
                     self._pending_online_counts.pop(module_id, None)
                     if self.facade:
                         self.facade.remove_dealer(module_id)
+                        try:
+                            self.facade.on_status_change(module_id, 'offline')
+                        except Exception as e:
+                            self.logger.error(f"Error in status change callback: {e}")
                     self.broadcast_updated_modules()
 
             # Expire PENDING config syncs that have gone unacknowledged too long.

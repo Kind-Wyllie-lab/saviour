@@ -154,10 +154,49 @@ def compile_hef(onnx_path: Path, num_classes: int, imgsz: int,
 
     input_name, output_names = inspect_onnx(onnx_path)
 
+    # Cut the graph at the six raw per-scale Conv outputs of the Detect head
+    # (/model.23 -- see the printed model summary during export), one box
+    # (cv2.X) + one class (cv3.X) Conv per detection scale X=0,1,2 (strides
+    # 8/16/32). nms_postprocess(meta_arch=yolov8, ...) below merges the
+    # scales, applies the class sigmoid, and does the DFL decode + box math
+    # + NMS itself on-chip -- it does NOT want any of that pre-done in the
+    # graph we hand it, including the Reshape+Concat that would otherwise
+    # merge each branch's 3 scales into one tensor.
+    #
+    # Confirmed against a real exported graph (2026-08-18), three rounds --
+    # each of these fails a bit further into the pipeline than the last:
+    #   /model.23/dfl/Reshape (DFC's own auto-suggestion) sits *inside* the
+    #     DFL decode subgraph (Concat -> dfl/Reshape -> Transpose ->
+    #     Softmax -> dfl/conv/Conv -> ...), not before it -- crashes the
+    #     parser itself (IndexError in is_null_reshape()).
+    #   /model.23/Sigmoid (post-sigmoid class score) parses fine but fails
+    #     quantization's nms_postprocess_command.py: "expected conv but
+    #     found LayerType.activation layer".
+    #   /model.23/Concat + /model.23/Concat_1 (the raw pre-activation,
+    #   pre-decode concats -- one merged tensor per branch across all 3
+    #     scales) parse fine too, but hit the *same* check for a different
+    #     reason: "expected conv but found LayerType.concat layer" -- it
+    #     wants a raw Conv as the literal last op of each branch, so even a
+    #     no-op-shape-wise Concat right at the end doesn't qualify.
+    # The six-node, per-scale-Conv form below is what actually satisfies
+    # that check, and matches Hailo's standard YOLOv8-family postprocessing
+    # pattern generally.
+    #
+    # These node names come from YOLO11's own module structure, not this
+    # specific model's weights, so they're stable for any YOLO11n export
+    # from this pipeline -- but if a future Ultralytics version renames
+    # them, re-inspect with:
+    #   python -c "import onnx; m = onnx.load('x.onnx')
+    #   [print(n.op_type, n.name) for n in m.graph.node if 'model.23' in n.name]"
     hn, npz = runner.translate_onnx_model(
         str(onnx_path),
         model_name,
         net_input_shapes={input_name: [1, 3, imgsz, imgsz]},
+        end_node_names=[
+            "/model.23/cv2.0/cv2.0.2/Conv", "/model.23/cv3.0/cv3.0.2/Conv",
+            "/model.23/cv2.1/cv2.1.2/Conv", "/model.23/cv3.1/cv3.1.2/Conv",
+            "/model.23/cv2.2/cv2.2.2/Conv", "/model.23/cv3.2/cv3.2.2/Conv",
+        ],
     )
     runner.save_har(str(har_path))
     print(f"      Saved HAR: {har_path}")

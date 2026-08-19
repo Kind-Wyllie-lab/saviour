@@ -66,7 +66,7 @@ def get_project(workspace: str, project: str, api_key: str | None = None):
     return rf.workspace(workspace).project(project)
 
 
-def list_versions(project) -> None:
+def list_versions(project, flag_name: str = "--version") -> None:
     versions = project.versions()
     if not versions:
         print("[ERROR] No versions found for this project -- generate one "
@@ -76,8 +76,8 @@ def list_versions(project) -> None:
     for v in versions:
         # v.id is like "workspace/project/N"
         num = v.id.rsplit("/", 1)[-1]
-        print(f"  --version {num}   ({v.name}, {v.images} images)")
-    print("\nRe-run with --version <N> to download.")
+        print(f"  {flag_name} {num}   ({v.name}, {v.images} images)")
+    print(f"\nRe-run with {flag_name} <N> to download.")
 
 
 def patch_data_yaml_path(data_yaml: Path, dataset_root: Path) -> None:

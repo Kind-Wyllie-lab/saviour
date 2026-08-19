@@ -16,14 +16,25 @@ import tempfile
 import time
 from unittest.mock import MagicMock, patch
 
+import src.controller.recording as recording_module
 from src.controller.recording import Recording, RecordingSession, SessionState
 
 
-def _make_recording(**config_overrides) -> tuple:
+def _make_recording(sessions_file: str | None = None, **config_overrides) -> tuple:
     """A Recording instance with the background monitor thread suppressed
     (Thread is patched during __init__ so _monitor_sessions never actually
     starts looping) and a MagicMock facade wired up with defaults that pass
-    the PTP gate most lifecycle methods check before acting."""
+    the PTP gate most lifecycle methods check before acting.
+
+    SESSIONS_FILE is repointed at a fresh temp path per call (unless the
+    caller supplies its own, for tests that specifically exercise
+    persistence) — it's a module-level constant pointing at a real
+    filesystem path (/var/lib/saviour/controller/sessions.json), and without
+    this every test in the process reads/writes the *same* file, so one
+    test's sessions leak into the next (and, on a real deployment, running
+    these tests would read/write the live controller's actual session
+    state)."""
+    recording_module.SESSIONS_FILE = sessions_file or os.path.join(tempfile.mkdtemp(), "sessions.json")
     with patch("src.controller.recording.threading.Thread"):
         rec = Recording()
     facade = MagicMock()
@@ -262,6 +273,36 @@ class TestDeleteSession:
             assert result == {"success": True}
             assert not os.path.isdir(session_dir)
 
+    def test_refuses_when_exports_still_pending(self):
+        """A session with files that never confirmed landing on the share must
+        not be silently deletable — that's the only record an operator has
+        that data may be missing."""
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, pending_exports=2)
+
+        result = rec.delete_session("exp1", delete_files=False)
+
+        assert result["export_warning"] is True
+        assert "exp1" in rec.sessions
+
+    def test_refuses_when_exports_permanently_failed(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, total_exports_failed=1)
+
+        result = rec.delete_session("exp1", delete_files=False)
+
+        assert result["export_warning"] is True
+        assert "exp1" in rec.sessions
+
+    def test_force_deletes_despite_unresolved_exports(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.STOPPED, pending_exports=2)
+
+        result = rec.delete_session("exp1", delete_files=False, force=True)
+
+        assert result == {"success": True}
+        assert "exp1" not in rec.sessions
+
 
 class TestClearEndedSessions:
     def test_removes_stopped_and_error_sessions_only(self):
@@ -278,8 +319,31 @@ class TestClearEndedSessions:
 
         result = rec.clear_ended_sessions()
 
-        assert result == {"cleared": 2}
+        assert result == {"cleared": 2, "skipped": 0, "skipped_sessions": []}
         assert list(rec.sessions.keys()) == ["active"]
+
+    def test_skips_sessions_with_unresolved_exports(self):
+        rec, _facade = _make_recording()
+        rec.sessions["clean"] = _session(session_name="clean", state=SessionState.STOPPED)
+        rec.sessions["stuck"] = _session(
+            session_name="stuck", state=SessionState.STOPPED, pending_exports=1
+        )
+
+        result = rec.clear_ended_sessions()
+
+        assert result == {"cleared": 1, "skipped": 1, "skipped_sessions": ["stuck"]}
+        assert list(rec.sessions.keys()) == ["stuck"]
+
+    def test_force_clears_sessions_with_unresolved_exports_too(self):
+        rec, _facade = _make_recording()
+        rec.sessions["stuck"] = _session(
+            session_name="stuck", state=SessionState.STOPPED, pending_exports=1
+        )
+
+        result = rec.clear_ended_sessions(force=True)
+
+        assert result == {"cleared": 1, "skipped": 0, "skipped_sessions": []}
+        assert rec.sessions == {}
 
 
 class TestStopSession:
@@ -685,37 +749,35 @@ class TestSessionPersistence:
     def test_save_then_load_round_trips_session_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sessions_file = os.path.join(tmpdir, "sessions.json")
-            with patch("src.controller.recording.SESSIONS_FILE", sessions_file):
-                rec, _facade = _make_recording()
-                rec.sessions["exp1"] = _session(
-                    state=SessionState.STOPPED, modules=["cam1"]
-                )
-                rec._save_sessions()
+            rec, _facade = _make_recording(sessions_file=sessions_file)
+            rec.sessions["exp1"] = _session(
+                state=SessionState.STOPPED, modules=["cam1"]
+            )
+            rec._save_sessions()
 
-                with open(sessions_file) as f:
-                    saved = json.load(f)
-                assert saved["exp1"]["session_name"] == "exp1"
+            with open(sessions_file) as f:
+                saved = json.load(f)
+            assert saved["exp1"]["session_name"] == "exp1"
 
-                with patch("src.controller.recording.threading.Thread"):
-                    rec2 = Recording()
-                assert rec2.sessions["exp1"].state == SessionState.STOPPED
+            with patch("src.controller.recording.threading.Thread"):
+                rec2 = Recording()
+            assert rec2.sessions["exp1"].state == SessionState.STOPPED
 
     def test_active_session_recovered_as_error_on_load(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             sessions_file = os.path.join(tmpdir, "sessions.json")
-            with patch("src.controller.recording.SESSIONS_FILE", sessions_file):
-                rec, _facade = _make_recording()
-                rec.sessions["exp1"] = _session(
-                    state=SessionState.ACTIVE, modules=["cam1"]
-                )
-                rec._save_sessions()
+            rec, _facade = _make_recording(sessions_file=sessions_file)
+            rec.sessions["exp1"] = _session(
+                state=SessionState.ACTIVE, modules=["cam1"]
+            )
+            rec._save_sessions()
 
-                with patch("src.controller.recording.threading.Thread"):
-                    rec2 = Recording()
+            with patch("src.controller.recording.threading.Thread"):
+                rec2 = Recording()
 
-                session = rec2.sessions["exp1"]
-                assert session.state == SessionState.ERROR
-                assert session.error_message == (
-                    "Controller restarted during active session"
-                )
-                assert session.module_stop_states == {"cam1": "unknown"}
+            session = rec2.sessions["exp1"]
+            assert session.state == SessionState.ERROR
+            assert session.error_message == (
+                "Controller restarted during active session"
+            )
+            assert session.module_stop_states == {"cam1": "unknown"}

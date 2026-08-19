@@ -1,0 +1,39 @@
+{
+    "module": {
+        "group": "habitat_camera"
+    },
+    "camera": {
+        "monochrome": false,
+        "hflip": false,
+        "vflip": false,
+        "rotation": 0,
+        "crop_rect": null,
+        "sensor_mode_index": 2,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "overlay_timestamp": true,
+        "text_size": "medium",
+        "gain": 1,
+        "manual_exposure": false,
+        "exposure_time": 10000,
+        "ae_enable": true,
+        "brightness": 0,
+        "contrast": 1.0,
+        "overlay_framerate_on_preview": true,
+        "_codec": "h264",
+        "_profile": "high",
+        "_level": 4.2,
+        "bitrate_mb": 2,
+        "autofocus_mode": "manual",
+        "lens_position": 0.0,
+        "sync_mode": "none",
+        "framesync_enabled": true,
+        "sync_lock_exposure": false,
+        "sync_lock_awb": false,
+        "livestream_quality": "normal"
+    },
+    "recording": {
+        "_recording_filetype": "ts"
+    }
+}

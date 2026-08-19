@@ -53,6 +53,45 @@ script's own docstring).
    Prefer a notebook? `train_rat_detector.ipynb` in this folder walks
    through the same download → train flow cell-by-cell (works locally or
    on Colab with a GPU runtime).
+
+   **Before a long run, confirm it's actually using the GPU** — a missing
+   or mismatched NVIDIA userspace/driver install silently falls back to
+   CPU with no error, just something far slower than expected:
+   ```bash
+   nvidia-smi                                                        # GPU visible at the OS level?
+   python -c "import torch; print(torch.cuda.is_available())"        # PyTorch sees it?
+   ```
+   Pass `--device 0` explicitly to fail loudly instead of silently
+   falling back to CPU if there's a problem.
+
+   **Running over SSH?** Run it inside `tmux`/`screen`
+   (`tmux new -s training`, detach with `Ctrl+B` `D`, reattach with
+   `tmux attach -t training`) so a dropped connection doesn't kill the
+   process — this actually prevents an interruption, rather than just
+   recovering from one.
+
+   **Interrupted anyway** (SSH dropped without `tmux`, Ctrl+C, crash,
+   reboot)? `--resume` continues the *exact* same run — same epoch count,
+   LR schedule position, optimizer state — rather than starting over.
+   Point it at that run's `last.pt` (path is printed as `save_dir` near
+   the top of the original run's own output, e.g.
+   `runs/detect/train/weights/last.pt`) and don't pass `--data`/
+   `--roboflow-*` alongside it — Ultralytics reads the original run's
+   settings back from its own saved `args.yaml`, which needs to still be
+   sitting next to that checkpoint:
+   ```bash
+   python train.py --resume runs/detect/train/weights/last.pt --device 0
+   ```
+
+   **On a low-VRAM GPU** (e.g. a 4GB card like a T400), the default
+   `--batch 16` at `imgsz 640` may not fit, especially since Ultralytics
+   disables AMP (mixed precision) on GPUs it doesn't trust for it —
+   without AMP, training uses full fp32, which needs more memory.
+   Ultralytics auto-retries at half the batch size on a CUDA OOM, so a
+   first run/resume may briefly show OOM warnings before settling at a
+   working batch size — that's expected recovery, not a failure. To skip
+   the retry on subsequent runs, pass the working size directly, e.g.
+   `--batch 8`.
 5. **Convert + deploy** — from the repo root:
    ```bash
    python tools/convert_to_hailo.py --model src/modules/variants/apa_camera/training/ratnet.pt

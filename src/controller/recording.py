@@ -339,11 +339,6 @@ class Recording:
             self.logger.warning(f"create_session: no modules for target '{target}'")
             return {"success": False, "error": f"No online modules found for target '{target}'"}
 
-        overlap = self._busy_modules() & set(modules)
-        if overlap:
-            self.logger.warning(f"create_session: modules already recording: {overlap}")
-            return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
-
         ptp = self._check_ptp_sync(modules)
         if not ptp["ok"]:
             self.logger.warning(f"create_session blocked by PTP check: {ptp['error']}")
@@ -370,6 +365,10 @@ class Recording:
         )
 
         with self._lock:
+            overlap = self._busy_modules() & set(modules)
+            if overlap:
+                self.logger.warning(f"create_session: modules already recording: {overlap}")
+                return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
             self.sessions[session_name] = session
 
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}

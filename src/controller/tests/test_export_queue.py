@@ -59,6 +59,31 @@ class TestEnqueueAndDispatch:
 
 
 # ---------------------------------------------------------------------------
+# Return value: callers (facade.enqueue_export) use this to decide whether
+# to count a new "pending" export -- a signal dropped as a duplicate here
+# must not be counted, or pending_exports drifts upward forever since no
+# complete/failed ever arrives for the dropped duplicate.
+# ---------------------------------------------------------------------------
+
+class TestEnqueueReturnValue:
+    def test_returns_true_when_actually_queued(self):
+        q, _ = _make_queue()
+        assert q.enqueue("mod_a", "path_a") is True
+
+    def test_returns_false_when_already_active(self):
+        q, _ = _make_queue(max_concurrent=1)
+        assert q.enqueue("mod_a", "path_a") is True
+        # mod_a is now active; a second export_ready signal for it is a duplicate
+        assert q.enqueue("mod_a", "path_a_second_clip") is False
+
+    def test_returns_false_when_already_queued(self):
+        q, _ = _make_queue(max_concurrent=1)
+        q.enqueue("mod_a", "path_a")  # dispatched, now active
+        assert q.enqueue("mod_b", "path_b") is True  # held in queue
+        assert q.enqueue("mod_b", "path_b_second_clip") is False  # still queued, duplicate
+
+
+# ---------------------------------------------------------------------------
 # Retry on failure
 # ---------------------------------------------------------------------------
 

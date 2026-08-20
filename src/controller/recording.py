@@ -688,6 +688,19 @@ class Recording:
         module's local to_export/ folder regardless of the specific
         export_path passed, so this recovers any stuck files for that
         module, not just ones matching this exact path.
+
+        Routed through facade.enqueue_export() (the same entry point every
+        real export_ready signal uses) rather than sending start_export
+        directly. Sending it directly used to let a retry race a
+        concurrently-dispatched real export to the same module -- two
+        overlapping start_export threads on the module racing
+        export.py's own concurrency guard, with the loser reporting a
+        spurious export_failed for a call that never actually attempted
+        anything. Confirmed live: clicking Retry Export made the failed
+        count go up, not down, even though the files genuinely exported.
+        Routing through enqueue_export() means a retry for a module
+        already active/queued in export_queue.py is simply dropped as a
+        duplicate, exactly like any other export_ready signal.
         """
         if session_name not in self.sessions:
             return {"result": "error", "error": "Session not found"}
@@ -701,12 +714,9 @@ class Recording:
             return {"result": "error", "error": "No failed exports to retry"}
 
         date = (session.start_time or "")[:8]
-        with self._lock:
-            for module_id in failed_modules:
-                export_path = f"{session_name}/{date}/{module_id}"
-                session.module_export_states[module_id] = "pending"
-                session.pending_exports += 1
-                self.facade.send_command(module_id, "start_export", {"export_path": export_path})
+        for module_id in failed_modules:
+            export_path = f"{session_name}/{date}/{module_id}"
+            self.facade.enqueue_export(module_id, export_path)
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()

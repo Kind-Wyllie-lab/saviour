@@ -153,6 +153,9 @@ class ControllerFacade:
     def clear_ended_sessions(self, delete_files: bool = False, force: bool = False) -> dict:
         return self.controller.recording.clear_ended_sessions(delete_files, force)
 
+    def retry_failed_exports(self, session_name: str) -> dict:
+        return self.controller.recording.retry_failed_exports(session_name)
+
     def add_module_to_session(self, session_name: str, module_id: str) -> dict:
         return self.controller.recording.add_module_to_session(session_name, module_id)
 

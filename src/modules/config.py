@@ -207,9 +207,22 @@ class Config:
         module config file don't accumulate in active_config.json across
         restarts.  _-prefixed (internal) keys are never pruned — they are
         managed by _merge_internal_defaults.
+
+        "export" is skipped entirely — same exemption as set_all()'s
+        _recursive_update (see its _NEVER_PRUNE_SECTIONS), but this is a
+        genuinely separate pruning path: this one runs once at startup, via
+        load_module_config(), comparing the loaded active_config.json against
+        the static base_config.json/<module>_config.json files. export.*
+        credentials (share_password in particular) are runtime-only, pushed
+        via set_export_config and never present in those static files at all
+        — so without this exemption, every single module restart deleted
+        share_password via this path, independently of and in addition to
+        the set_all() pruning already fixed. Confirmed live: "Pruning stale
+        config key: share_password" logged on every restart, causing Samba
+        export mounts to fail with a wrong (empty) password afterward.
         """
         for key in list(target.keys()):
-            if key.startswith("_"):
+            if key.startswith("_") or key == "export":
                 continue
             if key not in reference:
                 self.logger.info(f"Pruning stale config key: {key}")
@@ -368,6 +381,26 @@ class Config:
         config_updated = False
         updated_keys = []
 
+        # Keys/sections that must survive an update omitting them, because they're
+        # never part of the normal save payload for the thing that touches them:
+        # - export: system-managed (set via set_export_config), not the frontend's
+        #   editable config. ExportConfigSection.jsx hides the Samba credential
+        #   fields entirely in "controller" mode (the default), so ANY module
+        #   config save -- not just a FrameSync/export-specific one -- could
+        #   otherwise silently wipe a live share_password whenever the frontend's
+        #   cached config snapshot didn't happen to include it (e.g. right after a
+        #   reconnect, while invalidate_config()'s module.config={} reset is still
+        #   in effect). Confirmed live 2026-08-20.
+        # - camera.crop_rect: set only via the separate crop-editor modal's
+        #   set_camera_crop command, never included in the normal ConfigCard save
+        #   payload -- any unrelated camera config save would otherwise prune it,
+        #   then set_all()'s own re-merge-defaults step immediately resets it to
+        #   the base-config default (None), silently discarding a real crop rect.
+        #   Also confirmed live 2026-08-20 (harmless that time only because this
+        #   particular module had never had a crop rect set).
+        _NEVER_PRUNE_SECTIONS = {"export"}
+        _NEVER_PRUNE_KEYS = {"camera.crop_rect"}
+
         def _recursive_update(target, source, parent_key=""):
             nonlocal config_updated
             for k, v in source.items():
@@ -377,7 +410,11 @@ class Config:
                     # Remove non-private keys that exist in target but were deleted from source
                     # (e.g. a pin removed via the frontend). Skip _-prefixed keys — those are
                     # internal defaults that filterPrivateKeys strips before saving.
+                    if full_key in _NEVER_PRUNE_SECTIONS:
+                        continue
                     for stale in [sk for sk in list(target[k]) if sk not in v and not sk.startswith("_")]:
+                        if f"{full_key}.{stale}" in _NEVER_PRUNE_KEYS:
+                            continue
                         del target[k][stale]
                         config_updated = True
                         updated_keys.append(f"{full_key}.{stale}")

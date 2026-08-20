@@ -376,7 +376,19 @@ class Config:
                     _recursive_update(target[k], v, full_key)
                     # Remove non-private keys that exist in target but were deleted from source
                     # (e.g. a pin removed via the frontend). Skip _-prefixed keys — those are
-                    # internal defaults that filterPrivateKeys strips before saving.
+                    # internal defaults that filterPrivateKeys strips before saving. Also skip
+                    # the whole export.* section: it's system-managed (set via
+                    # set_export_config, not the frontend's editable config), and omission
+                    # from an incoming update must never be read as "the user deleted this
+                    # field". ExportConfigSection.jsx hides the Samba credential fields
+                    # entirely in "controller" mode (the default), so ANY module config save
+                    # -- not just a FrameSync/export-specific one -- could otherwise silently
+                    # wipe a live share_password whenever the frontend's cached config
+                    # snapshot didn't happen to include it (e.g. right after a reconnect,
+                    # while invalidate_config()'s module.config={} reset is still in effect).
+                    # Confirmed live 2026-08-20.
+                    if full_key == "export":
+                        continue
                     for stale in [sk for sk in list(target[k]) if sk not in v and not sk.startswith("_")]:
                         del target[k][stale]
                         config_updated = True

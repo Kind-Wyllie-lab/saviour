@@ -265,6 +265,14 @@ function SessionList({ sessionList, modules = [] }) {
     socket.emit("add_module_to_session", { session_name: sessionName, module_id: moduleId });
   };
 
+  const handleRetryExport = (sessionName) => {
+    // Once export_queue.py's MAX_RETRIES is exhausted, nothing retries a
+    // failed export on its own again, even if whatever caused the failures
+    // (e.g. bad Samba credentials) gets fixed afterward -- this manually
+    // re-triggers it.
+    socket.emit("retry_failed_exports", { session_name: sessionName });
+  };
+
   const toggleExpand = (sessionName) => {
     setExpandedSessions((prev) => ({
       ...prev,
@@ -684,6 +692,15 @@ function SessionList({ sessionList, modules = [] }) {
                         onClick={() => setAddModuleTarget(session.session_name)}
                       >
                         Add Module to Session
+                      </button>
+                    )}
+                    {isStopped && (session.pending_exports ?? 0) > 0 && (
+                      <button
+                        className="session-btn session-btn--start"
+                        onClick={() => handleRetryExport(session.session_name)}
+                        title="Re-attempt export for this session -- useful if exports failed and gave up before whatever caused it (e.g. bad credentials) was fixed"
+                      >
+                        Retry Export
                       </button>
                     )}
                     {isStopped && (

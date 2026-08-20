@@ -768,6 +768,16 @@ class Web(ABC):
             if "error" in result:
                 self.socketio.emit("session_error", result)
 
+        @self.socketio.on("retry_failed_exports")
+        def handle_retry_failed_exports(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = data.get("session_name")
+            self.logger.info(f"Received request to retry failed exports for session '{session_name}'")
+            result = self.facade.retry_failed_exports(session_name)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
         @self.socketio.on("clear_ended_sessions")
         def handle_clear_ended_sessions(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

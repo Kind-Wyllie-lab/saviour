@@ -549,6 +549,52 @@
   border-color: var(--accent-color, #4a90d9);
 }
 
+.session-recording-state-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-recording-state-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.session-recording-state-table {
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 0.78rem;
+}
+
+.session-recording-state-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color, #ddd) 50%, transparent);
+}
+
+.session-recording-state-row:last-child {
+  border-bottom: none;
+}
+
+.session-recording-state-row--head {
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.session-recording-state-row span:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .session-warning-text {
   font-size: 0.82rem;
   color: #b45309;

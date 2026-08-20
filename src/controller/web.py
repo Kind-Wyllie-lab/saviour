@@ -1883,6 +1883,7 @@ class Web(ABC):
         self.socketio.emit('module_recording_state_update', {
             'module_id': module_id,
             'summary': summary,
+            'last_reported': time.time(),
         })
 
 

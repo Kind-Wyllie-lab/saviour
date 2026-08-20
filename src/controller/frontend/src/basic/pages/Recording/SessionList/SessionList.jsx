@@ -8,6 +8,11 @@ function formatFaultTime(error_time) {
   return m ? `${m[4]}:${m[5]}` : null;
 }
 
+function formatEpochTime(epochSeconds) {
+  if (!epochSeconds) return null;
+  return new Date(epochSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function levelClass(line) {
   const m = line.match(/\[(\w+)\s*\]/);
   if (!m) return "";
@@ -155,6 +160,7 @@ function SessionList({ sessionList, modules = [] }) {
   const [sessionLogs, setSessionLogs] = useState({}); // session_name → string[] | "loading"
   const [sessionFileInfo, setSessionFileInfo] = useState({}); // session_name → info | "loading"
   const [fileListOpen, setFileListOpen] = useState({}); // session_name → bool
+  const [moduleRecordingStates, setModuleRecordingStates] = useState({}); // module_id → { summary, last_reported }
 
   useEffect(() => {
     socket.emit("get_controller_samba_info");
@@ -210,6 +216,18 @@ function SessionList({ sessionList, modules = [] }) {
     };
     socket.on("session_file_info_response", handler);
     return () => socket.off("session_file_info_response", handler);
+  }, []);
+
+  // Module-side pending/to_export/exported summary -- live visibility into a
+  // module's local recording pipeline, independent of the NAS-share file
+  // browser above. Pushed every ~5 min automatically, or on demand via the
+  // "Refresh" button below.
+  useEffect(() => {
+    const handler = ({ module_id, summary, last_reported }) => {
+      setModuleRecordingStates(prev => ({ ...prev, [module_id]: { summary, last_reported } }));
+    };
+    socket.on("module_recording_state_update", handler);
+    return () => socket.off("module_recording_state_update", handler);
   }, []);
 
   // Auto-fetch file info when a stopped session is expanded for the first time
@@ -271,6 +289,13 @@ function SessionList({ sessionList, modules = [] }) {
     // (e.g. bad Samba credentials) gets fixed afterward -- this manually
     // re-triggers it.
     socket.emit("retry_failed_exports", { session_name: sessionName });
+  };
+
+  const handleRefreshRecordingState = (sessionName) => {
+    // On-demand version of the ~5-min automatic poll -- the response
+    // arrives independently per module via module_recording_state_update,
+    // not synchronously, so there's nothing to await here.
+    socket.emit("request_recording_state_refresh", { session_name: sessionName });
   };
 
   const toggleExpand = (sessionName) => {
@@ -479,7 +504,7 @@ function SessionList({ sessionList, modules = [] }) {
                     </p>
                   )}
 
-                  {isStopped && (() => {
+                  {(isActive || isError || isStopped) && (() => {
                     const fi = sessionFileInfo[session.session_name];
                     const loading = fi === "loading";
                     const ready = fi && fi !== "loading";
@@ -583,7 +608,7 @@ function SessionList({ sessionList, modules = [] }) {
                     <p className="session-error-message">{forceStartErrors[session.session_name]}</p>
                   )}
 
-                  {isStopped && (() => {
+                  {(isActive || isError || isStopped) && (() => {
                     const fi = sessionFileInfo[session.session_name];
                     if (!fi || fi === "loading" || fi.files.length === 0) return null;
                     const isOpen = fileListOpen[session.session_name];
@@ -611,6 +636,67 @@ function SessionList({ sessionList, modules = [] }) {
                             })}
                           </div>
                         )}
+                      </div>
+                    );
+                  })()}
+
+                  {(isActive || isError) && (() => {
+                    // Module-side pending/to_export/exported summary --
+                    // independent of the NAS-share file browser above, and
+                    // the only visibility into a module's *local* state
+                    // (files not yet even staged for export). Scoped to
+                    // active/error sessions only: moduleRecordingStates is
+                    // keyed by module_id (a module's *latest* report,
+                    // whichever session it was for), not by session, so
+                    // showing it for a STOPPED session could display a
+                    // module's data from whatever session it's since moved
+                    // on to -- the share-side browser above is the correct,
+                    // session-scoped source once a session has actually
+                    // stopped.
+                    const moduleIds = session.modules || [];
+                    if (moduleIds.length === 0) return null;
+                    return (
+                      <div className="session-recording-state-section">
+                        <div className="session-recording-state-header">
+                          <span className="session-meta-label">Module status</span>
+                          <button
+                            type="button"
+                            className="session-log-toggle"
+                            onClick={() => handleRefreshRecordingState(session.session_name)}
+                            title="Ask every module in this session to report its local recording state now, instead of waiting for the next automatic poll (every ~5 min)"
+                          >
+                            ↻ Refresh
+                          </button>
+                        </div>
+                        <div className="session-recording-state-table">
+                          <div className="session-recording-state-row session-recording-state-row--head">
+                            <span>Module</span>
+                            <span>Pending</span>
+                            <span>Staged</span>
+                            <span>Exported</span>
+                            <span>Last reported</span>
+                          </div>
+                          {moduleIds.map((moduleId) => {
+                            const moduleInfo = modules.find(m => m.id === moduleId);
+                            const label = moduleInfo?.name || moduleId;
+                            const moduleState = moduleRecordingStates[moduleId];
+                            const summary = moduleState?.summary;
+                            const cell = (stage) => {
+                              const s = summary?.[stage];
+                              if (!s || !s.count) return "-";
+                              return `${s.count}${s.total_bytes ? ` (${formatBytes(s.total_bytes)})` : ""}`;
+                            };
+                            return (
+                              <div key={moduleId} className="session-recording-state-row">
+                                <span title={moduleId}>{label}</span>
+                                <span>{cell("pending")}</span>
+                                <span>{cell("to_export")}</span>
+                                <span>{cell("exported")}</span>
+                                <span>{moduleState?.last_reported ? formatEpochTime(moduleState.last_reported) : "never"}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })()}

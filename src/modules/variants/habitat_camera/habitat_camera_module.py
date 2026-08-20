@@ -58,20 +58,16 @@ _STATE_COLOR_BGR = {
     "waiting": (0, 191, 255),
     "active":  (0, 0, 255),
 }
-_STATE_LABEL = {
-    "idle":    "IDLE",
-    "waiting": "ARMED",
-    "active":  "RECORDING (motion)",
-}
-# _motion_state stays "idle" whenever not recording (see module docstring) --
-# that's the real gating readout, logged to the CSV, and shouldn't change
-# meaning. But that leaves an operator tuning activity_threshold with no way
-# to see a live threshold crossing without starting an actual recording.
-# This is a preview-only overlay signal layered on top, using the same
-# "waiting" amber to read as "this would arm" -- it never touches
-# _motion_state itself.
-_IDLE_ABOVE_THRESHOLD_COLOR_BGR = _STATE_COLOR_BGR["waiting"]
-_IDLE_ABOVE_THRESHOLD_LABEL = "IDLE (threshold exceeded)"
+# _motion_state is computed identically regardless of arm status -- the
+# livestream preview must be fully representative of the real recording
+# trigger, not a separate simplified check, so an operator can tune
+# activity_threshold/activity_min_duration_s against the exact same
+# sustained-duration logic that actually gates a clip, without needing a
+# real recording running. "idle" = below threshold; "waiting" = above
+# threshold, accumulating toward the sustained-duration trigger; "active" =
+# triggered. Only the "active" *label* depends on arm status (see
+# _process_lores_frame) -- if not actually armed, a triggered state is
+# real (the same math a real recording would use) but doesn't write a clip.
 
 
 class HabitatMotionDetector:
@@ -140,7 +136,6 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns: int | None = None   # start of current above/below streak
         self._motion_last_above: bool | None = None
         self._motion_last_score = 0.0
-        self._motion_above_threshold = False       # live, recording-independent -- see docstring above
         self._circular_output: CircularOutput | None = None  # built on arm, see _start_new_recording
         self._clip_open = False        # whether a clip file is currently being written
         self._clip_h264_path = None    # raw encoder output, remuxed to .ts on close
@@ -192,51 +187,40 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns = None
         self._motion_last_above = None
         self._motion_last_score = 0.0
-        self._motion_above_threshold = False
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
         score = self._motion_detector.score(m.array) if self._motion_detector else 0.0
         self._motion_last_score = score
-        # Computed unconditionally (not just while recording) so the preview
-        # badge can show a live threshold crossing while tuning -- see the
-        # _IDLE_ABOVE_THRESHOLD_* comment above.
         above = score >= self._motion_activity_threshold
-        self._motion_above_threshold = above
 
-        # Hysteresis state only progresses while a normal recording session
-        # is active ("armed" -- see module docstring). Transitions into/out of
-        # "active" are what actually open/close a clip file -- see
-        # _open_clip()/_close_clip() below.
-        #
-        # self.is_recording (the bare Module/CameraBase attribute) is dead
-        # for camera modules -- Module.__init__ sets it False once and
-        # nothing in camera_base.py ever sets it True again. facade.py's
-        # get_recording_status() is the live-updated accessor (backed by
-        # the composed Recording helper) -- also what health.py reports as
-        # the module's "recording" status field.
-        if not self.facade.get_recording_status():
-            self._motion_state = "idle"
-            self._motion_since_ns = None
-            self._motion_last_above = None
-        else:
-            if self._motion_last_above is None or above != self._motion_last_above:
-                self._motion_since_ns = timing.timestamp_ns
-                self._motion_last_above = above
+        # Runs identically regardless of arm status -- the livestream preview
+        # must be fully representative of the real recording trigger, not a
+        # separate simplified check (this used to reset to "idle" every frame
+        # while not recording, which meant the preview never actually
+        # exercised the sustained-duration logic a real trigger needs).
+        # self.facade.get_recording_status() (below) only gates whether a
+        # genuine "active" transition actually opens/closes a clip file --
+        # not whether the state machine itself runs.
+        if self._motion_last_above is None or above != self._motion_last_above:
+            self._motion_since_ns = timing.timestamp_ns
+            self._motion_last_above = above
 
-            elapsed_s = (
-                (timing.timestamp_ns - self._motion_since_ns) / 1e9
-                if self._motion_since_ns is not None else 0.0
-            )
+        elapsed_s = (
+            (timing.timestamp_ns - self._motion_since_ns) / 1e9
+            if self._motion_since_ns is not None else 0.0
+        )
 
-            if self._motion_state != "active":
-                triggered = above and elapsed_s >= self._motion_activity_min_duration_s
-                if triggered:
-                    self._motion_state = "active"
+        if self._motion_state != "active":
+            triggered = above and elapsed_s >= self._motion_activity_min_duration_s
+            if triggered:
+                self._motion_state = "active"
+                if self.facade.get_recording_status():
                     self._open_clip()
-                else:
-                    self._motion_state = "waiting"
-            elif not above and elapsed_s >= self._motion_inactivity_min_duration_s:
-                self._motion_state = "waiting"
+            else:
+                self._motion_state = "waiting" if above else "idle"
+        elif not above and elapsed_s >= self._motion_inactivity_min_duration_s:
+            self._motion_state = "idle"
+            if self._clip_open:
                 self._close_clip()
 
         return {
@@ -245,11 +229,17 @@ class HabitatCameraModule(CameraBase):
         }
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
-        if self._motion_state == "idle" and self._motion_above_threshold:
-            color, label = _IDLE_ABOVE_THRESHOLD_COLOR_BGR, _IDLE_ABOVE_THRESHOLD_LABEL
+        color = _STATE_COLOR_BGR.get(self._motion_state, _STATE_COLOR_BGR["idle"])
+        if self._motion_state == "idle":
+            label = "IDLE"
+        elif self._motion_state == "waiting":
+            label = "ABOVE THRESHOLD"
+        elif self._clip_open:
+            label = "RECORDING (motion)"
         else:
-            color = _STATE_COLOR_BGR.get(self._motion_state, _STATE_COLOR_BGR["idle"])
-            label = _STATE_LABEL.get(self._motion_state, self._motion_state.upper())
+            # Triggered by the same math a real recording would use, but not
+            # actually armed right now -- see _process_main_frame's docstring.
+            label = "TRIGGERED (not armed)"
         cv2.circle(m.array, (24, 24), 10, color, -1, cv2.LINE_AA)
         cv2.putText(
             m.array, f"{label}  {self._motion_last_score:.3f}", (42, 32),

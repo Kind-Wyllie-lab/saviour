@@ -853,11 +853,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         {activeTab === "motion" && (
           <>
             <div className="sensor-mode-info sensor-mode-info--muted">
-              Shadow mode only for now: the activity score below is computed
-              every frame and logged to the timestamp CSV (and shown live on
-              the preview) whenever this module is recording, but it doesn't
-              yet start or stop anything — use it to find a good threshold
-              from real data first.
+              While recording (armed), a clip is only written while the
+              activity score below stays above threshold — the score itself
+              is always computed every frame and logged to the timestamp CSV
+              (and shown live on the preview, including while idle) so you
+              can tune these values against real activity.
             </div>
             <div className="form-field">
               <label>Motion algorithm:</label>
@@ -884,6 +884,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <input type="number" min="0" step="1"
                 value={formData?.habitat_motion?.inactivity_min_duration_s ?? 120}
                 onChange={e => handleChange(["habitat_motion", "inactivity_min_duration_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Pre-roll buffer before trigger (s):</label>
+              <input type="number" min="0" step="0.5"
+                value={formData?.habitat_motion?.pre_roll_secs ?? 3.0}
+                onChange={e => handleChange(["habitat_motion", "pre_roll_secs"], e)} />
             </div>
             <div className="form-field">
               <label>Processing width (px, downscaled before detection):</label>

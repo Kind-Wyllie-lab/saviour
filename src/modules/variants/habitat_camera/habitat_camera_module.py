@@ -5,30 +5,39 @@ SAVIOUR System - Habitat Camera Module Class
 Built on CameraBase (src/modules/camera_base.py), which provides Picamera2
 lifecycle, MJPEG streaming, segmented recording, and the timestamp-CSV
 sidecar. This file adds a per-frame motion/activity score (see CLAUDE.md's
-"habitat_camera" feature idea) -- currently shadow-mode only: the score and
-a derived armed/waiting/active state are logged to the CSV sidecar and drawn
-on the live preview, but nothing yet gates when a clip starts/stops. The
-gating (pre-roll via Picamera2's CircularOutput, export-on-clip-close) is a
-deliberately separate next step once a sensible threshold has been chosen
-from real recorded data.
+"habitat_camera" feature idea) and gates recording on it: no clip file is
+written until the score crosses activity_threshold for activity_min_duration_s,
+using a CircularOutput pre-roll buffer (habitat_motion.pre_roll_secs) so the
+clip includes footage from just before the trigger, not just after it.
 
 "Armed" here just means "a normal recording session is active"
 (self.facade.get_recording_status(), set by the existing start_recording/
 stop_recording command path -- not the bare self.is_recording attribute,
-which is dead for camera modules) -- no new RPC needed. Motion state
-layered on top of that is purely a live/logged readout for now, not yet
-wired to actually start/stop anything.
+which is dead for camera modules) -- no new RPC needed. Arming still creates
+a normal Session on the controller exactly as for every other camera type;
+individual motion-triggered clips are just files added to that same ongoing
+session via the existing per-file export API (facade.add_session_file() /
+facade.stage_file_for_export()), not separate sessions of their own.
+
+While armed, CameraBase's own continuous SplittableOutput recording is
+replaced with a CircularOutput the encoder always writes into (buffering
+recent frames regardless of whether a clip file is currently open) --
+_start_new_recording() below builds it, _open_clip()/_close_clip() flush it
+to/from an actual file on each idle/waiting<->active transition, and
+_stop_recording() finalises whatever's open when disarmed.
 
 Author: Andrew SG
 """
 
 import os
+import subprocess
 import sys
 import time
 
 import cv2
 import numpy as np
 from picamera2 import MappedArray
+from picamera2.outputs import CircularOutput
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
@@ -131,6 +140,10 @@ class HabitatCameraModule(CameraBase):
         self._motion_last_above: bool | None = None
         self._motion_last_score = 0.0
         self._motion_above_threshold = False       # live, recording-independent -- see docstring above
+        self._circular_output: CircularOutput | None = None  # built on arm, see _start_new_recording
+        self._clip_open = False        # whether a clip file is currently being written
+        self._clip_h264_path = None    # raw encoder output, remuxed to .ts on close
+        self._clip_counter = 0         # per-armed-session clip numbering, for unique filenames
         # CameraBase.__init__ configures the camera via _configure_camera(),
         # not configure_module_special() -- _configure_module_extra() (and
         # thus the motion detector) otherwise wouldn't exist until the first
@@ -163,6 +176,8 @@ class HabitatCameraModule(CameraBase):
             self.config.get("habitat_motion.activity_min_duration_s", 1.0))
         self._motion_inactivity_min_duration_s = float(
             self.config.get("habitat_motion.inactivity_min_duration_s", 120.0))
+        self._motion_pre_roll_secs = float(
+            self.config.get("habitat_motion.pre_roll_secs", 3.0))
 
         self._motion_detector = HabitatMotionDetector(
             algorithm=self.config.get("habitat_motion.algorithm", "frame_diff"),
@@ -187,9 +202,9 @@ class HabitatCameraModule(CameraBase):
         self._motion_above_threshold = above
 
         # Hysteresis state only progresses while a normal recording session
-        # is active ("armed" -- see module docstring). This is shadow-mode
-        # only for now: state/score are logged and shown live, nothing acts
-        # on them yet.
+        # is active ("armed" -- see module docstring). Transitions into/out of
+        # "active" are what actually open/close a clip file -- see
+        # _open_clip()/_close_clip() below.
         #
         # self.is_recording (the bare Module/CameraBase attribute) is dead
         # for camera modules -- Module.__init__ sets it False once and
@@ -213,9 +228,14 @@ class HabitatCameraModule(CameraBase):
 
             if self._motion_state != "active":
                 triggered = above and elapsed_s >= self._motion_activity_min_duration_s
-                self._motion_state = "active" if triggered else "waiting"
+                if triggered:
+                    self._motion_state = "active"
+                    self._open_clip()
+                else:
+                    self._motion_state = "waiting"
             elif not above and elapsed_s >= self._motion_inactivity_min_duration_s:
                 self._motion_state = "waiting"
+                self._close_clip()
 
         return {
             "motion_score": f"{score:.4f}",
@@ -233,6 +253,121 @@ class HabitatCameraModule(CameraBase):
             m.array, f"{label}  {self._motion_last_score:.3f}", (42, 32),
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA,
         )
+
+    """Motion-gated recording.
+
+    Overrides CameraBase's continuous SplittableOutput recording. Arming
+    (start_recording/stop_recording, i.e. this module's normal Session)
+    works exactly as for every other camera type -- what changes is that no
+    clip file is written until _process_main_frame's hysteresis state
+    machine above actually transitions into "active"; each active streak
+    becomes its own clip, tagged onto the same armed session via the normal
+    per-file export API (add_session_file/stage_file_for_export), not a
+    separate session of its own.
+    """
+
+    def _start_new_recording(self) -> bool:
+        """Called once when arming (Recording._create_initial_recording_segment
+        -> facade.start_new_recording()). Starts the camera capturing and a
+        CircularOutput pre-roll buffer -- the encoder runs continuously for
+        the whole armed window, but no clip file is opened until the first
+        motion trigger."""
+        if not self.picam2.started:
+            self.picam2.start()
+            time.sleep(0.1)
+
+        fps = self.fps or self.config.get("camera.fps", 25)
+        buffersize = max(1, int(self._motion_pre_roll_secs * fps))
+        self._circular_output = CircularOutput(buffersize=buffersize)
+        self.main_encoder.output = self._circular_output
+        self.picam2.start_encoder(self.main_encoder, name="main")
+
+        self.recording_start_time = time.time()
+        self._clip_open = False
+        self._clip_counter = 0
+        return True
+
+    def _start_next_recording_segment(self) -> bool:
+        """No-op. CameraBase's shared time-based segment monitor
+        (Recording._monitor_recording_length) still runs while armed, but
+        clip rotation here is motion-driven (_open_clip/_close_clip below),
+        not time-driven, so its rotation callback has nothing to do.
+
+        Known v1 limitation: an unusually long single continuous "active"
+        streak isn't capped/segmented -- acceptable given typical activity
+        bouts are short; revisit if it turns out to matter."""
+        return True
+
+    def _stop_recording(self) -> bool:
+        """Disarm. Finalises any currently-open clip, then stops the
+        encoder entirely."""
+        try:
+            self.logger.info("Attempting to stop habitat_camera recording")
+            if self._clip_open:
+                self._close_clip()
+            self.picam2.stop_encoder(self.main_encoder)
+            self._circular_output = None
+            return True
+        except Exception as e:
+            self.logger.error(f"Error stopping habitat_camera recording: {e}")
+            return False
+
+    def _get_clip_filename(self) -> str:
+        """Unique-per-clip filename, session-scoped like every other camera
+        type's _get_video_filename() -- but that helper relies on
+        segment_id/segment_start_time, which _start_next_recording_segment()
+        being a no-op means never advance past their arm-time values. Uses
+        an incrementing per-arm counter plus the real current time instead."""
+        self._clip_counter += 1
+        strtime = self.facade.get_utc_time(time.time())
+        ext = self.config.get('recording.recording_filetype', 'ts')
+        return f"{self.facade.get_filename_prefix()}_(clip{self._clip_counter}_{strtime}).{ext}"
+
+    def _open_clip(self) -> None:
+        """Flush the pre-roll buffer to a new clip file and open its
+        timestamp CSV. Called on the waiting/idle -> active transition."""
+        if self._circular_output is None or self._clip_open:
+            return
+        ts_path = self._get_clip_filename()
+        self._clip_h264_path = os.path.splitext(ts_path)[0] + ".h264"
+        self.current_video_segment = ts_path
+        self.facade.add_session_file(ts_path)
+        self._circular_output.fileoutput = self._clip_h264_path
+        self._circular_output.start()
+        self._open_timestamp_csv(ts_path)
+        self._clip_open = True
+        self.logger.info(f"Motion clip opened: {ts_path}")
+
+    def _close_clip(self) -> None:
+        """Stop writing the current clip, close its CSV, remux the raw
+        .h264 CircularOutput produces to .ts (matching every other camera
+        type's export format and the tooling that expects it -- e.g.
+        analyse_framesync.py, video_compose.py), and stage it for export.
+        Called on the active -> waiting transition, and from
+        _stop_recording() if disarmed mid-clip."""
+        if not self._clip_open or self._circular_output is None:
+            return
+        self._circular_output.stop()
+        self._circular_output.fileoutput = None
+        self._close_timestamp_csv()
+
+        h264_path = self._clip_h264_path
+        ts_path = self.current_video_segment
+        final_path = ts_path
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", h264_path, "-c", "copy", "-f", "mpegts", ts_path],
+                check=True, capture_output=True,
+            )
+            os.remove(h264_path)
+        except Exception as e:
+            self.logger.error(f"Failed to remux motion clip {h264_path} to {ts_path}: {e}")
+            # Stage the raw stream rather than silently lose the clip.
+            final_path = h264_path
+
+        self.facade.stage_file_for_export(final_path)
+        self._clip_open = False
+        self.logger.info(f"Motion clip closed and staged: {final_path}")
 
 
 def main():

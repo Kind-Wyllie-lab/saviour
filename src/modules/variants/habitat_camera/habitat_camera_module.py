@@ -250,12 +250,21 @@ class HabitatCameraModule(CameraBase):
             label = "IDLE"
         elif self._motion_state == "waiting":
             label = "ABOVE THRESHOLD"
-        elif self._clip_open:
-            label = "RECORDING (motion)"
         else:
-            # Triggered by the same math a real recording would use, but not
-            # actually armed right now -- see _process_main_frame's docstring.
-            label = "TRIGGERED (not armed)"
+            # Triggered by the same math a real recording would use -- label
+            # distinguishes an actual clip from a not-armed test trigger, but
+            # the countdown below applies either way, same as the state
+            # machine itself (see _process_main_frame's docstring).
+            label = "RECORDING (motion)" if self._clip_open else "TRIGGERED (not armed)"
+            # self._motion_last_above is False exactly while the
+            # inactivity-duration countdown toward closing is running --
+            # True (or None, before any frame's been scored) means motion is
+            # still ongoing right now, so there's nothing counting down.
+            if self._motion_last_above is False and self._motion_since_ns is not None:
+                elapsed_s = (timing.timestamp_ns - self._motion_since_ns) / 1e9
+                remaining_s = max(0.0, self._motion_inactivity_min_duration_s - elapsed_s)
+                mins, secs = divmod(int(remaining_s), 60)
+                label = f"{label} - closing in {mins:02d}:{secs:02d}"
         cv2.circle(m.array, (24, 24), 10, color, -1, cv2.LINE_AA)
         cv2.putText(
             m.array, f"{label}  {self._motion_last_score:.3f}", (42, 32),

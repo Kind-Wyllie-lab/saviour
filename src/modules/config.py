@@ -368,6 +368,26 @@ class Config:
         config_updated = False
         updated_keys = []
 
+        # Keys/sections that must survive an update omitting them, because they're
+        # never part of the normal save payload for the thing that touches them:
+        # - export: system-managed (set via set_export_config), not the frontend's
+        #   editable config. ExportConfigSection.jsx hides the Samba credential
+        #   fields entirely in "controller" mode (the default), so ANY module
+        #   config save -- not just a FrameSync/export-specific one -- could
+        #   otherwise silently wipe a live share_password whenever the frontend's
+        #   cached config snapshot didn't happen to include it (e.g. right after a
+        #   reconnect, while invalidate_config()'s module.config={} reset is still
+        #   in effect). Confirmed live 2026-08-20.
+        # - camera.crop_rect: set only via the separate crop-editor modal's
+        #   set_camera_crop command, never included in the normal ConfigCard save
+        #   payload -- any unrelated camera config save would otherwise prune it,
+        #   then set_all()'s own re-merge-defaults step immediately resets it to
+        #   the base-config default (None), silently discarding a real crop rect.
+        #   Also confirmed live 2026-08-20 (harmless that time only because this
+        #   particular module had never had a crop rect set).
+        _NEVER_PRUNE_SECTIONS = {"export"}
+        _NEVER_PRUNE_KEYS = {"camera.crop_rect"}
+
         def _recursive_update(target, source, parent_key=""):
             nonlocal config_updated
             for k, v in source.items():
@@ -376,20 +396,12 @@ class Config:
                     _recursive_update(target[k], v, full_key)
                     # Remove non-private keys that exist in target but were deleted from source
                     # (e.g. a pin removed via the frontend). Skip _-prefixed keys — those are
-                    # internal defaults that filterPrivateKeys strips before saving. Also skip
-                    # the whole export.* section: it's system-managed (set via
-                    # set_export_config, not the frontend's editable config), and omission
-                    # from an incoming update must never be read as "the user deleted this
-                    # field". ExportConfigSection.jsx hides the Samba credential fields
-                    # entirely in "controller" mode (the default), so ANY module config save
-                    # -- not just a FrameSync/export-specific one -- could otherwise silently
-                    # wipe a live share_password whenever the frontend's cached config
-                    # snapshot didn't happen to include it (e.g. right after a reconnect,
-                    # while invalidate_config()'s module.config={} reset is still in effect).
-                    # Confirmed live 2026-08-20.
-                    if full_key == "export":
+                    # internal defaults that filterPrivateKeys strips before saving.
+                    if full_key in _NEVER_PRUNE_SECTIONS:
                         continue
                     for stale in [sk for sk in list(target[k]) if sk not in v and not sk.startswith("_")]:
+                        if f"{full_key}.{stale}" in _NEVER_PRUNE_KEYS:
+                            continue
                         del target[k][stale]
                         config_updated = True
                         updated_keys.append(f"{full_key}.{stale}")

@@ -53,6 +53,15 @@ _STATE_LABEL = {
     "waiting": "ARMED",
     "active":  "RECORDING (motion)",
 }
+# _motion_state stays "idle" whenever not recording (see module docstring) --
+# that's the real gating readout, logged to the CSV, and shouldn't change
+# meaning. But that leaves an operator tuning activity_threshold with no way
+# to see a live threshold crossing without starting an actual recording.
+# This is a preview-only overlay signal layered on top, using the same
+# "waiting" amber to read as "this would arm" -- it never touches
+# _motion_state itself.
+_IDLE_ABOVE_THRESHOLD_COLOR_BGR = _STATE_COLOR_BGR["waiting"]
+_IDLE_ABOVE_THRESHOLD_LABEL = "IDLE (threshold exceeded)"
 
 
 class HabitatMotionDetector:
@@ -121,6 +130,7 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns: int | None = None   # start of current above/below streak
         self._motion_last_above: bool | None = None
         self._motion_last_score = 0.0
+        self._motion_above_threshold = False       # live, recording-independent -- see docstring above
         # CameraBase.__init__ configures the camera via _configure_camera(),
         # not configure_module_special() -- _configure_module_extra() (and
         # thus the motion detector) otherwise wouldn't exist until the first
@@ -165,10 +175,16 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns = None
         self._motion_last_above = None
         self._motion_last_score = 0.0
+        self._motion_above_threshold = False
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
         score = self._motion_detector.score(m.array) if self._motion_detector else 0.0
         self._motion_last_score = score
+        # Computed unconditionally (not just while recording) so the preview
+        # badge can show a live threshold crossing while tuning -- see the
+        # _IDLE_ABOVE_THRESHOLD_* comment above.
+        above = score >= self._motion_activity_threshold
+        self._motion_above_threshold = above
 
         # Hysteresis state only progresses while a normal recording session
         # is active ("armed" -- see module docstring). This is shadow-mode
@@ -186,7 +202,6 @@ class HabitatCameraModule(CameraBase):
             self._motion_since_ns = None
             self._motion_last_above = None
         else:
-            above = score >= self._motion_activity_threshold
             if self._motion_last_above is None or above != self._motion_last_above:
                 self._motion_since_ns = timing.timestamp_ns
                 self._motion_last_above = above
@@ -208,8 +223,11 @@ class HabitatCameraModule(CameraBase):
         }
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
-        color = _STATE_COLOR_BGR.get(self._motion_state, _STATE_COLOR_BGR["idle"])
-        label = _STATE_LABEL.get(self._motion_state, self._motion_state.upper())
+        if self._motion_state == "idle" and self._motion_above_threshold:
+            color, label = _IDLE_ABOVE_THRESHOLD_COLOR_BGR, _IDLE_ABOVE_THRESHOLD_LABEL
+        else:
+            color = _STATE_COLOR_BGR.get(self._motion_state, _STATE_COLOR_BGR["idle"])
+            label = _STATE_LABEL.get(self._motion_state, self._motion_state.upper())
         cv2.circle(m.array, (24, 24), 10, color, -1, cv2.LINE_AA)
         cv2.putText(
             m.array, f"{label}  {self._motion_last_score:.3f}", (42, 32),

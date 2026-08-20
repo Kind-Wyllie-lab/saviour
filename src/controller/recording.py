@@ -667,6 +667,49 @@ class Recording:
         self.logger.info(f"Export state for {module_id} in '{session_name}': {state}")
 
 
+    def retry_failed_exports(self, session_name: str) -> dict:
+        """Manually re-trigger export for every module in a session whose
+        automatic retries (export_queue.py's MAX_RETRIES) have been
+        exhausted. Once that cap is hit, nothing retries on its own again,
+        even once whatever caused the failures (e.g. bad Samba credentials)
+        is fixed. Confirmed live: a session accumulated several failed/
+        pending exports after a credential-wipe bug, and nothing
+        re-attempted them even after the credentials were corrected.
+
+        Re-sends start_export for each affected module -- export.py's
+        export_staged() sweeps everything currently sitting in that
+        module's local to_export/ folder regardless of the specific
+        export_path passed, so this recovers any stuck files for that
+        module, not just ones matching this exact path.
+        """
+        if session_name not in self.sessions:
+            return {"result": "error", "error": "Session not found"}
+
+        session = self.sessions[session_name]
+        failed_modules = [
+            m for m in session.modules
+            if session.module_export_states.get(m) == "failed"
+        ]
+        if not failed_modules:
+            return {"result": "error", "error": "No failed exports to retry"}
+
+        date = (session.start_time or "")[:8]
+        with self._lock:
+            for module_id in failed_modules:
+                export_path = f"{session_name}/{date}/{module_id}"
+                session.module_export_states[module_id] = "pending"
+                session.pending_exports += 1
+                self.facade.send_command(module_id, "start_export", {"export_path": export_path})
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self._log_session_event(
+            session_name, "RECOVERY", f"Export manually retried for {', '.join(failed_modules)}"
+        )
+        self.logger.info(f"Manually retried export for session '{session_name}': {failed_modules}")
+        return {"result": "success"}
+
+
     # -----------------------------------------------------------------------
     # Getters
     # -----------------------------------------------------------------------
@@ -1631,6 +1674,21 @@ class Recording:
                                             f"The following modules are not recording: {', '.join(not_recording)}."
                                         ),
                                     )
+                            # Actively attempt recovery, not just flag the fault -- this is the
+                            # only place that notices a module lost its recording state without
+                            # the module ever having been marked offline (e.g. a service restart
+                            # fast enough to stay under health.py's suspicion_timeout, so the
+                            # offline->online edge that module_back_online() normally hangs off
+                            # of never fires). Confirmed live: a module restarted mid-recording,
+                            # the fault above correctly triggered ("Not recording: <module>"),
+                            # but nothing ever re-sent start_recording -- the session just sat in
+                            # ERROR indefinitely. module_back_online() already has the right
+                            # guards (session.state in ACTIVE/ERROR, skips a redundant resend if
+                            # already confirmed recording) and retries harmlessly on the next
+                            # cycle if this attempt doesn't stick (the module's own
+                            # start_recording is a no-op error, not a crash, if already recording).
+                            for m in not_recording:
+                                self.module_back_online(m)
                         elif session.state == SessionState.ERROR and should_be_recording:
                             # All modules we were actively checking are now recording — recover.
                             # Guard: if should_be_recording is empty (e.g. all states are "unknown"

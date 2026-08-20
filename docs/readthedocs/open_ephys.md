@@ -1,4 +1,5 @@
 # Using SAVIOUR with Open Ephys
+Open Ephys is a popular technology for recording ephysiology data in rodent experiments.
 
 **IMPORTANT**: read this guide, and double check everything is working correctly before hitting record! Researchers have lost hours of data because a cable was plugged into the wrong port of their HDMI board.
 

@@ -13,10 +13,11 @@ deliberately separate next step once a sensible threshold has been chosen
 from real recorded data.
 
 "Armed" here just means "a normal recording session is active"
-(self.is_recording, set by the existing start_recording/stop_recording
-command path) -- no new RPC needed. Motion state layered on top of that is
-purely a live/logged readout for now, not yet wired to actually start/stop
-anything.
+(self.facade.get_recording_status(), set by the existing start_recording/
+stop_recording command path -- not the bare self.is_recording attribute,
+which is dead for camera modules) -- no new RPC needed. Motion state
+layered on top of that is purely a live/logged readout for now, not yet
+wired to actually start/stop anything.
 
 Author: Andrew SG
 """
@@ -162,7 +163,14 @@ class HabitatCameraModule(CameraBase):
         # is active ("armed" -- see module docstring). This is shadow-mode
         # only for now: state/score are logged and shown live, nothing acts
         # on them yet.
-        if not self.is_recording:
+        #
+        # self.is_recording (the bare Module/CameraBase attribute) is dead
+        # for camera modules -- Module.__init__ sets it False once and
+        # nothing in camera_base.py ever sets it True again. facade.py's
+        # get_recording_status() is the live-updated accessor (backed by
+        # the composed Recording helper) -- also what health.py reports as
+        # the module's "recording" status field.
+        if not self.facade.get_recording_status():
             self._motion_state = "idle"
             self._motion_since_ns = None
             self._motion_last_above = None

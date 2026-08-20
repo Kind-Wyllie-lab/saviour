@@ -42,6 +42,7 @@ from picamera2.outputs import CircularOutput
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
+from modules.module import command
 
 # Per-pixel brightness delta (0-255) above which a pixel counts as "changed"
 # for the frame_diff algorithm. Fixed rather than a config key for now --
@@ -245,6 +246,24 @@ class HabitatCameraModule(CameraBase):
             m.array, f"{label}  {self._motion_last_score:.3f}", (42, 32),
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA,
         )
+
+    @command()
+    def reset_motion_trigger(self) -> dict:
+        """Manually clear a waiting/triggered state back to idle, without
+        waiting out inactivity_min_duration_s (120s default) -- lets an
+        operator reset quickly while testing/tuning against the livestream
+        instead of waiting the same duration a real clip close-out would
+        take. Finalises any currently-open clip first, same as the natural
+        active -> idle transition would, so this is safe to call even while
+        genuinely armed and recording -- it just closes the current clip
+        out early rather than discarding anything."""
+        if self._clip_open:
+            self._close_clip()
+        self._motion_state = "idle"
+        self._motion_since_ns = None
+        self._motion_last_above = None
+        self.logger.info("Motion trigger manually reset to idle")
+        return {"result": "success"}
 
     """Motion-gated recording.
 

@@ -897,6 +897,18 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.habitat_motion?.process_width ?? 256}
                 onChange={e => handleChange(["habitat_motion", "process_width"], e)} />
             </div>
+            <div className="config-action-buttons">
+              <button type="button" className="save-button"
+                onClick={() => socket.emit("send_command", { module_id: id, type: "reset_motion_trigger", params: {} })}>
+                Reset trigger to idle
+              </button>
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              A waiting/triggered state otherwise only clears once the score
+              has stayed below threshold for the full inactivity duration
+              above (120s by default) — the same wait a real clip close-out
+              would take. Use this to reset instantly while tuning.
+            </div>
           </>
         )}
 

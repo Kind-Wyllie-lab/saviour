@@ -32,6 +32,7 @@ Author: Andrew SG
 import os
 import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -150,6 +151,7 @@ class HabitatCameraModule(CameraBase):
         # config push from the controller. Same pattern as loom_camera_module's
         # explicit _configure_loom_tracking() call in its own __init__.
         self._configure_habitat_motion()
+        self._recover_orphaned_clips()
 
     def _configure_module_extra(self, updated_keys) -> None:
         # Only rebuild the detector (and reset its hysteresis timer) when a
@@ -339,34 +341,92 @@ class HabitatCameraModule(CameraBase):
         self.logger.info(f"Motion clip opened: {ts_path}")
 
     def _close_clip(self) -> None:
-        """Stop writing the current clip, close its CSV, remux the raw
-        .h264 CircularOutput produces to .ts (matching every other camera
-        type's export format and the tooling that expects it -- e.g.
-        analyse_framesync.py, video_compose.py), and stage it for export.
-        Called on the active -> waiting transition, and from
-        _stop_recording() if disarmed mid-clip."""
+        """Stop writing the current clip, then hand the slow part off to a
+        background thread. Called on the active -> waiting transition
+        (from _process_main_frame, which runs on Picamera2's own
+        pre_callback thread) and from _stop_recording() (the disarm
+        command, on the ZMQ command thread) if disarmed mid-clip -- neither
+        should block on file I/O or the ffmpeg subprocess. camera_base.py's
+        own timestamp-CSV writer already offloads its flush work for
+        exactly this reason ("file I/O never stalls capture" -- see
+        _csv_flush_worker); _close_timestamp_csv()'s up-to-5s thread-join
+        and the remux below both belong on a background thread the same way.
+
+        No extra locking against a fresh _open_clip() racing this cleanup:
+        the hysteresis state machine can't re-enter "active" (and therefore
+        can't call _open_clip() again) until it's spent at least
+        inactivity_min_duration_s (120s default) back in "waiting" first --
+        several orders of magnitude longer than this cleanup should ever take.
+        """
         if not self._clip_open or self._circular_output is None:
             return
         self._circular_output.stop()
         self._circular_output.fileoutput = None
-        self._close_timestamp_csv()
+        self._clip_open = False
 
         h264_path = self._clip_h264_path
         ts_path = self.current_video_segment
-        final_path = ts_path
+        threading.Thread(
+            target=self._finish_clip, args=(h264_path, ts_path),
+            daemon=True, name="habitat-clip-finish",
+        ).start()
+
+    def _finish_clip(self, h264_path: str, ts_path: str) -> None:
+        """Background: close the timestamp CSV, remux .h264 -> .ts, stage
+        for export. See _close_clip()'s docstring for why this runs off
+        the calling thread."""
+        self._close_timestamp_csv()
+        final_path = self._remux_clip_to_ts(h264_path, ts_path)
+        self.facade.stage_file_for_export(final_path)
+        self.logger.info(f"Motion clip closed and staged: {final_path}")
+
+    def _remux_clip_to_ts(self, h264_path: str, ts_path: str) -> str:
+        """Remux the raw .h264 CircularOutput produces into .ts, matching
+        every other camera type's export format and the tooling that
+        expects it (analyse_framesync.py, video_compose.py). -c copy is a
+        repackage, not a re-encode -- no pixels are touched, so this is
+        I/O-bound and fast regardless of clip length. Raw .h264 is not
+        corrupted by an interruption before this step ever runs (no
+        trailing-index format to lose, same reason .ts itself survives
+        interruption where .mp4 doesn't) -- see _recover_orphaned_clips()
+        for the case where this step never got the chance to run at all.
+        Returns the path that actually got produced: ts_path on success,
+        or h264_path itself if the remux failed (stage the raw stream
+        rather than silently lose the clip)."""
         try:
             subprocess.run(
                 ["ffmpeg", "-y", "-i", h264_path, "-c", "copy", "-f", "mpegts", ts_path],
                 check=True, capture_output=True,
             )
             os.remove(h264_path)
+            return ts_path
         except Exception as e:
             self.logger.error(f"Failed to remux motion clip {h264_path} to {ts_path}: {e}")
-            # Stage the raw stream rather than silently lose the clip.
-            final_path = h264_path
+            return h264_path
 
-        self.facade.stage_file_for_export(final_path)
-        self._clip_open = False
+    def _recover_orphaned_clips(self) -> None:
+        """Sweep for .h264 files left over from a clip that never reached
+        _close_clip() -- a crash or power loss mid-recording. Remuxes each
+        to .ts and stages it (plus its timestamp CSV sidecar, if present)
+        for export, so an interrupted clip's footage isn't silently
+        stranded on local disk forever. Run once at startup, before
+        anything else could create a new .h264 to collide with one found
+        here."""
+        folder = self.recording.recording_folder
+        try:
+            orphans = [f for f in os.listdir(folder) if f.endswith(".h264")]
+        except FileNotFoundError:
+            return
+        for name in orphans:
+            h264_path = os.path.join(folder, name)
+            ts_path = h264_path[:-len(".h264")] + ".ts"
+            self.logger.warning(f"Recovering orphaned motion clip: {h264_path}")
+            final_path = self._remux_clip_to_ts(h264_path, ts_path)
+            self.facade.stage_file_for_export(final_path)
+
+            csv_path = h264_path[:-len(".h264")] + "_timestamps.csv"
+            if os.path.exists(csv_path):
+                self.facade.stage_file_for_export(csv_path)
         self.logger.info(f"Motion clip closed and staged: {final_path}")
 
 

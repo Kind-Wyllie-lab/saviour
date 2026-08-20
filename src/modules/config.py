@@ -207,9 +207,22 @@ class Config:
         module config file don't accumulate in active_config.json across
         restarts.  _-prefixed (internal) keys are never pruned — they are
         managed by _merge_internal_defaults.
+
+        "export" is skipped entirely — same exemption as set_all()'s
+        _recursive_update (see its _NEVER_PRUNE_SECTIONS), but this is a
+        genuinely separate pruning path: this one runs once at startup, via
+        load_module_config(), comparing the loaded active_config.json against
+        the static base_config.json/<module>_config.json files. export.*
+        credentials (share_password in particular) are runtime-only, pushed
+        via set_export_config and never present in those static files at all
+        — so without this exemption, every single module restart deleted
+        share_password via this path, independently of and in addition to
+        the set_all() pruning already fixed. Confirmed live: "Pruning stale
+        config key: share_password" logged on every restart, causing Samba
+        export mounts to fail with a wrong (empty) password afterward.
         """
         for key in list(target.keys()):
-            if key.startswith("_"):
+            if key.startswith("_") or key == "export":
                 continue
             if key not in reference:
                 self.logger.info(f"Pruning stale config key: {key}")

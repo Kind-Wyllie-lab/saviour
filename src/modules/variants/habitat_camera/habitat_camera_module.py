@@ -129,7 +129,18 @@ class HabitatCameraModule(CameraBase):
         self._configure_habitat_motion()
 
     def _configure_module_extra(self, updated_keys) -> None:
-        self._configure_habitat_motion()
+        # Only rebuild the detector (and reset its hysteresis timer) when a
+        # habitat_motion.* key actually changed, or on a full reconfigure
+        # (updated_keys is None, e.g. reset_config). configure_module_special()
+        # runs this hook on EVERY config push, including an unrelated bare
+        # camera.sync_mode change from FrameSync reconcile -- which fires on
+        # essentially every reconnect (see CLAUDE.md's reconcile_framesync
+        # note). Rebuilding unconditionally wiped the in-progress armed ->
+        # recording streak before it could ever reach activity_min_duration_s
+        # -- confirmed live: state stuck at ARMED even with a real, varying,
+        # above-threshold score.
+        if updated_keys is None or any(k.startswith("habitat_motion.") for k in updated_keys):
+            self._configure_habitat_motion()
 
     def _configure_habitat_motion(self) -> None:
         # Config.get()'s dotted form falls back to the `_`-prefixed internal

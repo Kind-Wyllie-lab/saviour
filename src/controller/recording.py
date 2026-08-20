@@ -1631,6 +1631,21 @@ class Recording:
                                             f"The following modules are not recording: {', '.join(not_recording)}."
                                         ),
                                     )
+                            # Actively attempt recovery, not just flag the fault -- this is the
+                            # only place that notices a module lost its recording state without
+                            # the module ever having been marked offline (e.g. a service restart
+                            # fast enough to stay under health.py's suspicion_timeout, so the
+                            # offline->online edge that module_back_online() normally hangs off
+                            # of never fires). Confirmed live: a module restarted mid-recording,
+                            # the fault above correctly triggered ("Not recording: <module>"),
+                            # but nothing ever re-sent start_recording -- the session just sat in
+                            # ERROR indefinitely. module_back_online() already has the right
+                            # guards (session.state in ACTIVE/ERROR, skips a redundant resend if
+                            # already confirmed recording) and retries harmlessly on the next
+                            # cycle if this attempt doesn't stick (the module's own
+                            # start_recording is a no-op error, not a crash, if already recording).
+                            for m in not_recording:
+                                self.module_back_online(m)
                         elif session.state == SessionState.ERROR and should_be_recording:
                             # All modules we were actively checking are now recording — recover.
                             # Guard: if should_be_recording is empty (e.g. all states are "unknown"

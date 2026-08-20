@@ -487,6 +487,40 @@ class TestReportModuleFault:
         facade.update_sessions.assert_not_called()
 
 
+class TestRetryFailedExports:
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.retry_failed_exports("nope")
+        assert result["result"] == "error"
+
+    def test_no_failed_exports_returns_error(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            modules=["cam1"], module_export_states={"cam1": "complete"}
+        )
+        result = rec.retry_failed_exports("exp1")
+        assert result["result"] == "error"
+
+    def test_routes_through_enqueue_export_not_send_command_directly(self):
+        """Sending start_export directly (the original implementation) let a
+        retry race a concurrently-dispatched real export to the same module,
+        producing a spurious export_failed for the loser -- confirmed live,
+        see the CLAUDE.md entry for 2026-08-20. Routing through
+        facade.enqueue_export() instead means a retry is subject to
+        export_queue.py's own active/dedup tracking like any other
+        export_ready signal, so it can never double-dispatch."""
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            modules=["cam1", "cam2"],
+            start_time="20260820-101500",
+            module_export_states={"cam1": "failed", "cam2": "complete"},
+        )
+        result = rec.retry_failed_exports("exp1")
+        assert result["result"] == "success"
+        facade.enqueue_export.assert_called_once_with("cam1", "exp1/20260820/cam1")
+        facade.send_command.assert_not_called()
+
+
 class TestModuleBackOnline:
     def test_resumes_recording_for_errored_session(self):
         rec, facade = _make_recording()

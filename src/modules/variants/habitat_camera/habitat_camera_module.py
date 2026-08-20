@@ -427,7 +427,6 @@ class HabitatCameraModule(CameraBase):
             csv_path = h264_path[:-len(".h264")] + "_timestamps.csv"
             if os.path.exists(csv_path):
                 self.facade.stage_file_for_export(csv_path)
-        self.logger.info(f"Motion clip closed and staged: {final_path}")
 
 
 def main():

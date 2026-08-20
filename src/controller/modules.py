@@ -682,16 +682,27 @@ class Modules:
         diffs = []
         for key in set(a) | set(b):
             new_path = f"{path}.{key}" if path else key
-            if key not in a:
-                diffs.append((new_path, None, b[key]))
-            elif key not in b:
-                diffs.append((new_path, a[key], None))
-            else:
-                val_a, val_b = a[key], b[key]
-                if isinstance(val_a, dict) and isinstance(val_b, dict):
-                    diffs.extend(Modules._diff_dicts(val_a, val_b, new_path))
-                elif val_a != val_b:
-                    diffs.append((new_path, val_a, val_b))
+            val_a, val_b = a.get(key), b.get(key)
+            if isinstance(val_a, dict) or isinstance(val_b, dict):
+                # A key missing entirely from one side (e.g. camera.crop_rect,
+                # never included in the frontend's save payload -- it's set
+                # only via the separate crop-editor modal, not the normal
+                # form fields) must not be treated as an automatic mismatch
+                # just because .get() falls back to a bare {} vs the other
+                # side's real dict -- only an actual value difference inside
+                # should count.
+                diffs.extend(Modules._diff_dicts(val_a or {}, val_b or {}, new_path))
+            elif val_a != val_b:
+                # Previously this branch was skipped entirely whenever the key
+                # was absent from either side, so e.g. a[key]=None vs. key
+                # missing from b (both .get() to None) was flagged as a
+                # "mismatch" purely on key presence -- confirmed live: this
+                # made config_sync_status show FAILED after any save that
+                # didn't happen to echo every key the module's full config
+                # has, even though nothing actually differed. Now compares
+                # the resolved values themselves, so a real add/remove (where
+                # the values genuinely differ) is still caught.
+                diffs.append((new_path, val_a, val_b))
         return diffs
 
     @staticmethod

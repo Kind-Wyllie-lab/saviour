@@ -29,6 +29,7 @@ _stop_recording() finalises whatever's open when disarmed.
 Author: Andrew SG
 """
 
+import csv
 import os
 import subprocess
 import sys
@@ -141,6 +142,9 @@ class HabitatCameraModule(CameraBase):
         self._clip_open = False        # whether a clip file is currently being written
         self._clip_h264_path = None    # raw encoder output, remuxed to .ts on close
         self._clip_counter = 0         # per-armed-session clip numbering, for unique filenames
+        self._diag_csv_file = None     # continuous score/state log for the whole armed session --
+        self._diag_csv_writer = None   # independent of clip_open, see _open_diagnostic_csv
+        self._diag_csv_path = None
         # CameraBase.__init__ configures the camera via _configure_camera(),
         # not configure_module_special() -- _configure_module_extra() (and
         # thus the motion detector) otherwise wouldn't exist until the first
@@ -224,6 +228,17 @@ class HabitatCameraModule(CameraBase):
             if self._clip_open:
                 self._close_clip()
 
+        # Independent of whether a clip is open -- the per-clip timestamp CSV
+        # only exists while one is, so without this there's no record at all
+        # of what the score was doing during an idle/waiting stretch, making
+        # it impossible to tell after the fact whether a session that never
+        # triggered saw no real motion, or saw motion that just never crossed
+        # threshold/lasted long enough. See _open_diagnostic_csv().
+        if self._diag_csv_writer is not None:
+            self._diag_csv_writer.writerow(
+                [timing.timestamp_utc, f"{score:.4f}", self._motion_state, self._clip_open]
+            )
+
         return {
             "motion_score": f"{score:.4f}",
             "motion_state": self._motion_state,
@@ -296,6 +311,7 @@ class HabitatCameraModule(CameraBase):
         self.recording_start_time = time.time()
         self._clip_open = False
         self._clip_counter = 0
+        self._open_diagnostic_csv()
         return True
 
     def _start_next_recording_segment(self) -> bool:
@@ -318,10 +334,41 @@ class HabitatCameraModule(CameraBase):
                 self._close_clip()
             self.picam2.stop_encoder(self.main_encoder)
             self._circular_output = None
+            self._close_diagnostic_csv()
             return True
         except Exception as e:
             self.logger.error(f"Error stopping habitat_camera recording: {e}")
             return False
+
+    def _open_diagnostic_csv(self) -> None:
+        """Continuous per-frame motion_score/motion_state/clip_open log for
+        the whole armed session, regardless of whether a clip is open --
+        separate from the per-clip _timestamps.csv (which is meant to stay
+        aligned 1:1 with an actual clip's video frames; mixing in idle-period
+        rows with no corresponding footage would break that). Not buffered
+        via a background thread like the main timestamp CSV -- plain
+        buffered file writes are cheap enough for one row per frame, and
+        losing whatever's still in the OS write buffer if the process
+        crashes mid-session is an acceptable loss for a diagnostic file."""
+        path = f"{self.facade.get_filename_prefix()}_motion_diagnostic.csv"
+        self._diag_csv_file = open(path, "w", newline="", buffering=1 << 16)
+        self._diag_csv_writer = csv.writer(self._diag_csv_file)
+        self._diag_csv_writer.writerow(
+            ["timestamp_utc", "motion_score", "motion_state", "clip_open"]
+        )
+        self._diag_csv_path = path
+        self.facade.add_session_file(path)
+
+    def _close_diagnostic_csv(self) -> None:
+        if self._diag_csv_file is None:
+            return
+        self._diag_csv_file.flush()
+        self._diag_csv_file.close()
+        self._diag_csv_file = None
+        self._diag_csv_writer = None
+        if self._diag_csv_path:
+            self.facade.stage_file_for_export(self._diag_csv_path)
+            self._diag_csv_path = None
 
     def _get_clip_filename(self) -> str:
         """Unique-per-clip filename, session-scoped like every other camera

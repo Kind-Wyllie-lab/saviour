@@ -120,6 +120,12 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns: int | None = None   # start of current above/below streak
         self._motion_last_above: bool | None = None
         self._motion_last_score = 0.0
+        # CameraBase.__init__ configures the camera via _configure_camera(),
+        # not configure_module_special() -- _configure_module_extra() (and
+        # thus the motion detector) otherwise wouldn't exist until the first
+        # config push from the controller. Same pattern as loom_camera_module's
+        # explicit _configure_loom_tracking() call in its own __init__.
+        self._configure_habitat_motion()
 
     def _configure_module_extra(self, updated_keys) -> None:
         self._configure_habitat_motion()

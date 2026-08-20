@@ -58,6 +58,10 @@ class ModuleFacade:
         return self.module.export.exported_folder
 
 
+    def summarize_recording_state(self, session_name: str = None) -> dict:
+        return self.module.export.summarize_recording_state(session_name)
+
+
     def get_recording_status(self) -> bool:
         return self.module.recording.is_recording
 

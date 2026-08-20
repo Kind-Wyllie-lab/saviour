@@ -404,8 +404,11 @@ class TestAddModuleToSession:
         session = rec.sessions["exp1"]
         assert "cam2" in session.modules
         assert session.module_stop_states["cam2"] == "recording"
-        facade.send_command.assert_called_once_with(
+        facade.send_command.assert_any_call(
             "cam2", "start_recording", {"duration": 0, "session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam2", "report_recording_state", {"session_name": "exp1"}
         )
         facade.update_sessions.assert_called_once_with(rec.sessions)
 
@@ -487,6 +490,72 @@ class TestReportModuleFault:
         facade.update_sessions.assert_not_called()
 
 
+class TestPollRecordingState:
+    """_poll_recording_state() -- the periodic (5-min) step that asks every
+    module in every non-STOPPED session to report its local
+    pending/to_export/exported summary, giving the Recordings page live
+    visibility into a session that's still running."""
+
+    def test_sends_report_recording_state_to_every_module_in_active_session(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1", "cam2"]
+        )
+        rec._poll_recording_state()
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam2", "report_recording_state", {"session_name": "exp1"}
+        )
+
+    def test_scheduled_session_also_polled(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.SCHEDULED, modules=["cam1"]
+        )
+        rec._poll_recording_state()
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
+        )
+
+    def test_stopped_session_not_polled(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED, modules=["cam1"]
+        )
+        rec._poll_recording_state()
+        facade.send_command.assert_not_called()
+
+    def test_send_command_exception_for_one_module_does_not_block_others(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1", "cam2"]
+        )
+        facade.send_command.side_effect = [Exception("boom"), None]
+        rec._poll_recording_state()  # must not raise
+        assert facade.send_command.call_count == 2
+
+
+class TestRequestRecordingStateRefresh:
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.request_recording_state_refresh("nope")
+        assert result["result"] == "error"
+
+    def test_sends_report_recording_state_to_every_member_module(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(modules=["cam1", "cam2"])
+        result = rec.request_recording_state_refresh("exp1")
+        assert result["result"] == "success"
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam2", "report_recording_state", {"session_name": "exp1"}
+        )
+
+
 class TestModuleBackOnline:
     def test_resumes_recording_for_errored_session(self):
         rec, facade = _make_recording()
@@ -502,8 +571,11 @@ class TestModuleBackOnline:
         session = rec.sessions["exp1"]
         assert session.state == SessionState.ACTIVE
         assert session.module_stop_states["cam1"] == "recording"
-        facade.send_command.assert_called_once_with(
+        facade.send_command.assert_any_call(
             "cam1", "start_recording", {"duration": 0, "session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
         )
 
     def test_already_tracking_module_is_a_no_op(self):

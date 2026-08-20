@@ -1279,6 +1279,18 @@ class Module(ABC):
         return files
 
 
+    @command()
+    def report_recording_state(self, session_name: str = None) -> dict:
+        """Remotely-callable summary of this module's local recording
+        pipeline state (pending/to_export/exported), grouped by session and
+        reduced to counts/sizes/timestamps -- never raw filenames. Polled by
+        the controller so the Recordings page can show something meaningful
+        for a session that's still running, including habitat's 16-module,
+        weeks-long deployments where "wait until stopped" isn't workable.
+        """
+        return self.facade.summarize_recording_state(session_name)
+
+
 
     """Helper functions"""
     def generate_module_id(self, module_type: str) -> str:

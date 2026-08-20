@@ -374,6 +374,13 @@ class Recording:
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
         for module_id in modules:
             self.facade.send_command(module_id, "start_recording", params)
+            # Immediate first read rather than waiting on the next 5-min
+            # _poll_recording_state() cycle -- matters most for short
+            # sessions (e.g. a 12-min loom run) where 5 min is a large
+            # fraction of the whole session.
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
@@ -710,6 +717,23 @@ class Recording:
         return {"result": "success"}
 
 
+    def request_recording_state_refresh(self, session_name: str) -> dict:
+        """On-demand refresh of every member module's local recording-pipeline
+        summary (pending/to_export/exported) for a session, rather than
+        waiting for the next periodic poll in _monitor_sessions(). The
+        module_recording_state_update broadcasts arrive independently as
+        each module's cmd_ack comes back -- fire-and-forget here, same as
+        every other send_command call."""
+        if session_name not in self.sessions:
+            return {"result": "error", "error": "Session not found"}
+        session = self.sessions[session_name]
+        for module_id in session.modules:
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
+        return {"result": "success"}
+
+
     # -----------------------------------------------------------------------
     # Getters
     # -----------------------------------------------------------------------
@@ -782,6 +806,9 @@ class Recording:
 
         params = {"duration": 0, "session_name": session_name}
         self.facade.send_command(module_id, "start_recording", params)
+        self.facade.send_command(
+            module_id, "report_recording_state", {"session_name": session_name}
+        )
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Module {module_id} added to session '{session_name}'")
@@ -934,6 +961,9 @@ class Recording:
             self.facade.notify_module_recording(module_id)
             params = {"duration": 0, "session_name": session_name}
             self.facade.send_command(module_id, "start_recording", params)
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
             with self._lock:
                 session.module_stop_states[module_id] = "recording"
                 if session.state == SessionState.ERROR:
@@ -1277,6 +1307,9 @@ class Recording:
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
         for module_id in session.modules:
             self.facade.send_command(module_id, "start_recording", params)
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Scheduled session '{session_name}' started for {today}")
@@ -1487,6 +1520,27 @@ class Recording:
             self._save_sessions()
 
 
+    def _poll_recording_state(self) -> None:
+        """Ask every module in every non-STOPPED session to report its local
+        recording-pipeline summary (pending/to_export/exported). Fire-and-
+        forget, same as the other periodic checks in this block -- each
+        module's cmd_ack arrives independently and is pushed to the frontend
+        via web.broadcast_recording_state_update() (see controller.py's
+        'report_recording_state' cmd_ack branch). This is what gives the
+        Recordings page live visibility into a session that's still running,
+        rather than only after it stops."""
+        for session_name, session in list(self.sessions.items()):
+            if session.state == SessionState.STOPPED:
+                continue
+            for module_id in session.modules:
+                try:
+                    self.facade.send_command(
+                        module_id, "report_recording_state", {"session_name": session_name}
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Could not poll recording state for {module_id}: {e}")
+
+
     def _check_session_gaps(self, today: str) -> None:
         """Alert if a scheduled session missed its previous run.
 
@@ -1581,6 +1635,7 @@ class Recording:
                 self._check_nas_space_periodic()
                 self._check_export_staleness()
                 self._check_export_stall_after_stop()
+                self._poll_recording_state()
 
             # ── Daily gap detection (once per calendar day) ───────────────────
             if self._gap_check_date != today:

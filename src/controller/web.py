@@ -778,6 +778,16 @@ class Web(ABC):
             if "error" in result:
                 self.socketio.emit("session_error", result)
 
+        @self.socketio.on("request_recording_state_refresh")
+        def handle_request_recording_state_refresh(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = (data or {}).get("session_name")
+            self.logger.info(f"On-demand recording-state refresh requested for session '{session_name}'")
+            result = self.facade.request_recording_state_refresh(session_name)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
         @self.socketio.on("clear_ended_sessions")
         def handle_clear_ended_sessions(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):
@@ -1859,6 +1869,20 @@ class Web(ABC):
         """Push current module health to all connected frontend clients."""
         self.socketio.emit('module_health_update', {
             'module_health': self.facade.get_module_health()
+        })
+
+
+    def broadcast_recording_state_update(self, module_id: str, status_data: dict):
+        """Push a module's latest local recording-pipeline summary (pending/
+        to_export/exported) to the frontend as it arrives. See
+        Modules.update_recording_state() for why only the folder-summary
+        keys are kept, not the raw cmd_ack envelope."""
+        summary = {
+            k: v for k, v in status_data.items() if k in ("pending", "to_export", "exported")
+        }
+        self.socketio.emit('module_recording_state_update', {
+            'module_id': module_id,
+            'summary': summary,
         })
 
 

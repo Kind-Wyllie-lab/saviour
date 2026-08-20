@@ -257,6 +257,10 @@ class Controller(ABC):
                     elif command == 'get_diagnostics':
                         self.web.handle_diagnostics_ack(module_id, status_data)
 
+                    elif command == 'report_recording_state':
+                        self.modules.update_recording_state(module_id, status_data)
+                        self.web.broadcast_recording_state_update(module_id, status_data)
+
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')
                     if error == "Already recording":

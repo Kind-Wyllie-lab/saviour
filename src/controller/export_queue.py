@@ -72,12 +72,23 @@ class ExportQueue:
     # Public API
     # -----------------------------------------------------------------------
 
-    def enqueue(self, module_id: str, export_path: str) -> None:
+    def enqueue(self, module_id: str, export_path: str) -> bool:
         """Add a module to the export queue and dispatch if capacity allows.
 
         Deduplicates: if the module is already queued or actively exporting,
         the signal is dropped — export_staged picks up ALL files in to_export/
         so a single dispatch handles every pending segment.
+
+        Returns True if this signal actually queued a new attempt, False if
+        it was dropped as a duplicate. Callers (facade.enqueue_export) use
+        this to decide whether to count a new "pending" export — counting
+        every signal regardless of dedup meant a module producing several
+        export_ready signals close together (e.g. habitat_camera closing
+        multiple clips) inflated pending_exports on every duplicate signal,
+        with no matching decrement ever coming for the ones that got
+        dropped here rather than actually dispatched. Confirmed live: a
+        session's pending_exports count got permanently stuck above zero
+        despite every file genuinely reaching the share.
         """
         with self._lock:
             if module_id in self._active:
@@ -97,14 +108,14 @@ class ExportQueue:
                         self.logger.debug(
                             f"Export already active for {module_id} — ignoring duplicate signal"
                         )
-                        return
+                        return False
                 else:
-                    return
+                    return False
             if any(mid == module_id for mid, _, _ in self._queue):
                 self.logger.debug(
                     f"Export already queued for {module_id} — ignoring duplicate signal"
                 )
-                return
+                return False
             self._queue.append((module_id, export_path, 1))
             self.logger.info(
                 f"Export queued for {module_id} → {export_path}. "
@@ -112,6 +123,7 @@ class ExportQueue:
             )
             self._dispatch_next()
             self._save()
+            return True
 
     def on_export_complete(self, module_id: str) -> None:
         """Call when a module reports export_complete."""

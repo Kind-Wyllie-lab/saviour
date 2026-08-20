@@ -16,6 +16,39 @@ def test_facade():
 
 
 # ---------------------------------------------------------------------------
+# enqueue_export
+# ---------------------------------------------------------------------------
+
+class TestEnqueueExport:
+    def test_pending_only_counted_when_queue_actually_accepts(self):
+        """export_queue.enqueue() drops duplicate export_ready signals for a
+        module already queued/active. Counting pending on every signal
+        regardless of that meant pending_exports drifted upward forever for
+        the dropped ones -- no complete/failed ever arrives to bring it back
+        down. A module producing several export_ready signals close
+        together (e.g. habitat_camera closing multiple clips) hit this on
+        real hardware."""
+        controller = MagicMock()
+        facade = ControllerFacade(controller)
+        controller.export_queue.enqueue.return_value = True
+
+        facade.enqueue_export("mod_a", "session/2026/mod_a")
+
+        controller.recording.module_export_update.assert_called_once_with(
+            "mod_a", "session/2026/mod_a", "pending"
+        )
+
+    def test_pending_not_counted_when_queue_drops_as_duplicate(self):
+        controller = MagicMock()
+        facade = ControllerFacade(controller)
+        controller.export_queue.enqueue.return_value = False
+
+        facade.enqueue_export("mod_a", "session/2026/mod_a")
+
+        controller.recording.module_export_update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # reconcile_framesync
 # ---------------------------------------------------------------------------
 

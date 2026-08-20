@@ -326,8 +326,14 @@ class ControllerFacade:
     """Events"""
     """Export Queue"""
     def enqueue_export(self, module_id: str, export_path: str) -> None:
-        self.controller.recording.module_export_update(module_id, export_path, "pending")
-        self.controller.export_queue.enqueue(module_id, export_path)
+        # export_queue.enqueue() drops export_ready signals for a module that
+        # is already queued/active as duplicates -- only count "pending" for
+        # a signal it actually accepted, or pending_exports drifts upward
+        # forever on the dropped ones (a module producing several export_ready
+        # signals close together, e.g. habitat_camera closing multiple clips,
+        # never gets a matching complete/failed for the duplicates).
+        if self.controller.export_queue.enqueue(module_id, export_path):
+            self.controller.recording.module_export_update(module_id, export_path, "pending")
 
     def export_complete(self, module_id: str, export_path: str = "") -> None:
         self.controller.export_queue.on_export_complete(module_id)

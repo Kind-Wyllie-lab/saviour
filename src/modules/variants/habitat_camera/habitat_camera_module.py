@@ -265,10 +265,20 @@ class HabitatCameraModule(CameraBase):
                 remaining_s = max(0.0, self._motion_inactivity_min_duration_s - elapsed_s)
                 mins, secs = divmod(int(remaining_s), 60)
                 label = f"{label} - closing in {mins:02d}:{secs:02d}"
-        cv2.circle(m.array, (24, 24), 10, color, -1, cv2.LINE_AA)
+        # Bottom-left corner: top-center is the timestamp (up to 72% of frame
+        # width, see _apply_timestamp), top-right is the FPS overlay (see
+        # _apply_framerate's own comment on the same collision) -- with the
+        # countdown appended above, this label is long enough to run straight
+        # into the timestamp if left at the top. Smaller and thinner than
+        # before too, matching the FPS overlay's existing precedent for a
+        # secondary diagnostic overlay.
+        height = m.array.shape[0]
+        circle_y = height - 20
+        text_y = height - 12
+        cv2.circle(m.array, (18, circle_y), 6, color, -1, cv2.LINE_AA)
         cv2.putText(
-            m.array, f"{label}  {self._motion_last_score:.3f}", (42, 32),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA,
+            m.array, f"{label}  {self._motion_last_score:.3f}", (30, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA,
         )
 
     @command()

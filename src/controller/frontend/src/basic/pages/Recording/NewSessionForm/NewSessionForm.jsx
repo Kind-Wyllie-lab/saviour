@@ -274,33 +274,34 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget }) {
         {nameAlreadyUsed && (
           <p className="form-warning">Session name already used - previous recordings exist with this name. Consider updating the trial or rat ID.</p>
         )}
-        {recordingMode !== "scheduled" && !canStart && anyTargetRecording && (
+        {!canStart && anyTargetRecording && (
           <p className="form-warning">One or more target modules are already recording.</p>
         )}
-        {recordingMode !== "scheduled" && !canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
+        {!canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
           <p className="form-warning">Not all target modules are ready.</p>
         )}
         {!timedDurationValid && (
           <p className="form-warning">Enter a duration greater than 0.</p>
         )}
-        {recordingMode !== "scheduled" && ptpSyncStatus !== null && !ptpSyncStatus.ok && (
+        {ptpSyncStatus !== null && !ptpSyncStatus.ok && (
           <p className="form-warning">
             PTP not synchronised -{" "}
             {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
           </p>
         )}
-        {recordingMode !== "scheduled" && ptpSyncStatus?.ok && (
+        {ptpSyncStatus?.ok && (
           <p className="form-ok">
             PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
           </p>
         )}
 
         <div className="button-row">
-          {recordingMode !== "scheduled" && (
-            <button type="button" className="secondary-button" onClick={checkReady}>
-              Check Ready
-            </button>
-          )}
+          {/* Useful regardless of mode -- a scheduled session still benefits
+              from confirming modules are ready right now, even though the
+              actual start is deferred to the scheduled window. */}
+          <button type="button" className="secondary-button" onClick={checkReady}>
+            Check Ready
+          </button>
           <button type="submit" className="primary-button" disabled={recordingMode === "scheduled" ? !canSchedule : !canStart}>
             {recordingMode === "scheduled" ? "Schedule Session" : "Start Recording"}
           </button>

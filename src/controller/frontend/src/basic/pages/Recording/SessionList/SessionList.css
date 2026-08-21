@@ -42,27 +42,36 @@
   filter: brightness(1.08);
 }
 
+/* Bottom-of-list action, not header furniture -- a bulk destructive action
+   (clears every ended session) belongs weighted as such, separate from
+   the header's "+ New Session"/count. */
 .session-list__clear-all-btn {
-  font-size: 0.78rem;
-  padding: 3px 10px;
-  border: 1px solid var(--border-color);
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid color-mix(in srgb, #c62828 50%, var(--border-color));
   border-radius: 4px;
   background: transparent;
-  color: var(--text-color);
+  color: color-mix(in srgb, #c62828 75%, var(--text-color));
   cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .session-list__clear-all-btn:hover {
-  opacity: 1;
+  background: #c62828;
+  border-color: #c62828;
+  color: white;
 }
 
 .session-list__clear-all-confirm {
-  margin-left: auto;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  margin-top: 12px;
   font-size: 0.82rem;
 }
 

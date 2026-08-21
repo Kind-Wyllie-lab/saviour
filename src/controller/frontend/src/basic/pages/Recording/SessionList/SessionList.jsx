@@ -65,24 +65,6 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
         )}
       </div>
 
-      {endedSessions.length > 0 && (
-        pendingClearAll ? (
-          <span className="session-list__clear-all-confirm">
-            Clear {endedSessions.length} ended session{endedSessions.length !== 1 ? "s" : ""}?
-            <button type="button" className="session-btn session-btn--delete-confirm" onClick={handleClearAllConfirm}>Yes</button>
-            <button type="button" className="session-btn session-btn--cancel" onClick={() => setPendingClearAll(false)}>No</button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="session-list__clear-all-btn"
-            onClick={() => setPendingClearAll(true)}
-          >
-            Clear all ended
-          </button>
-        )
-      )}
-
       {clearAllWarning && (
         <div className="session-list__export-warning">
           <span>
@@ -199,6 +181,24 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
             </div>
           );
         })
+      )}
+
+      {endedSessions.length > 0 && (
+        pendingClearAll ? (
+          <span className="session-list__clear-all-confirm">
+            Clear {endedSessions.length} ended session{endedSessions.length !== 1 ? "s" : ""}?
+            <button type="button" className="session-btn session-btn--delete-confirm" onClick={handleClearAllConfirm}>Yes</button>
+            <button type="button" className="session-btn session-btn--cancel" onClick={() => setPendingClearAll(false)}>No</button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="session-list__clear-all-btn"
+            onClick={() => setPendingClearAll(true)}
+          >
+            Clear all ended
+          </button>
+        )
       )}
     </div>
   );

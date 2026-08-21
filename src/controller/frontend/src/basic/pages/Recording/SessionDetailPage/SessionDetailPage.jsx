@@ -77,9 +77,12 @@ export default function SessionDetailPage() {
   const [shareInfo, setShareInfo] = useState(null);
   const [pendingForceDelete, setPendingForceDelete] = useState(false);
   const [deleteWarning, setDeleteWarning] = useState(null);
-  const [sessionLog, setSessionLog] = useState(undefined); // undefined | "loading" | { lines, total, truncated }
+  // Both default to open (see the auto-fetch effects below) -- there's
+  // room for this content on the detail page, unlike the old
+  // inline-expanding card, so there's no reason to hide it by default.
+  const [sessionLog, setSessionLog] = useState("loading"); // undefined | "loading" | { lines, total, truncated }
   const [fileInfo, setFileInfo] = useState(null); // null | "loading" | { files, total_bytes }
-  const [fileListOpen, setFileListOpen] = useState(false);
+  const [fileListOpen, setFileListOpen] = useState(true);
   const [shareNoticeOpen, setShareNoticeOpen] = useState(false);
   const [moduleRecordingStates, setModuleRecordingStates] = useState({}); // module_id → { summary, last_reported }
   const [forceStartError, setForceStartError] = useState(null);
@@ -144,6 +147,15 @@ export default function SessionDetailPage() {
   useEffect(() => {
     setFileInfo("loading");
     socket.emit("get_session_file_info", { session_name: sessionName });
+  }, [sessionName]);
+
+  // Files and events both default to visible on the detail page -- there's
+  // room for them here, unlike the old inline-expanding list card, so
+  // there's no reason to hide them behind an extra click by default. The
+  // toggles below still let an operator collapse either one if they want.
+  useEffect(() => {
+    setSessionLog("loading");
+    socket.emit("get_session_log", { session_name: sessionName });
   }, [sessionName]);
 
   if (!session) {

@@ -166,6 +166,23 @@ class TestServeReactApp:
             finally:
                 resp.close()
 
+    def test_multi_segment_client_route_falls_back_to_index_html(self):
+        """Regression test for a live bug report: refreshing/deep-linking a
+        multi-segment client-side route (e.g. /recording/sessions/<name>)
+        404'd. Flask's own auto-registered static route already matches
+        multi-segment paths (it uses the <path:...> converter), and used to
+        shadow this app's catch-all entirely for any 2+-segment URL since
+        the catch-all only matched a single segment -- fixed by disabling
+        Flask's auto static route (static_folder=None) so this app's own
+        serve() is the only route handling anything under '/'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resp = self._client_with_static(tmpdir).get("/recording/sessions/Crumb-141343")
+            try:
+                assert resp.status_code == 200
+                assert b"spa shell" in resp.data
+            finally:
+                resp.close()
+
 
 class TestDownloadSessionFile:
     def _client_with_session(self, tmpdir):

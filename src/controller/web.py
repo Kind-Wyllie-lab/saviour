@@ -99,8 +99,20 @@ class Web(ABC):
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
 
-        # Flask setup
-        self.app = Flask(__name__, static_folder="frontend/dist", static_url_path="/")
+        # Flask setup. static_folder=None here deliberately disables Flask's
+        # own auto-registered '/<path:filename>' static route -- it and our
+        # own catch-all serve() route below (also path-based, so a deep
+        # client-side route like /recording/sessions/<name> matches it) tie
+        # on routing weight, and Werkzeug resolves ties by registration
+        # order, so Flask's rule (registered first, during this
+        # constructor) always won and shadowed serve()'s index.html
+        # fallback entirely -- a nonexistent static path 404'd outright
+        # instead of falling through to the SPA shell. static_folder is
+        # still set as a plain attribute right after construction so
+        # serve() below (self.app.static_folder) keeps working exactly as
+        # it already assumed.
+        self.app = Flask(__name__, static_folder=None)
+        self.app.static_folder = "frontend/dist"
         self.socketio = SocketIO(self.app, host="0.0.0.0", cors_allowed_origins="*", async_mode='threading')
 
         # Default experiment metadata
@@ -400,9 +412,13 @@ class Web(ABC):
 
 
     def _register_routes(self):
-        # Serve React app
+        # Serve React app. Must use the <path:path> converter (matches
+        # slashes), not <path> (single segment only) -- otherwise a direct
+        # load/refresh on a multi-segment client-side route (e.g.
+        # /recording/sessions/<name>) 404s instead of falling through to
+        # index.html for react-router to handle.
         @self.app.route("/", defaults={"path": ""})
-        @self.app.route("/<path>")
+        @self.app.route("/<path:path>")
         def serve(path):
             self.logger.info(f"Received request to access {path}")
             static_folder = self.app.static_folder

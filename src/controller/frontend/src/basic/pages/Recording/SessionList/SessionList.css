@@ -599,13 +599,41 @@
   gap: 6px;
 }
 
-.session-file-list {
+.session-file-tree {
   border: 1px solid var(--border-color, #ddd);
   border-radius: 4px;
   max-height: 260px;
   overflow-y: auto;
   font-size: 0.78rem;
   font-family: monospace;
+}
+
+.session-file-tree__folder > .session-file-tree__level {
+  padding-left: 14px;
+}
+
+.session-file-tree__folder {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color, #ddd) 50%, transparent);
+}
+
+.session-file-tree__level > .session-file-tree__folder:last-child {
+  border-bottom: none;
+}
+
+.session-file-tree__summary {
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+}
+
+.session-file-tree__summary:hover {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+.session-file-tree__count {
+  font-weight: 400;
+  color: var(--text-muted, #888);
 }
 
 .session-file-row {

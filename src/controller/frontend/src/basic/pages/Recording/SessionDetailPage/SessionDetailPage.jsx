@@ -8,6 +8,7 @@ import {
   formatScheduledDays, levelClass, DOWNLOAD_ALL_MAX_BYTES,
 } from "../sessionFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
+import FileTree from "./FileTree";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -554,19 +555,7 @@ export default function SessionDetailPage() {
                   {fileListOpen ? "▲ Hide files" : `▼ Browse files (${fileInfo.files.length})`}
                 </button>
                 {fileListOpen && (
-                  <div className="session-file-list">
-                    {fileInfo.files.map((file) => {
-                      const encodedPath = file.path.split("/").map(encodeURIComponent).join("/");
-                      const url = `/api/sessions/${session.session_name}/download/${encodedPath}`;
-                      return (
-                        <div key={file.path} className="session-file-row">
-                          <span className="session-file-name" title={file.path}>{file.path}</span>
-                          <span className="session-file-size">{formatBytes(file.size_bytes)}</span>
-                          <a className="session-file-dl" href={url} download={file.name}>Download</a>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <FileTree files={fileInfo.files} sessionName={session.session_name} />
                 )}
               </div>
             );

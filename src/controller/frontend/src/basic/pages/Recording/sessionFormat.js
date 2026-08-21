@@ -57,3 +57,17 @@ export function formatTarget(target) {
   const spaced = target.replace(/_/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
+
+// The three ways a session can be started, distinguished the same way
+// create_session()/create_scheduled_session() distinguish them on the
+// backend: session.scheduled (a daily time-window session, set once at
+// creation and never cleared even while its state cycles
+// scheduled<->active over the day) beats duration_minutes (set only for
+// a timed auto-stop session) beats neither (a plain manual start/stop
+// session) -- also stable for the life of the session, same reasoning as
+// formatTarget above.
+export function formatRecordingMode(session) {
+  if (session.scheduled) return "Scheduled";
+  if (session.duration_minutes) return "Timed";
+  return "Manual";
+}

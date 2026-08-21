@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import socket from "/src/socket";
-import { formatFaultTime, formatScheduledDays, formatTarget } from "../sessionFormat";
+import { formatFaultTime, formatScheduledDays, formatTarget, formatRecordingMode } from "../sessionFormat";
 import { Countdown, Elapsed } from "../sessionFormatComponents";
 import "./SessionList.css";
 
@@ -168,7 +168,9 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                     {isError     && <span className="session-state-label session-state-label--error">Error</span>}
                   </div>
 
-                  <div className="session-row__type">{formatTarget(session.target)}</div>
+                  <div className="session-row__type">
+                    {formatTarget(session.target)} · {formatRecordingMode(session)}
+                  </div>
 
                   <div className="session-row__summary">
                     {isPending && <span>Not started yet</span>}

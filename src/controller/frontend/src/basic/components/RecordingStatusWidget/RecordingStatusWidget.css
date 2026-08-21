@@ -99,6 +99,22 @@
 
 .rsw-countdown {
   opacity: 0.7;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Distinct from the routine "time left" look once a timed recording is
+   about to actually stop, not just a smaller number in the same muted
+   style -- this is the thing the banner should make hard to miss. */
+.rsw-countdown--soon {
+  opacity: 1;
+  color: #c62828;
+  animation: rsw-countdown-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rsw-countdown-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
 }
 
 .rsw-divider {

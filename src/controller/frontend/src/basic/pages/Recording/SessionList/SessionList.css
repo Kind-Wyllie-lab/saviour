@@ -76,6 +76,7 @@
   margin-bottom: 10px;
   background: var(--card-bg-color);
   transition: box-shadow 0.15s ease;
+  cursor: pointer;
 }
 
 .session:last-child {
@@ -84,6 +85,11 @@
 
 .session:hover {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
+}
+
+.session:focus-visible {
+  outline: 2px solid var(--accent-color, #4a90d9);
+  outline-offset: 1px;
 }
 
 .session.starting {
@@ -159,6 +165,60 @@
 .session-expand-toggle {
   font-size: 0.75rem;
   user-select: none;
+}
+
+/* ── Compact row layout (list view) ──────────────────────────────────────
+   Everything richer (files, share notice, events, module status, and the
+   Delete/Retry Export/Add Module actions) lives on SessionDetailPage now,
+   which reuses the session-meta-grid/session-share-notice/etc. rules
+   further down this file rather than duplicating them. */
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.session-row__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.session-row__summary {
+  flex-shrink: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-row__error-text {
+  color: #c62828;
+}
+
+.session-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .session-row {
+    flex-wrap: wrap;
+  }
+
+  .session-row__summary {
+    max-width: none;
+    order: 3;
+    flex-basis: 100%;
+  }
 }
 
 /* ── Status dots ──────────────────────────────────────────────────────── */

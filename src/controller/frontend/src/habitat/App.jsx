@@ -58,7 +58,7 @@ function App() {
           <Route path="/" element={<HabitatDashboard />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/monitor" element={<Monitor />} />
-          <Route path="/recording" element={<Recording />} />
+          <Route path="/recording/*" element={<Recording />} />
           <Route path="/system" element={<System />} />
           <Route path="/guide" element={<Guide />} />
         </Routes>

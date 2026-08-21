@@ -28,7 +28,7 @@ function App() {
       <div className="content">
         <Routes>
           <Route path="/" element={<APADashboard />} />
-          <Route path="/recording" element={<Recording />} />
+          <Route path="/recording/*" element={<Recording />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/system" element={<System />} />
           <Route path="/debug" element={<Debug />} />

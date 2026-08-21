@@ -6,6 +6,7 @@ import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import usePersistedState from "/src/hooks/usePersistedState";
 import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
+import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
@@ -13,8 +14,7 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
 
-function NewSessionForm({ modules, sessionList = {} }) {
-  const [target, setTarget] = usePersistedState("saviour_session_form_target", "all");
+function NewSessionForm({ modules, sessionList = {}, target, setTarget }) {
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -72,25 +72,16 @@ function NewSessionForm({ modules, sessionList = {} }) {
   );
 
   // Derive groups from module list
-  const groups = useMemo(() => {
-    const map = {};
-    modules.forEach((m) => {
-      if (m.group) {
-        map[m.group] = [...(map[m.group] ?? []), m];
-      }
-    });
-    return map;
-  }, [modules]);
+  const groups = useMemo(() => groupModulesByGroup(modules), [modules]);
 
   const hasGroups = Object.keys(groups).length > 0;
 
-  const targetModules = useMemo(() => {
-    if (target === "all")    return modules;
-    if (target in groups)   return groups[target];
-    return modules.filter((m) => m.id === target);
-  }, [target, modules, groups]);
+  const targetModules = useMemo(
+    () => resolveTargetModules(modules, target, groups),
+    [target, modules, groups]
+  );
 
-  const allTargetReady     = targetModules.length > 0 && targetModules.every((m) => m.status === "READY");
+  const allTargetReady     = targetModules.length > 0 && targetModules.every(isModuleReady);
   const anyTargetRecording = targetModules.some((m) => m.status === "RECORDING");
 
   const totalDurationMins = parseInt(durationHours || 0) * 60 + parseInt(durationMinutes || 0);

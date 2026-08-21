@@ -651,6 +651,42 @@ class Web(ABC):
                 "total_bytes": total,
             })
 
+        def _stream_zip_response(dir_path: str, zip_filename: str):
+            """Stream a ZIP of every file under dir_path (built incrementally
+            in a background thread via _QueueStream, not buffered in memory
+            or on disk first) as a Flask response. Shared by the whole-
+            session zip and the per-folder zip below -- same shape, only the
+            root directory and the download filename differ."""
+            q = _queue.SimpleQueue()
+
+            def _build():
+                try:
+                    with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
+                        for root, dirs, filenames in os.walk(dir_path):
+                            dirs.sort()
+                            for fn in sorted(filenames):
+                                full = os.path.join(root, fn)
+                                zf.write(full, os.path.relpath(full, dir_path))
+                except Exception as e:
+                    self.logger.error(f"ZIP stream error for '{dir_path}': {e}")
+                finally:
+                    q.put(None)
+
+            threading.Thread(target=_build, daemon=True).start()
+
+            def _generate():
+                while (chunk := q.get()) is not None:
+                    yield chunk
+
+            return self.app.response_class(
+                _generate(),
+                mimetype="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{zip_filename}"',
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         @self.app.route("/api/sessions/<session_name>/download/<path:filename>")
         def download_session_file(session_name, filename):
             import re
@@ -663,6 +699,15 @@ class Web(ABC):
             safe_path = os.path.realpath(os.path.join(session_dir, filename))
             if not safe_path.startswith(session_dir + os.sep):
                 return "Forbidden", 403
+            if os.path.isdir(safe_path):
+                # A folder in the file-tree browser (e.g. a date or module
+                # folder) -- zip that subtree rather than 404ing. Named
+                # session-folder.zip (not just folder.zip) since multiple
+                # sessions can have same-named module subfolders and the
+                # browser would otherwise show several indistinguishable
+                # download filenames.
+                zip_name = f"{session_name}-{'-'.join(filename.rstrip('/').split('/'))}.zip"
+                return _stream_zip_response(safe_path, zip_name)
             if not os.path.isfile(safe_path):
                 return "Not found", 404
             return send_file(safe_path, as_attachment=True, download_name=os.path.basename(safe_path))
@@ -678,36 +723,7 @@ class Web(ABC):
                 return "Forbidden", 403
             if not os.path.isdir(session_dir):
                 return "Not found", 404
-
-            q = _queue.SimpleQueue()
-
-            def _build():
-                try:
-                    with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
-                        for root, dirs, filenames in os.walk(session_dir):
-                            dirs.sort()
-                            for fn in sorted(filenames):
-                                full = os.path.join(root, fn)
-                                zf.write(full, os.path.relpath(full, session_dir))
-                except Exception as e:
-                    self.logger.error(f"ZIP stream error for '{session_name}': {e}")
-                finally:
-                    q.put(None)
-
-            threading.Thread(target=_build, daemon=True).start()
-
-            def _generate():
-                while (chunk := q.get()) is not None:
-                    yield chunk
-
-            return self.app.response_class(
-                _generate(),
-                mimetype="application/zip",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{session_name}.zip"',
-                    "X-Accel-Buffering": "no",
-                },
-            )
+            return _stream_zip_response(session_dir, f"{session_name}.zip")
 
         @self.socketio.on("create_session")
         def handle_create_session(data):

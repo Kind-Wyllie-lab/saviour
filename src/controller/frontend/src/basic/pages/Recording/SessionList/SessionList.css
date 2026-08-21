@@ -631,9 +631,27 @@
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
 }
 
+.session-file-tree__summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-file-tree__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .session-file-tree__count {
   font-weight: 400;
   color: var(--text-muted, #888);
+}
+
+.session-file-tree__folder-dl {
+  flex-shrink: 0;
 }
 
 .session-file-row {

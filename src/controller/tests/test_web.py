@@ -227,6 +227,33 @@ class TestDownloadSessionFile:
             )
             assert resp.status_code == 403
 
+    def test_folder_path_returns_zip_of_that_subtree_only(self):
+        """The FileTree browser lets an operator click a folder (e.g. a
+        per-module folder) -- hitting the same download URL for a directory
+        instead of a file must zip just that subtree, not the whole
+        session, and not silently 404 like a bare-file lookup would."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_dir = os.path.join(tmpdir, "session1")
+            os.makedirs(os.path.join(session_dir, "20260821", "camera_a"))
+            os.makedirs(os.path.join(session_dir, "20260821", "camera_b"))
+            with open(os.path.join(session_dir, "20260821", "camera_a", "rec.ts"), "w") as f:
+                f.write("cam a data")
+            with open(os.path.join(session_dir, "20260821", "camera_b", "rec.ts"), "w") as f:
+                f.write("cam b data")
+
+            web = _make_web(**{"export.mount_path": tmpdir})
+            resp = web.app.test_client().get(
+                "/api/sessions/session1/download/20260821/camera_a"
+            )
+
+            assert resp.status_code == 200
+            assert resp.mimetype == "application/zip"
+            assert resp.headers["Content-Disposition"] == \
+                'attachment; filename="session1-20260821-camera_a.zip"'
+            with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+                assert zf.namelist() == ["rec.ts"]
+                assert zf.read("rec.ts") == b"cam a data"
+
 
 class TestDownloadSessionZip:
     def test_rejects_invalid_session_name(self):

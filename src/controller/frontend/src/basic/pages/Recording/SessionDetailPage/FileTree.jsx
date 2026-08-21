@@ -1,5 +1,5 @@
 import React from "react";
-import { formatBytes } from "../sessionFormat";
+import { formatBytes, DOWNLOAD_ALL_MAX_BYTES } from "../sessionFormat";
 
 // Builds a nested tree from the flat {name, path, size_bytes} list
 // get_session_file_info returns -- path is a "/"-joined relative path
@@ -29,24 +29,64 @@ function countFiles(node) {
   return count;
 }
 
+function sumBytes(node) {
+  let total = node.files.reduce((acc, f) => acc + (f.size_bytes || 0), 0);
+  for (const sub of node.dirs.values()) total += sumBytes(sub);
+  return total;
+}
+
 // defaultOpen only applies to the top level (typically the date folder(s)
 // -- usually just one) -- deeper levels (typically per-module) default
 // collapsed so a large habitat deployment's file list stays scannable
 // rather than dumping every module's files open at once.
-function FileTreeNode({ node, sessionName, defaultOpen }) {
+//
+// pathPrefix accumulates the folder path relative to the session root as
+// we recurse, so each folder's zip link can hit
+// /api/sessions/<name>/download/<folder path> -- the same route a single
+// file download uses, now also zip-streaming when the resolved path is a
+// directory (web.py's download_session_file).
+function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
   return (
     <div className="session-file-tree__level">
       {[...node.dirs.entries()].map(([name, sub]) => {
         const n = countFiles(sub);
+        const folderPath = pathPrefix ? `${pathPrefix}/${name}` : name;
+        const totalBytes = sumBytes(sub);
+        const tooLarge = totalBytes > DOWNLOAD_ALL_MAX_BYTES;
+        const encodedFolderPath = folderPath.split("/").map(encodeURIComponent).join("/");
+        const folderUrl = `/api/sessions/${sessionName}/download/${encodedFolderPath}`;
+        const zipName = `${sessionName}-${folderPath.replace(/\//g, "-")}.zip`;
         return (
           <details key={name} className="session-file-tree__folder" open={defaultOpen}>
             <summary className="session-file-tree__summary">
-              {name}{" "}
-              <span className="session-file-tree__count">
-                ({n} file{n !== 1 ? "s" : ""})
+              <span className="session-file-tree__summary-row">
+                <span className="session-file-tree__label">
+                  {name}{" "}
+                  <span className="session-file-tree__count">
+                    ({n} file{n !== 1 ? "s" : ""}, {formatBytes(totalBytes)})
+                  </span>
+                </span>
+                {tooLarge ? (
+                  <span
+                    className="session-file-dl session-file-tree__folder-dl session-file-dl--disabled"
+                    title={`Too large to zip via browser (${formatBytes(totalBytes)}) - download individual files or use the network share`}
+                  >
+                    Download zip
+                  </span>
+                ) : (
+                  <a
+                    className="session-file-dl session-file-tree__folder-dl"
+                    href={folderUrl}
+                    download={zipName}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`Download all ${n} file${n !== 1 ? "s" : ""} in this folder as a zip`}
+                  >
+                    Download zip
+                  </a>
+                )}
               </span>
             </summary>
-            <FileTreeNode node={sub} sessionName={sessionName} defaultOpen={false} />
+            <FileTreeNode node={sub} sessionName={sessionName} defaultOpen={false} pathPrefix={folderPath} />
           </details>
         );
       })}
@@ -69,7 +109,7 @@ export default function FileTree({ files, sessionName }) {
   const tree = buildFileTree(files);
   return (
     <div className="session-file-tree">
-      <FileTreeNode node={tree} sessionName={sessionName} defaultOpen />
+      <FileTreeNode node={tree} sessionName={sessionName} defaultOpen pathPrefix="" />
     </div>
   );
 }

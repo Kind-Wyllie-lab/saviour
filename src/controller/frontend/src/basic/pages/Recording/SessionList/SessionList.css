@@ -664,11 +664,19 @@
 
 .session-recording-state-row {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border-color, #ddd) 50%, transparent);
+}
+
+.session-recording-state-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  white-space: nowrap;
 }
 
 .session-recording-state-row:last-child {

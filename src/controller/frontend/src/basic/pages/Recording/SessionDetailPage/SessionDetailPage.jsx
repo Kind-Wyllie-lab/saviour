@@ -158,10 +158,16 @@ export default function SessionDetailPage() {
   // room for them here, unlike the old inline-expanding list card, so
   // there's no reason to hide them behind an extra click by default. The
   // toggles below still let an operator collapse either one if they want.
+  // Re-fetches on every state transition (pending -> active on Start,
+  // active -> stopped on Stop, -> error on a fault, etc.), not just once on
+  // mount -- otherwise an operator sitting on this page watching it happen
+  // never sees the new log line for an action they just took (e.g. "Session
+  // started" after pressing Start Recording) without manually toggling the
+  // section closed and open again.
   useEffect(() => {
     setSessionLog("loading");
     socket.emit("get_session_log", { session_name: sessionName });
-  }, [sessionName]);
+  }, [sessionName, session?.state]);
 
   if (!session) {
     return (
@@ -473,6 +479,7 @@ export default function SessionDetailPage() {
               <div className="session-recording-state-table">
                 <div className="session-recording-state-row session-recording-state-row--head">
                   <span>Module</span>
+                  <span>Recording</span>
                   <span>Pending</span>
                   <span>Staged</span>
                   <span>Exported</span>
@@ -488,9 +495,27 @@ export default function SessionDetailPage() {
                     if (!s || !s.count) return "-";
                     return `${s.count}${s.total_bytes ? ` (${formatBytes(s.total_bytes)})` : ""}`;
                   };
+                  // "Module status" used to only show export-pipeline
+                  // progress, nothing about whether the module is actually
+                  // recording right now -- this column is that, so the
+                  // section title isn't overselling what it shows.
+                  const recDotClass = moduleInfo?.online === false
+                    ? "status-dot--stopped"
+                    : moduleInfo?.status === "RECORDING"
+                      ? "status-dot--recording"
+                      : "status-dot--error";
+                  const recLabel = moduleInfo?.online === false
+                    ? "Offline"
+                    : moduleInfo?.status === "RECORDING"
+                      ? "Recording"
+                      : (moduleInfo?.status || "Unknown");
                   return (
                     <div key={moduleId} className="session-recording-state-row">
                       <span title={moduleId}>{label}</span>
+                      <span className="session-recording-state-status">
+                        <span className={`status-dot ${recDotClass}`} title={recLabel} />
+                        {recLabel}
+                      </span>
                       <span>{cell("pending")}</span>
                       <span>{cell("to_export")}</span>
                       <span>{cell("exported")}</span>

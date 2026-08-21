@@ -146,6 +146,9 @@ class ControllerFacade:
     def force_start_scheduled_session(self, session_name: str) -> dict:
         return self.controller.recording.force_start_scheduled_session(session_name)
 
+    def force_start_session(self, session_name: str) -> dict:
+        return self.controller.recording.force_start_session(session_name)
+
     def delete_session(self, session_name: str, delete_files: bool = True,
                        force: bool = False) -> dict:
         return self.controller.recording.delete_session(session_name, delete_files, force)

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Outlet, useParams } from "react-router";
+import { Outlet, useParams, useNavigate } from "react-router";
 import "./Recording.css";
 
 import useModules from "/src/hooks/useModules";
@@ -20,6 +20,7 @@ import SessionList from "./SessionList/SessionList";
 function RecordingLayout() {
     const { moduleList } = useModules();
     const { sessionList } = useSessions();
+    const navigate = useNavigate();
     const [drawerOpen, setDrawerOpen] = useState(false);
 
     // useParams() here reflects the matched child route too (react-router
@@ -62,6 +63,10 @@ function RecordingLayout() {
                     sessionList={sessionList}
                     target={target}
                     setTarget={setTarget}
+                    onSessionCreated={(sessionName) => {
+                        setDrawerOpen(false);
+                        navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
+                    }}
                 />
                 <ReadinessSummary modules={moduleList} target={target} />
             </Drawer>

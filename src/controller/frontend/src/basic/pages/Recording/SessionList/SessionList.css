@@ -101,6 +101,10 @@
   outline-offset: 1px;
 }
 
+.session.pending {
+  border-left-color: #8e5ae8;
+}
+
 .session.starting {
   border-left-color: #e8a020;
 }
@@ -164,6 +168,7 @@
   flex-shrink: 0;
 }
 
+.session-state-label--pending    { color: #8e5ae8; }
 .session-state-label--starting   { color: #e8a020; }
 .session-state-label--recording  { color: #2e7d32; }
 .session-state-label--stopped    { color: var(--text-muted, #888); }
@@ -251,6 +256,7 @@
 .status-dot--error    { background-color: #c62828; }
 .status-dot--scheduled { background-color: #4a90d9; }
 .status-dot--stopped  { background-color: #bbb; }
+.status-dot--pending  { background-color: #8e5ae8; }
 
 @keyframes pulse-green {
   0%, 100% { box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.2); }

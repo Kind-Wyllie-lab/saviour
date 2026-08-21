@@ -712,6 +712,14 @@ class Web(ABC):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
                 self._write_session_metadata(result["session_name"], target)
+                # Sessions are created PENDING now, not auto-started -- the
+                # frontend needs a direct signal (not just waiting on
+                # sessions_update to eventually reflect it) to know exactly
+                # which session to close the drawer and navigate to.
+                self.socketio.emit("create_session_result", {
+                    "success": True,
+                    "session_name": result["session_name"],
+                })
 
 
         @self.socketio.on("create_scheduled_session")
@@ -738,7 +746,7 @@ class Web(ABC):
                 return
             session_name = data.get("session_name")
             self.logger.info(f"Received force-start request for session '{session_name}'")
-            result = self.facade.force_start_scheduled_session(session_name)
+            result = self.facade.force_start_session(session_name)
             self.socketio.emit("force_start_result", {
                 "session_name": session_name,
                 "success": bool(result and result.get("success")),

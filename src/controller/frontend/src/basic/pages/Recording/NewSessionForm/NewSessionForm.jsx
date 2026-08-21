@@ -14,7 +14,7 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
 
-function NewSessionForm({ modules, sessionList = {}, target, setTarget }) {
+function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated }) {
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -49,6 +49,19 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget }) {
     socket.on("session_error", onError);
     return () => socket.off("session_error", onError);
   }, []);
+
+  // Sessions are created PENDING now, not auto-started -- this is the
+  // direct signal (rather than waiting on sessions_update to eventually
+  // reflect it) telling the caller which session to navigate to so the
+  // operator lands on the actual "Start Recording" action.
+  useEffect(() => {
+    if (!onSessionCreated) return;
+    const onCreated = (data) => {
+      if (data.success) onSessionCreated(data.session_name);
+    };
+    socket.on("create_session_result", onCreated);
+    return () => socket.off("create_session_result", onCreated);
+  }, [onSessionCreated]);
 
   // Request a fresh health snapshot on mount so PTP offset data is available
   // before the user presses Check Ready.
@@ -303,7 +316,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget }) {
             Check Ready
           </button>
           <button type="submit" className="primary-button" disabled={recordingMode === "scheduled" ? !canSchedule : !canStart}>
-            {recordingMode === "scheduled" ? "Schedule Session" : "Start Recording"}
+            {recordingMode === "scheduled" ? "Schedule Session" : "Create Session"}
           </button>
         </div>
       </form>

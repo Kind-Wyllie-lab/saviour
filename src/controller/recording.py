@@ -36,6 +36,12 @@ _STARTUP_GRACE_SECS = 15
 # ---------------------------------------------------------------------------
 
 class SessionState(StrEnum):
+    # Created, modules assigned, not yet recording -- waiting on an
+    # explicit Start action (force_start_session). Immediate/timed
+    # sessions land here now instead of going straight to ACTIVE; a
+    # PENDING session can be discarded (delete_session) same as a
+    # stopped/error one.
+    PENDING   = "pending"
     SCHEDULED = "scheduled"
     ACTIVE    = "active"
     STOPPED   = "stopped"
@@ -321,7 +327,9 @@ class Recording:
                        duration_minutes: int | None = None,
                        researcher: str | None = None,
                        raw_name: bool = False) -> dict:
-        """Create a session that begins recording immediately.
+        """Create a session in PENDING state -- modules assigned, nothing
+        recording yet. Call start_pending_session() (via the unified
+        force_start_session()) to actually begin recording.
 
         Returns a result dict so the caller can surface errors to the frontend.
         """
@@ -347,20 +355,12 @@ class Recording:
         session_name = self._format_session_name(session_name, target) if not raw_name else \
             "".join(c for c in session_name if c.isalnum() or c in ("-", "_"))
 
-        start_at = time.time() + LEAD_SECS
-        timed_stop_at = (start_at + duration_minutes * 60) if duration_minutes else None
-
         session = RecordingSession(
             session_name=session_name,
             target=target,
-            state=SessionState.ACTIVE,
+            state=SessionState.PENDING,
             modules=modules,
-            start_time=datetime.now().strftime("%Y%m%d-%H%M%S"),
-            module_stop_states={m: "recording" for m in modules},
-            module_export_states={m: "idle" for m in modules},
-            recording_start_at=start_at,
             duration_minutes=duration_minutes,
-            timed_stop_at=timed_stop_at,
             researcher=researcher or None,
         )
 
@@ -370,6 +370,53 @@ class Recording:
                 self.logger.warning(f"create_session: modules already recording: {overlap}")
                 return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
             self.sessions[session_name] = session
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+
+        self.logger.info(
+            f"Session '{session_name}' created (pending) targeting {target} ({len(modules)} modules)"
+        )
+        self._log_session_event(session_name, "INFO",
+            f"Session created — modules: {', '.join(modules)}")
+        return {"success": True, "session_name": session_name}
+
+
+    def start_pending_session(self, session_name: str) -> dict:
+        """Actually begin recording for a PENDING session (create_session()'s
+        counterpart) -- re-validates everything fresh rather than reusing
+        anything computed at creation time, since a session can sit PENDING
+        for an arbitrary amount of time before an operator presses Start.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        session = self.sessions[session_name]
+        if session.state != SessionState.PENDING:
+            return {"success": False, "error": f"Session is not pending (state: {session.state})"}
+
+        modules = list(self.facade.get_modules_by_target(session.target).keys())
+        if not modules:
+            return {"success": False, "error": f"No online modules found for target '{session.target}'"}
+
+        overlap = self._busy_modules() & set(modules)
+        if overlap:
+            return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
+
+        ptp = self._check_ptp_sync(modules)
+        if not ptp["ok"]:
+            return {"success": False, "error": ptp["error"]}
+
+        start_at = time.time() + LEAD_SECS
+        timed_stop_at = (start_at + session.duration_minutes * 60) if session.duration_minutes else None
+
+        with self._lock:
+            session.modules = modules
+            session.state = SessionState.ACTIVE
+            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.module_stop_states = {m: "recording" for m in modules}
+            session.module_export_states = {m: "idle" for m in modules}
+            session.recording_start_at = start_at
+            session.timed_stop_at = timed_stop_at
 
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
         for module_id in modules:
@@ -385,7 +432,7 @@ class Recording:
         self._save_sessions()
 
         self.logger.info(
-            f"Session '{session_name}' created targeting {target} ({len(modules)} modules)"
+            f"Session '{session_name}' started ({len(modules)} modules)"
         )
         self._log_session_event(session_name, "INFO",
             f"Session started — modules: {', '.join(modules)}")
@@ -396,7 +443,21 @@ class Recording:
                 message=f"Session **{session_name}** started with {len(modules)} module(s): {', '.join(modules)}.",
                 severity="info",
             )
-        return {"success": True, "session_name": session_name}
+        return {"success": True}
+
+
+    def force_start_session(self, session_name: str) -> dict:
+        """Unified entry point for the frontend's "Start"/"Start Now" action,
+        regardless of whether the session is PENDING (immediate/timed,
+        created but not yet recording) or SCHEDULED (waiting on a time
+        window) -- the frontend sends the same force_start_session event
+        either way; this just routes to the right underlying start path.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        if self.sessions[session_name].state == SessionState.PENDING:
+            return self.start_pending_session(session_name)
+        return self.force_start_scheduled_session(session_name)
 
 
     def create_scheduled_session(self, session_name: str, target: str,
@@ -511,7 +572,7 @@ class Recording:
         """
         ended = [
             name for name, s in list(self.sessions.items())
-            if s.state not in (SessionState.ACTIVE, SessionState.SCHEDULED)
+            if s.state not in (SessionState.PENDING, SessionState.ACTIVE, SessionState.SCHEDULED)
         ]
         cleared = []
         skipped = []
@@ -1540,7 +1601,10 @@ class Recording:
         Recordings page live visibility into a session that's still running,
         rather than only after it stops."""
         for session_name, session in list(self.sessions.items()):
-            if session.state == SessionState.STOPPED:
+            # PENDING has no dispatched recording yet -- nothing for a
+            # module to report for this session until start_pending_session()
+            # actually begins it.
+            if session.state in (SessionState.STOPPED, SessionState.PENDING):
                 continue
             for module_id in session.modules:
                 try:

@@ -41,7 +41,12 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
   };
 
   const sessions = Object.values(sessionList);
-  const endedSessions = sessions.filter(s => s.state !== "active" && s.state !== "error" && s.state !== "scheduled");
+  // "Ended" = stopped, or errored-and-not-scheduled-to-retry -- explicitly
+  // not pending/active/scheduled. A PENDING session hasn't ended, it just
+  // hasn't started yet; "Clear all ended" must never sweep those up.
+  const endedSessions = sessions.filter(
+    s => s.state !== "pending" && s.state !== "active" && s.state !== "error" && s.state !== "scheduled"
+  );
 
   const goToSession = (sessionName) => {
     navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
@@ -92,6 +97,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
       ) : (
         sessions.map((session) => {
           const state = session.state;
+          const isPending   = state === "pending";
           const isActive    = state === "active";
           const isStopped   = state === "stopped";
           const isError     = state === "error";
@@ -109,6 +115,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
           let sessionClass = "session";
           if (isStarting)       sessionClass += " starting";
           else if (isActive)    sessionClass += " active";
+          if (isPending)        sessionClass += " pending";
           if (isStopped)        sessionClass += " stopped";
           if (isError)          sessionClass += " error";
           if (isSelected)       sessionClass += " session--selected";
@@ -125,6 +132,9 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
             >
               <div className="session-row">
                 <span className="status-dot--wrap">
+                  {isPending && (
+                    <span className="status-dot status-dot--pending" title="Pending - not started yet" />
+                  )}
                   {isStarting && (
                     <span className="status-dot status-dot--starting" title="Starting - waiting for modules" />
                   )}
@@ -145,6 +155,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                 <div className="session-row__main">
                   <div className="session-header__name">
                     <span className="session-name">{session.session_name}</span>
+                    {isPending   && <span className="session-state-label session-state-label--pending">Pending</span>}
                     {isStarting  && <span className="session-state-label session-state-label--starting">Starting…</span>}
                     {isActive && !isStarting && <span className="session-state-label session-state-label--recording">Recording</span>}
                     {isActive && !isStarting && session.error_time && (
@@ -158,6 +169,7 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
                   </div>
 
                   <div className="session-row__summary">
+                    {isPending && <span>Not started yet</span>}
                     {isActive && !isStarting && (
                       session.timed_stop_at
                         ? <span><Countdown timedStopAt={session.timed_stop_at} /> left</span>

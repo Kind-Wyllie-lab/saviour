@@ -170,7 +170,8 @@ export default function SessionDetailPage() {
   }
 
   const state = session.state;
-  const isActive    = state === "active";
+  const isPending    = state === "pending";
+  const isActive     = state === "active";
   const isStopped    = state === "stopped";
   const isError      = state === "error";
   const isScheduled  = state === "scheduled";
@@ -228,6 +229,7 @@ export default function SessionDetailPage() {
       <div className="session-detail-page__body card">
         <div className="session-header__name session-detail-page__title">
           <span className="session-name">{session.session_name}</span>
+          {isPending   && <span className="session-state-label session-state-label--pending">Pending</span>}
           {isStarting  && <span className="session-state-label session-state-label--starting">Starting…</span>}
           {isActive && !isStarting && <span className="session-state-label session-state-label--recording">Recording</span>}
           {isActive && !isStarting && session.error_time && (
@@ -282,6 +284,13 @@ export default function SessionDetailPage() {
               </>
             )}
           </div>
+
+          {isPending && (
+            <p className="session-info-text">
+              Created — modules assigned, nothing recording yet. Press <strong>Start Recording</strong>{" "}
+              below when ready, or Discard to cancel.
+            </p>
+          )}
 
           {isError && (
             <p className="session-error-message">{session.error_message}</p>
@@ -525,6 +534,15 @@ export default function SessionDetailPage() {
           )}
 
           <div className="session-actions">
+            {isPending && (
+              <button
+                className="session-btn session-btn--start"
+                onClick={handleForceStart}
+                title="Begin recording now"
+              >
+                Start Recording
+              </button>
+            )}
             {(isActive || isStarting || isError) && (
               <button className="session-btn session-btn--stop" onClick={handleStop}>
                 End Session
@@ -570,7 +588,7 @@ export default function SessionDetailPage() {
                 Retry Export
               </button>
             )}
-            {isStopped && (
+            {(isStopped || isPending) && (
               pendingForceDelete ? (
                 <div className="delete-confirm delete-confirm--export-warning">
                   <span>⚠ {deleteWarning}</span>
@@ -586,9 +604,12 @@ export default function SessionDetailPage() {
                 </div>
               ) : pendingDelete ? (
                 <div className="delete-confirm">
-                  <span>Delete session and all files?</span>
+                  {/* A pending session never recorded anything -- no files
+                      to warn about, so the wording (and the action's name)
+                      differ from a real, already-recorded session's delete. */}
+                  <span>{isPending ? "Discard this session?" : "Delete session and all files?"}</span>
                   <button className="session-btn session-btn--delete-confirm" onClick={handleDeleteConfirm}>
-                    Yes, delete
+                    {isPending ? "Yes, discard" : "Yes, delete"}
                   </button>
                   <button className="session-btn session-btn--cancel" onClick={() => setPendingDelete(false)}>
                     Cancel
@@ -596,7 +617,7 @@ export default function SessionDetailPage() {
                 </div>
               ) : (
                 <button className="session-btn session-btn--delete" onClick={() => setPendingDelete(true)}>
-                  Delete
+                  {isPending ? "Discard" : "Delete"}
                 </button>
               )
             )}

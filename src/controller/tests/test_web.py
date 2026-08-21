@@ -457,6 +457,52 @@ class TestAuthGatedHandlers:
             assert received[0]["args"][0] == {"share_ip": "192.168.1.2", "share_path": "nas_share"}
             facade.get_controller_own_share_info.assert_not_called()
 
+    def test_update_pending_session_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("update_pending_session", {
+            "session_name": "exp1", "new_session_name": "exp1_fixed", "duration_minutes": 30
+        })
+
+        facade.update_pending_session.assert_not_called()
+        assert client.get_received()[0]["name"] == "session_error"
+
+    def test_update_pending_session_allowed_after_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.update_pending_session.return_value = {
+                "success": True, "session_name": "exp1_fixed"
+            }
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("update_pending_session", {
+                "session_name": "exp1", "new_session_name": "exp1_fixed", "duration_minutes": 30
+            })
+
+            facade.update_pending_session.assert_called_once_with("exp1", "exp1_fixed", 30)
+            received = client.get_received()
+            assert received[-1]["name"] == "update_pending_session_result"
+            assert received[-1]["args"][0] == {"success": True, "session_name": "exp1_fixed"}
+
+    def test_update_pending_session_error_surfaces_session_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.update_pending_session.return_value = {
+                "success": False, "error": "Session is not pending (state: active)"
+            }
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("update_pending_session", {
+                "session_name": "exp1", "new_session_name": "exp1_fixed", "duration_minutes": 30
+            })
+
+            received = client.get_received()
+            assert received[-1]["name"] == "session_error"
+            assert received[-1]["args"][0] == {"error": "Session is not pending (state: active)"}
+
 
 class TestSaveModuleConfig:
     """save_module_config: blocked while the target module is recording,

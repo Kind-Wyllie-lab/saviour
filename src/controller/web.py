@@ -722,6 +722,28 @@ class Web(ABC):
                 })
 
 
+        @self.socketio.on("update_pending_session")
+        def handle_update_pending_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = data.get("session_name")
+            new_session_name = data.get("new_session_name")
+            duration_minutes = data.get("duration_minutes")
+            self.logger.info(f"Received request to update pending session '{session_name}'")
+            result = self.facade.update_pending_session(session_name, new_session_name, duration_minutes)
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                # Echoed back even when the name didn't change, so the
+                # frontend has one consistent event to listen for -- it
+                # only needs to act (navigate) when session_name differs
+                # from what it sent.
+                self.socketio.emit("update_pending_session_result", {
+                    "success": True,
+                    "session_name": result["session_name"],
+                })
+
+
         @self.socketio.on("create_scheduled_session")
         def handle_create_scheduled_session(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

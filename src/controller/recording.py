@@ -382,6 +382,64 @@ class Recording:
         return {"success": True, "session_name": session_name}
 
 
+    def update_pending_session(self, session_name: str, new_session_name: str | None,
+                               duration_minutes: int | None) -> dict:
+        """Edit a PENDING session's name and/or duration before it starts --
+        e.g. fixing a typo in the title, or changing a timed duration.
+        Locked once the session leaves PENDING (start_pending_session()'s
+        own state check is what actually enforces that; this method is
+        simply never reachable for a non-pending session from the frontend).
+        `new_session_name`/`duration_minutes` reflect the full desired
+        state, not a delta -- the caller (edit form) always submits both
+        current values, changed or not.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        session = self.sessions[session_name]
+        if session.state != SessionState.PENDING:
+            return {"success": False, "error": f"Session is not pending (state: {session.state})"}
+
+        final_name = session_name
+        if new_session_name and new_session_name.strip():
+            candidate = "".join(
+                c for c in new_session_name if c.isalnum() or c in (' ', '-', '_')
+            ).strip().replace(' ', '_')
+            if not candidate:
+                return {"success": False, "error": "Session name cannot be empty"}
+            if candidate != session_name and candidate in self.sessions:
+                return {"success": False, "error": f"Session '{candidate}' already exists"}
+            final_name = candidate
+
+        with self._lock:
+            session.duration_minutes = duration_minutes if duration_minutes else None
+            if final_name != session_name:
+                session.session_name = final_name
+                self.sessions[final_name] = self.sessions.pop(session_name)
+
+        if final_name != session_name:
+            # create_session() already wrote a "Session created" line to
+            # {share}/{old_name}/session_events.log -- rename that folder so
+            # the log stays continuous under the new name instead of being
+            # orphaned under the old one. Best-effort: nothing has recorded
+            # into this folder yet (session is still PENDING), so a failure
+            # here is a lost log line, not lost data.
+            try:
+                old_dir = os.path.join(self._get_share_root(), session_name)
+                new_dir = os.path.join(self._get_share_root(), final_name)
+                if os.path.isdir(old_dir) and not os.path.exists(new_dir):
+                    os.rename(old_dir, new_dir)
+            except Exception:
+                pass
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+
+        self.logger.info(f"Session '{session_name}' updated" +
+            (f" (renamed to '{final_name}')" if final_name != session_name else ""))
+        self._log_session_event(final_name, "INFO", "Session details updated")
+        return {"success": True, "session_name": final_name}
+
+
     def start_pending_session(self, session_name: str) -> dict:
         """Actually begin recording for a PENDING session (create_session()'s
         counterpart) -- re-validates everything fresh rather than reusing

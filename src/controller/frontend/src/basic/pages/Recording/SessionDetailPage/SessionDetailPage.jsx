@@ -86,6 +86,11 @@ export default function SessionDetailPage() {
   const [shareNoticeOpen, setShareNoticeOpen] = useState(false);
   const [moduleRecordingStates, setModuleRecordingStates] = useState({}); // module_id → { summary, last_reported }
   const [forceStartError, setForceStartError] = useState(null);
+  const [editingPending, setEditingPending] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDurationHours, setEditDurationHours] = useState("0");
+  const [editDurationMinutes, setEditDurationMinutes] = useState("0");
+  const [editError, setEditError] = useState(null);
 
   const session = sessions[sessionName];
 
@@ -121,6 +126,32 @@ export default function SessionDetailPage() {
     socket.on("session_error", handler);
     return () => socket.off("session_error", handler);
   }, [sessionName]);
+
+  // update_pending_session shares the generic session_error event with
+  // several other actions on this page -- only treat it as an edit-panel
+  // error while the edit panel is actually open, so an unrelated error
+  // (e.g. the delete export-warning above) can't get misattributed to it.
+  useEffect(() => {
+    const handler = (data) => {
+      if (data.export_warning || !editingPending) return;
+      setEditError(data.error);
+    };
+    socket.on("session_error", handler);
+    return () => socket.off("session_error", handler);
+  }, [editingPending]);
+
+  useEffect(() => {
+    const handler = (data) => {
+      if (!data.success) return;
+      setEditingPending(false);
+      setEditError(null);
+      if (data.session_name !== sessionName) {
+        navigate(`/recording/sessions/${encodeURIComponent(data.session_name)}`, { replace: true });
+      }
+    };
+    socket.on("update_pending_session_result", handler);
+    return () => socket.off("update_pending_session_result", handler);
+  }, [sessionName, navigate]);
 
   useEffect(() => {
     const handler = (data) => {
@@ -210,6 +241,27 @@ export default function SessionDetailPage() {
 
   const handleStop = () => socket.emit("stop_session", { session_name: sessionName });
   const handleForceStart = () => socket.emit("force_start_session", { session_name: sessionName });
+  const startEditingPending = () => {
+    setEditName(session.session_name);
+    const total = session.duration_minutes || 0;
+    setEditDurationHours(String(Math.floor(total / 60)));
+    setEditDurationMinutes(String(total % 60));
+    setEditError(null);
+    setEditingPending(true);
+  };
+  const handleCancelEdit = () => {
+    setEditingPending(false);
+    setEditError(null);
+  };
+  const handleSaveEdit = () => {
+    const totalMinutes = parseInt(editDurationHours || 0, 10) * 60 + parseInt(editDurationMinutes || 0, 10);
+    setEditError(null);
+    socket.emit("update_pending_session", {
+      session_name: sessionName,
+      new_session_name: editName,
+      duration_minutes: totalMinutes > 0 ? totalMinutes : null,
+    });
+  };
   const handleAddModuleConfirm = (name, moduleId) => socket.emit("add_module_to_session", { session_name: name, module_id: moduleId });
   const handleRetryExport = () => socket.emit("retry_failed_exports", { session_name: sessionName });
   const handleRefreshRecordingState = () => socket.emit("request_recording_state_refresh", { session_name: sessionName });
@@ -241,6 +293,16 @@ export default function SessionDetailPage() {
         <div className="session-header__name session-detail-page__title">
           <span className="session-name">{session.session_name}</span>
           {isPending   && <span className="session-state-label session-state-label--pending">Pending</span>}
+          {isPending && !editingPending && (
+            <button
+              type="button"
+              className="session-edit-toggle"
+              onClick={startEditingPending}
+              title="Edit name or duration"
+            >
+              ✎ Edit
+            </button>
+          )}
           {isStarting  && <span className="session-state-label session-state-label--starting">Starting…</span>}
           {isActive && !isStarting && <span className="session-state-label session-state-label--recording">Recording</span>}
           {isActive && !isStarting && session.error_time && (
@@ -296,7 +358,54 @@ export default function SessionDetailPage() {
             )}
           </div>
 
-          {isPending && (
+          {isPending && editingPending && (
+            <div className="session-edit-panel">
+              <div className="session-edit-panel__row">
+                <label htmlFor="edit-session-name">Name</label>
+                <input
+                  id="edit-session-name"
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+              </div>
+              <div className="session-edit-panel__row">
+                <label>Duration</label>
+                <div className="session-edit-panel__duration">
+                  <input
+                    type="number"
+                    min="0"
+                    max="99"
+                    value={editDurationHours}
+                    onChange={(e) => setEditDurationHours(e.target.value)}
+                    className="session-edit-panel__duration-input"
+                  />
+                  <span>h</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="59"
+                    value={editDurationMinutes}
+                    onChange={(e) => setEditDurationMinutes(e.target.value)}
+                    className="session-edit-panel__duration-input"
+                  />
+                  <span>m</span>
+                  <span className="session-edit-panel__hint">(0 = no time limit)</span>
+                </div>
+              </div>
+              {editError && <p className="session-error-message">{editError}</p>}
+              <div className="session-edit-panel__actions">
+                <button type="button" className="session-btn session-btn--start" onClick={handleSaveEdit}>
+                  Save
+                </button>
+                <button type="button" className="session-btn session-btn--cancel" onClick={handleCancelEdit}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isPending && !editingPending && (
             <p className="session-info-text">
               Created — modules assigned, nothing recording yet. Press <strong>Start Recording</strong>{" "}
               below when ready, or Discard to cancel.
@@ -564,7 +673,7 @@ export default function SessionDetailPage() {
           )}
 
           <div className="session-actions">
-            {isPending && (
+            {isPending && !editingPending && (
               <button
                 className="session-btn session-btn--start"
                 onClick={handleForceStart}
@@ -618,7 +727,7 @@ export default function SessionDetailPage() {
                 Retry Export
               </button>
             )}
-            {(isStopped || isPending) && (
+            {(isStopped || (isPending && !editingPending)) && (
               pendingForceDelete ? (
                 <div className="delete-confirm delete-confirm--export-warning">
                   <span>⚠ {deleteWarning}</span>

@@ -219,6 +219,74 @@ class TestCreateSession:
         assert result["session_name"] == "exact_name"
 
 
+class TestUpdatePendingSession:
+    """Editing a PENDING session's name/duration -- e.g. fixing a typo in
+    the title or changing a timed duration before the operator presses
+    Start. Locked once the session isn't PENDING any more."""
+
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.update_pending_session("ghost", "new_name", 30)
+        assert result["success"] is False
+
+    def test_non_pending_session_rejected(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.ACTIVE)
+        result = rec.update_pending_session("exp1", "exp1_renamed", 30)
+        assert result["success"] is False
+        assert rec.sessions["exp1"].session_name == "exp1"
+
+    def test_no_new_name_keeps_current_name(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, duration_minutes=30)
+        result = rec.update_pending_session("exp1", None, 45)
+        assert result == {"success": True, "session_name": "exp1"}
+        assert rec.sessions["exp1"].duration_minutes == 45
+
+    def test_duration_zero_clears_to_none(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, duration_minutes=30)
+        rec.update_pending_session("exp1", None, 0)
+        assert rec.sessions["exp1"].duration_minutes is None
+
+    def test_renames_session_and_moves_dict_key(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, duration_minutes=30)
+        result = rec.update_pending_session("exp1", "exp1_fixed", 30)
+        assert result == {"success": True, "session_name": "exp1_fixed"}
+        assert "exp1" not in rec.sessions
+        assert rec.sessions["exp1_fixed"].session_name == "exp1_fixed"
+        facade.update_sessions.assert_called_once_with(rec.sessions)
+
+    def test_new_name_sanitized_same_as_creation(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "weird!! name??", None)
+        assert result["session_name"] == "weird_name"
+
+    def test_rejects_when_sanitized_name_is_empty(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "!!??", None)
+        assert result["success"] is False
+        assert "exp1" in rec.sessions
+
+    def test_rejects_collision_with_existing_session(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(session_name="exp1", state=SessionState.PENDING)
+        rec.sessions["exp2"] = _session(session_name="exp2", state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "exp2", None)
+        assert result["success"] is False
+        assert "exp1" in rec.sessions
+        assert rec.sessions["exp1"].session_name == "exp1"
+
+    def test_renaming_to_own_current_name_is_a_noop_not_a_collision(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(session_name="exp1", state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "exp1", 30)
+        assert result == {"success": True, "session_name": "exp1"}
+
+
 class TestStartPendingSession:
     """create_session()'s counterpart -- re-validates everything fresh
     rather than reusing anything computed at creation time, since a

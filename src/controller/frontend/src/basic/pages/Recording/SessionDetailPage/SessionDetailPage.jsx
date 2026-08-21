@@ -90,10 +90,15 @@ export default function SessionDetailPage() {
   const session = sessions[sessionName];
 
   useEffect(() => {
-    socket.emit("get_controller_samba_info");
+    // get_export_destination, not get_controller_samba_info -- the latter
+    // always reports the controller's own address (a Settings-page preset)
+    // regardless of whether an external NAS override is configured, which
+    // is the common case for a habitat deployment. This is where files
+    // actually go.
+    socket.emit("get_export_destination");
     const handler = (data) => setShareInfo(data);
-    socket.on("controller_samba_info_response", handler);
-    return () => socket.off("controller_samba_info_response", handler);
+    socket.on("export_destination_response", handler);
+    return () => socket.off("export_destination_response", handler);
   }, []);
 
   useEffect(() => {
@@ -381,7 +386,7 @@ export default function SessionDetailPage() {
             </p>
           )}
 
-          {isStopped && shareInfo && (() => {
+          {isStopped && shareInfo?.share_ip && (() => {
             if (!fileInfo || fileInfo === "loading" || fileInfo.files.length === 0) return null;
             const tooLargeToDownload = fileInfo.total_bytes > DOWNLOAD_ALL_MAX_BYTES;
             const isOpen = tooLargeToDownload || shareNoticeOpen;

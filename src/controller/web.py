@@ -1096,8 +1096,30 @@ class Web(ABC):
         @self.socketio.on('get_controller_samba_info')
         def handle_get_controller_samba_info(data=None):
             """Return this controller's own Samba share info for the 'Controller Share' preset."""
+            # Found while adding get_export_destination below: this handler
+            # carries a plaintext Samba password in its response and had no
+            # _require_auth at all, unlike every sibling handler in this
+            # section (see e.g. sync_export_credentials above). Fixed here
+            # rather than left for the new handler to copy.
+            if not self._require_auth("auth_required"):
+                return
             info = self.facade.get_controller_own_share_info()
             self.socketio.emit("controller_samba_info_response", info)
+
+        @self.socketio.on('get_export_destination')
+        def handle_get_export_destination(data=None):
+            """Return where module exports are *actually* going right now --
+            distinct from get_controller_samba_info above, which always
+            reports the controller's own address for the Settings page's
+            "Controller Share" preset regardless of whether an external NAS
+            override (export.share_ip) is configured. A habitat deployment
+            commonly does export to a separate NAS, not the controller
+            itself -- session-detail's "here's where your files are" notice
+            needs the real answer, not the preset."""
+            if not self._require_auth("auth_required"):
+                return
+            info = self.facade.get_export_credentials()
+            self.socketio.emit("export_destination_response", info)
 
         """Controller System State"""
         @self.socketio.on("get_system_state")

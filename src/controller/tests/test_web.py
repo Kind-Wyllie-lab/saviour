@@ -405,6 +405,58 @@ class TestAuthGatedHandlers:
 
             facade.remove_module.assert_called_once_with("cam1")
 
+    def test_get_controller_samba_info_blocked_without_login(self):
+        """Carries a plaintext Samba password -- found missing _require_auth
+        entirely while adding get_export_destination alongside it."""
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("get_controller_samba_info")
+
+        facade.get_controller_own_share_info.assert_not_called()
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_get_controller_samba_info_allowed_after_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_controller_own_share_info.return_value = {"share_ip": "10.0.0.1"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("get_controller_samba_info")
+
+            received = client.get_received()
+            assert received[0]["name"] == "controller_samba_info_response"
+            assert received[0]["args"][0] == {"share_ip": "10.0.0.1"}
+
+    def test_get_export_destination_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("get_export_destination")
+
+        facade.get_export_credentials.assert_not_called()
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_get_export_destination_uses_export_credentials_not_controller_preset(self):
+        """The whole point of this handler existing separately from
+        get_controller_samba_info -- must call get_export_credentials()
+        (respects an external-NAS export.share_ip override), not
+        get_controller_own_share_info() (always the controller's own
+        address, "ignoring any NAS override" per its own docstring)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_export_credentials.return_value = {"share_ip": "192.168.1.2", "share_path": "nas_share"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("get_export_destination")
+
+            received = client.get_received()
+            assert received[0]["name"] == "export_destination_response"
+            assert received[0]["args"][0] == {"share_ip": "192.168.1.2", "share_path": "nas_share"}
+            facade.get_controller_own_share_info.assert_not_called()
+
 
 class TestSaveModuleConfig:
     """save_module_config: blocked while the target module is recording,

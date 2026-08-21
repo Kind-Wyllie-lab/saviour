@@ -160,6 +160,7 @@ function SessionList({ sessionList, modules = [] }) {
   const [sessionLogs, setSessionLogs] = useState({}); // session_name → string[] | "loading"
   const [sessionFileInfo, setSessionFileInfo] = useState({}); // session_name → info | "loading"
   const [fileListOpen, setFileListOpen] = useState({}); // session_name → bool
+  const [shareNoticeOpen, setShareNoticeOpen] = useState({}); // session_name → bool
   const [moduleRecordingStates, setModuleRecordingStates] = useState({}); // module_id → { summary, last_reported }
 
   useEffect(() => {
@@ -229,6 +230,27 @@ function SessionList({ sessionList, modules = [] }) {
     socket.on("module_recording_state_update", handler);
     return () => socket.off("module_recording_state_update", handler);
   }, []);
+
+  // Keep a session's card open through its active/error → stopped
+  // transition. Stopped sessions default to collapsed (expandedSessions
+  // starts empty) so a long session history doesn't render fully expanded
+  // on page load -- but a session that was open because the operator was
+  // just watching it record must not snap shut the instant it stops,
+  // which is exactly when they're most likely to want to check the
+  // exports/files it produced.
+  const prevSessionStatesRef = useRef({});
+  useEffect(() => {
+    const prevStates = prevSessionStatesRef.current;
+    Object.values(sessionList).forEach((session) => {
+      const prevState = prevStates[session.session_name];
+      if (prevState && prevState !== "stopped" && session.state === "stopped") {
+        setExpandedSessions(prev => ({ ...prev, [session.session_name]: true }));
+      }
+    });
+    prevSessionStatesRef.current = Object.fromEntries(
+      Object.values(sessionList).map(s => [s.session_name, s.state])
+    );
+  }, [sessionList]);
 
   // Auto-fetch file info when a stopped session is expanded for the first time
   useEffect(() => {
@@ -581,28 +603,56 @@ function SessionList({ sessionList, modules = [] }) {
                     </p>
                   )}
 
-                  {isStopped && shareInfo && (
-                    <div className="session-share-notice">
-                      <p className="session-share-notice__instruction">
-                        Prefer the <strong>Download all</strong> button above. For direct file
-                        explorer access instead (e.g. sessions too large to download), copy this
-                        path:
-                      </p>
-                      <div className="session-share-notice__path-row">
-                        <p className="session-share-notice__path">
-                          \\{shareInfo.share_ip}\{shareInfo.share_path}
-                        </p>
-                        <CopyButton text={`\\\\${shareInfo.share_ip}\\${shareInfo.share_path}`} />
+                  {isStopped && shareInfo && (() => {
+                    const fi = sessionFileInfo[session.session_name];
+                    if (!fi || fi === "loading" || fi.files.length === 0) return null;
+                    const tooLargeToDownload = fi.total_bytes > DOWNLOAD_ALL_MAX_BYTES;
+                    // Download-all is the default path; the network share is
+                    // only ever a fallback. Rather than showing both with
+                    // equal weight (confusing -- which one is the operator
+                    // actually meant to use?), the share notice stays
+                    // tucked behind a toggle unless it's the *only* option
+                    // that will actually work (session too large to
+                    // download through the browser).
+                    const isOpen = tooLargeToDownload || shareNoticeOpen[session.session_name];
+                    return (
+                      <div className="session-share-notice-wrapper">
+                        {!tooLargeToDownload && (
+                          <button
+                            type="button"
+                            className="session-log-toggle"
+                            onClick={() => setShareNoticeOpen(prev => ({
+                              ...prev, [session.session_name]: !prev[session.session_name],
+                            }))}
+                          >
+                            {isOpen ? "▲ Hide network share details" : "▼ Use the network share instead"}
+                          </button>
+                        )}
+                        {isOpen && (
+                          <div className="session-share-notice">
+                            <p className="session-share-notice__instruction">
+                              {tooLargeToDownload
+                                ? "Too large to download via browser -- use the network share directly:"
+                                : "Direct file explorer access, e.g. for scripted/bulk workflows:"}
+                            </p>
+                            <div className="session-share-notice__path-row">
+                              <p className="session-share-notice__path">
+                                \\{shareInfo.share_ip}\{shareInfo.share_path}
+                              </p>
+                              <CopyButton text={`\\\\${shareInfo.share_ip}\\${shareInfo.share_path}`} />
+                            </div>
+                            <p className="session-share-notice__creds">
+                              Need the share login? On the controller, run <code>sudo saviour-config</code>{" "}
+                              → "Reset Samba share password" to view or set it.
+                            </p>
+                            <p className="session-share-notice__warning">
+                              ⚠ Always check files are present after a recording, and export them to a safe long-term storage location!
+                            </p>
+                          </div>
+                        )}
                       </div>
-                      <p className="session-share-notice__creds">
-                        Need the share login? On the controller, run <code>sudo saviour-config</code>{" "}
-                        → "Reset Samba share password" to view or set it.
-                      </p>
-                      <p className="session-share-notice__warning">
-                        ⚠ Always check files are present after a recording, and export them to a safe long-term storage location!
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {forceStartErrors[session.session_name] && (
                     <p className="session-error-message">{forceStartErrors[session.session_name]}</p>

@@ -497,6 +497,12 @@
   gap: 6px;
 }
 
+.session-share-notice-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .session-file-list {
   border: 1px solid var(--border-color, #ddd);
   border-radius: 4px;

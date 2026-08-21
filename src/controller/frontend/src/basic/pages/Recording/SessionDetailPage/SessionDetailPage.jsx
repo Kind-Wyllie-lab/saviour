@@ -481,7 +481,7 @@ export default function SessionDetailPage() {
               <strong>Exports:</strong>{" "}
               {totalComplete} file{totalComplete !== 1 ? "s" : ""} exported
               {totalFailed > 0 && <span className="session-export-failed">, {totalFailed} failed</span>}
-              {activeSegment && (
+              {(isActive || isError) && activeSegment && (
                 <span className="session-export-progress">
                   {" "}· {completeExports}/{exportEntries.length} this segment
                   {pendingExports > 0 && `, ${pendingExports} pending`}

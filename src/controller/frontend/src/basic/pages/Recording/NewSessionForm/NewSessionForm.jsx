@@ -171,8 +171,6 @@ function NewSessionForm({ modules, sessionList = {} }) {
 
   return (
     <div className="new-session-form card">
-      <h2>New Session</h2>
-
       <SessionName experimentName={experimentName} />
 
       <form onSubmit={handleSubmit} className="session-form">

@@ -147,7 +147,7 @@ function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
   );
 }
 
-function SessionList({ sessionList, modules = [] }) {
+function SessionList({ sessionList, modules = [], onNewSession }) {
   const [expandedSessions, setExpandedSessions] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
   const [addModuleTarget, setAddModuleTarget] = useState(null); // session_name | null
@@ -345,6 +345,15 @@ function SessionList({ sessionList, modules = [] }) {
         <h2>Sessions</h2>
         {sessions.length > 0 && (
           <span className="session-list__count">{sessions.length}</span>
+        )}
+        {onNewSession && (
+          <button
+            type="button"
+            className="session-list__new-session-btn"
+            onClick={onNewSession}
+          >
+            + New Session
+          </button>
         )}
         {endedSessions.length > 0 && !pendingClearAll && (
           <button

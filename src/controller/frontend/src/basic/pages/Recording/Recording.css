@@ -6,43 +6,14 @@
   overflow-y: auto;
 }
 
+/* Single full-width column -- SessionList is the only permanent content on
+   this page now. Starting a session (NewSessionForm) and checking module
+   readiness (ModuleList) both moved into the "+ New Session" drawer
+   (Recording.jsx), since neither is something an operator needs a
+   permanent slot for on every visit -- especially for a long-running
+   habitat deployment, where this page is visited far more often to check
+   status than to start something new. */
 .recording-layout {
-  display: grid;
-  grid-template-columns: 380px 1fr;
-  grid-template-rows: auto 1fr;
-  gap: 24px;
-  align-items: start;
   max-width: 1200px;
   margin: 0 auto;
-}
-
-/* Form panel — left column, spans full height */
-.recording-layout__form {
-  grid-column: 1;
-  grid-row: 1 / -1;
-}
-
-/* Session list — top of right column */
-.recording-layout__sessions {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-/* Module list — bottom of right column */
-.recording-layout__modules {
-  grid-column: 2;
-  grid-row: 2;
-}
-
-@media (max-width: 860px) {
-  .recording-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .recording-layout__form,
-  .recording-layout__sessions,
-  .recording-layout__modules {
-    grid-column: 1;
-    grid-row: auto;
-  }
 }

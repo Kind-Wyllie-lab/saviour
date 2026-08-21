@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import socket from "/src/socket";
+import useSessions from "/src/hooks/useSessions";
+import useModules from "/src/hooks/useModules";
 import "./HabitatRecordingControl.css";
 
 function formatTime(t) {
@@ -45,8 +47,16 @@ function Countdown({ timedStopAt }) {
   );
 }
 
-export default function HabitatRecordingControl({ sessionList = [], modules = {} }) {
+// Fetches its own sessionList/modules (rather than taking them as props)
+// so it can be mounted once, globally, above every route's <Routes> block
+// in App.jsx -- same self-contained pattern as the basic variant's
+// RecordingStatusWidget. Previously only rendered inside HabitatDashboard,
+// so a timed/active session was invisible from every other page
+// (Monitor/Settings/Recording/System/Guide) -- reported live.
+export default function HabitatRecordingControl() {
   const navigate = useNavigate();
+  const { sessionList } = useSessions();
+  const { modules } = useModules();
   const [habitatConfig, setHabitatConfig] = useState(null);
   const [startError, setStartError] = useState(null);
 

@@ -46,3 +46,14 @@ export function formatScheduledDays(days) {
   if (!days || days.length === 0 || days.length === 7) return "every day";
   return [...days].sort((a, b) => a - b).map(d => DAY_NAMES[d]).join(", ");
 }
+
+// session.target is "all", a module group name (e.g. "camera",
+// "habitat_camera"), or a single module id -- readable as-is once
+// underscores become spaces and it's capitalised, and it's set once at
+// creation and never changes, so it stays a stable "what kind of session
+// was this" label even long after the session has stopped.
+export function formatTarget(target) {
+  if (!target || target === "all") return "All modules";
+  const spaced = target.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}

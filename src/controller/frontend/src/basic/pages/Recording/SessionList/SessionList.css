@@ -214,6 +214,15 @@
   flex: 1 1 auto;
 }
 
+.session-row__type {
+  font-size: 0.74rem;
+  color: var(--text-muted, #888);
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-row__summary {
   font-size: 0.8rem;
   color: var(--text-muted, #888);

@@ -625,6 +625,14 @@
   cursor: pointer;
   user-select: none;
   font-weight: 600;
+  list-style: none; /* suppress the native <summary> marker -- its default
+    box doesn't align inline with a flex child, which is what put the
+    disclosure arrow on its own line above the text; a custom arrow inside
+    the flex row below replaces it */
+}
+
+.session-file-tree__summary::-webkit-details-marker {
+  display: none;
 }
 
 .session-file-tree__summary:hover {
@@ -634,11 +642,23 @@
 .session-file-tree__summary-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
+.session-file-tree__arrow {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.8em;
+  color: var(--text-muted, #888);
+  transition: transform 0.15s ease;
+}
+
+.session-file-tree__folder[open] > summary .session-file-tree__arrow {
+  transform: rotate(90deg);
+}
+
 .session-file-tree__label {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

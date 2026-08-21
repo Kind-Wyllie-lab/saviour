@@ -60,6 +60,7 @@ function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
           <details key={name} className="session-file-tree__folder" open={defaultOpen}>
             <summary className="session-file-tree__summary">
               <span className="session-file-tree__summary-row">
+                <span className="session-file-tree__arrow" aria-hidden="true">▸</span>
                 <span className="session-file-tree__label">
                   {name}{" "}
                   <span className="session-file-tree__count">

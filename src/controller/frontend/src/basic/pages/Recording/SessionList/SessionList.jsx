@@ -5,34 +5,18 @@ import { formatFaultTime, formatScheduledDays } from "../sessionFormat";
 import { Countdown, Elapsed } from "../sessionFormatComponents";
 import "./SessionList.css";
 
-// Compact, clickable rows only -- everything else (files, share notice,
-// events log, module-recording-state table, Delete/Retry Export/Add
-// Module) lives in SessionDetailPage now, reached by clicking a row. See
-// CLAUDE.md's "Recording page" entries for why: a session card that
-// expanded in place got cramped once its own detail grew this rich, and
-// didn't scale to a long list of habitat sessions either.
-function SessionList({ sessionList, modules = [], onNewSession }) {
+// A narrow, always-visible selector rail (RecordingLayout renders it next
+// to the routed detail pane) -- rows are compact on purpose, since this
+// column stays this width regardless of viewport size. All actions
+// (Stop/Start Now/Retry Now/Delete/Retry Export/Add Module) live on
+// SessionDetailPage now, reached by clicking a row -- selecting a session
+// is cheap here (no navigation away from the list), so duplicating quick
+// actions onto the row as well would just be clutter in a column this
+// narrow.
+function SessionList({ sessionList, modules = [], onNewSession, selectedSessionName }) {
   const navigate = useNavigate();
   const [pendingClearAll, setPendingClearAll] = useState(false);
   const [clearAllWarning, setClearAllWarning] = useState(null); // { message, skippedSessions } | null
-  const [forceStartErrors, setForceStartErrors] = useState({}); // session_name → error string
-
-  useEffect(() => {
-    const handler = ({ session_name, success, error }) => {
-      if (!success && session_name && error) {
-        setForceStartErrors(prev => ({ ...prev, [session_name]: error }));
-        setTimeout(() => {
-          setForceStartErrors(prev => {
-            const next = { ...prev };
-            delete next[session_name];
-            return next;
-          });
-        }, 8000);
-      }
-    };
-    socket.on("force_start_result", handler);
-    return () => socket.off("force_start_result", handler);
-  }, []);
 
   useEffect(() => {
     const handler = (data) => {
@@ -44,14 +28,6 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
     socket.on("session_error", handler);
     return () => socket.off("session_error", handler);
   }, []);
-
-  const handleStop = (sessionName) => {
-    socket.emit("stop_session", { session_name: sessionName });
-  };
-
-  const handleForceStart = (sessionName) => {
-    socket.emit("force_start_session", { session_name: sessionName });
-  };
 
   const handleClearAllConfirm = () => {
     socket.emit("clear_ended_sessions", { delete_files: true });
@@ -87,7 +63,16 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
             + New Session
           </button>
         )}
-        {endedSessions.length > 0 && !pendingClearAll && (
+      </div>
+
+      {endedSessions.length > 0 && (
+        pendingClearAll ? (
+          <span className="session-list__clear-all-confirm">
+            Clear {endedSessions.length} ended session{endedSessions.length !== 1 ? "s" : ""}?
+            <button type="button" className="session-btn session-btn--delete-confirm" onClick={handleClearAllConfirm}>Yes</button>
+            <button type="button" className="session-btn session-btn--cancel" onClick={() => setPendingClearAll(false)}>No</button>
+          </span>
+        ) : (
           <button
             type="button"
             className="session-list__clear-all-btn"
@@ -95,15 +80,8 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
           >
             Clear all ended
           </button>
-        )}
-        {pendingClearAll && (
-          <span className="session-list__clear-all-confirm">
-            Clear {endedSessions.length} ended session{endedSessions.length !== 1 ? "s" : ""}?
-            <button type="button" className="session-btn session-btn--delete-confirm" onClick={handleClearAllConfirm}>Yes</button>
-            <button type="button" className="session-btn session-btn--cancel" onClick={() => setPendingClearAll(false)}>No</button>
-          </span>
-        )}
-      </div>
+        )
+      )}
 
       {clearAllWarning && (
         <div className="session-list__export-warning">
@@ -136,6 +114,7 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
           const isStopped   = state === "stopped";
           const isError     = state === "error";
           const isScheduled = state === "scheduled";
+          const isSelected  = session.session_name === selectedSessionName;
 
           // A session is "starting" when the controller has created it (active)
           // but no modules have confirmed recording yet.
@@ -150,6 +129,7 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
           else if (isActive)    sessionClass += " active";
           if (isStopped)        sessionClass += " stopped";
           if (isError)          sessionClass += " error";
+          if (isSelected)       sessionClass += " session--selected";
 
           return (
             <div
@@ -158,10 +138,11 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
               onClick={() => goToSession(session.session_name)}
               role="button"
               tabIndex={0}
+              aria-current={isSelected ? "true" : undefined}
               onKeyDown={(e) => { if (e.key === "Enter") goToSession(session.session_name); }}
             >
               <div className="session-row">
-                <div className="session-row__left">
+                <span className="status-dot--wrap">
                   {isStarting && (
                     <span className="status-dot status-dot--starting" title="Starting - waiting for modules" />
                   )}
@@ -177,7 +158,9 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
                   {isStopped && (
                     <span className="status-dot status-dot--stopped" title="Stopped" />
                   )}
+                </span>
 
+                <div className="session-row__main">
                   <div className="session-header__name">
                     <span className="session-name">{session.session_name}</span>
                     {isStarting  && <span className="session-state-label session-state-label--starting">Starting…</span>}
@@ -191,66 +174,26 @@ function SessionList({ sessionList, modules = [], onNewSession }) {
                     {isScheduled && <span className="session-state-label session-state-label--scheduled">Scheduled</span>}
                     {isError     && <span className="session-state-label session-state-label--error">Error</span>}
                   </div>
-                </div>
 
-                <div className="session-row__summary">
-                  {isActive && !isStarting && (
-                    session.timed_stop_at
-                      ? <span><Countdown timedStopAt={session.timed_stop_at} /> left</span>
-                      : <Elapsed startTime={session.start_time} />
-                  )}
-                  {isError && session.error_message && (
-                    <span className="session-row__error-text" title={session.error_message}>{session.error_message}</span>
-                  )}
-                  {isScheduled && session.scheduled_start_time && (
-                    <span>{session.scheduled_start_time} – {session.scheduled_end_time}, {formatScheduledDays(session.scheduled_days)}</span>
-                  )}
-                  {isStopped && (totalComplete > 0 || totalFailed > 0) && (
-                    <span>
-                      {totalComplete} exported
-                      {totalFailed > 0 && <span className="session-export-failed">, {totalFailed} failed</span>}
-                    </span>
-                  )}
-                  {forceStartErrors[session.session_name] && (
-                    <span className="session-row__error-text">{forceStartErrors[session.session_name]}</span>
-                  )}
-                </div>
-
-                <div className="session-row__actions" onClick={(e) => e.stopPropagation()}>
-                  {(isActive || isStarting || isError) && (
-                    <button
-                      className="session-btn session-btn--stop"
-                      onClick={() => handleStop(session.session_name)}
-                    >
-                      End Session
-                    </button>
-                  )}
-                  {isScheduled && (
-                    <>
-                      <button
-                        className="session-btn session-btn--start"
-                        onClick={() => handleForceStart(session.session_name)}
-                        title="Start recording now, bypassing the scheduled time window"
-                      >
-                        Start Now
-                      </button>
-                      <button
-                        className="session-btn session-btn--stop"
-                        onClick={() => handleStop(session.session_name)}
-                      >
-                        Cancel Schedule
-                      </button>
-                    </>
-                  )}
-                  {isError && session.scheduled && (
-                    <button
-                      className="session-btn session-btn--start"
-                      onClick={() => handleForceStart(session.session_name)}
-                      title="Retry this scheduled session now"
-                    >
-                      Retry Now
-                    </button>
-                  )}
+                  <div className="session-row__summary">
+                    {isActive && !isStarting && (
+                      session.timed_stop_at
+                        ? <span><Countdown timedStopAt={session.timed_stop_at} /> left</span>
+                        : <Elapsed startTime={session.start_time} />
+                    )}
+                    {isError && session.error_message && (
+                      <span className="session-row__error-text" title={session.error_message}>{session.error_message}</span>
+                    )}
+                    {isScheduled && session.scheduled_start_time && (
+                      <span>{session.scheduled_start_time} – {session.scheduled_end_time}, {formatScheduledDays(session.scheduled_days)}</span>
+                    )}
+                    {isStopped && (totalComplete > 0 || totalFailed > 0) && (
+                      <span>
+                        {totalComplete} exported
+                        {totalFailed > 0 && <span className="session-export-failed">, {totalFailed} failed</span>}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

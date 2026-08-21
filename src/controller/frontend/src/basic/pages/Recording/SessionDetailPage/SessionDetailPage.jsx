@@ -82,6 +82,7 @@ export default function SessionDetailPage() {
   const [fileListOpen, setFileListOpen] = useState(false);
   const [shareNoticeOpen, setShareNoticeOpen] = useState(false);
   const [moduleRecordingStates, setModuleRecordingStates] = useState({}); // module_id → { summary, last_reported }
+  const [forceStartError, setForceStartError] = useState(null);
 
   const session = sessions[sessionName];
 
@@ -91,6 +92,17 @@ export default function SessionDetailPage() {
     socket.on("controller_samba_info_response", handler);
     return () => socket.off("controller_samba_info_response", handler);
   }, []);
+
+  useEffect(() => {
+    const handler = ({ session_name, success, error }) => {
+      if (session_name !== sessionName || success || !error) return;
+      setForceStartError(error);
+      const t = setTimeout(() => setForceStartError(null), 8000);
+      return () => clearTimeout(t);
+    };
+    socket.on("force_start_result", handler);
+    return () => socket.off("force_start_result", handler);
+  }, [sessionName]);
 
   useEffect(() => {
     const handler = (data) => {
@@ -494,6 +506,10 @@ export default function SessionDetailPage() {
                 </div>
               )}
             </div>
+          )}
+
+          {forceStartError && (
+            <p className="session-error-message">{forceStartError}</p>
           )}
 
           <div className="session-actions">

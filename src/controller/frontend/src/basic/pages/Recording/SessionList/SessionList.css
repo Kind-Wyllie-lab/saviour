@@ -167,58 +167,55 @@
   user-select: none;
 }
 
-/* ── Compact row layout (list view) ──────────────────────────────────────
-   Everything richer (files, share notice, events, module status, and the
-   Delete/Retry Export/Add Module actions) lives on SessionDetailPage now,
-   which reuses the session-meta-grid/session-share-notice/etc. rules
-   further down this file rather than duplicating them. */
+/* ── Compact row layout (rail) ────────────────────────────────────────────
+   RecordingLayout renders SessionList as a narrow, always-visible column
+   next to the routed detail pane -- these rows stay compact regardless of
+   viewport size (it's a fixed-width column, not something that only gets
+   narrow on small screens), so the layout is stacked (name/state line,
+   summary line below) by default rather than relying on a width media
+   query. Everything richer (files, share notice, events, module status,
+   and all actions -- including Stop/Start Now/Retry Now, not just
+   Delete/Retry Export/Add Module) lives on SessionDetailPage now, which
+   reuses the session-meta-grid/session-share-notice/etc. rules further
+   down this file rather than duplicating them. */
 
 .session-row {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  align-items: flex-start;
+  gap: 10px;
 }
 
-.session-row__left {
+.status-dot--wrap {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  height: 1.3em;
+}
+
+.session-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
   flex: 1 1 auto;
 }
 
 .session-row__summary {
-  flex-shrink: 0;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--text-muted, #888);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-row__error-text {
   color: #c62828;
 }
 
-.session-row__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-@media (max-width: 640px) {
-  .session-row {
-    flex-wrap: wrap;
-  }
-
-  .session-row__summary {
-    max-width: none;
-    order: 3;
-    flex-basis: 100%;
-  }
+.session--selected {
+  border-left-color: var(--accent-color, #4a90d9);
+  box-shadow: 0 0 0 1px var(--accent-color, #4a90d9);
 }
 
 /* ── Status dots ──────────────────────────────────────────────────────── */

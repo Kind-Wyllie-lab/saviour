@@ -331,6 +331,18 @@ class HabitatCameraModule(CameraBase):
         self._clip_open = False
         self._clip_counter = 0
         self._open_diagnostic_csv()
+        # If motion was already sustained above threshold before this arm
+        # (e.g. an animal was mid-activity when the operator pressed Start),
+        # _process_main_frame's idle/waiting -> active transition already
+        # fired while unarmed, correctly skipping _open_clip() then -- but
+        # since that's a one-shot transition, not a per-frame check, nothing
+        # would otherwise open a clip until the animal goes fully quiet for
+        # inactivity_min_duration_s (120s default) and re-triggers from
+        # scratch. Confirmed live: the operator sees "TRIGGERED (not armed)"
+        # on the livestream despite genuinely being armed, and no footage of
+        # the ongoing activity gets captured. Catch up immediately instead.
+        if self._motion_state == "active":
+            self._open_clip()
         return True
 
     def _start_next_recording_segment(self) -> bool:

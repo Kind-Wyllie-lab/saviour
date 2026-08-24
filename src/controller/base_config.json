@@ -30,7 +30,8 @@
     },
     "export": {
         "max_concurrent_exports": 2,
-        "mount_path": "/home/pi/controller_share"
+        "mount_path": "/home/pi/controller_share",
+        "sync_all_modules": true
     },
     "recording": {
         "ptp_threshold_us": 1000.0,

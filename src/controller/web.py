@@ -1111,6 +1111,22 @@ class Web(ABC):
             result = self.facade.sync_export_to_module(module_id)
             self.socketio.emit("export_sync_result", {"module_id": module_id, **result})
 
+        def _sync_export_to_all_modules(creds: dict) -> None:
+            """Push export credentials to every connected module and report
+            the result. Shared by the manual 'sync_export_to_all' handler
+            below and the auto-sync-on-save path in save_controller_config."""
+            modules = self.facade.get_modules()
+            results = {
+                module_id: self.facade.sync_export_with_creds(module_id, creds)
+                for module_id in modules
+            }
+            success_count = sum(1 for r in results.values() if r.get("success"))
+            self.socketio.emit("export_sync_all_result", {
+                "results": results,
+                "success_count": success_count,
+                "total": len(results),
+            })
+
         @self.socketio.on('sync_export_to_all')
         def handle_sync_export_to_all(data=None):
             """Push export credentials to every connected module.
@@ -1133,19 +1149,11 @@ class Web(ABC):
                 current = self.facade.get_config()
                 current.setdefault("export", {}).update(creds)
                 self.facade.set_config(current)
+                self.ensure_export_share_mounted()
             else:
                 creds = self.facade.get_export_credentials()
 
-            modules = self.facade.get_modules()
-            results = {}
-            for module_id in modules:
-                results[module_id] = self.facade.sync_export_with_creds(module_id, creds)
-            success_count = sum(1 for r in results.values() if r.get("success"))
-            self.socketio.emit("export_sync_all_result", {
-                "results": results,
-                "success_count": success_count,
-                "total": len(results),
-            })
+            _sync_export_to_all_modules(creds)
 
         @self.socketio.on('get_controller_samba_info')
         def handle_get_controller_samba_info(data=None):
@@ -1198,10 +1206,40 @@ class Web(ABC):
             if not self._require_auth("auth_required"):
                 return
             self.logger.info("Saving controller config")
-            self.facade.set_config(_filter_private_keys(data.get("config", {})))
+            # Snapshot the export section before overwriting it, so we can
+            # tell below whether this particular save actually changed the
+            # share credentials (vs. e.g. an unrelated controller.name edit)
+            # -- auto-sync should fire on a real credential change, not on
+            # every save regardless of section.
+            old_export = self.facade.get_config().get("export", {})
+            new_config = _filter_private_keys(data.get("config", {}))
+            self.facade.set_config(new_config)
             self.socketio.emit("controller_config_response", {
                 "config": self.facade.get_config()
             })
+
+            new_export = new_config.get("export", {})
+            share_keys = ("share_ip", "share_path", "share_username", "share_password")
+            export_changed = any(
+                old_export.get(k) != new_export.get(k) for k in share_keys
+            )
+            # export.sync_all_modules (default True): most deployments point
+            # every module at the same share, so the default assumes that and
+            # pushes a changed share config out immediately rather than
+            # leaving already-connected modules on stale credentials until
+            # they reconnect or an operator remembers to click "Sync to all
+            # modules" by hand. Turn it off for a deployment that genuinely
+            # needs modules to diverge (the manual button still works either way).
+            if export_changed:
+                # Independent of sync_all_modules above -- the controller's
+                # own ability to browse/download exported files (session
+                # detail page) shouldn't depend on whether modules are also
+                # being auto-pushed the same credentials.
+                self.ensure_export_share_mounted()
+                if self.config.get("export.sync_all_modules", True):
+                    creds = self.facade.get_export_credentials()
+                    if creds:
+                        _sync_export_to_all_modules(creds)
 
 
         @self.socketio.on("get_controller_info")
@@ -2287,6 +2325,83 @@ class Web(ABC):
         except Exception as e:
             self.logger.error(f"NAS mount failed: {e}")
             return False
+
+
+    def _get_own_ip(self) -> str:
+        """The controller's own eth0 address, read the same synchronous way
+        handle_get_controller_info/handle_get_controller_health already do
+        -- deliberately not self.network.ip (Network's zeroconf-driven IP
+        detection), so this has no dependency on that timing and can be
+        called immediately at startup."""
+        try:
+            result = subprocess.run(
+                ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            return result.stdout.strip().split("/")[0] if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    def ensure_export_share_mounted(self) -> bool:
+        """Keep export.mount_path in sync with wherever export.share_ip
+        currently points, so the session-detail file browser/downloads --
+        get_session_file_info/download_session_file/download_session_zip,
+        all of which just read export.mount_path as a plain local directory
+        -- see the same files modules actually exported, even when that's a
+        remote NAS (e.g. habitat's //192.168.1.2/habitat_recording) rather
+        than the controller's own share. Call whenever export.* changes
+        (see save_controller_config/sync_export_to_all below) and once at
+        startup so a reboot doesn't lose the mount.
+
+        No-op (after unmounting any previous NAS mount) when export.share_ip
+        is unset or is the controller's own address -- export.mount_path
+        should then stay the controller's own local Samba-served directory
+        ([controller_share] in smb.conf), not a CIFS mount on top of it;
+        mounting a share onto its own backing directory would break the
+        controller's own Samba server, not just be redundant.
+        """
+        default_mount_path = "/home/pi/controller_share"
+        mount_point = Path(self.config.get("export.mount_path", default_mount_path))
+        nas_ip = self.config.get("export.share_ip", "")
+        is_remote = bool(nas_ip) and nas_ip != self._get_own_ip()
+
+        if mount_point.is_mount():
+            result = subprocess.run(
+                ["sudo", "umount", str(mount_point)],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode != 0:
+                self.logger.warning(
+                    f"Could not unmount {mount_point} before remount: {result.stderr}"
+                )
+
+        if not is_remote:
+            return True
+
+        share_path = self.config.get("export.share_path", "controller_share")
+        username   = self.config.get("export.share_username", "")
+        password   = self.config.get("export.share_password", "")
+        mount_point.mkdir(parents=True, exist_ok=True)
+        auth_opts = f"username={username},password={password}" if username else "guest"
+        mount_opts = (
+            f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"
+        )
+        result = subprocess.run(
+            ["sudo", "mount", "-t", "cifs",
+             f"//{nas_ip}/{share_path}", str(mount_point), "-o", mount_opts],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            self.logger.error(
+                f"Failed to mount export share //{nas_ip}/{share_path} "
+                f"at {mount_point}: {result.stderr}"
+            )
+            return False
+        self.logger.info(
+            f"Mounted export share //{nas_ip}/{share_path} "
+            f"at {mount_point} for local browsing"
+        )
+        return True
 
 
     def handle_special_module_status(self, module_id, status):

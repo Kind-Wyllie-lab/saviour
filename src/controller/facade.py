@@ -137,6 +137,9 @@ class ControllerFacade:
     def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False) -> dict:
         return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name)
 
+    def update_pending_session(self, session_name: str, new_session_name=None, duration_minutes=None) -> dict:
+        return self.controller.recording.update_pending_session(session_name, new_session_name, duration_minutes)
+
     def create_scheduled_session(self, session_name: str, target: str, start_time: str, end_time: str, days=None, researcher=None, raw_name=False) -> dict:
         return self.controller.recording.create_scheduled_session(session_name, target, start_time, end_time, days, researcher, raw_name)
 
@@ -146,12 +149,18 @@ class ControllerFacade:
     def force_start_scheduled_session(self, session_name: str) -> dict:
         return self.controller.recording.force_start_scheduled_session(session_name)
 
+    def force_start_session(self, session_name: str) -> dict:
+        return self.controller.recording.force_start_session(session_name)
+
     def delete_session(self, session_name: str, delete_files: bool = True,
                        force: bool = False) -> dict:
         return self.controller.recording.delete_session(session_name, delete_files, force)
 
     def clear_ended_sessions(self, delete_files: bool = False, force: bool = False) -> dict:
         return self.controller.recording.clear_ended_sessions(delete_files, force)
+
+    def request_recording_state_refresh(self, session_name: str) -> dict:
+        return self.controller.recording.request_recording_state_refresh(session_name)
 
     def retry_failed_exports(self, session_name: str) -> dict:
         return self.controller.recording.retry_failed_exports(session_name)

@@ -6,7 +6,6 @@ import useSessions from "/src/hooks/useSessions";
 import HealthSummaryWidget from "/src/basic/components/HealthSummaryWidget/HealthSummaryWidget";
 import HabitatLivestreamGrid from "../../components/HabitatLivestreamGrid/HabitatLivestreamGrid";
 import HabitatModuleStatusList from "../../components/HabitatModuleStatusList/HabitatModuleStatusList";
-import HabitatRecordingControl from "../../components/HabitatRecordingControl/HabitatRecordingControl";
 import HabitatMicrophoneStrip from "../../components/HabitatMicrophoneStrip/HabitatMicrophoneStrip";
 
 function HabitatDashboard() {
@@ -15,8 +14,6 @@ function HabitatDashboard() {
 
   return (
     <main className="habitat-dashboard">
-      <HabitatRecordingControl sessionList={sessionList} modules={modules} />
-
       <div className="habitat-dashboard-body">
         <section className="habitat-dashboard-left">
           <HealthSummaryWidget />

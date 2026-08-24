@@ -857,7 +857,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               activity score below stays above threshold — the score itself
               is always computed every frame and logged to the timestamp CSV
               (and shown live on the preview, including while idle) so you
-              can tune these values against real activity.
+              can tune these values against real activity. A score spike
+              right after the camera's auto-exposure adjusts (e.g. as ambient
+              light changes) is ignored for the settle time below, rather
+              than treated as motion — the preview shows "AE settling" during
+              that window.
             </div>
             <div className="form-field">
               <label>Motion algorithm:</label>
@@ -882,7 +886,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="form-field">
               <label>Min inactivity duration before clearing (s):</label>
               <input type="number" min="0" step="1"
-                value={formData?.habitat_motion?.inactivity_min_duration_s ?? 120}
+                value={formData?.habitat_motion?.inactivity_min_duration_s ?? 300}
                 onChange={e => handleChange(["habitat_motion", "inactivity_min_duration_s"], e)} />
             </div>
             <div className="form-field">
@@ -890,6 +894,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <input type="number" min="0" step="0.5"
                 value={formData?.habitat_motion?.pre_roll_secs ?? 3.0}
                 onChange={e => handleChange(["habitat_motion", "pre_roll_secs"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Auto-exposure settle time before trusting a score (s):</label>
+              <input type="number" min="0" step="0.05"
+                value={formData?.habitat_motion?.ae_settle_s ?? 0.75}
+                onChange={e => handleChange(["habitat_motion", "ae_settle_s"], e)} />
             </div>
             <div className="form-field">
               <label>Processing width (px, downscaled before detection):</label>

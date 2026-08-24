@@ -27,13 +27,15 @@ def test_controller():
 # ---------------------------------------------------------------------------
 
 class _Ctx:
-    """Minimal stand-in exposing only what on_module_status_change touches."""
+    """Minimal stand-in duck-typing the bits of Controller that
+    on_module_status_change / handle_status_update touch."""
     def __init__(self):
         self.logger = MagicMock()
         self.facade = MagicMock()
         self.modules = MagicMock()
         self.communication = MagicMock()
         self.web = MagicMock()
+        self.health = MagicMock()
 
 
 class TestOnModuleStatusChangeFramesync:
@@ -56,3 +58,41 @@ class TestOnModuleStatusChangeFramesync:
         ctx = _Ctx()
         Controller.on_module_status_change(ctx, "camera_a", "online")
         ctx.facade.module_back_online.assert_called_once_with("camera_a")
+
+
+# ---------------------------------------------------------------------------
+# handle_status_update -- cmd_ack routing for report_recording_state
+# ---------------------------------------------------------------------------
+
+class TestHandleStatusUpdateReportRecordingState:
+    def _send(self, ctx, module_id: str, payload: dict):
+        import json
+        ctx.modules.is_removed.return_value = False
+        data = json.dumps({"type": "cmd_ack", "command": "report_recording_state", **payload})
+        Controller.handle_status_update(ctx, f"status/{module_id}", data)
+
+    def test_routes_to_modules_update_recording_state(self):
+        ctx = _Ctx()
+        payload = {"pending": {"count": 1}, "to_export": {"count": 0}, "exported": {"count": 2}}
+        self._send(ctx, "habitat_camera_a", payload)
+        ctx.modules.update_recording_state.assert_called_once()
+        called_module_id, called_payload = ctx.modules.update_recording_state.call_args.args
+        assert called_module_id == "habitat_camera_a"
+        assert called_payload["pending"] == {"count": 1}
+
+    def test_broadcasts_to_frontend(self):
+        ctx = _Ctx()
+        payload = {"pending": {"count": 0}, "to_export": {"count": 0}, "exported": {"count": 0}}
+        self._send(ctx, "habitat_camera_a", payload)
+        ctx.web.broadcast_recording_state_update.assert_called_once()
+        called_module_id = ctx.web.broadcast_recording_state_update.call_args.args[0]
+        assert called_module_id == "habitat_camera_a"
+
+    def test_other_cmd_acks_do_not_trigger_this_branch(self):
+        ctx = _Ctx()
+        import json
+        ctx.modules.is_removed.return_value = False
+        data = json.dumps({"type": "cmd_ack", "command": "get_diagnostics", "result": "ok"})
+        Controller.handle_status_update(ctx, "status/habitat_camera_a", data)
+        ctx.modules.update_recording_state.assert_not_called()
+        ctx.web.broadcast_recording_state_update.assert_not_called()

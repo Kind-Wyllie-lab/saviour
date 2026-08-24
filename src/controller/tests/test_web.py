@@ -15,7 +15,7 @@ import queue
 import re
 import tempfile
 import zipfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from src.controller.recording import RecordingSession
 from src.controller.web import (
@@ -166,6 +166,23 @@ class TestServeReactApp:
             finally:
                 resp.close()
 
+    def test_multi_segment_client_route_falls_back_to_index_html(self):
+        """Regression test for a live bug report: refreshing/deep-linking a
+        multi-segment client-side route (e.g. /recording/sessions/<name>)
+        404'd. Flask's own auto-registered static route already matches
+        multi-segment paths (it uses the <path:...> converter), and used to
+        shadow this app's catch-all entirely for any 2+-segment URL since
+        the catch-all only matched a single segment -- fixed by disabling
+        Flask's auto static route (static_folder=None) so this app's own
+        serve() is the only route handling anything under '/'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resp = self._client_with_static(tmpdir).get("/recording/sessions/Crumb-141343")
+            try:
+                assert resp.status_code == 200
+                assert b"spa shell" in resp.data
+            finally:
+                resp.close()
+
 
 class TestDownloadSessionFile:
     def _client_with_session(self, tmpdir):
@@ -209,6 +226,33 @@ class TestDownloadSessionFile:
                 "/api/sessions/session1/download/../outside.txt"
             )
             assert resp.status_code == 403
+
+    def test_folder_path_returns_zip_of_that_subtree_only(self):
+        """The FileTree browser lets an operator click a folder (e.g. a
+        per-module folder) -- hitting the same download URL for a directory
+        instead of a file must zip just that subtree, not the whole
+        session, and not silently 404 like a bare-file lookup would."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_dir = os.path.join(tmpdir, "session1")
+            os.makedirs(os.path.join(session_dir, "20260821", "camera_a"))
+            os.makedirs(os.path.join(session_dir, "20260821", "camera_b"))
+            with open(os.path.join(session_dir, "20260821", "camera_a", "rec.ts"), "w") as f:
+                f.write("cam a data")
+            with open(os.path.join(session_dir, "20260821", "camera_b", "rec.ts"), "w") as f:
+                f.write("cam b data")
+
+            web = _make_web(**{"export.mount_path": tmpdir})
+            resp = web.app.test_client().get(
+                "/api/sessions/session1/download/20260821/camera_a"
+            )
+
+            assert resp.status_code == 200
+            assert resp.mimetype == "application/zip"
+            assert resp.headers["Content-Disposition"] == \
+                'attachment; filename="session1-20260821-camera_a.zip"'
+            with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+                assert zf.namelist() == ["rec.ts"]
+                assert zf.read("rec.ts") == b"cam a data"
 
 
 class TestDownloadSessionZip:
@@ -365,6 +409,89 @@ class TestAuthGatedHandlers:
 
             facade.set_config.assert_called_once_with({"name": "hab1"})
 
+    def test_save_controller_config_auto_syncs_export_when_share_changed(self):
+        """export.sync_all_modules defaults True -- a changed share config
+        should push out to every connected module without a separate manual
+        'Sync to All Modules' click."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.side_effect = [
+                {"export": {"share_ip": "10.0.0.1"}},
+                {"export": {"share_ip": "10.0.0.2"}},
+            ]
+            facade.get_export_credentials.return_value = {"share_ip": "10.0.0.2"}
+            facade.get_modules.return_value = {"cam1": {}, "cam2": {}}
+            facade.sync_export_with_creds.return_value = {"success": True}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_controller_config", {
+                "config": {"export": {"share_ip": "10.0.0.2"}}
+            })
+
+            assert facade.sync_export_with_creds.call_args_list == [
+                call("cam1", {"share_ip": "10.0.0.2"}),
+                call("cam2", {"share_ip": "10.0.0.2"}),
+            ]
+
+    def test_save_controller_config_no_sync_when_export_unchanged(self):
+        """Saving an unrelated section (no share_ip/path/username/password
+        change) should not re-push credentials to every module."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.side_effect = [
+                {"export": {"share_ip": "10.0.0.1"}, "name": "old"},
+                {"export": {"share_ip": "10.0.0.1"}, "name": "new"},
+            ]
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_controller_config", {
+                "config": {"export": {"share_ip": "10.0.0.1"}, "name": "new"}
+            })
+
+            facade.sync_export_with_creds.assert_not_called()
+
+    def test_save_controller_config_no_auto_sync_when_disabled(self):
+        """export.sync_all_modules: false opts out of the auto-push -- the
+        manual 'Sync to All Modules' button still works either way, it just
+        isn't exercised by this handler."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade(**{"export.sync_all_modules": False})
+            facade.get_config.side_effect = [
+                {"export": {"share_ip": "10.0.0.1"}},
+                {"export": {"share_ip": "10.0.0.2"}},
+            ]
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_controller_config", {
+                "config": {"export": {"share_ip": "10.0.0.2"}}
+            })
+
+            facade.sync_export_with_creds.assert_not_called()
+
+    def test_save_controller_config_mounts_locally_even_when_module_sync_disabled(self):
+        """The controller's own file-browser mount (ensure_export_share_mounted)
+        is independent of export.sync_all_modules -- that flag only controls
+        whether *other modules* get auto-pushed the new credentials, not
+        whether the controller itself can browse/download from the share."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade(**{"export.sync_all_modules": False})
+            web.ensure_export_share_mounted = MagicMock(return_value=True)
+            facade.get_config.side_effect = [
+                {"export": {"share_ip": "10.0.0.1"}},
+                {"export": {"share_ip": "10.0.0.2"}},
+            ]
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("save_controller_config", {
+                "config": {"export": {"share_ip": "10.0.0.2"}}
+            })
+
+            web.ensure_export_share_mounted.assert_called_once()
+
     def test_start_recording_blocked_without_login(self):
         web, facade = _make_web_with_facade()
         client = _connected_client(web)
@@ -404,6 +531,104 @@ class TestAuthGatedHandlers:
             client.emit("remove_module", {"id": "cam1"})
 
             facade.remove_module.assert_called_once_with("cam1")
+
+    def test_get_controller_samba_info_blocked_without_login(self):
+        """Carries a plaintext Samba password -- found missing _require_auth
+        entirely while adding get_export_destination alongside it."""
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("get_controller_samba_info")
+
+        facade.get_controller_own_share_info.assert_not_called()
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_get_controller_samba_info_allowed_after_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_controller_own_share_info.return_value = {"share_ip": "10.0.0.1"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("get_controller_samba_info")
+
+            received = client.get_received()
+            assert received[0]["name"] == "controller_samba_info_response"
+            assert received[0]["args"][0] == {"share_ip": "10.0.0.1"}
+
+    def test_get_export_destination_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("get_export_destination")
+
+        facade.get_export_credentials.assert_not_called()
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_get_export_destination_uses_export_credentials_not_controller_preset(self):
+        """The whole point of this handler existing separately from
+        get_controller_samba_info -- must call get_export_credentials()
+        (respects an external-NAS export.share_ip override), not
+        get_controller_own_share_info() (always the controller's own
+        address, "ignoring any NAS override" per its own docstring)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_export_credentials.return_value = {"share_ip": "192.168.1.2", "share_path": "nas_share"}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("get_export_destination")
+
+            received = client.get_received()
+            assert received[0]["name"] == "export_destination_response"
+            assert received[0]["args"][0] == {"share_ip": "192.168.1.2", "share_path": "nas_share"}
+            facade.get_controller_own_share_info.assert_not_called()
+
+    def test_update_pending_session_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("update_pending_session", {
+            "session_name": "exp1", "new_session_name": "exp1_fixed", "duration_minutes": 30
+        })
+
+        facade.update_pending_session.assert_not_called()
+        assert client.get_received()[0]["name"] == "session_error"
+
+    def test_update_pending_session_allowed_after_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.update_pending_session.return_value = {
+                "success": True, "session_name": "exp1_fixed"
+            }
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("update_pending_session", {
+                "session_name": "exp1", "new_session_name": "exp1_fixed", "duration_minutes": 30
+            })
+
+            facade.update_pending_session.assert_called_once_with("exp1", "exp1_fixed", 30)
+            received = client.get_received()
+            assert received[-1]["name"] == "update_pending_session_result"
+            assert received[-1]["args"][0] == {"success": True, "session_name": "exp1_fixed"}
+
+    def test_update_pending_session_error_surfaces_session_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.update_pending_session.return_value = {
+                "success": False, "error": "Session is not pending (state: active)"
+            }
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("update_pending_session", {
+                "session_name": "exp1", "new_session_name": "exp1_fixed", "duration_minutes": 30
+            })
+
+            received = client.get_received()
+            assert received[-1]["name"] == "session_error"
+            assert received[-1]["args"][0] == {"error": "Session is not pending (state: active)"}
 
 
 class TestSaveModuleConfig:
@@ -662,6 +887,94 @@ class TestCheckNasFreeSpace:
 
         assert error is not None
         assert "rejected the credentials" in error
+
+
+class TestEnsureExportShareMounted:
+    """Keeps export.mount_path in sync with wherever export.share_ip
+    currently points, so the session-detail file browser/downloads see the
+    same files modules exported to a remote NAS rather than an empty local
+    directory. subprocess/Path mocked throughout -- these assert the right
+    commands are built, not real mount behaviour."""
+
+    @staticmethod
+    def _run_side_effect(own_ip, mount_returncode=0, mount_stderr=""):
+        def _run(cmd, **kwargs):
+            if cmd[0] == "nmcli":
+                return MagicMock(returncode=0, stdout=f"{own_ip}/24\n")
+            if cmd[:2] == ["sudo", "umount"]:
+                return MagicMock(returncode=0, stderr="")
+            if cmd[:2] == ["sudo", "mount"]:
+                return MagicMock(returncode=mount_returncode, stderr=mount_stderr)
+            raise AssertionError(f"unexpected subprocess call: {cmd}")
+        return _run
+
+    def test_no_share_ip_configured_unmounts_stale_mount_and_returns_true(self):
+        """A previous session may have left an external-NAS mount in place;
+        clearing export.share_ip back to 'use the controller itself' must
+        unmount it so export.mount_path reverts to the plain local
+        directory backing the controller's own Samba share."""
+        web, _facade = _make_web_with_facade()
+        run = MagicMock(side_effect=self._run_side_effect(own_ip="10.0.0.1"))
+
+        with patch("src.controller.web.subprocess.run", run), \
+             patch("src.controller.web.Path.is_mount", return_value=True), \
+             patch("src.controller.web.Path.mkdir"):
+            assert web.ensure_export_share_mounted() is True
+
+        prefixes = [c.args[0][:2] for c in run.call_args_list]
+        assert prefixes.count(["sudo", "umount"]) == 1
+        assert not any(c.args[0][:2] == ["sudo", "mount"] for c in run.call_args_list)
+
+    def test_share_ip_matching_own_address_treated_as_local(self):
+        """export.share_ip happening to equal the controller's own address
+        must never CIFS-mount the controller's own share directory onto
+        itself -- that would break the controller's own Samba server, not
+        just be redundant."""
+        web, _facade = _make_web_with_facade(**{"export.share_ip": "10.0.0.1"})
+        run = MagicMock(side_effect=self._run_side_effect(own_ip="10.0.0.1"))
+
+        with patch("src.controller.web.subprocess.run", run), \
+             patch("src.controller.web.Path.is_mount", return_value=False), \
+             patch("src.controller.web.Path.mkdir"):
+            assert web.ensure_export_share_mounted() is True
+
+        assert not any(c.args[0][:2] == ["sudo", "mount"] for c in run.call_args_list)
+
+    def test_remote_share_mounts_with_configured_credentials(self):
+        web, _facade = _make_web_with_facade(**{
+            "export.share_ip":       "192.168.1.2",
+            "export.share_path":     "habitat_recording",
+            "export.share_username": "saviour_module",
+            "export.share_password": "hunter2",
+            "export.mount_path":     "/home/pi/controller_share",
+        })
+        run = MagicMock(side_effect=self._run_side_effect(own_ip="10.0.0.1"))
+
+        with patch("src.controller.web.subprocess.run", run), \
+             patch("src.controller.web.Path.is_mount", return_value=False), \
+             patch("src.controller.web.Path.mkdir"):
+            assert web.ensure_export_share_mounted() is True
+
+        mount_calls = [
+            c.args[0] for c in run.call_args_list if c.args[0][:2] == ["sudo", "mount"]
+        ]
+        assert len(mount_calls) == 1
+        cmd = mount_calls[0]
+        assert cmd[4] == "//192.168.1.2/habitat_recording"
+        assert cmd[5] == "/home/pi/controller_share"
+        assert "username=saviour_module,password=hunter2" in cmd[7]
+
+    def test_mount_failure_returns_false_without_raising(self):
+        web, _facade = _make_web_with_facade(**{"export.share_ip": "192.168.1.2"})
+        run = MagicMock(side_effect=self._run_side_effect(
+            own_ip="10.0.0.1", mount_returncode=1,
+            mount_stderr="mount error(13): Permission denied",
+        ))
+
+        with patch("src.controller.web.subprocess.run", run), \
+             patch("src.controller.web.Path.is_mount", return_value=False), \
+             patch("src.controller.web.Path.mkdir"):
+            assert web.ensure_export_share_mounted() is False
 
 
 class TestDeployUpdateToModule:

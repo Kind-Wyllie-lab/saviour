@@ -1192,13 +1192,35 @@ log-queries
 log-dhcp
 EOF
 
-    # Ensure dnsmasq starts after interfaces are up
-    if [ -f /lib/systemd/system/dnsmasq.service ]; then
-        sed -i 's/Requires=network.target/Requires=network-online.target/g' \
-            /lib/systemd/system/dnsmasq.service
-        sed -i 's/After=network.target/After=network-online.target/g' \
-            /lib/systemd/system/dnsmasq.service
-    fi
+    # Ensure dnsmasq starts after interfaces are up, and recovers if it doesn't.
+    # A drop-in survives `apt upgrade dnsmasq` re-installing the vendor unit file
+    # (sed-patching /lib/systemd/system/dnsmasq.service directly, the previous
+    # approach here, does not — confirmed live 2026-08-24: a habitat controller's
+    # vendor unit had silently reverted to Requires/After=network.target, and
+    # dnsmasq crashed with "unknown interface eth0" on every boot as a result).
+    # After=network-online.target is best-effort, not a full guarantee — on that
+    # same device NetworkManager-wait-online.service itself took 60s and then
+    # failed outright (wlan0 had no carrier/profile), so network-online.target
+    # wasn't reached until well after eth0 was actually up. Restart=on-failure is
+    # what actually closes the race: eth0 is reliably up within a few seconds, so
+    # a short backoff recovers without depending on network-online.target timing.
+    mkdir -p /etc/systemd/system/dnsmasq.service.d
+    tee /etc/systemd/system/dnsmasq.service.d/override.conf > /dev/null <<'EOF'
+[Unit]
+Description=DHCP Server for SAVIOUR Local Network
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Don't start automatically at boot
+ExecStartPre=/bin/true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+# Don't enable at boot by default
+WantedBy=multi-user.target
+EOF
 
     run_logged systemctl daemon-reload
     run_logged systemctl enable dnsmasq

@@ -36,6 +36,12 @@ _STARTUP_GRACE_SECS = 15
 # ---------------------------------------------------------------------------
 
 class SessionState(StrEnum):
+    # Created, modules assigned, not yet recording -- waiting on an
+    # explicit Start action (force_start_session). Immediate/timed
+    # sessions land here now instead of going straight to ACTIVE; a
+    # PENDING session can be discarded (delete_session) same as a
+    # stopped/error one.
+    PENDING   = "pending"
     SCHEDULED = "scheduled"
     ACTIVE    = "active"
     STOPPED   = "stopped"
@@ -321,7 +327,9 @@ class Recording:
                        duration_minutes: int | None = None,
                        researcher: str | None = None,
                        raw_name: bool = False) -> dict:
-        """Create a session that begins recording immediately.
+        """Create a session in PENDING state -- modules assigned, nothing
+        recording yet. Call start_pending_session() (via the unified
+        force_start_session()) to actually begin recording.
 
         Returns a result dict so the caller can surface errors to the frontend.
         """
@@ -347,20 +355,12 @@ class Recording:
         session_name = self._format_session_name(session_name, target) if not raw_name else \
             "".join(c for c in session_name if c.isalnum() or c in ("-", "_"))
 
-        start_at = time.time() + LEAD_SECS
-        timed_stop_at = (start_at + duration_minutes * 60) if duration_minutes else None
-
         session = RecordingSession(
             session_name=session_name,
             target=target,
-            state=SessionState.ACTIVE,
+            state=SessionState.PENDING,
             modules=modules,
-            start_time=datetime.now().strftime("%Y%m%d-%H%M%S"),
-            module_stop_states={m: "recording" for m in modules},
-            module_export_states={m: "idle" for m in modules},
-            recording_start_at=start_at,
             duration_minutes=duration_minutes,
-            timed_stop_at=timed_stop_at,
             researcher=researcher or None,
         )
 
@@ -371,14 +371,126 @@ class Recording:
                 return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
             self.sessions[session_name] = session
 
-        params = {"duration": 0, "session_name": session_name, "start_at": start_at}
-        for module_id in modules:
-            self.facade.send_command(module_id, "start_recording", params)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
 
         self.logger.info(
-            f"Session '{session_name}' created targeting {target} ({len(modules)} modules)"
+            f"Session '{session_name}' created (pending) targeting {target} ({len(modules)} modules)"
+        )
+        self._log_session_event(session_name, "INFO",
+            f"Session created — modules: {', '.join(modules)}")
+        return {"success": True, "session_name": session_name}
+
+
+    def update_pending_session(self, session_name: str, new_session_name: str | None,
+                               duration_minutes: int | None) -> dict:
+        """Edit a PENDING session's name and/or duration before it starts --
+        e.g. fixing a typo in the title, or changing a timed duration.
+        Locked once the session leaves PENDING (start_pending_session()'s
+        own state check is what actually enforces that; this method is
+        simply never reachable for a non-pending session from the frontend).
+        `new_session_name`/`duration_minutes` reflect the full desired
+        state, not a delta -- the caller (edit form) always submits both
+        current values, changed or not.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        session = self.sessions[session_name]
+        if session.state != SessionState.PENDING:
+            return {"success": False, "error": f"Session is not pending (state: {session.state})"}
+
+        final_name = session_name
+        if new_session_name and new_session_name.strip():
+            candidate = "".join(
+                c for c in new_session_name if c.isalnum() or c in (' ', '-', '_')
+            ).strip().replace(' ', '_')
+            if not candidate:
+                return {"success": False, "error": "Session name cannot be empty"}
+            if candidate != session_name and candidate in self.sessions:
+                return {"success": False, "error": f"Session '{candidate}' already exists"}
+            final_name = candidate
+
+        with self._lock:
+            session.duration_minutes = duration_minutes if duration_minutes else None
+            if final_name != session_name:
+                session.session_name = final_name
+                self.sessions[final_name] = self.sessions.pop(session_name)
+
+        if final_name != session_name:
+            # create_session() already wrote a "Session created" line to
+            # {share}/{old_name}/session_events.log -- rename that folder so
+            # the log stays continuous under the new name instead of being
+            # orphaned under the old one. Best-effort: nothing has recorded
+            # into this folder yet (session is still PENDING), so a failure
+            # here is a lost log line, not lost data.
+            try:
+                old_dir = os.path.join(self._get_share_root(), session_name)
+                new_dir = os.path.join(self._get_share_root(), final_name)
+                if os.path.isdir(old_dir) and not os.path.exists(new_dir):
+                    os.rename(old_dir, new_dir)
+            except Exception:
+                pass
+
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+
+        self.logger.info(f"Session '{session_name}' updated" +
+            (f" (renamed to '{final_name}')" if final_name != session_name else ""))
+        self._log_session_event(final_name, "INFO", "Session details updated")
+        return {"success": True, "session_name": final_name}
+
+
+    def start_pending_session(self, session_name: str) -> dict:
+        """Actually begin recording for a PENDING session (create_session()'s
+        counterpart) -- re-validates everything fresh rather than reusing
+        anything computed at creation time, since a session can sit PENDING
+        for an arbitrary amount of time before an operator presses Start.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        session = self.sessions[session_name]
+        if session.state != SessionState.PENDING:
+            return {"success": False, "error": f"Session is not pending (state: {session.state})"}
+
+        modules = list(self.facade.get_modules_by_target(session.target).keys())
+        if not modules:
+            return {"success": False, "error": f"No online modules found for target '{session.target}'"}
+
+        overlap = self._busy_modules() & set(modules)
+        if overlap:
+            return {"success": False, "error": f"Already recording: {', '.join(sorted(overlap))}"}
+
+        ptp = self._check_ptp_sync(modules)
+        if not ptp["ok"]:
+            return {"success": False, "error": ptp["error"]}
+
+        start_at = time.time() + LEAD_SECS
+        timed_stop_at = (start_at + session.duration_minutes * 60) if session.duration_minutes else None
+
+        with self._lock:
+            session.modules = modules
+            session.state = SessionState.ACTIVE
+            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.module_stop_states = {m: "recording" for m in modules}
+            session.module_export_states = {m: "idle" for m in modules}
+            session.recording_start_at = start_at
+            session.timed_stop_at = timed_stop_at
+
+        params = {"duration": 0, "session_name": session_name, "start_at": start_at}
+        for module_id in modules:
+            self.facade.send_command(module_id, "start_recording", params)
+            # Immediate first read rather than waiting on the next 5-min
+            # _poll_recording_state() cycle -- matters most for short
+            # sessions (e.g. a 12-min loom run) where 5 min is a large
+            # fraction of the whole session.
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+
+        self.logger.info(
+            f"Session '{session_name}' started ({len(modules)} modules)"
         )
         self._log_session_event(session_name, "INFO",
             f"Session started — modules: {', '.join(modules)}")
@@ -389,7 +501,21 @@ class Recording:
                 message=f"Session **{session_name}** started with {len(modules)} module(s): {', '.join(modules)}.",
                 severity="info",
             )
-        return {"success": True, "session_name": session_name}
+        return {"success": True}
+
+
+    def force_start_session(self, session_name: str) -> dict:
+        """Unified entry point for the frontend's "Start"/"Start Now" action,
+        regardless of whether the session is PENDING (immediate/timed,
+        created but not yet recording) or SCHEDULED (waiting on a time
+        window) -- the frontend sends the same force_start_session event
+        either way; this just routes to the right underlying start path.
+        """
+        if session_name not in self.sessions:
+            return {"success": False, "error": f"Unknown session '{session_name}'"}
+        if self.sessions[session_name].state == SessionState.PENDING:
+            return self.start_pending_session(session_name)
+        return self.force_start_scheduled_session(session_name)
 
 
     def create_scheduled_session(self, session_name: str, target: str,
@@ -504,7 +630,7 @@ class Recording:
         """
         ended = [
             name for name, s in list(self.sessions.items())
-            if s.state not in (SessionState.ACTIVE, SessionState.SCHEDULED)
+            if s.state not in (SessionState.PENDING, SessionState.ACTIVE, SessionState.SCHEDULED)
         ]
         cleared = []
         skipped = []
@@ -681,6 +807,19 @@ class Recording:
         module's local to_export/ folder regardless of the specific
         export_path passed, so this recovers any stuck files for that
         module, not just ones matching this exact path.
+
+        Routed through facade.enqueue_export() (the same entry point every
+        real export_ready signal uses) rather than sending start_export
+        directly. Sending it directly used to let a retry race a
+        concurrently-dispatched real export to the same module -- two
+        overlapping start_export threads on the module racing
+        export.py's own concurrency guard, with the loser reporting a
+        spurious export_failed for a call that never actually attempted
+        anything. Confirmed live: clicking Retry Export made the failed
+        count go up, not down, even though the files genuinely exported.
+        Routing through enqueue_export() means a retry for a module
+        already active/queued in export_queue.py is simply dropped as a
+        duplicate, exactly like any other export_ready signal.
         """
         if session_name not in self.sessions:
             return {"result": "error", "error": "Session not found"}
@@ -694,12 +833,9 @@ class Recording:
             return {"result": "error", "error": "No failed exports to retry"}
 
         date = (session.start_time or "")[:8]
-        with self._lock:
-            for module_id in failed_modules:
-                export_path = f"{session_name}/{date}/{module_id}"
-                session.module_export_states[module_id] = "pending"
-                session.pending_exports += 1
-                self.facade.send_command(module_id, "start_export", {"export_path": export_path})
+        for module_id in failed_modules:
+            export_path = f"{session_name}/{date}/{module_id}"
+            self.facade.enqueue_export(module_id, export_path)
 
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
@@ -707,6 +843,23 @@ class Recording:
             session_name, "RECOVERY", f"Export manually retried for {', '.join(failed_modules)}"
         )
         self.logger.info(f"Manually retried export for session '{session_name}': {failed_modules}")
+        return {"result": "success"}
+
+
+    def request_recording_state_refresh(self, session_name: str) -> dict:
+        """On-demand refresh of every member module's local recording-pipeline
+        summary (pending/to_export/exported) for a session, rather than
+        waiting for the next periodic poll in _monitor_sessions(). The
+        module_recording_state_update broadcasts arrive independently as
+        each module's cmd_ack comes back -- fire-and-forget here, same as
+        every other send_command call."""
+        if session_name not in self.sessions:
+            return {"result": "error", "error": "Session not found"}
+        session = self.sessions[session_name]
+        for module_id in session.modules:
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
         return {"result": "success"}
 
 
@@ -782,6 +935,9 @@ class Recording:
 
         params = {"duration": 0, "session_name": session_name}
         self.facade.send_command(module_id, "start_recording", params)
+        self.facade.send_command(
+            module_id, "report_recording_state", {"session_name": session_name}
+        )
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Module {module_id} added to session '{session_name}'")
@@ -934,6 +1090,9 @@ class Recording:
             self.facade.notify_module_recording(module_id)
             params = {"duration": 0, "session_name": session_name}
             self.facade.send_command(module_id, "start_recording", params)
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
             with self._lock:
                 session.module_stop_states[module_id] = "recording"
                 if session.state == SessionState.ERROR:
@@ -1277,6 +1436,9 @@ class Recording:
         params = {"duration": 0, "session_name": session_name, "start_at": start_at}
         for module_id in session.modules:
             self.facade.send_command(module_id, "start_recording", params)
+            self.facade.send_command(
+                module_id, "report_recording_state", {"session_name": session_name}
+            )
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
         self.logger.info(f"Scheduled session '{session_name}' started for {today}")
@@ -1487,6 +1649,30 @@ class Recording:
             self._save_sessions()
 
 
+    def _poll_recording_state(self) -> None:
+        """Ask every module in every non-STOPPED session to report its local
+        recording-pipeline summary (pending/to_export/exported). Fire-and-
+        forget, same as the other periodic checks in this block -- each
+        module's cmd_ack arrives independently and is pushed to the frontend
+        via web.broadcast_recording_state_update() (see controller.py's
+        'report_recording_state' cmd_ack branch). This is what gives the
+        Recordings page live visibility into a session that's still running,
+        rather than only after it stops."""
+        for session_name, session in list(self.sessions.items()):
+            # PENDING has no dispatched recording yet -- nothing for a
+            # module to report for this session until start_pending_session()
+            # actually begins it.
+            if session.state in (SessionState.STOPPED, SessionState.PENDING):
+                continue
+            for module_id in session.modules:
+                try:
+                    self.facade.send_command(
+                        module_id, "report_recording_state", {"session_name": session_name}
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Could not poll recording state for {module_id}: {e}")
+
+
     def _check_session_gaps(self, today: str) -> None:
         """Alert if a scheduled session missed its previous run.
 
@@ -1581,6 +1767,7 @@ class Recording:
                 self._check_nas_space_periodic()
                 self._check_export_staleness()
                 self._check_export_stall_after_stop()
+                self._poll_recording_state()
 
             # ── Daily gap detection (once per calendar day) ───────────────────
             if self._gap_check_date != today:

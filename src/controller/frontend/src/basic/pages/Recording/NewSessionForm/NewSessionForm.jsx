@@ -6,6 +6,7 @@ import useExperimentTitle from "/src/hooks/useExperimentTitle";
 import usePersistedState from "/src/hooks/usePersistedState";
 import SessionName from "../SessionName/SessionName";
 import TimeSelect from "./TimeSelect/TimeSelect";
+import { groupModulesByGroup, resolveTargetModules, isModuleReady } from "../targetModules";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
@@ -13,8 +14,7 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
 
-function NewSessionForm({ modules, sessionList = {} }) {
-  const [target, setTarget] = usePersistedState("saviour_session_form_target", "all");
+function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated }) {
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -50,6 +50,19 @@ function NewSessionForm({ modules, sessionList = {} }) {
     return () => socket.off("session_error", onError);
   }, []);
 
+  // Sessions are created PENDING now, not auto-started -- this is the
+  // direct signal (rather than waiting on sessions_update to eventually
+  // reflect it) telling the caller which session to navigate to so the
+  // operator lands on the actual "Start Recording" action.
+  useEffect(() => {
+    if (!onSessionCreated) return;
+    const onCreated = (data) => {
+      if (data.success) onSessionCreated(data.session_name);
+    };
+    socket.on("create_session_result", onCreated);
+    return () => socket.off("create_session_result", onCreated);
+  }, [onSessionCreated]);
+
   // Request a fresh health snapshot on mount so PTP offset data is available
   // before the user presses Check Ready.
   useEffect(() => {
@@ -72,25 +85,16 @@ function NewSessionForm({ modules, sessionList = {} }) {
   );
 
   // Derive groups from module list
-  const groups = useMemo(() => {
-    const map = {};
-    modules.forEach((m) => {
-      if (m.group) {
-        map[m.group] = [...(map[m.group] ?? []), m];
-      }
-    });
-    return map;
-  }, [modules]);
+  const groups = useMemo(() => groupModulesByGroup(modules), [modules]);
 
   const hasGroups = Object.keys(groups).length > 0;
 
-  const targetModules = useMemo(() => {
-    if (target === "all")    return modules;
-    if (target in groups)   return groups[target];
-    return modules.filter((m) => m.id === target);
-  }, [target, modules, groups]);
+  const targetModules = useMemo(
+    () => resolveTargetModules(modules, target, groups),
+    [target, modules, groups]
+  );
 
-  const allTargetReady     = targetModules.length > 0 && targetModules.every((m) => m.status === "READY");
+  const allTargetReady     = targetModules.length > 0 && targetModules.every(isModuleReady);
   const anyTargetRecording = targetModules.some((m) => m.status === "RECORDING");
 
   const totalDurationMins = parseInt(durationHours || 0) * 60 + parseInt(durationMinutes || 0);
@@ -171,8 +175,6 @@ function NewSessionForm({ modules, sessionList = {} }) {
 
   return (
     <div className="new-session-form card">
-      <h2>New Session</h2>
-
       <SessionName experimentName={experimentName} />
 
       <form onSubmit={handleSubmit} className="session-form">
@@ -285,35 +287,36 @@ function NewSessionForm({ modules, sessionList = {} }) {
         {nameAlreadyUsed && (
           <p className="form-warning">Session name already used - previous recordings exist with this name. Consider updating the trial or rat ID.</p>
         )}
-        {recordingMode !== "scheduled" && !canStart && anyTargetRecording && (
+        {!canStart && anyTargetRecording && (
           <p className="form-warning">One or more target modules are already recording.</p>
         )}
-        {recordingMode !== "scheduled" && !canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
+        {!canStart && !anyTargetRecording && targetModules.length > 0 && !allTargetReady && (
           <p className="form-warning">Not all target modules are ready.</p>
         )}
         {!timedDurationValid && (
           <p className="form-warning">Enter a duration greater than 0.</p>
         )}
-        {recordingMode !== "scheduled" && ptpSyncStatus !== null && !ptpSyncStatus.ok && (
+        {ptpSyncStatus !== null && !ptpSyncStatus.ok && (
           <p className="form-warning">
             PTP not synchronised -{" "}
             {ptpSyncStatus.failures?.map((f) => `${f.module_id}: ${f.reason}`).join("; ")}
           </p>
         )}
-        {recordingMode !== "scheduled" && ptpSyncStatus?.ok && (
+        {ptpSyncStatus?.ok && (
           <p className="form-ok">
             PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
           </p>
         )}
 
         <div className="button-row">
-          {recordingMode !== "scheduled" && (
-            <button type="button" className="secondary-button" onClick={checkReady}>
-              Check Ready
-            </button>
-          )}
+          {/* Useful regardless of mode -- a scheduled session still benefits
+              from confirming modules are ready right now, even though the
+              actual start is deferred to the scheduled window. */}
+          <button type="button" className="secondary-button" onClick={checkReady}>
+            Check Ready
+          </button>
           <button type="submit" className="primary-button" disabled={recordingMode === "scheduled" ? !canSchedule : !canStart}>
-            {recordingMode === "scheduled" ? "Schedule Session" : "Start Recording"}
+            {recordingMode === "scheduled" ? "Schedule Session" : "Create Session"}
           </button>
         </div>
       </form>

@@ -1,0 +1,117 @@
+.readiness-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.readiness-summary__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.readiness-summary__empty {
+  color: var(--text-muted, #888);
+  font-size: 0.85rem;
+}
+
+.readiness-summary__group {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.readiness-summary__group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.readiness-summary__group-header--ok {
+  color: color-mix(in srgb, #2e7d32 80%, var(--text-color));
+}
+
+.readiness-summary__group-header--warn {
+  background: color-mix(in srgb, #e8a020 10%, transparent);
+  color: color-mix(in srgb, #b45309 85%, var(--text-color));
+  font-weight: 600;
+}
+
+.readiness-summary__group-marker {
+  flex-shrink: 0;
+}
+
+.readiness-summary__group-name {
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+
+.readiness-summary__group-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.readiness-summary__group-toggle {
+  flex-shrink: 0;
+  opacity: 0.6;
+  font-size: 0.75rem;
+}
+
+.readiness-summary__rows {
+  border-top: 1px solid var(--border-color);
+  padding: 4px 10px;
+}
+
+.readiness-summary__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.82rem;
+}
+
+.readiness-summary__row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.readiness-summary__row-status {
+  flex-shrink: 0;
+  opacity: 0.75;
+  font-size: 0.8em;
+}
+
+.readiness-summary__row-message {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78em;
+  color: color-mix(in srgb, #b45309 85%, var(--text-color));
+}
+
+.readiness-summary__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.readiness-summary__dot--ready     { background: #2e7d32; }
+.readiness-summary__dot--recording { background: #1565c0; }
+.readiness-summary__dot--not-ready { background: #e8a020; }
+.readiness-summary__dot--waiting   { background: #bbb; }
+.readiness-summary__dot--fault     { background: #c62828; }
+.readiness-summary__dot--offline   { background: #888; }

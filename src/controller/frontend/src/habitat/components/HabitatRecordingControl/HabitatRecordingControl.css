@@ -2,6 +2,13 @@
   padding: 8px 14px;
   border-left: 4px solid var(--border-color);
   transition: border-color 0.3s;
+  /* This is a full-width banner (HabitatRecordingControl sits at the top of
+     the dashboard, RecordingStatusWidget at the top of every basic-variant
+     page) -- it should never take on the shared .card class's rounded
+     corners, in any state including while recording. Set here on the base
+     .hrc class (not per-component) since every .hrc.card usage is a banner
+     like this, never a boxy card that would want the rounded look. */
+  border-radius: 0;
 }
 
 .hrc--recording { border-left-color: #2e7d32; }
@@ -106,6 +113,24 @@
   color: var(--text-muted, #888);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.hrc-countdown {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Distinct from the routine "time left" look once a timed recording is
+   about to actually stop, not just a smaller number in the same muted
+   style -- this is the thing the top banner should make hard to miss. */
+.hrc-countdown--soon {
+  color: #c62828;
+  animation: hrc-countdown-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes hrc-countdown-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
 }
 
 .hrc-fault-inline {

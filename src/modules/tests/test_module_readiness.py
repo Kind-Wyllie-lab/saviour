@@ -259,13 +259,66 @@ class TestCheckExport:
         assert "skipping" in message
         mock_run.assert_not_called()
 
-    def test_missing_password_fails_without_touching_network(self):
-        m = _bare_module(config=_export_config(**{"export.share_password": ""}))
+    def test_missing_share_ip_fails_without_touching_network(self):
+        """share_ip, not password, is the real "nothing configured yet"
+        signal -- a blank password alone is a legitimate guest-share
+        configuration (see the guest-mount tests below)."""
+        m = _bare_module(config=_export_config(**{"export.share_ip": ""}))
         with patch("src.modules.module.subprocess.run") as mock_run:
             result, message = m._check_export()
         assert result is False
         assert "credentials not set" in message
         mock_run.assert_not_called()
+
+    def test_blank_username_and_password_mounts_as_guest(self):
+        """Confirmed live 2026-08-24 against a real NAS with `guest ok = yes`
+        -- a blank username/password with share_ip set must attempt a guest
+        mount, not hard-fail before ever trying, and must use the same
+        "guest" auth keyword export.py/web.py's mount logic already does
+        rather than literal empty username=/password= fields."""
+        with tempfile.TemporaryDirectory() as mount_point:
+            m = _bare_module(config=_export_config(**{
+                "export.share_username": "", "export.share_password": "",
+            }))
+            m.export.mount_point = mount_point
+            m.export.exporting = False
+
+            with patch(
+                     "src.modules.module.os.path.ismount", side_effect=[False, True]
+                 ), \
+                 patch(
+                     "src.modules.module.subprocess.run",
+                     return_value=MagicMock(returncode=0),
+                 ) as mock_run:
+                result, message = m._check_export()
+
+        assert result is True
+        assert "reachable and writable" in message
+        mount_cmd = mock_run.call_args_list[0][0][0]
+        opts = mount_cmd[mount_cmd.index("-o") + 1]
+        assert opts.startswith("guest,")
+        assert "username=" not in opts
+
+    def test_blank_password_with_real_username_still_attempts_mount(self):
+        """A non-guest share where the password just hasn't been filled in
+        yet is a real (if unusual) case -- it should surface the actual
+        mount/auth failure from the CIFS server, not a blanket "credentials
+        not set" before ever asking the share."""
+        with tempfile.TemporaryDirectory() as mount_point:
+            m = _bare_module(config=_export_config(**{"export.share_password": ""}))
+            m.export.mount_point = mount_point
+            m.export.exporting = False
+
+            denied = MagicMock(
+                returncode=1, stderr="mount error(13): Permission denied"
+            )
+            with patch("src.modules.module.os.path.ismount", return_value=False), \
+                 patch("src.modules.module.subprocess.run", return_value=denied), \
+                 patch("src.modules.module.time.sleep"):
+                result, message = m._check_export()
+
+        assert result is False
+        assert "Permission denied" in message
 
     def test_already_mounted_and_writable_passes_without_mounting(self):
         with tempfile.TemporaryDirectory() as mount_point:

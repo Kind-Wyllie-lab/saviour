@@ -111,6 +111,15 @@ class Controller(ABC):
         self.export_queue.facade = self.facade
         self.config.on_controller_config_change = self.on_controller_config_change
 
+        # If export.share_ip already points at an external NAS from a
+        # previous session (e.g. habitat's //192.168.1.2/habitat_recording),
+        # re-establish the controller's own local mount of it on every boot
+        # -- otherwise the session-detail file browser/downloads would show
+        # 0 files until an operator happened to re-save the export config.
+        # Also run on every live export.* change -- see
+        # save_controller_config/sync_export_to_all in web.py.
+        self.web.ensure_export_share_mounted()
+
         # Controller state
         self.start_time = None
 
@@ -256,6 +265,10 @@ class Controller(ABC):
 
                     elif command == 'get_diagnostics':
                         self.web.handle_diagnostics_ack(module_id, status_data)
+
+                    elif command == 'report_recording_state':
+                        self.modules.update_recording_state(module_id, status_data)
+                        self.web.broadcast_recording_state_update(module_id, status_data)
 
                 case 'recording_start_failed':
                     error = status_data.get('error', 'unknown')

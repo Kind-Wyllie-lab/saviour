@@ -10,6 +10,7 @@ import Guide from '../basic/pages/Guide/Guide';
 
 import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Monitor from "./pages/Monitor/Monitor";
+import HabitatRecordingControl from "./components/HabitatRecordingControl/HabitatRecordingControl";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useSessions from "/src/hooks/useSessions";
@@ -54,11 +55,12 @@ function App() {
     <div className="app">
       <Sidebar navItems={pages} />
       <div className="content">
+        <HabitatRecordingControl />
         <Routes>
           <Route path="/" element={<HabitatDashboard />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/monitor" element={<Monitor />} />
-          <Route path="/recording" element={<Recording />} />
+          <Route path="/recording/*" element={<Recording />} />
           <Route path="/system" element={<System />} />
           <Route path="/guide" element={<Guide />} />
         </Routes>

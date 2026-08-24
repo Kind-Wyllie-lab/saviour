@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import socket from "/src/socket";
+import useSessions from "/src/hooks/useSessions";
+import useModules from "/src/hooks/useModules";
 import "./HabitatRecordingControl.css";
 
 function formatTime(t) {
@@ -11,8 +13,50 @@ function formatTime(t) {
   return `${parseInt(m[3])} ${months[parseInt(m[2]) - 1]}, ${m[4]}:${m[5]}`;
 }
 
-export default function HabitatRecordingControl({ sessionList = [], modules = {} }) {
+// Below this many seconds remaining, the countdown switches to its "soon"
+// styling (see .hrc-countdown--soon) so an imminent stop is visually
+// distinct from routine "time left" text, not just a smaller number in the
+// same style.
+const COUNTDOWN_SOON_SECS = 60;
+
+// Live-ticking "time left" for a timed (duration-limited) session, so it's
+// clear from the top banner alone when a recording is about to stop rather
+// than only via the elapsed "since" time. Mirrors RecordingStatusWidget's
+// own Countdown (basic variant) -- kept as a separate small copy rather
+// than a shared import since the two widgets have unrelated layouts and
+// this is a handful of lines.
+function Countdown({ timedStopAt }) {
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
+  useEffect(() => {
+    const id = setInterval(() => setRemaining(Math.max(0, Math.floor(timedStopAt - Date.now() / 1000))), 1000);
+    return () => clearInterval(id);
+  }, [timedStopAt]);
+  if (remaining <= 0) {
+    return <span className="hrc-countdown hrc-countdown--soon"> · ending…</span>;
+  }
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  const label = h > 0
+    ? `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
+    : `${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+  return (
+    <span className={`hrc-countdown ${remaining <= COUNTDOWN_SOON_SECS ? "hrc-countdown--soon" : ""}`}>
+      {" "}· {label} left
+    </span>
+  );
+}
+
+// Fetches its own sessionList/modules (rather than taking them as props)
+// so it can be mounted once, globally, above every route's <Routes> block
+// in App.jsx -- same self-contained pattern as the basic variant's
+// RecordingStatusWidget. Previously only rendered inside HabitatDashboard,
+// so a timed/active session was invisible from every other page
+// (Monitor/Settings/Recording/System/Guide) -- reported live.
+export default function HabitatRecordingControl() {
   const navigate = useNavigate();
+  const { sessionList } = useSessions();
+  const { modules } = useModules();
   const [habitatConfig, setHabitatConfig] = useState(null);
   const [startError, setStartError] = useState(null);
 
@@ -104,7 +148,16 @@ export default function HabitatRecordingControl({ sessionList = [], modules = {}
         {isRecording && cameraSession?.start_time && (
           <>
             <span className="hrc-sep">·</span>
-            <span className="hrc-since">since {formatTime(cameraSession.start_time)}</span>
+            <span className="hrc-since">
+              since {formatTime(cameraSession.start_time)}
+              {cameraSession.timed_stop_at && <Countdown timedStopAt={cameraSession.timed_stop_at} />}
+            </span>
+          </>
+        )}
+        {audioSession?.state === "active" && audioSession.timed_stop_at && (
+          <>
+            <span className="hrc-sep">·</span>
+            <span className="hrc-since">audio<Countdown timedStopAt={audioSession.timed_stop_at} /></span>
           </>
         )}
         {(hasFault || startError) && (

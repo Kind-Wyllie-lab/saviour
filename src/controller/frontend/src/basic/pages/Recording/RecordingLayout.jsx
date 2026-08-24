@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Outlet, useParams, useNavigate } from "react-router";
 import "./Recording.css";
 
@@ -29,6 +29,23 @@ function RecordingLayout() {
     // route that actually declares :sessionName -- used to highlight the
     // corresponding row in the rail.
     const { sessionName: selectedSessionName } = useParams();
+
+    // Land on the most recently created session (sessionList's insertion
+    // order from the backend -- new sessions are only ever appended, so the
+    // last entry is the newest regardless of state) rather than the blank
+    // placeholder, so opening the Recording page shows something useful
+    // immediately. One-shot (the ref, not a dependency on sessionList) --
+    // this should only fire on initial load, not yank the operator to a
+    // different session every time a new one is created while they're
+    // deliberately sitting on the index route.
+    const autoSelected = useRef(false);
+    useEffect(() => {
+        if (autoSelected.current || selectedSessionName) return;
+        const names = Object.keys(sessionList);
+        if (names.length === 0) return;
+        autoSelected.current = true;
+        navigate(`/recording/sessions/${encodeURIComponent(names[names.length - 1])}`, { replace: true });
+    }, [sessionList, selectedSessionName, navigate]);
 
     // Lifted out of NewSessionForm so ReadinessSummary can scope itself to
     // the same target the operator is about to start, rather than always

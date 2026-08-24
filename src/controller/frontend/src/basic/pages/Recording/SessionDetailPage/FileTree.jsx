@@ -35,17 +35,17 @@ function sumBytes(node) {
   return total;
 }
 
-// defaultOpen only applies to the top level (typically the date folder(s)
-// -- usually just one) -- deeper levels (typically per-module) default
-// collapsed so a large habitat deployment's file list stays scannable
-// rather than dumping every module's files open at once.
+// Every level, including the top-level date folder(s), starts collapsed --
+// the session view should open showing just the day(s) at a glance, not the
+// full file list, especially for a large habitat deployment with many
+// modules' files nested underneath.
 //
 // pathPrefix accumulates the folder path relative to the session root as
 // we recurse, so each folder's zip link can hit
 // /api/sessions/<name>/download/<folder path> -- the same route a single
 // file download uses, now also zip-streaming when the resolved path is a
 // directory (web.py's download_session_file).
-function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
+function FileTreeNode({ node, sessionName, pathPrefix, onRequestDownload }) {
   return (
     <div className="session-file-tree__level">
       {[...node.dirs.entries()].map(([name, sub]) => {
@@ -57,7 +57,7 @@ function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
         const folderUrl = `/api/sessions/${sessionName}/download/${encodedFolderPath}`;
         const zipName = `${sessionName}-${folderPath.replace(/\//g, "-")}.zip`;
         return (
-          <details key={name} className="session-file-tree__folder" open={defaultOpen}>
+          <details key={name} className="session-file-tree__folder">
             <summary className="session-file-tree__summary">
               <span className="session-file-tree__summary-row">
                 <span className="session-file-tree__arrow" aria-hidden="true">▸</span>
@@ -78,8 +78,11 @@ function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
                   <a
                     className="session-file-dl session-file-tree__folder-dl"
                     href={folderUrl}
-                    download={zipName}
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      onRequestDownload(folderUrl, zipName, totalBytes);
+                    }}
                     title={`Download all ${n} file${n !== 1 ? "s" : ""} in this folder as a zip`}
                   >
                     Download zip
@@ -87,7 +90,12 @@ function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
                 )}
               </span>
             </summary>
-            <FileTreeNode node={sub} sessionName={sessionName} defaultOpen={false} pathPrefix={folderPath} />
+            <FileTreeNode
+              node={sub}
+              sessionName={sessionName}
+              pathPrefix={folderPath}
+              onRequestDownload={onRequestDownload}
+            />
           </details>
         );
       })}
@@ -98,7 +106,16 @@ function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
           <div key={file.path} className="session-file-row">
             <span className="session-file-name" title={file.path}>{file.name}</span>
             <span className="session-file-size">{formatBytes(file.size_bytes)}</span>
-            <a className="session-file-dl" href={url} download={file.name}>Download</a>
+            <a
+              className="session-file-dl"
+              href={url}
+              onClick={(e) => {
+                e.preventDefault();
+                onRequestDownload(url, file.name, file.size_bytes || 0);
+              }}
+            >
+              Download
+            </a>
           </div>
         );
       })}
@@ -106,11 +123,16 @@ function FileTreeNode({ node, sessionName, defaultOpen, pathPrefix }) {
   );
 }
 
-export default function FileTree({ files, sessionName }) {
+export default function FileTree({ files, sessionName, onRequestDownload }) {
   const tree = buildFileTree(files);
   return (
     <div className="session-file-tree">
-      <FileTreeNode node={tree} sessionName={sessionName} defaultOpen pathPrefix="" />
+      <FileTreeNode
+        node={tree}
+        sessionName={sessionName}
+        pathPrefix=""
+        onRequestDownload={onRequestDownload}
+      />
     </div>
   );
 }

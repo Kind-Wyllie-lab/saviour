@@ -7,8 +7,34 @@
 
 export const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// Sessions larger than this will have "Download all" disabled — use the NAS share instead.
-export const DOWNLOAD_ALL_MAX_BYTES = 2 * 1024 ** 3; // 2 GB
+// Sessions/folders larger than this will have "Download zip" disabled — use
+// the NAS share instead. The zip itself streams straight from disk with no
+// server-side buffering (see web.py's _stream_zip_response), so this is a
+// UI guard against surprising an operator with a huge in-browser download,
+// not a real backend limit — 25 GB comfortably covers a single day/module
+// folder at habitat scale (largest observed in practice: ~22 GB for one
+// camera's full day of continuous hourly segments) while still catching an
+// accidental zip of an entire multi-week deployment share.
+export const DOWNLOAD_ALL_MAX_BYTES = 25 * 1024 ** 3; // 25 GB
+
+// Below this, a download (single file, folder zip, or whole-session zip)
+// starts immediately on click. At or above it, the caller should confirm
+// with the operator first — big enough to not nag on an ordinary clip, but
+// still a heads-up before kicking off a download that could take a while.
+export const DOWNLOAD_CONFIRM_BYTES = 1 * 1024 ** 3; // 1 GB
+
+// Actually starts a download without a full page navigation (a plain
+// `<a href>` click would also work for this, but every download in the file
+// tree/session view is routed through here so the size-confirm flow above
+// has exactly one place to intercept before committing to the click).
+export function triggerDownload(url, filename) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 export function formatFaultTime(error_time) {
   if (!error_time) return null;

@@ -6,6 +6,7 @@ import useModules from "/src/hooks/useModules";
 import {
   formatFaultTime, formatEpochTime, formatBytes, formatDuration,
   formatScheduledDays, levelClass, DOWNLOAD_ALL_MAX_BYTES,
+  DOWNLOAD_CONFIRM_BYTES, triggerDownload,
 } from "../sessionFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
@@ -67,6 +68,33 @@ function AddModuleModal({ sessionName, candidates, onConfirm, onClose }) {
   );
 }
 
+function DownloadConfirmModal({ name, sizeBytes, onConfirm, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <p>Download <strong>{name}</strong>?</p>
+        <p className="modal-subtext">
+          This is {formatBytes(sizeBytes)} — it may take a while depending on your connection.
+        </p>
+        <div className="modal-buttons">
+          <button className="save-button" type="button" onClick={onConfirm}>
+            Download
+          </button>
+          <button className="save-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SessionDetailPage() {
   const { sessionName } = useParams();
   const navigate = useNavigate();
@@ -92,6 +120,19 @@ export default function SessionDetailPage() {
   const [editDurationHours, setEditDurationHours] = useState("0");
   const [editDurationMinutes, setEditDurationMinutes] = useState("0");
   const [editError, setEditError] = useState(null);
+  const [pendingDownload, setPendingDownload] = useState(null); // null | { url, name, sizeBytes }
+
+  const requestDownload = (url, name, sizeBytes) => {
+    if (sizeBytes >= DOWNLOAD_CONFIRM_BYTES) {
+      setPendingDownload({ url, name, sizeBytes });
+    } else {
+      triggerDownload(url, name);
+    }
+  };
+  const confirmPendingDownload = () => {
+    if (pendingDownload) triggerDownload(pendingDownload.url, pendingDownload.name);
+    setPendingDownload(null);
+  };
 
   const session = sessions[sessionName];
 
@@ -451,7 +492,14 @@ export default function SessionDetailPage() {
                       <a
                         className="session-file-dl session-file-dl--all"
                         href={`/api/sessions/${session.session_name}/download`}
-                        download={`${session.session_name}.zip`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          requestDownload(
+                            `/api/sessions/${session.session_name}/download`,
+                            `${session.session_name}.zip`,
+                            fileInfo.total_bytes,
+                          );
+                        }}
                       >
                         Download all
                       </a>
@@ -479,7 +527,7 @@ export default function SessionDetailPage() {
           {(exportEntries.length > 0 || totalComplete > 0) && (
             <p className="session-info-text">
               <strong>Exports:</strong>{" "}
-              {totalComplete} file{totalComplete !== 1 ? "s" : ""} exported
+              {totalComplete} export{totalComplete !== 1 ? "s" : ""} completed
               {totalFailed > 0 && <span className="session-export-failed">, {totalFailed} failed</span>}
               {(isActive || isError) && activeSegment && (
                 <span className="session-export-progress">
@@ -555,7 +603,11 @@ export default function SessionDetailPage() {
                   {fileListOpen ? "▲ Hide files" : `▼ Browse files (${fileInfo.files.length})`}
                 </button>
                 {fileListOpen && (
-                  <FileTree files={fileInfo.files} sessionName={session.session_name} />
+                  <FileTree
+                    files={fileInfo.files}
+                    sessionName={session.session_name}
+                    onRequestDownload={requestDownload}
+                  />
                 )}
               </div>
             );
@@ -759,6 +811,15 @@ export default function SessionDetailPage() {
           candidates={candidates}
           onConfirm={handleAddModuleConfirm}
           onClose={() => setAddModuleTarget(false)}
+        />
+      )}
+
+      {pendingDownload && (
+        <DownloadConfirmModal
+          name={pendingDownload.name}
+          sizeBytes={pendingDownload.sizeBytes}
+          onConfirm={confirmPendingDownload}
+          onClose={() => setPendingDownload(null)}
         />
       )}
     </div>

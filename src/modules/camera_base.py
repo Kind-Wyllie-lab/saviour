@@ -48,6 +48,8 @@ class FrameTiming:
     actual_fps: float | None
     delta_ms: Any           # float or "" — same convention as the base CSV columns
     dropped_before: Any      # int or ""
+    exposure_time_us: Any    # int or "" — from Picamera2 metadata, exposed so a
+    analogue_gain: Any        # float or "" — subclass hook can detect AE hunting
 
 
 class _FrameShim:
@@ -865,9 +867,13 @@ class CameraBase(Module):
             ts_label = (f"{module_name} "
                         f"{dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}+00:00")
 
+            exposure_time_us = meta.get("ExposureTime", "")
+            analogue_gain    = meta.get("AnalogueGain", "")
+
             timing = FrameTiming(
                 timestamp_ns=timestamp, timestamp_utc=timestamp_utc, ts_label=ts_label,
                 actual_fps=actual_fps, delta_ms=delta_ms, dropped_before=dropped_before,
+                exposure_time_us=exposure_time_us, analogue_gain=analogue_gain,
             )
 
             extra = {}
@@ -902,8 +908,6 @@ class CameraBase(Module):
             if self._timestamp_csv_writer is not None:
                 wall_mono_offset = time.time() - time.monotonic()
                 sync_lag_us      = meta.get("SyncTimer", "")
-                exposure_time_us = meta.get("ExposureTime", "")
-                analogue_gain    = meta.get("AnalogueGain", "")
                 colour_gains     = meta.get("ColourGains") or ("", "")
                 row = [
                     self._frame_id, timestamp, timestamp_utc,

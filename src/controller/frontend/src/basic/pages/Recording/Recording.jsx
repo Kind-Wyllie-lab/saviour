@@ -1,32 +1,22 @@
 import React from "react";
-import "./Recording.css";
+import { Routes, Route } from "react-router";
 
-import useModules from "/src/hooks/useModules";
-import useSessions from "/src/hooks/useSessions";
+import RecordingLayout from "./RecordingLayout";
+import NoSessionSelected from "./NoSessionSelected";
+import SessionDetailPage from "./SessionDetailPage/SessionDetailPage";
 
-import ModuleList from "/src/basic/components/ModuleList/ModuleList";
-import NewSessionForm from "./NewSessionForm/NewSessionForm";
-import SessionList from "./SessionList/SessionList";
-
-
+// Mounted at "/recording/*" (see the variant App.jsx files) so these nested
+// routes can resolve. RecordingLayout is a layout route -- it renders the
+// session-list rail once and an <Outlet/> for whichever child below is
+// active, rather than each child owning the whole page.
 function Recording() {
-    const { moduleList } = useModules();
-    const { sessionList } = useSessions();
-
     return (
-        <div className="recording-page">
-            <div className="recording-layout">
-                <div className="recording-layout__form">
-                    <NewSessionForm modules={moduleList} sessionList={sessionList} />
-                </div>
-                <div className="recording-layout__sessions">
-                    <SessionList sessionList={sessionList} modules={moduleList} />
-                </div>
-                <div className="recording-layout__modules">
-                    <ModuleList modules={moduleList} />
-                </div>
-            </div>
-        </div>
+        <Routes>
+            <Route element={<RecordingLayout />}>
+                <Route index element={<NoSessionSelected />} />
+                <Route path="sessions/:sessionName" element={<SessionDetailPage />} />
+            </Route>
+        </Routes>
     );
 }
 

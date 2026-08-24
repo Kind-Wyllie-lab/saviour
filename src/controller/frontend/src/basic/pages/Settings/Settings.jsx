@@ -66,13 +66,29 @@ function Settings() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [selectedId, configDirty]);
 
-  const moduleOptions = [
-    { id: "controller", name: "Controller" },
-    ...Object.entries(modules).map(([id, module]) => ({
-      id,
-      name: module.name + " (" + id + ")" || id,
-    })),
-  ];
+  // Controller is pinned at the top (it isn't a "module" -- always its own
+  // top-level option, never grouped in with the rest). Everything else is
+  // grouped by module type (a real <optgroup> per type, e.g. "Camera",
+  // "Microphone"), with both the groups themselves and the modules inside
+  // each group in alphabetical order, so a large habitat-scale fleet (many
+  // modules of a handful of types) stays scannable instead of listing in
+  // whatever order modules happened to connect/discover in.
+  const formatTypeLabel = (type) => {
+    if (!type) return "Other";
+    return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
+  const moduleGroups = {};
+  for (const [id, module] of Object.entries(modules)) {
+    const type = module.type || "other";
+    (moduleGroups[type] ??= []).push({ id, name: module.name ? `${module.name} (${id})` : id });
+  }
+  for (const group of Object.values(moduleGroups)) {
+    group.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  const sortedTypes = Object.keys(moduleGroups).sort((a, b) =>
+    formatTypeLabel(a).localeCompare(formatTypeLabel(b))
+  );
 
   const selectedModule =
     selectedId === "controller" ? null : modules[selectedId];
@@ -92,10 +108,15 @@ function Settings() {
             value={selectedId}
             onChange={(e) => trySelectId(e.target.value)}
           >
-            {moduleOptions.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.name}
-              </option>
+            <option value="controller">Controller</option>
+            {sortedTypes.map((type) => (
+              <optgroup key={type} label={formatTypeLabel(type)}>
+                {moduleGroups[type].map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>

@@ -31,17 +31,31 @@ function formatTime(date) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+// Below this many seconds remaining, the countdown switches to its "soon"
+// styling so an imminent stop reads as visually distinct, not just a
+// smaller number in the same muted style.
+const COUNTDOWN_SOON_SECS = 60;
+
 function Countdown({ timedStopAt }) {
   const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor(timedStopAt - Date.now() / 1000)));
   useEffect(() => {
     const id = setInterval(() => setRemaining(Math.max(0, Math.floor(timedStopAt - Date.now() / 1000))), 1000);
     return () => clearInterval(id);
   }, [timedStopAt]);
-  if (remaining <= 0) return <span className="rsw-countdown"> · ending…</span>;
+  if (remaining <= 0) {
+    return <span className="rsw-countdown rsw-countdown--soon"> · ending…</span>;
+  }
   const h = Math.floor(remaining / 3600);
   const m = Math.floor((remaining % 3600) / 60);
   const s = remaining % 60;
-  return <span className="rsw-countdown"> · {h > 0 ? `${h}h ${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s` : `${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s`} left</span>;
+  const label = h > 0
+    ? `${h}h ${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s`
+    : `${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s`;
+  return (
+    <span className={`rsw-countdown ${remaining <= COUNTDOWN_SOON_SECS ? "rsw-countdown--soon" : ""}`}>
+      {" "}· {label} left
+    </span>
+  );
 }
 
 function SessionEntry({ session, modules, moduleHealth }) {

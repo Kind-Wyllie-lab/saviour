@@ -1,48 +1,69 @@
 .recording-page {
   width: 100%;
+  height: 100%;
   min-height: 100%;
-  padding: 24px 32px;
+  padding: 16px 24px;
   box-sizing: border-box;
   overflow-y: auto;
 }
 
-.recording-layout {
-  display: grid;
-  grid-template-columns: 380px 1fr;
-  grid-template-rows: auto 1fr;
-  gap: 24px;
-  align-items: start;
-  max-width: 1200px;
-  margin: 0 auto;
+/* Split layout: a narrow, always-visible session rail on the left and the
+   routed detail view (SessionDetailPage, or NoSessionSelected) filling the
+   rest of the width on the right -- both visible together, rather than the
+   detail view taking over the whole page. Starting a session
+   (NewSessionForm) and checking module readiness (ReadinessSummary) both
+   live in the "+ New Session" drawer instead (RecordingLayout.jsx), since
+   neither needs a permanent slot on every visit.
+   Left-anchored (no auto-centering) so the rail sits right up against the
+   page's own padding, not floated away from the app's nav sidebar with a
+   dead gap in between. */
+.recording-layout--split {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  max-width: 1600px;
 }
 
-/* Form panel — left column, spans full height */
-.recording-layout__form {
-  grid-column: 1;
-  grid-row: 1 / -1;
+.recording-layout__rail {
+  flex: 0 0 320px;
+  min-width: 0;
 }
 
-/* Session list — top of right column */
-.recording-layout__sessions {
-  grid-column: 2;
-  grid-row: 1;
+/* Sized to its own content (session rows), not stretched to match the
+   detail pane's height -- a short list shouldn't render as a tall card
+   with a lot of empty space below the last row. */
+.recording-layout__rail .session-list.card {
+  min-width: 0;
 }
 
-/* Module list — bottom of right column */
-.recording-layout__modules {
-  grid-column: 2;
-  grid-row: 2;
+.recording-layout__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.no-session-selected {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-muted, #888);
+  font-size: 0.95rem;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
 }
 
 @media (max-width: 860px) {
-  .recording-layout {
-    grid-template-columns: 1fr;
+  .recording-layout--split {
+    flex-direction: column;
   }
 
-  .recording-layout__form,
-  .recording-layout__sessions,
-  .recording-layout__modules {
-    grid-column: 1;
-    grid-row: auto;
+  .recording-layout__rail {
+    flex-basis: auto;
+    width: 100%;
+  }
+
+  .recording-layout__rail .session-list.card {
+    max-height: 40vh;
+    overflow-y: auto;
   }
 }

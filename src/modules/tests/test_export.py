@@ -5,9 +5,11 @@ Covers: PENDING_ rollback on copy failure, thread lock on concurrent exports,
 and _mount_share retry + timeout behaviour.
 """
 
+import json
 import os
 import subprocess
 import tempfile
+import time
 from unittest.mock import MagicMock, patch
 
 from src.modules.export import Export
@@ -37,6 +39,7 @@ def _make_export(tmpdir: str) -> Export:
     export.config = cfg
     export.logger = MagicMock()
     export.mount_point = os.path.join(tmpdir, "mnt")
+    export.pending_folder = os.path.join(tmpdir, "pending")
     export.to_export_folder = os.path.join(tmpdir, "to_export")
     export.exported_folder = os.path.join(tmpdir, "exported")
     export.samba_share_ip = "10.0.0.1"
@@ -53,6 +56,7 @@ def _make_export(tmpdir: str) -> Export:
     import threading as _t
     export._export_lock = _t.Lock()
 
+    os.makedirs(export.pending_folder, exist_ok=True)
     os.makedirs(export.to_export_folder, exist_ok=True)
     os.makedirs(export.exported_folder, exist_ok=True)
     os.makedirs(export.mount_point, exist_ok=True)
@@ -326,3 +330,85 @@ class TestMountShare:
                 result = exp._mount_share()
             assert result is False
             assert mock_run.call_count == Export._MOUNT_MAX_ATTEMPTS
+
+
+# ---------------------------------------------------------------------------
+# summarize_recording_state
+#
+# module_id is "camera_test" (see _make_export) -- since it has no "-", the
+# short-id marker in _extract_session_from_filename equals the full-id
+# marker, both "_camera_test_", so filenames below embed that directly.
+# ---------------------------------------------------------------------------
+
+class TestSummarizeRecordingState:
+    def test_empty_folders_returns_zeroed_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            zero = {"count": 0, "total_bytes": 0, "oldest_mtime": None, "newest_mtime": None}
+            assert exp.summarize_recording_state("sessionA") == {
+                "pending": zero, "to_export": zero, "exported": zero,
+            }
+
+    def test_counts_and_bytes_for_named_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            _write_test_file(exp.to_export_folder, "sessionA_camera_test_(0_20260820-101500).ts")
+            _write_test_file(exp.to_export_folder, "sessionA_camera_test_(1_20260820-101600).ts")
+            _write_test_file(exp.exported_folder, "sessionA_camera_test_(2_20260820-101700).ts")
+            result = exp.summarize_recording_state("sessionA")
+            assert result["to_export"]["count"] == 2
+            assert result["to_export"]["total_bytes"] > 0
+            assert result["exported"]["count"] == 1
+
+    def test_never_returns_raw_filenames(self):
+        """A habitat session can have 16 modules producing files for weeks --
+        this must stay small regardless, so it's summary-only, never paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            _write_test_file(exp.to_export_folder, "sessionA_camera_test_(0_20260820-101500).ts")
+            result = exp.summarize_recording_state("sessionA")
+            assert "camera_test" not in json.dumps(result)
+            assert ".ts" not in json.dumps(result)
+
+    def test_filters_to_requested_session_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            _write_test_file(exp.to_export_folder, "sessionA_camera_test_(0_20260820-101500).ts")
+            _write_test_file(exp.to_export_folder, "sessionB_camera_test_(0_20260820-101500).ts")
+            result = exp.summarize_recording_state("sessionA")
+            assert result["to_export"]["count"] == 1
+
+    def test_no_session_name_groups_by_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            _write_test_file(exp.to_export_folder, "sessionA_camera_test_(0_20260820-101500).ts")
+            _write_test_file(exp.to_export_folder, "sessionB_camera_test_(0_20260820-101500).ts")
+            result = exp.summarize_recording_state()
+            assert result["to_export"]["sessionA"]["count"] == 1
+            assert result["to_export"]["sessionB"]["count"] == 1
+
+    def test_unrecognised_filename_grouped_under_unknown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            _write_test_file(exp.to_export_folder, "not_a_recognised_pattern.ts")
+            result = exp.summarize_recording_state()
+            assert result["to_export"]["_unknown"]["count"] == 1
+
+    def test_oldest_and_newest_mtime_span_multiple_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            older = _write_test_file(exp.to_export_folder, "sessionA_camera_test_(0_20260820-101500).ts")
+            _write_test_file(exp.to_export_folder, "sessionA_camera_test_(1_20260820-101600).ts")
+            past = time.time() - 3600
+            os.utime(older, (past, past))
+            result = exp.summarize_recording_state("sessionA")
+            assert result["to_export"]["oldest_mtime"] < result["to_export"]["newest_mtime"]
+
+    def test_missing_folder_treated_as_empty_not_an_error(self):
+        """The pending folder in particular may not exist yet on a module
+        that has never recorded -- must not raise."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            os.rmdir(exp.pending_folder)
+            result = exp.summarize_recording_state("sessionA")
+            assert result["pending"]["count"] == 0

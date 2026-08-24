@@ -138,6 +138,10 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns: int | None = None   # start of current above/below streak
         self._motion_last_above: bool | None = None
         self._motion_last_score = 0.0
+        self._motion_last_exposure_time_us = None  # previous frame's AE metadata, for
+        self._motion_last_analogue_gain = None      # detecting an active AE adjustment
+        self._motion_ae_unstable_until_ns: int | None = None  # see _update_ae_stability
+        self._motion_ae_stable = True                          # for the live overlay
         self._circular_output: CircularOutput | None = None  # built on arm, see _start_new_recording
         self._clip_open = False        # whether a clip file is currently being written
         self._clip_h264_path = None    # raw encoder output, remuxed to .ts on close
@@ -177,9 +181,11 @@ class HabitatCameraModule(CameraBase):
         self._motion_activity_min_duration_s = float(
             self.config.get("habitat_motion.activity_min_duration_s", 1.0))
         self._motion_inactivity_min_duration_s = float(
-            self.config.get("habitat_motion.inactivity_min_duration_s", 120.0))
+            self.config.get("habitat_motion.inactivity_min_duration_s", 300.0))
         self._motion_pre_roll_secs = float(
             self.config.get("habitat_motion.pre_roll_secs", 3.0))
+        self._motion_ae_settle_s = float(
+            self.config.get("habitat_motion.ae_settle_s", 0.75))
 
         self._motion_detector = HabitatMotionDetector(
             algorithm=self.config.get("habitat_motion.algorithm", "frame_diff"),
@@ -192,11 +198,66 @@ class HabitatCameraModule(CameraBase):
         self._motion_since_ns = None
         self._motion_last_above = None
         self._motion_last_score = 0.0
+        self._motion_last_exposure_time_us = None
+        self._motion_last_analogue_gain = None
+        self._motion_ae_unstable_until_ns = None
+        self._motion_ae_stable = True
+
+    def _update_ae_stability(self, timing) -> bool:
+        """Return whether auto-exposure/gain has been steady for at least
+        ae_settle_s (0.75s default). MOG2 (and, to a lesser extent, frame_diff)
+        treat a sudden global brightness step -- which is exactly what a
+        continuous-AE camera produces every time it nudges exposure_time_us or
+        analogue_gain in response to changing ambient light -- as a frame full
+        of "foreground" pixels, indistinguishable from real motion until the
+        background model catches up.
+
+        Confirmed against a real deployment (2026-08-24, Motion_Tracking_Test):
+        every false-triggered clip on two of three days showed motion_score
+        decaying smoothly in lockstep with analogue_gain/exposure_time_us
+        still changing frame-to-frame, then collapsing to ~0 the instant AE
+        stopped adjusting -- all within a recurring several-hour daytime
+        window (consistent both days, absent overnight), with no visible
+        subject in the footage at any trigger. Gating the trigger on AE
+        stability (rather than e.g. just raising activity_threshold) targets
+        that mechanism directly without dulling sensitivity to genuine motion,
+        which the AE gate doesn't touch as long as the light stays steady.
+
+        Compares against the previous frame's exact metadata values (not a
+        tolerance/epsilon) -- confirmed live that Picamera2's AE control
+        reports the identical float back, frame after frame, once it has
+        actually converged, so any change at all means AE is still moving."""
+        exposure_time_us = timing.exposure_time_us
+        analogue_gain = timing.analogue_gain
+        changed = (
+            self._motion_last_exposure_time_us is not None
+            and (
+                exposure_time_us != self._motion_last_exposure_time_us
+                or analogue_gain != self._motion_last_analogue_gain
+            )
+        )
+        self._motion_last_exposure_time_us = exposure_time_us
+        self._motion_last_analogue_gain = analogue_gain
+
+        if changed:
+            self._motion_ae_unstable_until_ns = (
+                timing.timestamp_ns + int(self._motion_ae_settle_s * 1e9)
+            )
+        self._motion_ae_stable = (
+            self._motion_ae_unstable_until_ns is None
+            or timing.timestamp_ns >= self._motion_ae_unstable_until_ns
+        )
+        return self._motion_ae_stable
 
     def _process_main_frame(self, m: MappedArray, timing) -> dict:
         score = self._motion_detector.score(m.array) if self._motion_detector else 0.0
         self._motion_last_score = score
-        above = score >= self._motion_activity_threshold
+        # AE-unstable frames never count toward a trigger, regardless of score
+        # -- see _update_ae_stability's docstring. The raw score is still
+        # computed/logged above/below so the diagnostic CSV keeps showing
+        # exactly what the algorithm saw, not a suppressed value.
+        ae_stable = self._update_ae_stability(timing)
+        above = score >= self._motion_activity_threshold and ae_stable
 
         # Runs identically regardless of arm status -- the livestream preview
         # must be fully representative of the real recording trigger, not a
@@ -236,7 +297,8 @@ class HabitatCameraModule(CameraBase):
         # threshold/lasted long enough. See _open_diagnostic_csv().
         if self._diag_csv_writer is not None:
             self._diag_csv_writer.writerow(
-                [timing.timestamp_utc, f"{score:.4f}", self._motion_state, self._clip_open]
+                [timing.timestamp_utc, f"{score:.4f}", self._motion_state,
+                 self._clip_open, self._motion_ae_stable]
             )
 
         return {
@@ -247,7 +309,19 @@ class HabitatCameraModule(CameraBase):
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
         color = _STATE_COLOR_BGR.get(self._motion_state, _STATE_COLOR_BGR["idle"])
         if self._motion_state == "idle":
-            label = "IDLE"
+            # "waiting" can only be reached via a gated-True `above` (see
+            # _process_main_frame), so AE is necessarily stable by then --
+            # this qualifier only ever applies to "idle": the raw score alone
+            # would already be over threshold, but _update_ae_stability is
+            # holding the gated trigger off, so an operator watching a
+            # visibly-high score with no state change can tell it's the AE
+            # gate rather than a threshold/duration problem, without needing
+            # to read the diagnostic CSV.
+            score_over = self._motion_last_score >= self._motion_activity_threshold
+            if not self._motion_ae_stable and score_over:
+                label = "IDLE (AE settling)"
+            else:
+                label = "IDLE"
         elif self._motion_state == "waiting":
             label = "ABOVE THRESHOLD"
         else:
@@ -284,7 +358,7 @@ class HabitatCameraModule(CameraBase):
     @command()
     def reset_motion_trigger(self) -> dict:
         """Manually clear a waiting/triggered state back to idle, without
-        waiting out inactivity_min_duration_s (120s default) -- lets an
+        waiting out inactivity_min_duration_s (300s default) -- lets an
         operator reset quickly while testing/tuning against the livestream
         instead of waiting the same duration a real clip close-out would
         take. Finalises any currently-open clip first, same as the natural
@@ -331,6 +405,18 @@ class HabitatCameraModule(CameraBase):
         self._clip_open = False
         self._clip_counter = 0
         self._open_diagnostic_csv()
+        # If motion was already sustained above threshold before this arm
+        # (e.g. an animal was mid-activity when the operator pressed Start),
+        # _process_main_frame's idle/waiting -> active transition already
+        # fired while unarmed, correctly skipping _open_clip() then -- but
+        # since that's a one-shot transition, not a per-frame check, nothing
+        # would otherwise open a clip until the animal goes fully quiet for
+        # inactivity_min_duration_s (300s default) and re-triggers from
+        # scratch. Confirmed live: the operator sees "TRIGGERED (not armed)"
+        # on the livestream despite genuinely being armed, and no footage of
+        # the ongoing activity gets captured. Catch up immediately instead.
+        if self._motion_state == "active":
+            self._open_clip()
         return True
 
     def _start_next_recording_segment(self) -> bool:
@@ -373,7 +459,7 @@ class HabitatCameraModule(CameraBase):
         self._diag_csv_file = open(path, "w", newline="", buffering=1 << 16)
         self._diag_csv_writer = csv.writer(self._diag_csv_file)
         self._diag_csv_writer.writerow(
-            ["timestamp_utc", "motion_score", "motion_state", "clip_open"]
+            ["timestamp_utc", "motion_score", "motion_state", "clip_open", "ae_stable"]
         )
         self._diag_csv_path = path
         self.facade.add_session_file(path)
@@ -430,7 +516,7 @@ class HabitatCameraModule(CameraBase):
         No extra locking against a fresh _open_clip() racing this cleanup:
         the hysteresis state machine can't re-enter "active" (and therefore
         can't call _open_clip() again) until it's spent at least
-        inactivity_min_duration_s (120s default) back in "waiting" first --
+        inactivity_min_duration_s (300s default) back in "waiting" first --
         several orders of magnitude longer than this cleanup should ever take.
         """
         if not self._clip_open or self._circular_output is None:

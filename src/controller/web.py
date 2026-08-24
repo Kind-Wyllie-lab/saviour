@@ -99,8 +99,20 @@ class Web(ABC):
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
 
-        # Flask setup
-        self.app = Flask(__name__, static_folder="frontend/dist", static_url_path="/")
+        # Flask setup. static_folder=None here deliberately disables Flask's
+        # own auto-registered '/<path:filename>' static route -- it and our
+        # own catch-all serve() route below (also path-based, so a deep
+        # client-side route like /recording/sessions/<name> matches it) tie
+        # on routing weight, and Werkzeug resolves ties by registration
+        # order, so Flask's rule (registered first, during this
+        # constructor) always won and shadowed serve()'s index.html
+        # fallback entirely -- a nonexistent static path 404'd outright
+        # instead of falling through to the SPA shell. static_folder is
+        # still set as a plain attribute right after construction so
+        # serve() below (self.app.static_folder) keeps working exactly as
+        # it already assumed.
+        self.app = Flask(__name__, static_folder=None)
+        self.app.static_folder = "frontend/dist"
         self.socketio = SocketIO(self.app, host="0.0.0.0", cors_allowed_origins="*", async_mode='threading')
 
         # Default experiment metadata
@@ -400,9 +412,13 @@ class Web(ABC):
 
 
     def _register_routes(self):
-        # Serve React app
+        # Serve React app. Must use the <path:path> converter (matches
+        # slashes), not <path> (single segment only) -- otherwise a direct
+        # load/refresh on a multi-segment client-side route (e.g.
+        # /recording/sessions/<name>) 404s instead of falling through to
+        # index.html for react-router to handle.
         @self.app.route("/", defaults={"path": ""})
-        @self.app.route("/<path>")
+        @self.app.route("/<path:path>")
         def serve(path):
             self.logger.info(f"Received request to access {path}")
             static_folder = self.app.static_folder
@@ -635,6 +651,42 @@ class Web(ABC):
                 "total_bytes": total,
             })
 
+        def _stream_zip_response(dir_path: str, zip_filename: str):
+            """Stream a ZIP of every file under dir_path (built incrementally
+            in a background thread via _QueueStream, not buffered in memory
+            or on disk first) as a Flask response. Shared by the whole-
+            session zip and the per-folder zip below -- same shape, only the
+            root directory and the download filename differ."""
+            q = _queue.SimpleQueue()
+
+            def _build():
+                try:
+                    with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
+                        for root, dirs, filenames in os.walk(dir_path):
+                            dirs.sort()
+                            for fn in sorted(filenames):
+                                full = os.path.join(root, fn)
+                                zf.write(full, os.path.relpath(full, dir_path))
+                except Exception as e:
+                    self.logger.error(f"ZIP stream error for '{dir_path}': {e}")
+                finally:
+                    q.put(None)
+
+            threading.Thread(target=_build, daemon=True).start()
+
+            def _generate():
+                while (chunk := q.get()) is not None:
+                    yield chunk
+
+            return self.app.response_class(
+                _generate(),
+                mimetype="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{zip_filename}"',
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         @self.app.route("/api/sessions/<session_name>/download/<path:filename>")
         def download_session_file(session_name, filename):
             import re
@@ -647,6 +699,15 @@ class Web(ABC):
             safe_path = os.path.realpath(os.path.join(session_dir, filename))
             if not safe_path.startswith(session_dir + os.sep):
                 return "Forbidden", 403
+            if os.path.isdir(safe_path):
+                # A folder in the file-tree browser (e.g. a date or module
+                # folder) -- zip that subtree rather than 404ing. Named
+                # session-folder.zip (not just folder.zip) since multiple
+                # sessions can have same-named module subfolders and the
+                # browser would otherwise show several indistinguishable
+                # download filenames.
+                zip_name = f"{session_name}-{'-'.join(filename.rstrip('/').split('/'))}.zip"
+                return _stream_zip_response(safe_path, zip_name)
             if not os.path.isfile(safe_path):
                 return "Not found", 404
             return send_file(safe_path, as_attachment=True, download_name=os.path.basename(safe_path))
@@ -662,36 +723,7 @@ class Web(ABC):
                 return "Forbidden", 403
             if not os.path.isdir(session_dir):
                 return "Not found", 404
-
-            q = _queue.SimpleQueue()
-
-            def _build():
-                try:
-                    with zipfile.ZipFile(_QueueStream(q), 'w', zipfile.ZIP_STORED, allowZip64=True) as zf:
-                        for root, dirs, filenames in os.walk(session_dir):
-                            dirs.sort()
-                            for fn in sorted(filenames):
-                                full = os.path.join(root, fn)
-                                zf.write(full, os.path.relpath(full, session_dir))
-                except Exception as e:
-                    self.logger.error(f"ZIP stream error for '{session_name}': {e}")
-                finally:
-                    q.put(None)
-
-            threading.Thread(target=_build, daemon=True).start()
-
-            def _generate():
-                while (chunk := q.get()) is not None:
-                    yield chunk
-
-            return self.app.response_class(
-                _generate(),
-                mimetype="application/zip",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{session_name}.zip"',
-                    "X-Accel-Buffering": "no",
-                },
-            )
+            return _stream_zip_response(session_dir, f"{session_name}.zip")
 
         @self.socketio.on("create_session")
         def handle_create_session(data):
@@ -712,6 +744,36 @@ class Web(ABC):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
                 self._write_session_metadata(result["session_name"], target)
+                # Sessions are created PENDING now, not auto-started -- the
+                # frontend needs a direct signal (not just waiting on
+                # sessions_update to eventually reflect it) to know exactly
+                # which session to close the drawer and navigate to.
+                self.socketio.emit("create_session_result", {
+                    "success": True,
+                    "session_name": result["session_name"],
+                })
+
+
+        @self.socketio.on("update_pending_session")
+        def handle_update_pending_session(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = data.get("session_name")
+            new_session_name = data.get("new_session_name")
+            duration_minutes = data.get("duration_minutes")
+            self.logger.info(f"Received request to update pending session '{session_name}'")
+            result = self.facade.update_pending_session(session_name, new_session_name, duration_minutes)
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                # Echoed back even when the name didn't change, so the
+                # frontend has one consistent event to listen for -- it
+                # only needs to act (navigate) when session_name differs
+                # from what it sent.
+                self.socketio.emit("update_pending_session_result", {
+                    "success": True,
+                    "session_name": result["session_name"],
+                })
 
 
         @self.socketio.on("create_scheduled_session")
@@ -738,7 +800,7 @@ class Web(ABC):
                 return
             session_name = data.get("session_name")
             self.logger.info(f"Received force-start request for session '{session_name}'")
-            result = self.facade.force_start_scheduled_session(session_name)
+            result = self.facade.force_start_session(session_name)
             self.socketio.emit("force_start_result", {
                 "session_name": session_name,
                 "success": bool(result and result.get("success")),
@@ -775,6 +837,16 @@ class Web(ABC):
             session_name = data.get("session_name")
             self.logger.info(f"Received request to retry failed exports for session '{session_name}'")
             result = self.facade.retry_failed_exports(session_name)
+            if "error" in result:
+                self.socketio.emit("session_error", result)
+
+        @self.socketio.on("request_recording_state_refresh")
+        def handle_request_recording_state_refresh(data):
+            if not self._require_auth("session_error", {"error": "Login required for this action"}):
+                return
+            session_name = (data or {}).get("session_name")
+            self.logger.info(f"On-demand recording-state refresh requested for session '{session_name}'")
+            result = self.facade.request_recording_state_refresh(session_name)
             if "error" in result:
                 self.socketio.emit("session_error", result)
 
@@ -1039,6 +1111,22 @@ class Web(ABC):
             result = self.facade.sync_export_to_module(module_id)
             self.socketio.emit("export_sync_result", {"module_id": module_id, **result})
 
+        def _sync_export_to_all_modules(creds: dict) -> None:
+            """Push export credentials to every connected module and report
+            the result. Shared by the manual 'sync_export_to_all' handler
+            below and the auto-sync-on-save path in save_controller_config."""
+            modules = self.facade.get_modules()
+            results = {
+                module_id: self.facade.sync_export_with_creds(module_id, creds)
+                for module_id in modules
+            }
+            success_count = sum(1 for r in results.values() if r.get("success"))
+            self.socketio.emit("export_sync_all_result", {
+                "results": results,
+                "success_count": success_count,
+                "total": len(results),
+            })
+
         @self.socketio.on('sync_export_to_all')
         def handle_sync_export_to_all(data=None):
             """Push export credentials to every connected module.
@@ -1061,25 +1149,39 @@ class Web(ABC):
                 current = self.facade.get_config()
                 current.setdefault("export", {}).update(creds)
                 self.facade.set_config(current)
+                self.ensure_export_share_mounted()
             else:
                 creds = self.facade.get_export_credentials()
 
-            modules = self.facade.get_modules()
-            results = {}
-            for module_id in modules:
-                results[module_id] = self.facade.sync_export_with_creds(module_id, creds)
-            success_count = sum(1 for r in results.values() if r.get("success"))
-            self.socketio.emit("export_sync_all_result", {
-                "results": results,
-                "success_count": success_count,
-                "total": len(results),
-            })
+            _sync_export_to_all_modules(creds)
 
         @self.socketio.on('get_controller_samba_info')
         def handle_get_controller_samba_info(data=None):
             """Return this controller's own Samba share info for the 'Controller Share' preset."""
+            # Found while adding get_export_destination below: this handler
+            # carries a plaintext Samba password in its response and had no
+            # _require_auth at all, unlike every sibling handler in this
+            # section (see e.g. sync_export_credentials above). Fixed here
+            # rather than left for the new handler to copy.
+            if not self._require_auth("auth_required"):
+                return
             info = self.facade.get_controller_own_share_info()
             self.socketio.emit("controller_samba_info_response", info)
+
+        @self.socketio.on('get_export_destination')
+        def handle_get_export_destination(data=None):
+            """Return where module exports are *actually* going right now --
+            distinct from get_controller_samba_info above, which always
+            reports the controller's own address for the Settings page's
+            "Controller Share" preset regardless of whether an external NAS
+            override (export.share_ip) is configured. A habitat deployment
+            commonly does export to a separate NAS, not the controller
+            itself -- session-detail's "here's where your files are" notice
+            needs the real answer, not the preset."""
+            if not self._require_auth("auth_required"):
+                return
+            info = self.facade.get_export_credentials()
+            self.socketio.emit("export_destination_response", info)
 
         """Controller System State"""
         @self.socketio.on("get_system_state")
@@ -1104,10 +1206,40 @@ class Web(ABC):
             if not self._require_auth("auth_required"):
                 return
             self.logger.info("Saving controller config")
-            self.facade.set_config(_filter_private_keys(data.get("config", {})))
+            # Snapshot the export section before overwriting it, so we can
+            # tell below whether this particular save actually changed the
+            # share credentials (vs. e.g. an unrelated controller.name edit)
+            # -- auto-sync should fire on a real credential change, not on
+            # every save regardless of section.
+            old_export = self.facade.get_config().get("export", {})
+            new_config = _filter_private_keys(data.get("config", {}))
+            self.facade.set_config(new_config)
             self.socketio.emit("controller_config_response", {
                 "config": self.facade.get_config()
             })
+
+            new_export = new_config.get("export", {})
+            share_keys = ("share_ip", "share_path", "share_username", "share_password")
+            export_changed = any(
+                old_export.get(k) != new_export.get(k) for k in share_keys
+            )
+            # export.sync_all_modules (default True): most deployments point
+            # every module at the same share, so the default assumes that and
+            # pushes a changed share config out immediately rather than
+            # leaving already-connected modules on stale credentials until
+            # they reconnect or an operator remembers to click "Sync to all
+            # modules" by hand. Turn it off for a deployment that genuinely
+            # needs modules to diverge (the manual button still works either way).
+            if export_changed:
+                # Independent of sync_all_modules above -- the controller's
+                # own ability to browse/download exported files (session
+                # detail page) shouldn't depend on whether modules are also
+                # being auto-pushed the same credentials.
+                self.ensure_export_share_mounted()
+                if self.config.get("export.sync_all_modules", True):
+                    creds = self.facade.get_export_credentials()
+                    if creds:
+                        _sync_export_to_all_modules(creds)
 
 
         @self.socketio.on("get_controller_info")
@@ -1862,6 +1994,21 @@ class Web(ABC):
         })
 
 
+    def broadcast_recording_state_update(self, module_id: str, status_data: dict):
+        """Push a module's latest local recording-pipeline summary (pending/
+        to_export/exported) to the frontend as it arrives. See
+        Modules.update_recording_state() for why only the folder-summary
+        keys are kept, not the raw cmd_ack envelope."""
+        summary = {
+            k: v for k, v in status_data.items() if k in ("pending", "to_export", "exported")
+        }
+        self.socketio.emit('module_recording_state_update', {
+            'module_id': module_id,
+            'summary': summary,
+            'last_reported': time.time(),
+        })
+
+
     def update_modules(self, modules: list):
         """Update the list of modules from the controller service manager"""
         self._modules = modules
@@ -2178,6 +2325,83 @@ class Web(ABC):
         except Exception as e:
             self.logger.error(f"NAS mount failed: {e}")
             return False
+
+
+    def _get_own_ip(self) -> str:
+        """The controller's own eth0 address, read the same synchronous way
+        handle_get_controller_info/handle_get_controller_health already do
+        -- deliberately not self.network.ip (Network's zeroconf-driven IP
+        detection), so this has no dependency on that timing and can be
+        called immediately at startup."""
+        try:
+            result = subprocess.run(
+                ["nmcli", "-g", "IP4.ADDRESS", "device", "show", "eth0"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            return result.stdout.strip().split("/")[0] if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    def ensure_export_share_mounted(self) -> bool:
+        """Keep export.mount_path in sync with wherever export.share_ip
+        currently points, so the session-detail file browser/downloads --
+        get_session_file_info/download_session_file/download_session_zip,
+        all of which just read export.mount_path as a plain local directory
+        -- see the same files modules actually exported, even when that's a
+        remote NAS (e.g. habitat's //192.168.1.2/habitat_recording) rather
+        than the controller's own share. Call whenever export.* changes
+        (see save_controller_config/sync_export_to_all below) and once at
+        startup so a reboot doesn't lose the mount.
+
+        No-op (after unmounting any previous NAS mount) when export.share_ip
+        is unset or is the controller's own address -- export.mount_path
+        should then stay the controller's own local Samba-served directory
+        ([controller_share] in smb.conf), not a CIFS mount on top of it;
+        mounting a share onto its own backing directory would break the
+        controller's own Samba server, not just be redundant.
+        """
+        default_mount_path = "/home/pi/controller_share"
+        mount_point = Path(self.config.get("export.mount_path", default_mount_path))
+        nas_ip = self.config.get("export.share_ip", "")
+        is_remote = bool(nas_ip) and nas_ip != self._get_own_ip()
+
+        if mount_point.is_mount():
+            result = subprocess.run(
+                ["sudo", "umount", str(mount_point)],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode != 0:
+                self.logger.warning(
+                    f"Could not unmount {mount_point} before remount: {result.stderr}"
+                )
+
+        if not is_remote:
+            return True
+
+        share_path = self.config.get("export.share_path", "controller_share")
+        username   = self.config.get("export.share_username", "")
+        password   = self.config.get("export.share_password", "")
+        mount_point.mkdir(parents=True, exist_ok=True)
+        auth_opts = f"username={username},password={password}" if username else "guest"
+        mount_opts = (
+            f"{auth_opts},uid=pi,gid=pi,file_mode=0664,dir_mode=0775,cache=none"
+        )
+        result = subprocess.run(
+            ["sudo", "mount", "-t", "cifs",
+             f"//{nas_ip}/{share_path}", str(mount_point), "-o", mount_opts],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            self.logger.error(
+                f"Failed to mount export share //{nas_ip}/{share_path} "
+                f"at {mount_point}: {result.stderr}"
+            )
+            return False
+        self.logger.info(
+            f"Mounted export share //{nas_ip}/{share_path} "
+            f"at {mount_point} for local browsing"
+        )
+        return True
 
 
     def handle_special_module_status(self, module_id, status):

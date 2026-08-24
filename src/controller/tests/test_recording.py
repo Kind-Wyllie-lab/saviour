@@ -188,7 +188,12 @@ class TestCreateSession:
         assert result["success"] is False
         assert "PTP" in result["error"]
 
-    def test_success_creates_active_session_and_starts_modules(self):
+    def test_success_creates_pending_session_without_starting_modules(self):
+        """create_session() no longer auto-starts -- it creates a PENDING
+        session (modules assigned, nothing recording) and returns; the
+        operator's separate Start action (start_pending_session, via the
+        unified force_start_session) is what actually dispatches
+        start_recording. See TestStartPendingSession."""
         rec, facade = _make_recording()
         facade.get_modules_by_target.return_value = {"cam1": {}, "cam2": {}}
 
@@ -198,14 +203,13 @@ class TestCreateSession:
 
         assert result["success"] is True
         session = rec.sessions[result["session_name"]]
-        assert session.state == SessionState.ACTIVE
+        assert session.state == SessionState.PENDING
         assert session.modules == ["cam1", "cam2"]
         assert session.researcher == "alice"
         assert session.duration_minutes == 30
-        assert session.module_stop_states == {"cam1": "recording", "cam2": "recording"}
+        assert session.module_stop_states == {}
 
-        sent_ids = {c.args[0] for c in facade.send_command.call_args_list}
-        assert sent_ids == {"cam1", "cam2"}
+        facade.send_command.assert_not_called()
         facade.update_sessions.assert_called_once_with(rec.sessions)
 
     def test_raw_name_bypasses_timestamp_suffix(self):
@@ -213,6 +217,185 @@ class TestCreateSession:
         facade.get_modules_by_target.return_value = {"cam1": {}}
         result = rec.create_session("exact_name", "camera", raw_name=True)
         assert result["session_name"] == "exact_name"
+
+
+class TestUpdatePendingSession:
+    """Editing a PENDING session's name/duration -- e.g. fixing a typo in
+    the title or changing a timed duration before the operator presses
+    Start. Locked once the session isn't PENDING any more."""
+
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.update_pending_session("ghost", "new_name", 30)
+        assert result["success"] is False
+
+    def test_non_pending_session_rejected(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.ACTIVE)
+        result = rec.update_pending_session("exp1", "exp1_renamed", 30)
+        assert result["success"] is False
+        assert rec.sessions["exp1"].session_name == "exp1"
+
+    def test_no_new_name_keeps_current_name(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, duration_minutes=30)
+        result = rec.update_pending_session("exp1", None, 45)
+        assert result == {"success": True, "session_name": "exp1"}
+        assert rec.sessions["exp1"].duration_minutes == 45
+
+    def test_duration_zero_clears_to_none(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, duration_minutes=30)
+        rec.update_pending_session("exp1", None, 0)
+        assert rec.sessions["exp1"].duration_minutes is None
+
+    def test_renames_session_and_moves_dict_key(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, duration_minutes=30)
+        result = rec.update_pending_session("exp1", "exp1_fixed", 30)
+        assert result == {"success": True, "session_name": "exp1_fixed"}
+        assert "exp1" not in rec.sessions
+        assert rec.sessions["exp1_fixed"].session_name == "exp1_fixed"
+        facade.update_sessions.assert_called_once_with(rec.sessions)
+
+    def test_new_name_sanitized_same_as_creation(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "weird!! name??", None)
+        assert result["session_name"] == "weird_name"
+
+    def test_rejects_when_sanitized_name_is_empty(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "!!??", None)
+        assert result["success"] is False
+        assert "exp1" in rec.sessions
+
+    def test_rejects_collision_with_existing_session(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(session_name="exp1", state=SessionState.PENDING)
+        rec.sessions["exp2"] = _session(session_name="exp2", state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "exp2", None)
+        assert result["success"] is False
+        assert "exp1" in rec.sessions
+        assert rec.sessions["exp1"].session_name == "exp1"
+
+    def test_renaming_to_own_current_name_is_a_noop_not_a_collision(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(session_name="exp1", state=SessionState.PENDING)
+        result = rec.update_pending_session("exp1", "exp1", 30)
+        assert result == {"success": True, "session_name": "exp1"}
+
+
+class TestStartPendingSession:
+    """create_session()'s counterpart -- re-validates everything fresh
+    rather than reusing anything computed at creation time, since a
+    session can sit PENDING for an arbitrary amount of time before an
+    operator presses Start."""
+
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.start_pending_session("ghost")
+        assert result["success"] is False
+
+    def test_non_pending_session_rejected(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.ACTIVE, modules=["cam1"])
+        result = rec.start_pending_session("exp1")
+        assert result["success"] is False
+
+    def test_no_modules_online_rejected(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        facade.get_modules_by_target.return_value = {}
+        result = rec.start_pending_session("exp1")
+        assert result["success"] is False
+        assert "No online modules" in result["error"]
+
+    def test_modules_now_busy_elsewhere_rejected(self):
+        """A module could have been grabbed by another session while this
+        one sat PENDING -- re-checked fresh at start time, not just at
+        creation time."""
+        rec, facade = _make_recording()
+        rec.sessions["busy"] = _session(
+            session_name="busy", state=SessionState.ACTIVE, modules=["cam1"]
+        )
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        result = rec.start_pending_session("exp1")
+        assert result["success"] is False
+        assert "cam1" in result["error"]
+
+    def test_ptp_not_synced_rejected_and_stays_pending(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        facade.get_module_health.return_value = {
+            "status": "online", "last_heartbeat": time.time(), "ptp4l_offset_ns": 999_999,
+        }
+        result = rec.start_pending_session("exp1")
+        assert result["success"] is False
+        assert "PTP" in result["error"]
+        assert rec.sessions["exp1"].state == SessionState.PENDING
+
+    def test_success_dispatches_start_recording_and_activates(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.PENDING, modules=["cam1", "cam2"], duration_minutes=30,
+        )
+        facade.get_modules_by_target.return_value = {"cam1": {}, "cam2": {}}
+
+        result = rec.start_pending_session("exp1")
+
+        assert result == {"success": True}
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.ACTIVE
+        assert session.module_stop_states == {"cam1": "recording", "cam2": "recording"}
+        assert session.recording_start_at is not None
+        assert session.timed_stop_at is not None
+
+        dispatched = {(c.args[0], c.args[1]) for c in facade.send_command.call_args_list}
+        assert dispatched == {
+            ("cam1", "start_recording"), ("cam2", "start_recording"),
+            ("cam1", "report_recording_state"), ("cam2", "report_recording_state"),
+        }
+
+    def test_success_with_no_duration_leaves_timed_stop_at_none(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        rec.start_pending_session("exp1")
+        assert rec.sessions["exp1"].timed_stop_at is None
+
+
+class TestForceStartSession:
+    """The unified dispatcher the frontend's single force_start_session
+    event now always calls -- routes to start_pending_session() for a
+    PENDING session or the existing force_start_scheduled_session() for
+    everything else, so "Start Recording" on a pending session and
+    "Start Now" on a scheduled one share one wire event."""
+
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.force_start_session("ghost")
+        assert result["success"] is False
+
+    def test_pending_session_routes_to_start_pending_session(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        facade.get_modules_by_target.return_value = {"cam1": {}}
+        result = rec.force_start_session("exp1")
+        assert result["success"] is True
+        assert rec.sessions["exp1"].state == SessionState.ACTIVE
+
+    def test_scheduled_session_routes_to_force_start_scheduled_session(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(scheduled=True, state=SessionState.SCHEDULED)
+        rec._start_scheduled_session = lambda name, today: setattr(
+            rec.sessions[name], "state", SessionState.ACTIVE
+        )
+        result = rec.force_start_session("exp1")
+        assert result == {"success": True}
 
 
 class TestCreateScheduledSession:
@@ -257,6 +440,18 @@ class TestDeleteSession:
         assert result == {"success": True}
         assert "exp1" not in rec.sessions
         facade.update_sessions.assert_called_once_with(rec.sessions)
+
+    def test_pending_session_can_be_discarded(self):
+        """The "Discard" action on a never-started session is just
+        delete_session() -- no dedicated backend method needed. Confirmed
+        safe: PENDING was never in the blocked-states tuple, and
+        pending_exports/total_exports_failed are naturally 0 for a
+        session that never recorded anything."""
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        result = rec.delete_session("exp1", delete_files=False)
+        assert result == {"success": True}
+        assert "exp1" not in rec.sessions
 
     def test_deletes_session_files_when_requested(self):
         with tempfile.TemporaryDirectory() as share_root:
@@ -321,6 +516,20 @@ class TestClearEndedSessions:
 
         assert result == {"cleared": 2, "skipped": 0, "skipped_sessions": []}
         assert list(rec.sessions.keys()) == ["active"]
+
+    def test_pending_session_not_swept_up_as_ended(self):
+        """A PENDING session hasn't ended, it hasn't started -- "Clear all
+        ended" must never silently discard a session an operator was about
+        to start. Regression: PENDING was briefly missing from the
+        "not ended" exclusion list alongside ACTIVE/SCHEDULED."""
+        rec, _facade = _make_recording()
+        rec.sessions["stopped"] = _session(session_name="stopped", state=SessionState.STOPPED)
+        rec.sessions["pending"] = _session(session_name="pending", state=SessionState.PENDING)
+
+        result = rec.clear_ended_sessions()
+
+        assert result == {"cleared": 1, "skipped": 0, "skipped_sessions": []}
+        assert list(rec.sessions.keys()) == ["pending"]
 
     def test_skips_sessions_with_unresolved_exports(self):
         rec, _facade = _make_recording()
@@ -404,8 +613,11 @@ class TestAddModuleToSession:
         session = rec.sessions["exp1"]
         assert "cam2" in session.modules
         assert session.module_stop_states["cam2"] == "recording"
-        facade.send_command.assert_called_once_with(
+        facade.send_command.assert_any_call(
             "cam2", "start_recording", {"duration": 0, "session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam2", "report_recording_state", {"session_name": "exp1"}
         )
         facade.update_sessions.assert_called_once_with(rec.sessions)
 
@@ -487,6 +699,106 @@ class TestReportModuleFault:
         facade.update_sessions.assert_not_called()
 
 
+class TestRetryFailedExports:
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.retry_failed_exports("nope")
+        assert result["result"] == "error"
+
+    def test_no_failed_exports_returns_error(self):
+        rec, _facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            modules=["cam1"], module_export_states={"cam1": "complete"}
+        )
+        result = rec.retry_failed_exports("exp1")
+        assert result["result"] == "error"
+
+    def test_routes_through_enqueue_export_not_send_command_directly(self):
+        """Sending start_export directly (the original implementation) let a
+        retry race a concurrently-dispatched real export to the same module,
+        producing a spurious export_failed for the loser -- confirmed live,
+        see the CLAUDE.md entry for 2026-08-20. Routing through
+        facade.enqueue_export() instead means a retry is subject to
+        export_queue.py's own active/dedup tracking like any other
+        export_ready signal, so it can never double-dispatch."""
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            modules=["cam1", "cam2"],
+            start_time="20260820-101500",
+            module_export_states={"cam1": "failed", "cam2": "complete"},
+        )
+        result = rec.retry_failed_exports("exp1")
+        assert result["result"] == "success"
+        facade.enqueue_export.assert_called_once_with("cam1", "exp1/20260820/cam1")
+        facade.send_command.assert_not_called()
+
+
+class TestPollRecordingState:
+    """_poll_recording_state() -- the periodic (5-min) step that asks every
+    module in every non-STOPPED session to report its local
+    pending/to_export/exported summary, giving the Recordings page live
+    visibility into a session that's still running."""
+
+    def test_sends_report_recording_state_to_every_module_in_active_session(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1", "cam2"]
+        )
+        rec._poll_recording_state()
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam2", "report_recording_state", {"session_name": "exp1"}
+        )
+
+    def test_scheduled_session_also_polled(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.SCHEDULED, modules=["cam1"]
+        )
+        rec._poll_recording_state()
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
+        )
+
+    def test_stopped_session_not_polled(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.STOPPED, modules=["cam1"]
+        )
+        rec._poll_recording_state()
+        facade.send_command.assert_not_called()
+
+    def test_send_command_exception_for_one_module_does_not_block_others(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1", "cam2"]
+        )
+        facade.send_command.side_effect = [Exception("boom"), None]
+        rec._poll_recording_state()  # must not raise
+        assert facade.send_command.call_count == 2
+
+
+class TestRequestRecordingStateRefresh:
+    def test_unknown_session_returns_error(self):
+        rec, _facade = _make_recording()
+        result = rec.request_recording_state_refresh("nope")
+        assert result["result"] == "error"
+
+    def test_sends_report_recording_state_to_every_member_module(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(modules=["cam1", "cam2"])
+        result = rec.request_recording_state_refresh("exp1")
+        assert result["result"] == "success"
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam2", "report_recording_state", {"session_name": "exp1"}
+        )
+
+
 class TestModuleBackOnline:
     def test_resumes_recording_for_errored_session(self):
         rec, facade = _make_recording()
@@ -502,8 +814,11 @@ class TestModuleBackOnline:
         session = rec.sessions["exp1"]
         assert session.state == SessionState.ACTIVE
         assert session.module_stop_states["cam1"] == "recording"
-        facade.send_command.assert_called_once_with(
+        facade.send_command.assert_any_call(
             "cam1", "start_recording", {"duration": 0, "session_name": "exp1"}
+        )
+        facade.send_command.assert_any_call(
+            "cam1", "report_recording_state", {"session_name": "exp1"}
         )
 
     def test_already_tracking_module_is_a_no_op(self):

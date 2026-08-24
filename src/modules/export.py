@@ -33,6 +33,11 @@ class Export:
         self.logger = logging.getLogger(__name__)
 
         # Local SD card context
+        # pending_folder mirrors Recording.recording_folder (recording.py) --
+        # both derive it the same way from the same config key, rather than
+        # Export reaching into Recording for it. Recording owns creating it;
+        # Export only needs it to read, for summarize_recording_state() below.
+        self.pending_folder = f'{self.config.get("recording.recording_folder")}/pending'
         self.to_export_folder = f'{self.config.get("recording.recording_folder")}/to_export'
         self.exported_folder = f'{self.config.get("recording.recording_folder")}/exported'
         os.makedirs(self.to_export_folder, exist_ok=True)
@@ -139,6 +144,71 @@ class Export:
                         return prefix[:last_sep]
                 return prefix
         return None
+
+
+    def summarize_recording_state(self, session_name: str = None) -> dict:
+        """Summarize local recording-pipeline state (pending/to_export/exported),
+        grouped by session, without ever returning raw filenames.
+
+        This is what the controller polls to give the frontend visibility
+        into a module's *local* state -- data that never touches the NAS
+        (remote or otherwise) until export actually happens, so today's
+        share-side file browser has no way to see it at all. A habitat
+        session can have 16 modules producing files continuously for weeks,
+        so this must stay small and cheap regardless of how many files are
+        actually on disk -- counts/sizes/timestamps only, never filenames.
+
+        Pass session_name to get just that session's breakdown per stage;
+        omit it to get every session currently represented on disk (useful
+        for spotting files stuck under an unexpected/old session name, e.g.
+        if the exported folder didn't auto-clear).
+        """
+        folders = {
+            "pending": self.pending_folder,
+            "to_export": self.to_export_folder,
+            "exported": self.exported_folder,
+        }
+        result = {}
+        for stage, folder in folders.items():
+            try:
+                filenames = os.listdir(folder)
+            except OSError:
+                filenames = []
+            by_session: dict = {}
+            for fn in filenames:
+                full_path = os.path.join(folder, fn)
+                if not os.path.isfile(full_path):
+                    continue
+                session = self._extract_session_from_filename(fn) or "_unknown"
+                by_session.setdefault(session, []).append(full_path)
+
+            if session_name is not None:
+                result[stage] = self._summarize_paths(by_session.get(session_name, []))
+            else:
+                result[stage] = {
+                    session: self._summarize_paths(paths)
+                    for session, paths in by_session.items()
+                }
+        return result
+
+    def _summarize_paths(self, paths: list) -> dict:
+        """Reduce a list of file paths to counts/sizes/timestamps only --
+        never the paths/filenames themselves. See summarize_recording_state()."""
+        sizes = []
+        mtimes = []
+        for p in paths:
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            sizes.append(st.st_size)
+            mtimes.append(st.st_mtime)
+        return {
+            "count": len(paths),
+            "total_bytes": sum(sizes),
+            "oldest_mtime": min(mtimes) if mtimes else None,
+            "newest_mtime": max(mtimes) if mtimes else None,
+        }
 
 
     def export_staged(self, export_path: str = None) -> dict:

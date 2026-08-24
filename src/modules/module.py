@@ -1060,14 +1060,23 @@ class Module(ABC):
         if self.config.get("export.export_target", "controller") != "controller":
             return True, "Export target is not controller — skipping share check"
 
-        password = self.config.get("export.share_password", "")
-        if not password:
+        # share_ip, not password, is the real "has anything been configured
+        # at all" signal -- a blank password is a legitimate configuration
+        # for a guest-access share (see export.py's _mount_share() and
+        # web.py's ensure_export_share_mounted(), both of which already fall
+        # back to "guest" auth when username is empty). Gating on password
+        # here instead used to hard-fail readiness for a genuinely working
+        # guest share (confirmed live 2026-08-24: mount succeeded fine with
+        # `-o guest` against a real NAS with `guest ok = yes`), before ever
+        # attempting the mount below that would have shown it working.
+        share_ip = self.config.get("export.share_ip", "")
+        if not share_ip:
             return False, (
                 "Export credentials not set — use 'Sync Export' in Controller Settings "
                 "(Settings page → Controller)"
             )
 
-        share_ip   = self.config.get("export.share_ip", "")
+        password   = self.config.get("export.share_password", "")
         share_path = self.config.get("export.share_path", "controller_share")
         username   = self.config.get("export.share_username", "saviour_module")
         mount_point = self.export.mount_point
@@ -1087,7 +1096,11 @@ class Module(ABC):
 
         def _mount() -> tuple[bool, str]:
             """Mount the share, retrying transient failures; return (success, err)."""
-            auth = f"username={username},password={password}"
+            # Same guest-auth fallback as export.py's _mount_share() and
+            # web.py's ensure_export_share_mounted() -- a blank username
+            # means a guest-access share, not "no credentials configured"
+            # (that case already returned above via the share_ip check).
+            auth = f"username={username},password={password}" if username else "guest"
             last_err = "unknown error"
             for attempt in range(1, _CHECK_MOUNT_MAX_ATTEMPTS + 1):
                 try:
@@ -1277,6 +1290,18 @@ class Module(ABC):
             "exported": exported_files
         }
         return files
+
+
+    @command()
+    def report_recording_state(self, session_name: str = None) -> dict:
+        """Remotely-callable summary of this module's local recording
+        pipeline state (pending/to_export/exported), grouped by session and
+        reduced to counts/sizes/timestamps -- never raw filenames. Polled by
+        the controller so the Recordings page can show something meaningful
+        for a session that's still running, including habitat's 16-module,
+        weeks-long deployments where "wait until stopped" isn't workable.
+        """
+        return self.facade.summarize_recording_state(session_name)
 
 
 

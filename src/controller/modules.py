@@ -54,6 +54,18 @@ class ModuleConfigState:
     diffs:         list[tuple] = field(default_factory=list)  # [(path, true_val, target_val)]
 
 
+@dataclass
+class ModuleRecordingState:
+    """Latest self-reported local recording-pipeline summary from a module
+    (pending/to_export/exported counts+sizes, grouped by session -- see
+    Export.summarize_recording_state()). Live/point-in-time only, never
+    persisted to sessions.json -- it's repopulated by polling, not durable
+    session state, and could grow unbounded for a long-running habitat
+    deployment if it were."""
+    summary:       dict[str, Any] = field(default_factory=dict)
+    last_reported: float = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Modules
 # ---------------------------------------------------------------------------
@@ -87,6 +99,10 @@ class Modules:
 
         # Config state registry – keyed by module_id
         self._config_states: dict[str, ModuleConfigState] = {}
+
+        # Latest local recording-pipeline summary – keyed by module_id.
+        # Live-only, never persisted (see ModuleRecordingState docstring).
+        self._recording_states: dict[str, ModuleRecordingState] = {}
 
         # Serialises config state reads/writes across received_module_config
         # and set_target_module_config, which may run on different threads.
@@ -128,12 +144,15 @@ class Modules:
         self._modules[module.id] = module
         if module.id not in self._config_states:
             self._config_states[module.id] = ModuleConfigState()
+        if module.id not in self._recording_states:
+            self._recording_states[module.id] = ModuleRecordingState()
         self.logger.info(f"Module registered: {module.id} (name={module.name})")
 
 
     def remove_module(self, module_id: str) -> None:
         self._modules.pop(module_id, None)
         self._config_states.pop(module_id, None)
+        self._recording_states.pop(module_id, None)
         self._removed_ids.add(module_id)
         self.broadcast_updated_modules()
 
@@ -203,6 +222,8 @@ class Modules:
             self._modules[new_id] = self._modules.pop(old_id)
         if old_id in self._config_states:
             self._config_states[new_id] = self._config_states.pop(old_id)
+        if old_id in self._recording_states:
+            self._recording_states[new_id] = self._recording_states.pop(old_id)
         self.broadcast_updated_modules()
 
 
@@ -317,6 +338,43 @@ class Modules:
         if module_id in self._modules:
             self._modules[module_id].status = ModuleStatus.DEFAULT
         self.broadcast_updated_modules()
+
+
+    # -----------------------------------------------------------------------
+    # Local recording-pipeline state (pending/to_export/exported summary)
+    # -----------------------------------------------------------------------
+
+    def update_recording_state(self, module_id: str, status_data: dict) -> None:
+        """Store a module's latest report_recording_state response.
+
+        status_data is the raw cmd_ack payload -- {"type", "command", plus
+        the summarize_recording_state() dict spread in ("pending",
+        "to_export", "exported")} -- so only keep the folder-summary keys.
+        """
+        summary = {
+            k: v for k, v in status_data.items() if k in ("pending", "to_export", "exported")
+        }
+        state = self._recording_states.setdefault(module_id, ModuleRecordingState())
+        state.summary = summary
+        state.last_reported = time.time()
+
+    def get_recording_state(self, module_id: str) -> ModuleRecordingState | None:
+        return self._recording_states.get(module_id)
+
+    def get_recording_states_for_session(self, module_ids: list) -> dict:
+        """Return {module_id: {summary, last_reported}} for the given
+        modules -- e.g. a session's member list -- omitting any module that
+        has never reported (rather than a default-empty entry, so the
+        frontend can distinguish "no report yet" from "reported and empty")."""
+        result = {}
+        for module_id in module_ids:
+            state = self._recording_states.get(module_id)
+            if state is not None and state.last_reported:
+                result[module_id] = {
+                    "summary": state.summary,
+                    "last_reported": state.last_reported,
+                }
+        return result
 
 
     # -----------------------------------------------------------------------

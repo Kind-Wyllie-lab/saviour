@@ -426,6 +426,10 @@ class TestCheckExport:
 
         assert result is False
         assert "Stale mount, remount failed" in message
+        # More verbose per 2026-08-24 fleet-wide contention incident: an
+        # operator should be told this could be simultaneous-check load, not
+        # just "the share is broken".
+        assert "same moment" in message
 
     def test_freshly_mounted_write_failure_also_triggers_remount_and_retry(self):
         """A mount command can report success while the share isn't actually

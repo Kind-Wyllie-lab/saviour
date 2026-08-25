@@ -7,18 +7,22 @@ JSON + geometry parsing, exercised with real temp JSON files). The
 crossing-line debounce state machine (LoomCrossingState /
 loom_update_crossing_state) already has dedicated coverage in
 test_loom_crossing.py. LoomCameraModule itself (the CameraBase subclass)
-is out of scope here -- see test_camera_base.py for the __new__-based
-construction pattern that would apply to it too.
+is mostly out of scope here -- see test_camera_base.py for the
+__new__-based construction pattern that would apply to it too -- except
+for _resolve_roi_json_path's legacy-migration logic below, which is pure
+path/filesystem logic worth covering directly via that same pattern.
 """
 
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
 from src.modules.variants.loom_camera.loom_camera_module import (
     LoomBlobDiffTracker,
+    LoomCameraModule,
     loom_load_roi_and_line,
 )
 
@@ -216,3 +220,85 @@ class TestLoomLoadRoiAndLine:
             assert mask.all()
             assert poly is None
             assert line is None
+
+
+# ---------------------------------------------------------------------------
+# LoomCameraModule._resolve_roi_json_path -- legacy in-tree migration
+# ---------------------------------------------------------------------------
+
+def _make_module(roi_json_path):
+    mod = LoomCameraModule.__new__(LoomCameraModule)
+    mod.logger = MagicMock()
+    mod.config = MagicMock()
+    mod.config.get.return_value = {"roi_json_path": roi_json_path}
+    return mod
+
+
+class TestResolveRoiJsonPath:
+    def test_returns_none_when_unset(self):
+        mod = _make_module(None)
+        assert mod._resolve_roi_json_path() is None
+
+    def test_migrates_from_legacy_path_when_target_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy = Path(tmpdir) / "legacy" / "roi.json"
+            legacy.parent.mkdir()
+            legacy.write_text(json.dumps({"created": "legacy"}))
+            target = Path(tmpdir) / "new" / "roi.json"
+
+            mod = _make_module(str(target))
+            with patch(
+                "src.modules.variants.loom_camera.loom_camera_module._LEGACY_ROI_JSON_PATH",
+                legacy,
+            ):
+                resolved = mod._resolve_roi_json_path()
+
+            assert resolved == target
+            assert json.loads(target.read_text()) == {"created": "legacy"}
+
+    def test_does_not_overwrite_an_existing_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy = Path(tmpdir) / "legacy" / "roi.json"
+            legacy.parent.mkdir()
+            legacy.write_text(json.dumps({"created": "legacy"}))
+            target = Path(tmpdir) / "new" / "roi.json"
+            target.parent.mkdir()
+            target.write_text(json.dumps({"created": "already-calibrated"}))
+
+            mod = _make_module(str(target))
+            with patch(
+                "src.modules.variants.loom_camera.loom_camera_module._LEGACY_ROI_JSON_PATH",
+                legacy,
+            ):
+                mod._resolve_roi_json_path()
+
+            assert json.loads(target.read_text()) == {"created": "already-calibrated"}
+
+    def test_no_migration_when_legacy_file_absent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy = Path(tmpdir) / "legacy" / "roi.json"  # never created
+            target = Path(tmpdir) / "new" / "roi.json"
+
+            mod = _make_module(str(target))
+            with patch(
+                "src.modules.variants.loom_camera.loom_camera_module._LEGACY_ROI_JSON_PATH",
+                legacy,
+            ):
+                resolved = mod._resolve_roi_json_path()
+
+            assert resolved == target
+            assert not target.exists()
+
+    def test_no_self_migration_when_configured_path_is_the_legacy_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy = Path(tmpdir) / "roi.json"
+            legacy.write_text(json.dumps({"created": "legacy"}))
+
+            mod = _make_module(str(legacy))
+            with patch(
+                "src.modules.variants.loom_camera.loom_camera_module._LEGACY_ROI_JSON_PATH",
+                legacy,
+            ):
+                resolved = mod._resolve_roi_json_path()
+
+            assert resolved == legacy

@@ -95,6 +95,15 @@
 .hrc-state--fault     { color: #c62828; }
 .hrc-state--ready     { color: var(--text-muted, #888); }
 
+.hrc-session-name {
+  font-size: 0.82rem;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .hrc-stat {
   font-size: 0.82rem;
   color: var(--text-muted, #888);

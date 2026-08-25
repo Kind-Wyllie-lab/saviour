@@ -14,7 +14,7 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
 
-function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated }) {
+function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated, prefill }) {
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -83,6 +83,33 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     new Set(ALL_DAYS),
     { serialize: daysSerialize, deserialize: daysDeserialize }
   );
+
+  // One-shot prefill from "Copy Session" (target is applied by the caller
+  // via setTarget before opening the drawer, since it's already lifted up
+  // to RecordingLayout). `prefill` is a fresh object per Copy click, so
+  // this fires exactly once per click rather than on every render -- not a
+  // plain initializer because mode/duration/schedule are persisted state,
+  // already populated before the operator ever copies a session.
+  useEffect(() => {
+    if (!prefill) return;
+    setRecordingMode(prefill.mode);
+    if (prefill.mode === "timed") {
+      const total = prefill.durationMinutes ?? 0;
+      setDurationHours(String(Math.floor(total / 60)));
+      setDurationMinutes(String(total % 60));
+    } else if (prefill.mode === "scheduled") {
+      const [sh, sm] = (prefill.scheduledStart || "19:00").split(":");
+      const [eh, em] = (prefill.scheduledEnd || "23:00").split(":");
+      setStartHour(sh);
+      setStartMinute(sm);
+      setEndHour(eh);
+      setEndMinute(em);
+      setScheduledDays(new Set(prefill.scheduledDays?.length ? prefill.scheduledDays : ALL_DAYS));
+    }
+  }, [
+    prefill, setRecordingMode, setDurationHours, setDurationMinutes,
+    setStartHour, setStartMinute, setEndHour, setEndMinute, setScheduledDays,
+  ]);
 
   // Derive groups from module list
   const groups = useMemo(() => groupModulesByGroup(modules), [modules]);

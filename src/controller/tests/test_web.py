@@ -42,6 +42,14 @@ def _make_web(**config_overrides) -> Web:
     return Web(_make_config(**config_overrides))
 
 
+def _download_qs(web) -> str:
+    """A valid ?token=... query string for the session download routes,
+    which require one minted via _issue_download_token (normally handed
+    out over an authenticated Socket.IO connection -- see
+    request_download_token)."""
+    return f"?token={web._issue_download_token()}"
+
+
 # ---------------------------------------------------------------------------
 # Tier 1: pure helper functions
 # ---------------------------------------------------------------------------
@@ -185,25 +193,43 @@ class TestServeReactApp:
 
 
 class TestDownloadSessionFile:
-    def _client_with_session(self, tmpdir):
+    def _web_with_session(self, tmpdir):
         session_dir = os.path.join(tmpdir, "session1")
         os.makedirs(session_dir)
         with open(os.path.join(session_dir, "data.txt"), "w") as f:
             f.write("recorded data")
-        web = _make_web(**{"export.mount_path": tmpdir})
-        return web.app.test_client()
+        return _make_web(**{"export.mount_path": tmpdir})
+
+    def _client_with_session(self, tmpdir):
+        return self._web_with_session(tmpdir).app.test_client()
+
+    def test_missing_token_is_unauthorized(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resp = self._client_with_session(tmpdir).get(
+                "/api/sessions/session1/download/data.txt"
+            )
+            assert resp.status_code == 401
+
+    def test_invalid_token_is_unauthorized(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resp = self._client_with_session(tmpdir).get(
+                "/api/sessions/session1/download/data.txt?token=not-a-real-token"
+            )
+            assert resp.status_code == 401
 
     def test_rejects_invalid_session_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            resp = self._client_with_session(tmpdir).get(
-                "/api/sessions/bad!name/download/data.txt"
+            web = self._web_with_session(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/bad!name/download/data.txt{_download_qs(web)}"
             )
             assert resp.status_code == 400
 
     def test_downloads_existing_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            resp = self._client_with_session(tmpdir).get(
-                "/api/sessions/session1/download/data.txt"
+            web = self._web_with_session(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/session1/download/data.txt{_download_qs(web)}"
             )
             try:
                 assert resp.status_code == 200
@@ -213,8 +239,9 @@ class TestDownloadSessionFile:
 
     def test_missing_file_returns_404(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            resp = self._client_with_session(tmpdir).get(
-                "/api/sessions/session1/download/missing.txt"
+            web = self._web_with_session(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/session1/download/missing.txt{_download_qs(web)}"
             )
             assert resp.status_code == 404
 
@@ -222,8 +249,9 @@ class TestDownloadSessionFile:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "outside.txt"), "w") as f:
                 f.write("should not be reachable")
-            resp = self._client_with_session(tmpdir).get(
-                "/api/sessions/session1/download/../outside.txt"
+            web = self._web_with_session(tmpdir)
+            resp = web.app.test_client().get(
+                f"/api/sessions/session1/download/../outside.txt{_download_qs(web)}"
             )
             assert resp.status_code == 403
 
@@ -243,7 +271,7 @@ class TestDownloadSessionFile:
 
             web = _make_web(**{"export.mount_path": tmpdir})
             resp = web.app.test_client().get(
-                "/api/sessions/session1/download/20260821/camera_a"
+                f"/api/sessions/session1/download/20260821/camera_a{_download_qs(web)}"
             )
 
             assert resp.status_code == 200
@@ -256,16 +284,24 @@ class TestDownloadSessionFile:
 
 
 class TestDownloadSessionZip:
+    def test_missing_token_is_unauthorized(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web = _make_web(**{"export.mount_path": tmpdir})
+            resp = web.app.test_client().get("/api/sessions/session1/download")
+            assert resp.status_code == 401
+
     def test_rejects_invalid_session_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             web = _make_web(**{"export.mount_path": tmpdir})
-            resp = web.app.test_client().get("/api/sessions/bad!name/download")
+            url = f"/api/sessions/bad!name/download{_download_qs(web)}"
+            resp = web.app.test_client().get(url)
             assert resp.status_code == 400
 
     def test_missing_session_returns_404(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             web = _make_web(**{"export.mount_path": tmpdir})
-            resp = web.app.test_client().get("/api/sessions/does_not_exist/download")
+            url = f"/api/sessions/does_not_exist/download{_download_qs(web)}"
+            resp = web.app.test_client().get(url)
             assert resp.status_code == 404
 
     def test_zips_session_directory_contents(self):
@@ -276,13 +312,85 @@ class TestDownloadSessionZip:
                 f.write("recorded data")
 
             web = _make_web(**{"export.mount_path": tmpdir})
-            resp = web.app.test_client().get("/api/sessions/session1/download")
+            url = f"/api/sessions/session1/download{_download_qs(web)}"
+            resp = web.app.test_client().get(url)
 
             assert resp.status_code == 200
             assert resp.mimetype == "application/zip"
             with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
                 assert zf.namelist() == ["data.txt"]
                 assert zf.read("data.txt") == b"recorded data"
+
+
+class TestFacadeRestRoutes:
+    """GET routes under _register_rest_facade_routes -- for external
+    scripts (e.g. a Matlab experiment controller), not the browser
+    frontend, so they check an Authorization: Bearer <password> header
+    rather than a Socket.IO login (see _check_bearer_auth)."""
+
+    def _web_with_password(self, tmpdir):
+        web = _make_web()
+        web.facade = MagicMock()
+        web._ADMIN_CREDENTIALS_FILE = os.path.join(tmpdir, "admin_credentials")
+        password = web._get_or_create_admin_password()
+        return web, password
+
+    def test_list_modules_blocked_without_header(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = self._web_with_password(tmpdir)
+            resp = web.app.test_client().get("/facade/list_modules")
+            assert resp.status_code == 401
+
+    def test_list_modules_blocked_with_wrong_password(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = self._web_with_password(tmpdir)
+            resp = web.app.test_client().get(
+                "/facade/list_modules", headers={"Authorization": "Bearer wrong"}
+            )
+            assert resp.status_code == 401
+
+    def test_list_modules_succeeds_with_correct_password(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, password = self._web_with_password(tmpdir)
+            web.facade.get_modules.return_value = {"cam1": {"type": "camera"}}
+            resp = web.app.test_client().get(
+                "/facade/list_modules", headers={"Authorization": f"Bearer {password}"}
+            )
+            assert resp.status_code == 200
+            assert resp.get_json() == {"modules": {"cam1": {"type": "camera"}}}
+
+    def test_module_health_blocked_without_header(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = self._web_with_password(tmpdir)
+            resp = web.app.test_client().get("/facade/module_health")
+            assert resp.status_code == 401
+
+    def test_module_health_succeeds_with_correct_password(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, password = self._web_with_password(tmpdir)
+            web.facade.get_module_health.return_value = {"cam1": "ok"}
+            resp = web.app.test_client().get(
+                "/facade/module_health", headers={"Authorization": f"Bearer {password}"}
+            )
+            assert resp.status_code == 200
+            assert resp.get_json() == {"cam1": "ok"}
+
+    def test_exported_recordings_blocked_without_header(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = self._web_with_password(tmpdir)
+            resp = web.app.test_client().get("/facade/exported_recordings")
+            assert resp.status_code == 401
+
+    def test_exported_recordings_succeeds_with_correct_password(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, password = self._web_with_password(tmpdir)
+            web.get_exported_recordings = MagicMock(return_value=["rec1.mp4"])
+            headers = {"Authorization": f"Bearer {password}"}
+            resp = web.app.test_client().get(
+                "/facade/exported_recordings", headers=headers
+            )
+            assert resp.status_code == 200
+            assert resp.get_json() == {"exported_recordings": ["rec1.mp4"]}
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +737,55 @@ class TestAuthGatedHandlers:
             received = client.get_received()
             assert received[-1]["name"] == "session_error"
             assert received[-1]["args"][0] == {"error": "Session is not pending (state: active)"}
+
+    def test_request_download_token_blocked_without_login(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("request_download_token")
+
+        assert client.get_received()[0]["name"] == "auth_required"
+        assert web._download_tokens == {}
+
+    def test_request_download_token_allowed_after_login_and_is_valid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("request_download_token")
+
+            received = client.get_received()
+            assert received[-1]["name"] == "download_token"
+            token = received[-1]["args"][0]["token"]
+            assert web._check_download_token(token) is True
+
+    def test_get_bug_report_blocked_without_login(self):
+        web, _ = _make_web_with_facade()
+        web._collect_bug_report = MagicMock()
+        client = _connected_client(web)
+
+        client.emit("get_bug_report")
+
+        assert client.get_received()[0]["name"] == "auth_required"
+        web._collect_bug_report.assert_not_called()
+
+    def test_get_bug_report_allowed_after_login_passes_requester_sid(self):
+        """The background thread must be handed the requesting connection's
+        sid -- bug_report_status/bug_report_ready scope their emits to it
+        (room=requester_sid) rather than broadcasting the diagnostics
+        download link to every connected guest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            web._collect_bug_report = MagicMock()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("get_bug_report")
+
+            web._collect_bug_report.assert_called_once()
+            (called_sid,), _ = web._collect_bug_report.call_args
+            assert called_sid  # a real sid was captured, not None/empty
 
 
 class TestCheckReady:

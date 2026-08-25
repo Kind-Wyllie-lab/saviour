@@ -40,7 +40,12 @@ function SessionList({ sessionList, modules = [], onNewSession, selectedSessionN
     setClearAllWarning(null);
   };
 
-  const sessions = Object.values(sessionList);
+  // sessionList is keyed by session_name in backend insertion order (new
+  // sessions are only ever appended, per RecordingLayout's own auto-select
+  // effect) -- reverse so the rail reads newest-first, matching how an
+  // operator actually wants to scan it (most likely to click a session
+  // just created, not one from hours/days ago).
+  const sessions = Object.values(sessionList).slice().reverse();
   // "Ended" = stopped, or errored-and-not-scheduled-to-retry -- explicitly
   // not pending/active/scheduled. A PENDING session hasn't ended, it just
   // hasn't started yet; "Clear all ended" must never sweep those up.

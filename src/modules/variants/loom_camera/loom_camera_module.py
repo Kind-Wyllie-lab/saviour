@@ -14,6 +14,7 @@ Author: Paul Rignanese / Andrew SG
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -32,6 +33,15 @@ from modules.variants.loom_camera.loom_stimulus import (
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
 from modules.module import command
+
+# Pre-2026-08-24 default roi_json_path pointed here -- inside the deployed
+# source tree, so update_saviour's rsync (module.py, excludes only env/ and
+# .git/) silently overwrote a live-calibrated ROI with whatever was last
+# committed to git. Kept only as a one-time migration source for devices
+# still using that default; see _resolve_roi_json_path.
+_LEGACY_ROI_JSON_PATH = Path(
+    "/usr/local/src/saviour/src/modules/variants/loom_camera/loom_roi_and_line.json"
+)
 
 
 @dataclass(frozen=True)
@@ -493,10 +503,27 @@ class LoomCameraModule(CameraBase):
             return None
 
         roi_path = Path(str(p)).expanduser()
-        if roi_path.is_absolute():
-            return roi_path
+        if not roi_path.is_absolute():
+            roi_path = (Path(__file__).resolve().parent / roi_path).resolve()
 
-        return (Path(__file__).resolve().parent / roi_path).resolve()
+        # One-time migration: a device still pointed at the legacy in-tree
+        # default (or freshly updated to a config that now points elsewhere)
+        # gets its existing calibration copied to the new location instead of
+        # silently falling back to a full-frame ROI.
+        if (roi_path != _LEGACY_ROI_JSON_PATH
+                and not roi_path.exists()
+                and _LEGACY_ROI_JSON_PATH.exists()):
+            try:
+                roi_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(_LEGACY_ROI_JSON_PATH, roi_path)
+                self.logger.info(
+                    f"Migrated ROI JSON from legacy in-tree path: "
+                    f"{_LEGACY_ROI_JSON_PATH} -> {roi_path}"
+                )
+            except Exception as e:
+                self.logger.warning(f"Could not migrate legacy ROI JSON: {e}")
+
+        return roi_path
 
     def _set_default_roi(self, *, proc_w: int, proc_h: int) -> None:
         """

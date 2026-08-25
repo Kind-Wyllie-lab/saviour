@@ -176,21 +176,24 @@ class TestCheckDiskspace:
         assert result is False
         assert "Cannot check disk space" in message
 
-    def test_exact_boundary_silently_returns_none_instead_of_a_result_tuple(self):
-        """Real bug, not a designed edge case (see CLAUDE.md TODO, found while
-        adding test coverage): free_mb == required_mb hits neither `if free_mb
-        > required_mb` nor `if free_mb < required_mb` (~line 1008-1011), so the
-        function falls off the end and implicitly returns None instead of a
-        (bool, str) tuple. _run_checks() then does `result, message = check()`
-        on that None and crashes with TypeError, taking validate_readiness()'s
-        try/except with it (it reports the TypeError as a failed readiness
-        check rather than the module ever finding out its disk is exactly
-        full to the threshold)."""
+    def test_exact_boundary_is_treated_as_sufficient(self):
+        """Was a real bug (see CLAUDE.md TODO, found 2026-08-04 while adding
+        test coverage, fixed 2026-08-25): free_mb == required_mb used to hit
+        neither `if free_mb > required_mb` nor `if free_mb < required_mb`
+        (~line 1008-1011), so the function fell off the end and implicitly
+        returned None instead of a (bool, str) tuple. _run_checks() then did
+        `result, message = check()` on that None and crashed with TypeError,
+        taking validate_readiness()'s try/except with it (it reported the
+        TypeError as a failed readiness check rather than the module ever
+        finding out its disk is exactly full to the threshold). Fixed by
+        making the sufficient-space guard `>=` instead of `>`, so the exact
+        boundary now reads as "just enough," not a crash."""
         m = _bare_module(config=_make_config(**{"module.required_disk_space_mb": 100.0}))
         with patch("src.modules.module.os.statvfs", create=True,
                     return_value=_statvfs(bavail=100)):
-            result = m._check_diskspace()
-        assert result is None
+            result, message = m._check_diskspace()
+        assert result is True
+        assert "Sufficient disk space" in message
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,9 @@
 #   4. Rebuilds AudioMoth-USB-Microphone if missing or binary is stale
 #   5. Installs / refreshes the saviour-config symlink
 #   6. Applies logging and NTP configuration
-#   7. Regenerates the saviour.service systemd unit and restarts it if running
+#   7. Disables NVMe APST (power-state transitions) on devices with an NVMe root
+#   8. Sets the PoE+ HAT's PSU_MAX_CURRENT bootloader budget on NVMe devices
+#   9. Regenerates the saviour.service systemd unit and restarts it if running
 #
 # What it does NOT do:
 #   - Pull or otherwise change the SAVIOUR code itself -- code version is
@@ -74,7 +76,7 @@ cd "$TARGET_DIR"
 
 # ── 1. System packages ─────────────────────────────────────────────────────────
 
-section "1/7  System packages"
+section "1/8  System packages"
 
 sudo apt-get update -y -qq || warn "apt-get update had errors — some repositories may be unavailable; continuing"
 
@@ -133,7 +135,7 @@ done
 
 # ── 2. Python environment ──────────────────────────────────────────────────────
 
-section "2/7  Python environment"
+section "2/8  Python environment"
 
 if [ ! -d "$TARGET_DIR/env" ]; then
     fix "Creating virtual environment"
@@ -150,7 +152,7 @@ ok "Python environment up to date"
 
 # ── 3. Frontend build (controller only) ───────────────────────────────────────
 
-section "3/7  Frontend build"
+section "3/8  Frontend build"
 
 # Determine role: prefer /etc/saviour/config, fall back to detecting a running controller service
 DETECTED_ROLE="none"
@@ -190,7 +192,7 @@ fi
 
 # ── 4. AudioMoth USB command ───────────────────────────────────────────────────
 
-section "4/7  AudioMoth-USB-Microphone"
+section "4/8  AudioMoth-USB-Microphone"
 
 BINARY_PATH="/usr/local/bin/AudioMoth-USB-Microphone"
 REPO="OpenAcousticDevices/AudioMoth-USB-Microphone-Cmd"
@@ -216,7 +218,7 @@ fi
 
 # ── 5. saviour-config symlink ──────────────────────────────────────────────────
 
-section "5/7  saviour-config"
+section "5/8  saviour-config"
 
 SAVIOUR_CONFIG_SRC="$TARGET_DIR/saviour-config"
 SAVIOUR_CONFIG_LINK="/usr/local/bin/saviour-config"
@@ -235,7 +237,7 @@ fi
 
 # ── 6. Logging + NTP ──────────────────────────────────────────────────────────
 
-section "6/7  Logging + NTP"
+section "6/8  Logging + NTP"
 
 # Persistent journald logging
 if grep -q "Storage=persistent" /etc/systemd/journald.conf 2>/dev/null; then
@@ -265,9 +267,72 @@ EOF
     systemctl restart systemd-timesyncd
 fi
 
-# ── 7. Restart service ─────────────────────────────────────────────────────────
+# ── 7. NVMe power management ───────────────────────────────────────────────────
 
-section "7/7  Service restart"
+section "7/9  NVMe power management"
+
+# Raspberry Pi 5 + NVMe SSD root: default NVMe autonomous power-state
+# transitions (APST) let the drive drop into a deep power-saving state
+# between writes, and on this hardware combination that can cause it to fail
+# to wake in time -- usually a recoverable I/O timeout, but occasionally the
+# controller never comes back and the whole device hangs until a manual
+# power cycle (found 2026-08-25, live on a habitat controller: three such
+# timeouts in one ~22h boot, the third fatal, ~5h unresponsive). Not an
+# undervoltage issue (`vcgencmd get_throttled` was 0x0 throughout).
+if [ ! -e /sys/class/nvme/nvme0 ]; then
+    ok "No NVMe device — nothing to do"
+else
+    CMDLINE_FILE="/boot/firmware/cmdline.txt"
+    if [ ! -f "$CMDLINE_FILE" ]; then
+        warn "$CMDLINE_FILE not found — skipping NVMe power-management fix"
+    elif grep -q "nvme_core.default_ps_max_latency_us=" "$CMDLINE_FILE"; then
+        ok "NVMe APST fix already applied"
+    else
+        fix "Disabling NVMe autonomous power-state transitions (APST)"
+        sed -i -E "s/\$/ nvme_core.default_ps_max_latency_us=0/" "$CMDLINE_FILE"
+        warn "NVMe APST fix requires a reboot to take effect"
+    fi
+fi
+
+# ── 8. PSU_MAX_CURRENT (fleet-wide: every device is Pi 5 + a PoE HAT) ─────────
+
+section "8/9  PoE HAT power budget"
+
+# Every device in the fleet is a Pi 5 powered over PoE, not USB-C -- so the
+# Type-C PD negotiation the Pi 5 bootloader relies on to detect a high-amp
+# supply never happens, and it defaults to a conservative 3A current budget
+# regardless of which PoE HAT is actually fitted: controllers use the 52Pi
+# EP-0240 M.2 NVMe PoE+ HAT (up to 4.5A/25W), modules mostly use the
+# Waveshare "PoE HAT (F)" (also up to 4.5A over its GPIO header). Both
+# vendors document the same required fix (PSU_MAX_CURRENT=5000) for the same
+# underlying Pi 5 firmware behaviour -- this isn't NVMe-specific, so unlike
+# the APST step above it applies to every device, not just controllers.
+# Found completely unset on a live habitat controller (2026-08-25) that had
+# just needed a manual power cycle after an NVMe hang -- a plausible
+# contributing factor there alongside APST, worth closing fleet-wide
+# regardless of whether a given device has ever actually hit a
+# power-starvation symptom.
+if ! command -v rpi-eeprom-config &>/dev/null; then
+    warn "rpi-eeprom-config not found — not a Raspberry Pi 4/5 bootloader, skipping"
+elif rpi-eeprom-config 2>/dev/null | grep -q "^PSU_MAX_CURRENT=5000$"; then
+    ok "PSU_MAX_CURRENT already set to 5000"
+else
+    fix "Setting PSU_MAX_CURRENT=5000 in bootloader EEPROM config"
+    TMP_CONF=$(mktemp)
+    rpi-eeprom-config > "$TMP_CONF"
+    sed -i '/^PSU_MAX_CURRENT=/d' "$TMP_CONF"
+    echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONF"
+    if rpi-eeprom-config --apply "$TMP_CONF" >> "$LOG" 2>&1; then
+        warn "PSU_MAX_CURRENT fix requires a reboot to take effect"
+    else
+        warn "Failed to apply PSU_MAX_CURRENT — check $LOG"
+    fi
+    rm -f "$TMP_CONF"
+fi
+
+# ── 9. Restart service ─────────────────────────────────────────────────────────
+
+section "9/9  Service restart"
 
 # saviour-config bakes the current code layout (e.g. src/*/variants/<type>)
 # into /etc/systemd/system/saviour.service as literal text; a plain code

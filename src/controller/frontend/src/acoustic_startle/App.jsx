@@ -11,6 +11,7 @@ import Guide from "/src/basic/pages/Guide/Guide";
 
 import Dashboard from "/src/acoustic_startle/pages/AcousticStartleDashboard/AcousticStartleDashboard";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
+import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
 document.title="Acoustic Startle";
 
@@ -29,6 +30,7 @@ function App() {
         <div className="app">
             <Sidebar navItems={pages} />
             <div className="content">
+            <RecordingStatusWidget />
             <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/settings" element={<Settings />} />

@@ -130,32 +130,46 @@ class Recording:
         except (PermissionError, AttributeError, OSError) as e:
             self.logger.debug(f"SCHED_FIFO unavailable ({e}); using normal scheduling")
 
-        # 2. Pre-compute session state so _get_video_filename() works correctly
-        #    inside the module hook (current_filename_prefix would be None otherwise)
-        self._pre_setup_session(session_name, start_at)
-
-        # 3. Run when_recording_starts() BEFORE sleeping so that Samba I/O
-        #    (config export, directory creation) is off the critical path.
-        #    _begin_recording checks the flag and skips its own call.
-        self.facade.when_recording_starts()
-        self._recording_start_prepped = True
-
-        # 4. Pre-create file handles before sleeping
+        # This whole block runs in its own daemon thread, spawned by
+        # start_recording() *after* it already returned {"result": "success"}
+        # to the controller (command.py's own outer try/except has long since
+        # returned by the time this runs, so it can't catch anything here) --
+        # without this try/except, a failure anywhere below (e.g.
+        # camera_base.py's _start_new_recording() hitting a busy encoder) had
+        # no way to ever reach the controller at all, propagating only to
+        # Python's default thread excepthook (stderr).
         try:
-            self.facade.pre_create_first_segment(start_at)
+            # 2. Pre-compute session state so _get_video_filename() works
+            #    correctly inside the module hook (current_filename_prefix
+            #    would be None otherwise)
+            self._pre_setup_session(session_name, start_at)
+
+            # 3. Run when_recording_starts() BEFORE sleeping so that Samba I/O
+            #    (config export, directory creation) is off the critical path.
+            #    _begin_recording checks the flag and skips its own call.
+            self.facade.when_recording_starts()
+            self._recording_start_prepped = True
+
+            # 4. Pre-create file handles before sleeping
+            try:
+                self.facade.pre_create_first_segment(start_at)
+            except Exception as e:
+                self.logger.warning(
+                    f"pre_create_first_segment failed ({e}); "
+                    "will open files at start time"
+                )
+
+            # 5. Sleep then spin
+            delay = start_at - time.time()
+            if delay > 0.010:
+                time.sleep(delay - 0.010)
+            while time.time() < start_at:
+                pass
+
+            self._begin_recording(session_name, duration)
         except Exception as e:
-            self.logger.warning(
-                f"pre_create_first_segment failed ({e}); will open files at start time"
-            )
-
-        # 5. Sleep then spin
-        delay = start_at - time.time()
-        if delay > 0.010:
-            time.sleep(delay - 0.010)
-        while time.time() < start_at:
-            pass
-
-        self._begin_recording(session_name, duration)
+            self.logger.error(f"Scheduled recording start failed: {e}")
+            self.facade.send_status({"type": "recording_start_failed", "error": str(e)})
 
 
     def _pre_setup_session(self, session_name: str, start_at: float) -> None:

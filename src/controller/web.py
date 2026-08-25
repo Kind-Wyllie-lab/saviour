@@ -565,8 +565,22 @@ class Web(ABC):
                 return
             target = data.get("target")
             modules = list(self.facade.get_modules_by_target(target).keys())
+            # get_health is a cheap in-memory read on the module side — fire it at
+            # every module immediately, no staggering needed.
             for mid in modules:
                 self.facade.send_command(mid, "get_health", {})
+            # validate_readiness makes each module mount+write+unmount against the
+            # shared export share (module.py's _check_export()). Dispatching that
+            # to every module within the same instant is a thundering herd against
+            # the NAS's SMB server — confirmed live 2026-08-24 on a 20-module
+            # habitat deployment, where most of the fleet failed readiness with a
+            # mix of I/O error / device busy / no-such-file even though the share
+            # was healthy throughout. Stagger dispatch to spread the resulting
+            # mount/write/unmount cycles out over time instead.
+            _READINESS_STAGGER_S = 0.3
+            for i, mid in enumerate(modules):
+                if i > 0:
+                    self.socketio.sleep(_READINESS_STAGGER_S)
                 self.facade.send_command(mid, "validate_readiness", {})
             # Yield to let get_health responses arrive and update the health cache
             # before running the PTP check.  get_health is an in-memory read on the

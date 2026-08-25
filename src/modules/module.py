@@ -1121,12 +1121,31 @@ class Module(ABC):
                     time.sleep(_CHECK_MOUNT_RETRY_DELAY_S)
             return False, f"Cannot mount //{share_ip}/{share_path}: {last_err}"
 
-        def _test_write() -> bool:
+        def _test_write() -> tuple[bool, str]:
             test_path = os.path.join(mount_point, ".saviour_check")
-            with open(test_path, "w") as f:
-                f.write("check")
-            os.remove(test_path)
-            return True
+            try:
+                with open(test_path, "w") as f:
+                    f.write("check")
+                os.remove(test_path)
+                return True, ""
+            except OSError as e:
+                return False, str(e)
+
+        # Surfaced whenever a failure here could plausibly be fleet-wide NAS/SMB
+        # contention rather than a genuinely broken share -- confirmed live
+        # 2026-08-24: an unstaggered fleet-wide "Check Ready" against a
+        # 20-module habitat deployment produced a mix of I/O error / device
+        # busy / no-such-file failures across most of the fleet on this exact
+        # write/delete step, even though the share itself was healthy
+        # throughout (fixed at the dispatch side too, see web.py's
+        # check_ready handler -- this message is a backstop for whatever
+        # contention the staggering doesn't fully absorb, e.g. a very large
+        # fleet or a slow NAS).
+        _CONTENTION_HINT = (
+            "If several modules checked readiness at the same moment, this "
+            "can be transient NAS/share contention rather than a real fault "
+            "— try Check Ready again."
+        )
 
         try:
             if not already_mounted:
@@ -1135,31 +1154,43 @@ class Module(ABC):
                     return False, err
                 mounted_for_check = True
 
-            try:
-                _test_write()
+            ok, write_err = _test_write()
+            if ok:
                 return True, f"Controller share //{share_ip}/{share_path} reachable and writable"
-            except OSError:
-                # Write failed — either a stale CIFS connection left over from a
-                # previous export session, or a mount that reported success but
-                # isn't actually serving a working share yet (e.g. controller's
-                # Samba was mid-restart). Attempt a lazy unmount and fresh remount
-                # either way, but only if no export is currently active (we must
-                # not pull the rug from live I/O).
-                if not self.export.exporting:
-                    subprocess.run(
-                        ["sudo", "umount", "-l", mount_point],
-                        capture_output=True, timeout=5,
+
+            # Write failed — either a stale CIFS connection left over from a
+            # previous export session, or a mount that reported success but
+            # isn't actually serving a working share yet (e.g. controller's
+            # Samba was mid-restart). Attempt a lazy unmount and fresh remount
+            # either way, but only if no export is currently active (we must
+            # not pull the rug from live I/O).
+            if not self.export.exporting:
+                subprocess.run(
+                    ["sudo", "umount", "-l", mount_point],
+                    capture_output=True, timeout=5,
+                )
+                ok, remount_err = _mount()
+                if not ok:
+                    return False, (
+                        f"Stale mount, remount failed: {remount_err} "
+                        f"(original write error: {write_err}). {_CONTENTION_HINT}"
                     )
-                    ok, err = _mount()
-                    if not ok:
-                        return False, f"Stale mount, remount failed: {err}"
-                    mounted_for_check = True
-                    _test_write()
+                mounted_for_check = True
+                ok, write_err2 = _test_write()
+                if ok:
                     return True, (
                         f"Controller share //{share_ip}/{share_path} reachable "
                         f"and writable (remounted stale connection)"
                     )
-                raise  # export active — re-raise for outer handler
+                return False, (
+                    f"Write still failing after remount: {write_err2}. {_CONTENTION_HINT}"
+                )
+
+            return False, (
+                f"Export check failed: write test failed ({write_err}) while an "
+                f"export is currently active, so the mount was left untouched "
+                f"rather than remounted."
+            )
 
         except subprocess.TimeoutExpired:
             return False, f"Mount timed out after {_CHECK_TIMEOUT_S}s — controller unreachable?"

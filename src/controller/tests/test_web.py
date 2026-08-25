@@ -631,6 +631,60 @@ class TestAuthGatedHandlers:
             assert received[-1]["args"][0] == {"error": "Session is not pending (state: active)"}
 
 
+class TestCheckReady:
+    """validate_readiness makes each module mount+write+unmount against the
+    shared export share (module.py's _check_export()) -- firing that at every
+    module within the same instant is a thundering herd against the NAS's SMB
+    server, confirmed live 2026-08-24 on a 20-module habitat deployment where
+    most of the fleet failed readiness with a mix of I/O error / device busy /
+    no-such-file even though the share itself was healthy throughout."""
+
+    def test_readiness_dispatch_is_staggered_across_modules(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules_by_target.return_value = {
+                "cam1": {}, "cam2": {}, "cam3": {},
+            }
+            facade.check_ptp_sync.return_value = {}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch.object(web.socketio, "sleep") as mock_sleep:
+                client.emit("check_ready", {"target": "all"})
+
+            # get_health is a cheap in-memory read -- fired at every module
+            # immediately, no staggering needed.
+            get_health_calls = [
+                c for c in facade.send_command.call_args_list if c.args[1] == "get_health"
+            ]
+            assert len(get_health_calls) == 3
+
+            # validate_readiness is the one that touches the shared export
+            # share -- one call per module, with a stagger sleep before every
+            # send after the first, plus the existing trailing 0.75s PTP wait.
+            readiness_calls = [
+                c for c in facade.send_command.call_args_list
+                if c.args[1] == "validate_readiness"
+            ]
+            assert [c.args[0] for c in readiness_calls] == ["cam1", "cam2", "cam3"]
+            assert mock_sleep.call_args_list == [call(0.3), call(0.3), call(0.75)]
+
+    def test_single_module_target_has_no_stagger_delay(self):
+        """Only one module -- nothing to stagger against, so the only sleep
+        should be the existing trailing 0.75s PTP wait."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules_by_target.return_value = {"cam1": {}}
+            facade.check_ptp_sync.return_value = {}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch.object(web.socketio, "sleep") as mock_sleep:
+                client.emit("check_ready", {"target": "cam1"})
+
+            assert mock_sleep.call_args_list == [call(0.75)]
+
+
 class TestSaveModuleConfig:
     """save_module_config: blocked while the target module is recording,
     and propagates the transmitter's fps/sensor_mode_index to its FrameSync

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate, Link } from "react-router";
+import { useParams, useNavigate, useOutletContext, Link } from "react-router";
 import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
@@ -100,6 +100,7 @@ export default function SessionDetailPage() {
   const navigate = useNavigate();
   const { sessions } = useSessions();
   const { moduleList: modules } = useModules();
+  const { openCopyDrawer } = useOutletContext();
 
   const [pendingDelete, setPendingDelete] = useState(false);
   const [addModuleTarget, setAddModuleTarget] = useState(false);
@@ -768,6 +769,13 @@ export default function SessionDetailPage() {
                 Retry Export
               </button>
             )}
+            <button
+              className="session-btn session-btn--copy"
+              onClick={() => openCopyDrawer(session)}
+              title="Create a new session with the same target and mode (immediate/timed/scheduled)"
+            >
+              Copy
+            </button>
             {(isStopped || (isPending && !editingPending)) && (
               pendingForceDelete ? (
                 <div className="delete-confirm delete-confirm--export-warning">

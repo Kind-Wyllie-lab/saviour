@@ -151,6 +151,58 @@ class TestStartRecording:
             assert rec.recording_session_id == "camera_ab12cd"
 
 
+class TestScheduledStart:
+    """_scheduled_start's own SCHED_FIFO/pre-stage/spin-wait mechanics are
+    deliberately out of scope (see module docstring) -- these tests cover
+    only the try/except boundary wrapped around the whole method body
+    (fixed 2026-08-25), by calling it directly with start_at in the past so
+    the sleep/spin step falls through immediately."""
+
+    def test_exception_during_prep_reports_recording_start_failed(self):
+        """Was a real bug: this whole method ran in its own daemon thread,
+        spawned after start_recording() had already returned {"result":
+        "success"} to the controller -- command.py's outer try/except has
+        long since returned by the time this thread body runs, so a failure
+        here (e.g. camera_base.py's _start_new_recording() hitting a busy
+        encoder) previously vanished into Python's default thread
+        excepthook (stderr) with no send_status of any kind."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir)
+            rec._pre_setup_session = MagicMock(side_effect=RuntimeError("encoder busy"))
+
+            rec._scheduled_start("exp1", None, time.time())
+
+            facade.send_status.assert_called_once_with({
+                "type": "recording_start_failed", "error": "encoder busy"
+            })
+            assert rec.is_recording is False
+
+    def test_exception_in_begin_recording_reports_recording_start_failed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir)
+            facade.start_new_recording.side_effect = RuntimeError("device busy")
+
+            rec._scheduled_start("exp1", None, time.time())
+
+            facade.send_status.assert_called_once_with({
+                "type": "recording_start_failed", "error": "device busy"
+            })
+            assert rec.is_recording is False
+
+    def test_successful_run_begins_recording_without_reporting_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir)
+
+            rec._scheduled_start("exp1", None, time.time())
+
+            assert rec.is_recording is True
+            failure_calls = [
+                c for c in facade.send_status.call_args_list
+                if c.args[0].get("type") == "recording_start_failed"
+            ]
+            assert failure_calls == []
+
+
 def time_far_future() -> float:
     return time.time() + 3600
 

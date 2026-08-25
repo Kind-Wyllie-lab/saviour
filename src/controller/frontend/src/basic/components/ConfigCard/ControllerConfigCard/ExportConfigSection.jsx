@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import socket from "/src/socket";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 
 /**
  * Export target section for the controller config card.
@@ -10,6 +11,7 @@ function ExportConfigSection({ exportConfig, handleChange }) {
   const [mode, setMode] = useState(null); // "controller" | "custom" — null until loaded
   const [controllerShare, setControllerShare] = useState(null);
   const [syncStatus, setSyncStatus] = useState(null); // null | "syncing" | { success_count, total }
+  const loggedIn = useIsLoggedIn();
 
   // Fetch the controller's own Samba details on mount
   useEffect(() => {
@@ -148,7 +150,8 @@ function ExportConfigSection({ exportConfig, handleChange }) {
             type="button"
             className="save-button"
             onClick={syncAll}
-            disabled={syncStatus === "syncing"}
+            disabled={!loggedIn || syncStatus === "syncing"}
+            title={loggedIn ? undefined : "Login required for this action"}
           >
             {syncStatus === "syncing" ? "Syncing…" : "Sync to All Modules"}
           </button>

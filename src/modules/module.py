@@ -1021,10 +1021,9 @@ class Module(ABC):
             free_bytes = statvfs.f_frsize * statvfs.f_bavail
             free_mb = free_bytes / (1024 * 1024)
             required_mb = self._get_required_disk_space_mb()
-            if free_mb > required_mb:
+            if free_mb >= required_mb:
                 return True, f"Sufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
-            if free_mb < required_mb:
-                return False, f"Insufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
+            return False, f"Insufficient disk space: {free_mb:.1f}MB free (need at least {required_mb:.1f}MB)"
         except Exception as e:
             return False, f"Cannot check disk space: {e!s}"
 

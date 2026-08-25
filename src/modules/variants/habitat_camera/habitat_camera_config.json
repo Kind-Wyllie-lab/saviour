@@ -38,8 +38,8 @@
     },
     "habitat_motion": {
         "algorithm": "frame_diff",
-        "activity_threshold": 0.02,
-        "activity_min_duration_s": 1.0,
+        "activity_threshold": 0.0005,
+        "activity_min_duration_s": 0.5,
         "inactivity_min_duration_s": 300.0,
         "pre_roll_secs": 3.0,
         "ae_settle_s": 0.75,

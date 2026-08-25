@@ -8,22 +8,26 @@ network -- it's a pure decode-and-replay over an existing video file plus
 its paired *_timestamps.csv sidecar (every SAVIOUR camera writes one
 alongside every segment, habitat or not -- see camera_base.py).
 
-Imports the real HabitatMotionDetector (the actual score algorithm) directly
-from habitat_camera_module.py, so scoring is byte-for-byte identical to what
-runs on hardware. The surrounding hysteresis state machine + AE-stability
-gate are reimplemented here as ReplayTrigger, mirroring
+Imports the real HabitatMotionDetector (the actual score algorithm) from
+motion_detector.py, so scoring is byte-for-byte identical to what runs on
+hardware -- that module holds only the scoring class (cv2/numpy only, no
+picamera2), split out of habitat_camera_module.py specifically so this tool
+can run on a plain dev machine without the picamera2 hardware dependency the
+rest of that file drags in. The surrounding hysteresis state machine +
+AE-stability gate are reimplemented here as ReplayTrigger, mirroring
 HabitatCameraModule._process_main_frame/_update_ae_stability exactly (see
 those methods' own docstrings for the reasoning) -- if that logic changes,
 update this to match, since replay output is only trustworthy if it does.
 
-Usage:
-    python3 tools/replay_habitat_motion.py VIDEO.ts [--timestamps CSV]
+Usage (paths below relative to the repo root):
+    SCRIPT=src/modules/variants/habitat_camera/analysis/replay_habitat_motion.py
+    python3 $SCRIPT VIDEO.ts [--timestamps CSV]
         [--config habitat_camera_config.json] [--no-ae-gate]
         [--start-frame N] [--max-frames N] [--diagnostic-csv OUT.csv]
 
     # Compare the AE-gate fix against pre-fix behaviour on the same footage:
-    python3 tools/replay_habitat_motion.py video.ts
-    python3 tools/replay_habitat_motion.py video.ts --no-ae-gate
+    python3 $SCRIPT video.ts
+    python3 $SCRIPT video.ts --no-ae-gate
 
 Exit status is always 0 -- this is an analysis tool, not a check.
 """
@@ -37,8 +41,8 @@ from pathlib import Path
 
 import cv2
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from modules.variants.habitat_camera.habitat_camera_module import HabitatMotionDetector  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))  # .../src
+from modules.variants.habitat_camera.motion_detector import HabitatMotionDetector  # noqa: E402
 
 _DEFAULTS = {
     "algorithm": "frame_diff",
@@ -153,6 +157,16 @@ def main():
     ap.add_argument("--start-frame", type=int, default=0)
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--diagnostic-csv", help="write a per-frame score/state/ae_stable CSV here")
+    ap.add_argument("--compare-labels", help="ground-truth labels CSV from label_activity.py -- "
+                                              "reports how many labeled segments this config's "
+                                              "threshold/duration settings would have caught")
+    ap.add_argument("--crop-top-frac", type=float, default=0.0,
+                     help="crop this fraction off the top of each frame before scoring -- "
+                          "the recorded .ts has the timestamp overlay burned in "
+                          "(camera_base.py's _apply_timestamp runs AFTER _process_main_frame "
+                          "on hardware, so live scoring never sees it -- this flag makes replay "
+                          "match that by cropping out the burned-in text before this tool "
+                          "scores it). 0.08 comfortably covers the default text_size overlay.")
     args = ap.parse_args()
 
     video_path = Path(args.video)
@@ -181,7 +195,15 @@ def main():
         sys.exit(f"Could not open video: {video_path}")
 
     if args.start_frame:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, args.start_frame)
+        # CAP_PROP_POS_FRAMES is not reliable for this .ts container -- measured
+        # live (see label_activity.py's get_frame docstring) landing ~17% short
+        # of the requested frame, consistent with the ffmpeg backend assuming
+        # 30fps for footage that's actually 25fps. Seek by the target frame's
+        # own real timestamp (CAP_PROP_POS_MSEC) instead -- accurate to
+        # ~0.1-0.3s in the same test, independent of any fps assumption.
+        t0 = datetime.fromisoformat(rows[0]["timestamp_utc"])
+        target_dt = datetime.fromisoformat(rows[args.start_frame]["timestamp_utc"])
+        cap.set(cv2.CAP_PROP_POS_MSEC, (target_dt - t0).total_seconds() * 1000)
 
     diag_writer = None
     diag_file = None
@@ -211,6 +233,10 @@ def main():
         if not ok:
             break
         row = rows[frame_idx]
+
+        if args.crop_top_frac > 0:
+            crop_rows = int(frame.shape[0] * args.crop_top_frac)
+            frame = frame[crop_rows:, :]
 
         score = detector.score(frame)
         timestamp_ns = int(row["timestamp_ns"])
@@ -259,6 +285,55 @@ def main():
     for i, (a, b) in enumerate(segments, 1):
         dur = (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds()
         print(f"  clip{i:>3}  {_fmt_ts(a)} -> {_fmt_ts(b)}  ({_fmt_dur(dur)})")
+
+    if args.compare_labels:
+        _print_label_comparison(args.compare_labels, segments)
+
+
+def _load_labels(path: str) -> list[tuple[datetime, datetime]]:
+    with open(path, newline="") as f:
+        return [
+            (datetime.fromisoformat(row["start_utc"]),
+             datetime.fromisoformat(row["end_utc"]))
+            for row in csv.DictReader(f)
+        ]
+
+
+def _overlaps(a_start, a_end, b_start, b_end) -> bool:
+    return a_start < b_end and b_start < a_end
+
+
+def _print_label_comparison(labels_path: str, segments: list[tuple[str, str]]) -> None:
+    labels = _load_labels(labels_path)
+    seg_dt = [
+        (datetime.fromisoformat(a), datetime.fromisoformat(b)) for a, b in segments
+    ]
+
+    caught = [
+        (ls, le) for ls, le in labels
+        if any(_overlaps(ls, le, ds, de) for ds, de in seg_dt)
+    ]
+    missed = [(ls, le) for ls, le in labels if (ls, le) not in caught]
+    unmatched_clips = [
+        (ds, de) for ds, de in seg_dt
+        if not any(_overlaps(ls, le, ds, de) for ls, le in labels)
+    ]
+
+    print()
+    print(f"=== Compared against {len(labels)} labeled ground-truth segment(s) "
+          f"({Path(labels_path).name}) ===")
+    print(f"  caught (overlapped by a detected clip):  {len(caught)}/{len(labels)}")
+    print(f"  missed (no detected clip overlapped):    {len(missed)}/{len(labels)}")
+    print(f"  detected clip(s) with no labeled overlap: "
+          f"{len(unmatched_clips)}/{len(seg_dt)}")
+    if missed:
+        print("  missed labeled segment(s):")
+        for ls, le in missed:
+            print(f"    {_fmt_ts(ls.isoformat())} -> {_fmt_ts(le.isoformat())}")
+    if unmatched_clips:
+        print("  unmatched detected clip(s):")
+        for ds, de in unmatched_clips:
+            print(f"    {_fmt_ts(ds.isoformat())} -> {_fmt_ts(de.isoformat())}")
 
 
 if __name__ == "__main__":

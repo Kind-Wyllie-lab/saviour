@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import socket from "/src/socket";
 import useSessions from "/src/hooks/useSessions";
 import useModules from "/src/hooks/useModules";
+import { groupModulesByGroup, resolveTargetModules } from "../../../basic/pages/Recording/targetModules";
 import "./HabitatRecordingControl.css";
 
 function formatTime(t) {
@@ -76,13 +77,25 @@ export default function HabitatRecordingControl() {
     return () => socket.off("session_error", onError);
   }, []);
 
+  // A session's `target` is "all", a module `group` name, or a single
+  // module_id -- never a literal "camera"/"microphone" string, so matching
+  // against it directly (the previous approach here) missed the common
+  // case of a session targeting "all" or a custom per-enclosure group,
+  // leaving this banner stuck on "Idle" for an actually-active session.
+  // Resolve target -> actual modules the same way NewSessionForm/
+  // ReadinessSummary do, then check module *type* instead.
+  const moduleList = useMemo(() => Object.values(modules), [modules]);
+  const groups = useMemo(() => groupModulesByGroup(moduleList), [moduleList]);
+
   const cameraSession = useMemo(
-    () => sessionList.find(s => s.target?.includes("camera") && s.state !== "stopped"),
-    [sessionList]
+    () => sessionList.find(s => s.state !== "stopped" &&
+      resolveTargetModules(moduleList, s.target, groups).some(m => m.type?.includes("camera"))),
+    [sessionList, moduleList, groups]
   );
   const audioSession = useMemo(
-    () => sessionList.find(s => s.target === "microphone" && s.state !== "stopped"),
-    [sessionList]
+    () => sessionList.find(s => s.state !== "stopped" &&
+      resolveTargetModules(moduleList, s.target, groups).some(m => m.type === "microphone")),
+    [sessionList, moduleList, groups]
   );
 
   const isRecording = cameraSession?.state === "active";
@@ -90,7 +103,6 @@ export default function HabitatRecordingControl() {
     !Object.values(modules).some(m => m.type?.includes("camera") && m.status === "RECORDING");
   const hasFault    = cameraSession?.state === "error";
 
-  const moduleList      = useMemo(() => Object.values(modules), [modules]);
   const cameras         = moduleList.filter(m => m.type?.includes("camera"));
   const cameraOnline    = cameras.filter(m => m.online !== false).length;
   const cameraRecording = cameras.filter(m => m.status === "RECORDING").length;
@@ -141,6 +153,9 @@ export default function HabitatRecordingControl() {
         <span className={`hrc-state hrc-state--${isStarting ? "starting" : isRecording ? "recording" : hasFault ? "fault" : "ready"}`}>
           {stateLabel}
         </span>
+        {(isRecording || isStarting) && cameraSession?.session_name && (
+          <span className="hrc-session-name">{cameraSession.session_name}</span>
+        )}
         <span className="hrc-spacer" />
         <span className="hrc-stat">{cameraStr}</span>
         <span className="hrc-sep">·</span>

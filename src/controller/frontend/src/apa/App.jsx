@@ -10,6 +10,7 @@ import System from "../basic/pages/System/System";
 import Debug from "../basic/pages/Debug/Debug";
 import Guide from "../basic/pages/Guide/Guide";
 import ConnectionOverlay from "../basic/components/ConnectionOverlay/ConnectionOverlay";
+import RecordingStatusWidget from "../basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
 document.title = "APA";
 
@@ -26,6 +27,7 @@ function App() {
     <div className="app">
       <Sidebar navItems={pages} />
       <div className="content">
+        <RecordingStatusWidget />
         <Routes>
           <Route path="/" element={<APADashboard />} />
           <Route path="/recording/*" element={<Recording />} />

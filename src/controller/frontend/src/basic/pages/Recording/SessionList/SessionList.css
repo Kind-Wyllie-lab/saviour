@@ -404,6 +404,17 @@
   color: #333;
 }
 
+.session-btn--copy {
+  background: none;
+  color: #888;
+  border: 1px solid #bbb;
+}
+
+.session-btn--copy:hover {
+  color: #4a90d9;
+  border-color: #4a90d9;
+}
+
 .delete-confirm {
   display: flex;
   align-items: center;

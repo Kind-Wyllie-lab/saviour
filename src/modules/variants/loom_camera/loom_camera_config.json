@@ -18,6 +18,8 @@
     "ae_enable": false,
     "brightness": 0,
     "contrast": 1.0,
+    "sharpness": 1.0,
+    "noise_reduction_mode": "fast",
     "overlay_framerate_on_preview": false,
     "bitrate_mb": 2,
     "autofocus_mode": "manual",

@@ -487,8 +487,9 @@ function Sidebar({ navItems }) {
 
             <div className="modal-buttons">
               {staged && !deployStatus && (
-                <button className="save-button" type="button" onClick={handleDeploy}>
-                  Deploy to All
+                <button className="save-button" type="button" onClick={handleDeploy}
+                  title="Deploys to every module -- not the controller itself; update the controller from its own Actions menu on the System page">
+                  Deploy to All Modules
                 </button>
               )}
               {updateMode !== null && !deployStatus && (

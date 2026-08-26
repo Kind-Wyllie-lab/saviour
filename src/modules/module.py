@@ -166,6 +166,7 @@ class Module(ABC):
             "update_saviour": self.update_saviour,
             "reboot": self.reboot,
             "restart_service": self.restart_service,
+            "run_mend": self.run_mend,
             "reset_config": self.reset_config,
             "start_export": self.start_export,
             "set_export_config": self.set_export_config,
@@ -402,6 +403,59 @@ class Module(ABC):
 
         threading.Thread(target=_do_update, daemon=True, name="saviour-update").start()
         return {"result": "started", "output": "Update download started."}
+
+
+    def run_mend(self) -> dict:
+        """Run mend.sh to repair/refresh this device's dependencies, config,
+        and systemd unit file, then restart the service.
+
+        Typically sent by the controller as a deliberate follow-up after
+        `update_saviour` (once the module has reconnected post-update) --
+        unlike update_saviour, which only rsyncs new code, mend.sh also
+        regenerates saviour.service via `saviour-config --regenerate-service`
+        to match whatever variant/path layout the new code landed at (see
+        the "Blocking prerequisite" note in CLAUDE.md's Architectural
+        concerns section), so a code change that renames/moves a variant
+        folder needs both commands, not just update_saviour alone.
+        """
+        import threading
+
+        def _do_mend():
+            try:
+                mend_script = os.path.join(INSTALL_DIR, "mend.sh")
+                if not os.path.isfile(mend_script):
+                    raise FileNotFoundError(f"mend.sh not found at {mend_script}")
+                self.logger.info(f"Running {mend_script}")
+                # mend.sh's own last step restarts saviour.service, which
+                # tears down this very process -- same race as
+                # update_saviour's restart above, accepted there for the
+                # same reason: the "started" ack already returned at
+                # dispatch time is the reliable signal, this one is best-effort.
+                result = subprocess.run(
+                    ["sudo", "bash", mend_script],
+                    capture_output=True, text=True, timeout=1200, check=False,
+                )
+                tail = ((result.stdout or "") + (result.stderr or ""))[-2000:]
+                if result.returncode != 0:
+                    raise RuntimeError(f"mend.sh exited {result.returncode}: {tail}")
+                self.logger.info("mend.sh completed successfully")
+                self.communication.send_status({
+                    "type": "cmd_ack",
+                    "command": "run_mend",
+                    "result": "success",
+                    "output": "mend.sh completed",
+                })
+            except Exception as e:
+                self.logger.error(f"run_mend failed: {e}")
+                self.communication.send_status({
+                    "type": "cmd_ack",
+                    "command": "run_mend",
+                    "result": "error",
+                    "output": str(e),
+                })
+
+        threading.Thread(target=_do_mend, daemon=True, name="saviour-mend").start()
+        return {"result": "started", "output": "mend.sh started"}
 
 
     def _handle_set_config(self, **kwargs) -> dict:

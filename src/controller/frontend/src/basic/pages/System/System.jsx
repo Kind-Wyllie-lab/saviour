@@ -5,6 +5,7 @@ import socket from "/src/socket";
 import ClockModal from "../../components/ClockModal/ClockModal";
 import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsMenu";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import { triggerDownload } from "../Recording/sessionFormat";
 import "./System.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -145,6 +146,7 @@ export default function System() {
   // ── Remove module ─────────────────────────────────────────────────────────
   // ── Bug report ────────────────────────────────────────────────────────────
   const [bugReportState, setBugReportState] = useState(null); // null | "collecting" | "ready"
+  const [ptpHistoryHours, setPtpHistoryHours] = useState("24");
 
   useEffect(() => {
     const onStatus = ({ status }) => {
@@ -185,6 +187,12 @@ export default function System() {
       socket.emit("shutdown_controller");
     }
     setControllerActionTarget(null);
+  };
+
+  const handleUpdateController = () => {
+    setDeviceStatuses(prev => ({ ...prev, controller: "updating" }));
+    setShowControllerActions(false);
+    socket.emit("deploy_update_to_controller");
   };
 
   // ── Set controller time ───────────────────────────────────────────────────
@@ -272,6 +280,21 @@ export default function System() {
     return rows;
   }, [deviceStatuses, moduleList]);
 
+  // ── Mend all modules ──────────────────────────────────────────────────────
+  // Broadcasts via send_command's module_id: "all", which only ever reaches
+  // self.facade.get_modules() on the backend -- the controller is a
+  // structurally separate object there and can never be swept into this,
+  // same guarantee the existing Refresh button already relies on.
+  const [mendAllTarget, setMendAllTarget] = useState(false);
+  const [mendAllStatus, setMendAllStatus] = useState(null); // null | "sent"
+
+  const handleMendAllConfirm = () => {
+    socket.emit("send_command", { module_id: "all", type: "run_mend", params: {} });
+    setMendAllTarget(false);
+    setMendAllStatus("sent");
+    setTimeout(() => setMendAllStatus(null), 5000);
+  };
+
   return (
     <main className="system-page">
       <div className="system-header">
@@ -291,6 +314,40 @@ export default function System() {
           >
             {bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}
           </button>
+          <button
+            className="refresh-btn"
+            type="button"
+            onClick={() => setMendAllTarget(true)}
+            disabled={!loggedIn || moduleList.length === 0}
+            title={!loggedIn ? "Login required for this action" : "Run mend.sh on every module (not the controller)"}
+          >
+            {mendAllStatus === "sent" ? "Mend requested" : "Mend All Modules"}
+          </button>
+          <div className="ptp-history-export">
+            <input
+              type="number"
+              min="0.1"
+              step="1"
+              value={ptpHistoryHours}
+              onChange={(e) => setPtpHistoryHours(e.target.value)}
+              title="How many hours of PTP history to include (blank/0 = entire retained history)"
+            />
+            <span>h</span>
+            <button
+              className="refresh-btn"
+              type="button"
+              onClick={() => {
+                const hours = parseFloat(ptpHistoryHours);
+                const url = hours > 0
+                  ? `/api/ptp_history.csv?hours=${hours}`
+                  : "/api/ptp_history.csv?hours=all";
+                triggerDownload(url, `ptp_history_${hours > 0 ? hours : "all"}h.csv`);
+              }}
+              title="Download every module's recorded PTP offset history as CSV, for plotting fleet sync quality over time"
+            >
+              Download PTP History
+            </button>
+          </div>
         </div>
       </div>
 
@@ -471,6 +528,14 @@ export default function System() {
                 <span>Set Time</span>
                 <span className="actions-modal__hint">Manually set the controller clock</span>
               </button>
+              {stagedMeta && (
+                <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                  title={loggedIn ? undefined : "Login required for this action"}
+                  onClick={handleUpdateController}>
+                  <span>Update</span>
+                  <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to the controller only</span>
+                </button>
+              )}
               <button type="button" className="actions-modal__item" disabled={!loggedIn}
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
@@ -529,6 +594,24 @@ export default function System() {
           controllerTime={displayedControllerMs ? new Date(displayedControllerMs).toISOString() : controllerHealth?.controller_time}
           onClose={() => setShowClockModal(false)}
         />
+      )}
+
+      {mendAllTarget && (
+        <div className="modal-overlay" onClick={() => setMendAllTarget(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Run mend on all {moduleList.length} module(s)?</p>
+            <p className="modal-subtext">
+              Rebuilds dependencies, regenerates each module's service file, and restarts its
+              service. Takes a few minutes per module; each will briefly go offline then
+              reconnect automatically. The controller itself is not included -- use its own
+              Actions menu to mend/update it separately.
+            </p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleMendAllConfirm}>Run mend</button>
+              <button className="save-button" type="button" onClick={() => setMendAllTarget(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
       )}
 
     </main>

@@ -1668,13 +1668,14 @@ class Web(ABC):
 
         @self.socketio.on("deploy_update")
         def handle_deploy_update(data=None):
-            import shutil
-
             from flask_socketio import emit as _emit
-            if not self._require_auth("deploy_update_error", {"error": "Login required for this action"}):
+            if not self._require_auth(
+                "deploy_update_error", {"error": "Login required for this action"}
+            ):
                 return
             if not os.path.exists(_UPDATE_ZIP):
-                _emit("deploy_update_error", {"error": "No update staged — upload a package first"})
+                _emit("deploy_update_error",
+                     {"error": "No update staged — upload a package first"})
                 return
 
             controller_ip = getattr(self.facade, 'get_controller_ip',
@@ -1685,7 +1686,11 @@ class Web(ABC):
                 pass
             controller_url = f"http://{controller_ip}:5000"
 
-            # Send to modules first so they update in parallel while controller applies
+            # Modules only -- the controller is never swept into this
+            # broadcast. Updating the controller itself is a separate,
+            # deliberate action (deploy_update_to_controller, below),
+            # matching how reboot/shutdown already distinguish "all modules"
+            # from the controller's own dedicated actions.
             modules = list(self.facade.get_modules().keys())
             for mid in modules:
                 try:
@@ -1697,6 +1702,20 @@ class Web(ABC):
                     self.logger.error(f"Failed to send update to {mid}: {e}")
             self.socketio.emit("deploy_update_status",
                                {"stage": "modules_notified", "count": len(modules)})
+
+        @self.socketio.on("deploy_update_to_controller")
+        def handle_deploy_update_to_controller(data=None):
+            import shutil
+
+            from flask_socketio import emit as _emit
+            if not self._require_auth(
+                "deploy_update_error", {"error": "Login required for this action"}
+            ):
+                return
+            if not os.path.exists(_UPDATE_ZIP):
+                _emit("deploy_update_error",
+                     {"error": "No update staged — upload a package first"})
+                return
 
             def _apply_to_controller():
                 try:
@@ -1762,7 +1781,7 @@ class Web(ABC):
                 subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
 
             threading.Thread(target=_apply_to_controller, daemon=True,
-                             name="saviour-deploy").start()
+                             name="saviour-deploy-controller").start()
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
@@ -2679,6 +2698,14 @@ class Web(ABC):
                         result = status.get("result")
                         if result in ("success", "error"):
                             self.socketio.emit("module_update_result", {
+                                "module_id": module_id,
+                                "success": result == "success",
+                                "output": status.get("output", ""),
+                            })
+                    elif command == "run_mend":
+                        result = status.get("result")
+                        if result in ("success", "error"):
+                            self.socketio.emit("module_mend_result", {
                                 "module_id": module_id,
                                 "success": result == "success",
                                 "output": status.get("output", ""),

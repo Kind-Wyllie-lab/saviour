@@ -189,6 +189,12 @@ export default function System() {
     setControllerActionTarget(null);
   };
 
+  const handleUpdateController = () => {
+    setDeviceStatuses(prev => ({ ...prev, controller: "updating" }));
+    setShowControllerActions(false);
+    socket.emit("deploy_update_to_controller");
+  };
+
   // ── Set controller time ───────────────────────────────────────────────────
   const [showClockModal, setShowClockModal] = useState(false);
 
@@ -274,6 +280,21 @@ export default function System() {
     return rows;
   }, [deviceStatuses, moduleList]);
 
+  // ── Mend all modules ──────────────────────────────────────────────────────
+  // Broadcasts via send_command's module_id: "all", which only ever reaches
+  // self.facade.get_modules() on the backend -- the controller is a
+  // structurally separate object there and can never be swept into this,
+  // same guarantee the existing Refresh button already relies on.
+  const [mendAllTarget, setMendAllTarget] = useState(false);
+  const [mendAllStatus, setMendAllStatus] = useState(null); // null | "sent"
+
+  const handleMendAllConfirm = () => {
+    socket.emit("send_command", { module_id: "all", type: "run_mend", params: {} });
+    setMendAllTarget(false);
+    setMendAllStatus("sent");
+    setTimeout(() => setMendAllStatus(null), 5000);
+  };
+
   return (
     <main className="system-page">
       <div className="system-header">
@@ -292,6 +313,15 @@ export default function System() {
             title="Collect logs and system state from all devices and download as a ZIP"
           >
             {bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}
+          </button>
+          <button
+            className="refresh-btn"
+            type="button"
+            onClick={() => setMendAllTarget(true)}
+            disabled={!loggedIn || moduleList.length === 0}
+            title={!loggedIn ? "Login required for this action" : "Run mend.sh on every module (not the controller)"}
+          >
+            {mendAllStatus === "sent" ? "Mend requested" : "Mend All Modules"}
           </button>
           <div className="ptp-history-export">
             <input
@@ -498,6 +528,14 @@ export default function System() {
                 <span>Set Time</span>
                 <span className="actions-modal__hint">Manually set the controller clock</span>
               </button>
+              {stagedMeta && (
+                <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                  title={loggedIn ? undefined : "Login required for this action"}
+                  onClick={handleUpdateController}>
+                  <span>Update</span>
+                  <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to the controller only</span>
+                </button>
+              )}
               <button type="button" className="actions-modal__item" disabled={!loggedIn}
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
@@ -556,6 +594,24 @@ export default function System() {
           controllerTime={displayedControllerMs ? new Date(displayedControllerMs).toISOString() : controllerHealth?.controller_time}
           onClose={() => setShowClockModal(false)}
         />
+      )}
+
+      {mendAllTarget && (
+        <div className="modal-overlay" onClick={() => setMendAllTarget(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Run mend on all {moduleList.length} module(s)?</p>
+            <p className="modal-subtext">
+              Rebuilds dependencies, regenerates each module's service file, and restarts its
+              service. Takes a few minutes per module; each will briefly go offline then
+              reconnect automatically. The controller itself is not included -- use its own
+              Actions menu to mend/update it separately.
+            </p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleMendAllConfirm}>Run mend</button>
+              <button className="save-button" type="button" onClick={() => setMendAllTarget(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
       )}
 
     </main>

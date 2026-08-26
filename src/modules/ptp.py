@@ -533,6 +533,31 @@ class PTP:
             'phc2sys_freq': calculate_stats(phc2sys_freqs)
         }
 
+    def get_recent_offset_range(self, window_s: float) -> dict:
+        """Min/max ptp4l_offset_ns and phc2sys_offset_ns over the last
+        window_s seconds of ptp_buffer (populated at ~1s resolution by
+        _monitor).  Used to report a heartbeat interval's full offset range
+        rather than a single instantaneous sample, so a brief transient
+        spike that settles again before the next heartbeat isn't invisible
+        to the controller's fleet-level PTP history."""
+        cutoff = time.time() - window_s
+
+        def _range(key):
+            values = [
+                e[key] for e in self.ptp_buffer
+                if e['timestamp'] >= cutoff and e[key] is not None
+            ]
+            return (min(values), max(values)) if values else (None, None)
+
+        ptp4l_min, ptp4l_max = _range('ptp4l_offset_ns')
+        phc2sys_min, phc2sys_max = _range('phc2sys_offset_ns')
+        return {
+            'ptp4l_offset_ns_min': ptp4l_min,
+            'ptp4l_offset_ns_max': ptp4l_max,
+            'phc2sys_offset_ns_min': phc2sys_min,
+            'phc2sys_offset_ns_max': phc2sys_max,
+        }
+
     def is_synchronized(self, timeout=5):
         if self.last_sync_time and (time.time() - self.last_sync_time) < timeout:
             return True

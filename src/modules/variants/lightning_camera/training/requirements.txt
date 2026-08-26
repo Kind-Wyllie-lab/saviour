@@ -1,0 +1,16 @@
+# Dependencies for the lightning_camera single-view pose training pipeline
+# (prepare_lp_project.py needs only pyyaml; actual training needs the full
+# lightning-pose package below). Install on a GPU workstation, not the Pi --
+# a separate environment from the main SAVIOUR install, same as
+# apa_camera/training's requirements.
+#
+#   pip install -r requirements.txt
+#
+# Hailo conversion (tools/convert_lp_pose_to_hailo.py, repo root) needs the
+# Hailo Dataflow Compiler on x86-64 Linux, same as the apa_camera path --
+# not covered here, see that script's own docstring. That script is
+# self-documented as an unverified template as of 2026-08-26 -- expect to
+# adjust it once a real checkpoint exists to test it against.
+
+pyyaml
+lightning-pose

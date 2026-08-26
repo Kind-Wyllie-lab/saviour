@@ -65,6 +65,15 @@ something either this README or the prep script can promise.
    run; copying the assembled project to a different machine afterward
    means hand-fixing those paths first.
 
+   `--train-prob`/`--val-prob` control the train/validation/test split
+   (whatever's left over becomes the held-out test set); defaults are
+   `0.7`/`0.15`, leaving `0.15` (~14 of the 92 frames) for test. This is
+   deliberately **not** Lightning Pose's own upstream default (`0.95`/`0.05`)
+   — that pair sums to `1.0` and leaves zero frames for test on a dataset
+   this small, which defeats the point of checking how well the model
+   generalizes. See `TrainOptions` in `prepare_lp_project.py` for the full
+   reasoning.
+
 2. **Train.** Needs a real `lightning-pose` install (GPU workstation, not
    the Pi — same split as the apa_camera rat-detector's own training/GPU
    step):
@@ -79,19 +88,33 @@ something either this README or the prep script can promise.
    start from an animal-pose-pretrained backbone, not independently
    benchmarked against alternatives.
 
-3. **Sanity-check before converting anything.** Lightning Pose's own
-   post-training video prediction (`eval.predict_vids_after_training`,
-   already on in the generated config) overlays predicted keypoints on
-   `video_dir`'s video(s) — watch that output before spending time on Hailo
-   conversion. A model that clearly isn't tracking the animal at this stage
+3. **Check generalization on the held-out test set, then sanity-check
+   visually.** The frames left over after `--train-prob`/`--val-prob` (see
+   step 1) are Lightning Pose's actual answer to "how well does this
+   generalize" — held out from both training and validation/early-stopping,
+   unlike the validation split. Check
+   `outputs/`'s own logged test-set metrics before trusting the model at
+   all. Separately, Lightning Pose's post-training video prediction
+   (`eval.predict_vids_after_training`, already on in the generated config)
+   overlays predicted keypoints on `video_dir`'s video(s) — watch that
+   output too. A model that clearly isn't tracking the animal at this stage
    isn't going to get better by compiling it.
 
 4. **Convert + deploy** — see
    [`docs/readthedocs/hailo_pose_conversion.md`](../../../../docs/readthedocs/hailo_pose_conversion.md).
-   Expect this step to need real debugging: the equivalent detection-model
-   conversion (`tools/convert_to_hailo.py`, apa_camera's rat detector) took
-   several rounds of trial and error against the Hailo Dataflow Compiler
-   before parsing succeeded, and is *still* not fully working through
-   quantization as of this writing — and the docs for the pose path
-   specifically flag it as less standardized than the detection path (no
-   on-chip NMS equivalent for heatmaps, fewer known-working examples).
+   Note the Hailo Dataflow Compiler's quantization step needs its own
+   **calibration set** — 64-128 real, *unlabeled* images representative of
+   the actual camera view (the arena, with and without the animal), passed
+   via `--calib-dir` to `tools/convert_lp_pose_to_hailo.py`. This is a
+   separate concept from the train/val/test split above: calibration only
+   needs raw frames to compute activation statistics for quantization, not
+   labelled keypoints, and doesn't have to come from the same 92 labelled
+   frames — a larger, more varied set of unlabeled frames from the deployed
+   camera is fine, and likely better. Expect this step to need real
+   debugging: the equivalent detection-model conversion
+   (`tools/convert_to_hailo.py`, apa_camera's rat detector) took several
+   rounds of trial and error against the Hailo Dataflow Compiler before
+   parsing succeeded, and is *still* not fully working through quantization
+   as of this writing — and the docs for the pose path specifically flag it
+   as less standardized than the detection path (no on-chip NMS equivalent
+   for heatmaps, fewer known-working examples).

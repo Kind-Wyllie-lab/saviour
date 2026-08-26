@@ -39,6 +39,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     import yaml
@@ -113,8 +114,26 @@ def assemble_project(source_dir: Path, camera: str, out_dir: Path) -> Path:
     return csv_dest
 
 
-def build_config(out_dir: Path, keypoint_names: list[str],
-                  resize_dims: tuple[int, int], video_dir: Path, backbone: str) -> dict:
+class TrainOptions(NamedTuple):
+    resize_dims: tuple[int, int]
+    # Fraction of labelled frames used for train/validation; whatever's left
+    # (1 - train_prob - val_prob) becomes the held-out test set. Upstream's
+    # own default (0.95/0.05) is meant for datasets with thousands of
+    # frames, where a 5% validation split is still hundreds of frames and a
+    # separate test set isn't the only way accuracy gets checked. With only
+    # ~92 labelled frames here, 0.95+0.05 leaves EXACTLY ZERO for test --
+    # every non-training frame goes to validation (used for model
+    # selection/early stopping during training, not a fair post-hoc check),
+    # so "how well does it generalize" would have nothing held out to
+    # answer that with. Default here is deliberately different from
+    # upstream's for that reason.
+    train_prob: float
+    val_prob: float
+    backbone: str
+
+
+def build_config(out_dir: Path, keypoint_names: list[str], video_dir: Path,
+                  opts: TrainOptions) -> dict:
     """A Lightning Pose config.yaml, in the same shape as upstream's own
     config_default.yaml (confirmed against the real file in the
     lightning-pose repo, not reconstructed from memory) -- only the fields
@@ -122,7 +141,7 @@ def build_config(out_dir: Path, keypoint_names: list[str],
     else is upstream's own documented default. model_type is pinned to
     "heatmap" deliberately: HailoPoseDetector._decode_heatmaps() (module
     side) only knows how to decode a heatmap output, not a regression one."""
-    resize_height, resize_width = resize_dims
+    resize_height, resize_width = opts.resize_dims
     return {
         "data": {
             "image_resize_dims": {"height": resize_height, "width": resize_width},
@@ -140,8 +159,8 @@ def build_config(out_dir: Path, keypoint_names: list[str],
             "train_batch_size": 16,
             "val_batch_size": 32,
             "test_batch_size": 32,
-            "train_prob": 0.95,
-            "val_prob": 0.05,
+            "train_prob": opts.train_prob,
+            "val_prob": opts.val_prob,
             "train_frames": 1,
             "num_gpus": 1,
             "unfreezing_epoch": 20,
@@ -164,7 +183,7 @@ def build_config(out_dir: Path, keypoint_names: list[str],
         },
         "model": {
             "losses_to_use": [],
-            "backbone": backbone,
+            "backbone": opts.backbone,
             "model_type": "heatmap",
             "heatmap_loss_type": "mse",
             "model_name": "lightning_camera_single_view",
@@ -229,6 +248,16 @@ def main() -> None:
                           "aspect ratio (16:9-ish) -- not validated against actual "
                           "training results, a starting point to tune from.")
     ap.add_argument("--resize-width", type=int, default=896)
+    ap.add_argument("--train-prob", type=float, default=0.7,
+                     help="Fraction of labelled frames used for training. "
+                          "Default 0.7/0.15 (train/val), leaving 0.15 held out "
+                          "as a test set -- deliberately different from "
+                          "Lightning Pose's own upstream default (0.95/0.05, "
+                          "which leaves zero frames for test on a small "
+                          "dataset like this one; see TrainOptions for why)")
+    ap.add_argument("--val-prob", type=float, default=0.15,
+                     help="Fraction of labelled frames used for validation "
+                          "during training. See --train-prob.")
     ap.add_argument("--backbone", default="resnet50_animal_ap10k",
                      help="Lightning Pose backbone -- resnet50_animal_ap10k is "
                           "pretrained on animal pose data specifically, a "
@@ -247,6 +276,12 @@ def main() -> None:
         sys.exit(
             f"--resize-height/--resize-width must both be multiples of 128 "
             f"(got {args.resize_height}x{args.resize_width})"
+        )
+    if args.train_prob + args.val_prob >= 1.0:
+        sys.exit(
+            f"--train-prob + --val-prob must be < 1.0 so something is left "
+            f"over for the test set (got {args.train_prob} + {args.val_prob} "
+            f"= {args.train_prob + args.val_prob})"
         )
 
     keypoint_names = load_keypoint_names(args.module_config)
@@ -268,10 +303,13 @@ def main() -> None:
         else:
             print(f"  --copy-eval-video given but not found: {vid_src}")
 
-    config = build_config(
-        args.out, keypoint_names, (args.resize_height, args.resize_width),
-        video_dir, args.backbone,
+    opts = TrainOptions(
+        resize_dims=(args.resize_height, args.resize_width),
+        train_prob=args.train_prob,
+        val_prob=args.val_prob,
+        backbone=args.backbone,
     )
+    config = build_config(args.out, keypoint_names, video_dir, opts)
     config_path = args.out / "config.yaml"
     with open(config_path, "w") as f:
         yaml.safe_dump(config, f, sort_keys=False, default_flow_style=False)

@@ -410,7 +410,7 @@ def _make_web_with_facade(**config_overrides):
 
 def _connected_client(web):
     """Connect a Socket.IO test client and drain the connect-time emits
-    (client_ip, module_update, experiment_name_update) so each test only
+    (client_ip, modules_update, experiment_name_update) so each test only
     sees events produced by the action it's actually exercising."""
     client = web.socketio.test_client(web.app)
     client.get_received()
@@ -425,6 +425,27 @@ def _login(web, client, tmpdir) -> str:
     client.emit("login", {"password": password})
     client.get_received()
     return password
+
+
+class TestConnectHandler:
+    """The 'connect' handler's own emits -- covers the event-name/payload-
+    shape mismatch fixed 2026-08-26: it previously emitted a singular
+    'module_update' event wrapped as {"modules": ...}, which no frontend
+    code has ever listened for (useModules.js listens for plural
+    'modules_update' with the raw dict), so a reconnecting client never got
+    a proactive module/readiness refresh -- it silently depended on some
+    later real state change to trigger a fresh broadcast."""
+
+    def test_connect_emits_modules_update_with_current_modules(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules.return_value = {"cam1": {"type": "camera"}}
+
+        client = web.socketio.test_client(web.app)
+        received = client.get_received()
+
+        modules_events = [e for e in received if e["name"] == "modules_update"]
+        assert len(modules_events) == 1
+        assert modules_events[0]["args"][0] == {"cam1": {"type": "camera"}}
 
 
 class TestReadOnlySocketIOHandlers:

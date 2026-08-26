@@ -76,6 +76,10 @@ class ControllerFacade:
         return self.controller.health.get_ptp_sync()
 
 
+    def export_ptp_history_csv(self, hours: float | None = 24.0):
+        return self.controller.health.export_ptp_history_csv(hours)
+
+
     def get_recording_status(self) -> bool:
         return self.controller.recording.get_recording_status()
 

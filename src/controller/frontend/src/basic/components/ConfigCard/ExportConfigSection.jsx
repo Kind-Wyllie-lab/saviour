@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useExportSync } from "/src/hooks/useExportSync";
+import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 
 /**
  * Renders the export section for any module config card.
@@ -15,6 +16,7 @@ import { useExportSync } from "/src/hooks/useExportSync";
 function ExportConfigSection({ exportConfig, handleChange, moduleId }) {
   const [showPassword, setShowPassword] = useState(false);
   const { syncStatus, syncExport } = useExportSync(moduleId);
+  const loggedIn = useIsLoggedIn();
 
   const cfg = exportConfig ?? {};
   const target = cfg.export_target ?? "controller";
@@ -81,7 +83,8 @@ function ExportConfigSection({ exportConfig, handleChange, moduleId }) {
         <div className="config-action-buttons">
           <button type="button" className="save-button"
             onClick={syncExport}
-            disabled={syncStatus === "syncing"}>
+            disabled={!loggedIn || syncStatus === "syncing"}
+            title={loggedIn ? undefined : "Login required for this action"}>
             {syncStatus === "syncing" ? "Syncing…" : "Sync credentials from controller"}
           </button>
           {syncStatus && syncStatus !== "syncing" && (

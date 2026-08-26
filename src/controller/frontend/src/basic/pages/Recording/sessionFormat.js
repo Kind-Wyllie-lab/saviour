@@ -5,6 +5,8 @@
 // instead -- react-refresh/only-export-components requires files to
 // export either components or plain values, not both.
 
+import socket from "/src/socket";
+
 export const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // Sessions/folders larger than this will have "Download zip" disabled — use
@@ -23,13 +25,44 @@ export const DOWNLOAD_ALL_MAX_BYTES = 25 * 1024 ** 3; // 25 GB
 // still a heads-up before kicking off a download that could take a while.
 export const DOWNLOAD_CONFIRM_BYTES = 1 * 1024 ** 3; // 1 GB
 
+// Session file/zip downloads are plain HTTP GETs with no Socket.IO session
+// of their own, so the server can't check them against _authenticated_sids
+// the way every mutating socket action is gated -- they need a short-lived
+// token on the URL instead (see web.py's request_download_token/
+// _check_download_token). Requested fresh per download rather than cached
+// across the whole page lifetime, so a page left open past the token's
+// 5-minute TTL doesn't quietly start failing downloads.
+function requestDownloadToken() {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.off("download_token", onToken);
+      socket.off("auth_required", onAuthRequired);
+      clearTimeout(timer);
+    };
+    const onToken = (data) => { cleanup(); resolve(data.token); };
+    const onAuthRequired = () => { cleanup(); reject(new Error("Login required to download files")); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error("Timed out requesting download authorization")); }, 8000);
+    socket.on("download_token", onToken);
+    socket.on("auth_required", onAuthRequired);
+    socket.emit("request_download_token");
+  });
+}
+
 // Actually starts a download without a full page navigation (a plain
 // `<a href>` click would also work for this, but every download in the file
 // tree/session view is routed through here so the size-confirm flow above
 // has exactly one place to intercept before committing to the click).
-export function triggerDownload(url, filename) {
+export async function triggerDownload(url, filename) {
+  let token;
+  try {
+    token = await requestDownloadToken();
+  } catch (e) {
+    window.alert(e.message || "Could not start download");
+    return;
+  }
+  const sep = url.includes("?") ? "&" : "?";
   const a = document.createElement("a");
-  a.href = url;
+  a.href = `${url}${sep}token=${encodeURIComponent(token)}`;
   a.download = filename;
   document.body.appendChild(a);
   a.click();

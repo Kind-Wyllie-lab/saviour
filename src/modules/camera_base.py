@@ -88,8 +88,15 @@ class CameraBase(Module):
         "camera.gain", "camera.brightness", "camera.contrast", "camera.exposure_time",
         "camera.manual_exposure", "camera.ae_enable",
         "camera.lens_position", "camera.autofocus_mode",
-        "camera.crop_rect",
+        "camera.crop_rect", "camera.sharpness", "camera.noise_reduction_mode",
     }
+    # libcamera's NoiseReductionMode enum (control_ids_draft.yaml) -- only the
+    # three modes relevant to a continuous video pipeline are offered;
+    # Minimal/ZSL are omitted (ZSL is a stills zero-shutter-lag mode, not
+    # applicable here). "fast" matches Picamera2's own implicit default for a
+    # video configuration, so a device with no explicit override behaves
+    # identically to before this config key existed.
+    _NR_MODE_MAP = {"off": 0, "fast": 1, "high_quality": 2}
 
     def __init__(self, module_type: str):
         super().__init__(module_type)
@@ -372,6 +379,10 @@ class CameraBase(Module):
             live_controls = {
                 "Brightness": self.config.get("camera.brightness"),
                 "Contrast": self.config.get("camera.contrast", 1.0),
+                "Sharpness": self.config.get("camera.sharpness", 1.0),
+                "NoiseReductionMode": self._NR_MODE_MAP.get(
+                    self.config.get("camera.noise_reduction_mode", "fast"), 1
+                ),
                 "FrameRate": fps,
                 "AeEnable": ae_enabled,
             }
@@ -496,6 +507,10 @@ class CameraBase(Module):
                 "FrameRate": self.fps,
                 "Brightness": self.config.get("camera.brightness"),
                 "Contrast": self.config.get("camera.contrast", 1.0),
+                "Sharpness": self.config.get("camera.sharpness", 1.0),
+                "NoiseReductionMode": self._NR_MODE_MAP.get(
+                    self.config.get("camera.noise_reduction_mode", "fast"), 1
+                ),
                 "AeEnable": ae_enabled,
             }
             if not ae_enabled:

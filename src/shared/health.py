@@ -27,6 +27,14 @@ class ModuleHealthSnapshot:
     ptp4l_freq:      float | None = None
     phc2sys_offset_ns:  float | None = None
     phc2sys_freq:    float | None = None
+    # Min/max over the last heartbeat_interval seconds (from the module's own
+    # 1s-resolution PTP buffer), not just the single instantaneous sample
+    # above -- so a transient spike that recovers between heartbeats is still
+    # visible in fleet-level PTP history, regardless of heartbeat interval.
+    ptp4l_offset_ns_min:   float | None = None
+    ptp4l_offset_ns_max:   float | None = None
+    phc2sys_offset_ns_min: float | None = None
+    phc2sys_offset_ns_max: float | None = None
     recording:       bool            = False
     version:         str | None   = None
 

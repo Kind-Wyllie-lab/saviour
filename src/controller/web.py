@@ -29,6 +29,7 @@ from pathlib import Path
 
 from flask import (
     Flask,
+    Response,
     jsonify,
     request,
     send_file,
@@ -167,6 +168,17 @@ class Web(ABC):
         self._authenticated_sids: set = set()
         self._auth_lock = threading.Lock()
 
+        # Short-lived tokens authorizing a plain browser GET (session file/
+        # zip downloads) -- a Socket.IO connection being in
+        # _authenticated_sids doesn't help those routes at all, since a
+        # plain <a>/window.location download carries no Socket.IO session
+        # and can't attach a custom Authorization header the way an
+        # external script hitting /facade/send_command can. Minted only
+        # over an already-authenticated socket (see request_download_token
+        # below), token → expiry epoch.
+        self._download_tokens: dict = {}
+        self._download_token_lock = threading.Lock()
+
 
     def _generate_experiment_name(self) -> str:
         """Generate experiment name from metadata, skipping empty fields."""
@@ -226,6 +238,17 @@ class Web(ABC):
         return hmac.compare_digest(str(password or ""), expected)
 
 
+    def _check_bearer_auth(self) -> bool:
+        """Check the admin password against this request's `Authorization:
+        Bearer <password>` header -- for the /facade/* REST routes, which
+        are for external scripts (e.g. a Matlab experiment controller)
+        rather than the browser frontend, so they have no Socket.IO session
+        to check via _is_authenticated/_require_auth."""
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+        return self._check_admin_password(token)
+
+
     def _is_authenticated(self) -> bool:
         """Whether the current Socket.IO connection (request.sid) has logged
         in. Gates every mutating/destructive handler."""
@@ -242,6 +265,38 @@ class Web(ABC):
         _emit(error_event, error_payload if error_payload is not None
               else {"error": "Login required for this action"})
         return False
+
+
+    _DOWNLOAD_TOKEN_TTL_SECS = 300
+
+    def _issue_download_token(self) -> str:
+        """Mint a short-lived token authorizing session-file downloads over
+        plain HTTP GET. Must only be called from a handler already gated by
+        _require_auth."""
+        token = secrets.token_urlsafe(32)
+        expires = time.time() + self._DOWNLOAD_TOKEN_TTL_SECS
+        with self._download_token_lock:
+            # Opportunistic cleanup so this dict doesn't grow unbounded on a
+            # long-running controller -- cheap since it only iterates on
+            # mint, not on every check.
+            now = time.time()
+            expired = [t for t, exp in self._download_tokens.items() if exp < now]
+            for t in expired:
+                del self._download_tokens[t]
+            self._download_tokens[token] = expires
+        return token
+
+
+    def _check_download_token(self, token) -> bool:
+        """Constant-time-ish validity check for a download token minted by
+        _issue_download_token. Not consumed on use -- a single page visit
+        can trigger several downloads (per-folder zips, the whole-session
+        zip, individual files) within the same short window."""
+        if not token:
+            return False
+        with self._download_token_lock:
+            expires = self._download_tokens.get(token)
+        return expires is not None and expires >= time.time()
 
 
     def _check_nas_free_space(self) -> "str | None":
@@ -465,10 +520,18 @@ class Web(ABC):
                 with self._auth_lock:
                     self._authenticated_sids.add(request.sid)
 
-            # Send initial module list
+            # Send initial module list -- event name/payload shape must match
+            # what useModules.js actually listens for (modules_update, raw
+            # dict) and what the 'get_modules' handler below already sends;
+            # this previously emitted a differently-named, differently-shaped
+            # 'module_update' event that no frontend code has ever listened
+            # for, so a reconnect (e.g. after a brief network blip) never
+            # proactively refreshed a client's module/readiness state -- it
+            # silently depended on some future real change to trigger a
+            # fresh broadcast, until the operator did a full page reload.
             modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
-            self.socketio.emit('module_update', {"modules": modules})
+            self.socketio.emit('modules_update', modules)
 
             # Send current experiment name to new client
             if self.current_experiment_name:
@@ -703,6 +766,8 @@ class Web(ABC):
 
         @self.app.route("/api/sessions/<session_name>/download/<path:filename>")
         def download_session_file(session_name, filename):
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
             import re
             if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
                 return "Invalid session name", 400
@@ -728,6 +793,8 @@ class Web(ABC):
 
         @self.app.route("/api/sessions/<session_name>/download")
         def download_session_zip(session_name):
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
             import re
             if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
                 return "Invalid session name", 400
@@ -738,6 +805,39 @@ class Web(ABC):
             if not os.path.isdir(session_dir):
                 return "Not found", 404
             return _stream_zip_response(session_dir, f"{session_name}.zip")
+
+        @self.app.route("/api/ptp_history.csv")
+        def download_ptp_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            # ?hours=N restricts to the last N hours (default 24, matching
+            # export_ptp_history_csv's own default); ?hours=all requests
+            # the entire retained buffer instead.
+            hours_param = request.args.get("hours")
+            if hours_param is None:
+                hours, filename_part = 24.0, "24h"
+            elif hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
+            # export_ptp_history_csv() is a generator (one CSV row per
+            # yield) -- Response streams it directly rather than buffering
+            # the whole export in memory first, same reasoning as
+            # _stream_zip_response above for session downloads.
+            return Response(
+                self.facade.export_ptp_history_csv(hours),
+                mimetype="text/csv",
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=ptp_history_{filename_part}.csv"
+                },
+            )
 
         @self.socketio.on("create_session")
         def handle_create_session(data):
@@ -1856,8 +1956,17 @@ class Web(ABC):
 
         @self.socketio.on("get_bug_report")
         def handle_get_bug_report(data=None):
+            if not self._require_auth("auth_required"):
+                return
             self.logger.info("Bug report requested")
-            threading.Thread(target=self._collect_bug_report, daemon=True).start()
+            # Capture sid here, on the request thread -- it's not available
+            # inside the background thread, and the diagnostics zip (raw
+            # journalctl output, unredacted config) should only ever reach
+            # the socket that asked for it, not every connected guest.
+            requester_sid = request.sid
+            threading.Thread(
+                target=self._collect_bug_report, args=(requester_sid,), daemon=True
+            ).start()
 
         @self.app.route("/api/bug_report/<token>")
         def download_bug_report(token):
@@ -1971,6 +2080,19 @@ class Web(ABC):
                 self.socketio.emit("login_error", "Wrong password", room=request.sid)
 
 
+        @self.socketio.on("request_download_token")
+        def handle_request_download_token(data=None):
+            # Session file/zip downloads are plain <a>/window.location GETs
+            # with no Socket.IO session of their own, so being in
+            # _authenticated_sids doesn't reach them -- this hands the
+            # already-authenticated socket a short-lived token to put on
+            # the download URL instead. See _issue_download_token.
+            if not self._require_auth("auth_required"):
+                return
+            token = self._issue_download_token()
+            self.socketio.emit("download_token", {"token": token}, room=request.sid)
+
+
         @self.socketio.on("change_admin_password")
         def handle_change_admin_password(data):
             # Requires the *current* password, not just an existing
@@ -2062,9 +2184,17 @@ class Web(ABC):
             entry['data'] = data
             entry['event'].set()
 
-    def _collect_bug_report(self) -> None:
-        """Background thread: gather logs from controller + all online modules, emit download token."""
-        self.socketio.emit("bug_report_status", {"status": "collecting"})
+    def _collect_bug_report(self, requester_sid: str) -> None:
+        """Background thread: gather logs from controller + all online modules, emit download token.
+
+        Both emits below are scoped to `requester_sid` (the socket that
+        asked), not broadcast -- the finished zip carries raw journalctl
+        output and sanitised-but-still-sensitive config for every module,
+        not something every connected guest should be handed a link to.
+        """
+        self.socketio.emit(
+            "bug_report_status", {"status": "collecting"}, room=requester_sid
+        )
 
         modules = self.facade.get_modules() if self.facade else {}
         online_ids = [mid for mid, m in modules.items() if m.get('online')]
@@ -2144,7 +2274,11 @@ class Web(ABC):
 
         token = secrets.token_urlsafe(16)
         self._bug_report_store = {token: (buf.getvalue(), f"saviour_diagnostics_{ts}.zip")}
-        self.socketio.emit("bug_report_ready", {"token": token, "filename": f"saviour_diagnostics_{ts}.zip"})
+        self.socketio.emit(
+            "bug_report_ready",
+            {"token": token, "filename": f"saviour_diagnostics_{ts}.zip"},
+            room=requester_sid,
+        )
 
     def _nas_monitor_loop(self):
         NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)
@@ -2582,6 +2716,11 @@ class Web(ABC):
         """
         @self.app.route('/facade/list_modules', methods=['GET'])
         def list_modules():
+            if not self._check_bearer_auth():
+                return jsonify({
+                    "error": "Unauthorized -- provide the admin password via "
+                             "an 'Authorization: Bearer <password>' header"
+                }), 401
             self.logger.info("/facade/list_modules endpoint called. Listing modules")
             modules = self.facade.get_modules()
             self.logger.info(f"Found {len(modules)} modules")
@@ -2612,9 +2751,7 @@ class Web(ABC):
                 -H "Authorization: Bearer <admin password>" \\
                 -d "{\"command\":\"start_recording\",\"module_id\":\"all\"}"
             """
-            auth_header = request.headers.get("Authorization", "")
-            token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
-            if not self._check_admin_password(token):
+            if not self._check_bearer_auth():
                 return jsonify({
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
@@ -2669,6 +2806,11 @@ class Web(ABC):
         @self.app.route('/facade/module_health', methods=['GET'])
         def module_health():
             """Get the health status of all modules"""
+            if not self._check_bearer_auth():
+                return jsonify({
+                    "error": "Unauthorized -- provide the admin password via "
+                             "an 'Authorization: Bearer <password>' header"
+                }), 401
             self.logger.info("/facade/module_health endpoint called. Getting module health")
             health = self.facade.get_module_health()
             self.logger.info(f"Got module health for {len(health)} modules")
@@ -2678,6 +2820,11 @@ class Web(ABC):
         @self.app.route('/facade/exported_recordings', methods=['GET'])
         def get_exported_recordings_facade():
             """Get list of exported recordings"""
+            if not self._check_bearer_auth():
+                return jsonify({
+                    "error": "Unauthorized -- provide the admin password via "
+                             "an 'Authorization: Bearer <password>' header"
+                }), 401
             self.logger.info("/facade/exported_recordings endpoint called")
             exported_recordings = self.get_exported_recordings()
             return jsonify({"exported_recordings": exported_recordings})

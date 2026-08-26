@@ -230,6 +230,75 @@ install_audiomoth_usb_cmd() {
     echo "[OK] AudioMoth-USB-Microphone installed at $BINARY_PATH"
 }
 
+configure_nvme_power_management() {
+    # Raspberry Pi 5 + NVMe SSD root: the kernel's default NVMe autonomous
+    # power-state transitions (APST) let the drive drop into a deep
+    # power-saving state between writes. On this hardware combination that
+    # can cause the drive to fail to wake up in time, hitting the kernel's
+    # I/O timeout ("nvme nvme0: I/O tag ... timeout, aborting req_op:WRITE")
+    # -- usually recoverable, but occasionally the controller never comes
+    # back and the whole device hangs until a manual power cycle (found
+    # 2026-08-25, live on a habitat controller: three such timeouts in one
+    # ~22h boot, the third one fatal, ~5h of total unresponsiveness). Not an
+    # undervoltage issue (`vcgencmd get_throttled` was 0x0 throughout).
+    # Disabling APST (max latency 0) is the standard fix and only matters if
+    # this device actually has an NVMe drive.
+    if [ ! -e /sys/class/nvme/nvme0 ]; then
+        return
+    fi
+
+    CMDLINE_FILE="/boot/firmware/cmdline.txt"
+    if [ ! -f "$CMDLINE_FILE" ]; then
+        echo "[WARN] $CMDLINE_FILE not found — skipping NVMe power-management fix"
+        return
+    fi
+
+    if grep -q "nvme_core.default_ps_max_latency_us=" "$CMDLINE_FILE"; then
+        echo "[OK] NVMe power-management fix already applied"
+    else
+        echo "[FIXING] Disabling NVMe autonomous power-state transitions (APST)"
+        sudo sed -i -E "s/\$/ nvme_core.default_ps_max_latency_us=0/" "$CMDLINE_FILE"
+        echo "[WARN] NVMe APST fix requires a reboot to take effect"
+    fi
+}
+
+configure_psu_max_current() {
+    # Every device in the fleet is a Pi 5 powered over PoE, not USB-C -- so
+    # the Type-C PD negotiation the Pi 5 bootloader relies on to detect a
+    # high-amp supply never happens, and it defaults to a conservative 3A
+    # current budget regardless of which PoE HAT is actually fitted:
+    # controllers use the 52Pi EP-0240 M.2 NVMe PoE+ HAT (up to 4.5A/25W),
+    # modules mostly use the Waveshare "PoE HAT (F)" (also up to 4.5A over
+    # its GPIO header). Both vendors document the same required fix (`sudo
+    # rpi-eeprom-config --edit`, add `PSU_MAX_CURRENT=5000`) for the same
+    # underlying Pi 5 firmware behaviour -- this isn't NVMe-specific, so
+    # unlike the APST fix above it applies to every device, not just
+    # controllers. Found completely unset on a live habitat controller
+    # (2026-08-25) that had just needed a manual power cycle after an NVMe
+    # hang -- a plausible contributing factor there alongside APST, and
+    # worth closing fleet-wide regardless of whether a given device has
+    # ever actually hit a power-starvation symptom.
+    if ! command -v rpi-eeprom-config &> /dev/null; then
+        echo "[WARN] rpi-eeprom-config not found — not a Raspberry Pi 4/5 bootloader, skipping"
+        return
+    fi
+
+    if sudo rpi-eeprom-config 2>/dev/null | grep -q "^PSU_MAX_CURRENT=5000$"; then
+        echo "[OK] PSU_MAX_CURRENT already set to 5000"
+        return
+    fi
+
+    echo "[FIXING] Setting PSU_MAX_CURRENT=5000 in bootloader EEPROM config"
+    TMP_CONF=$(mktemp)
+    sudo rpi-eeprom-config > "$TMP_CONF"
+    # Drop any existing (missing or wrong) value before appending the correct one
+    sed -i '/^PSU_MAX_CURRENT=/d' "$TMP_CONF"
+    echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONF"
+    sudo rpi-eeprom-config --apply "$TMP_CONF"
+    rm -f "$TMP_CONF"
+    echo "[WARN] PSU_MAX_CURRENT fix requires a reboot to take effect"
+}
+
 install_provision_service() {
     # Applies /etc/saviour/config's declared ROLE/TYPE (and, for a
     # controller, its network settings) non-interactively before
@@ -259,6 +328,8 @@ install_system_packages
 configure_ntp_for_ptp
 create_python_environment
 configure_logging
+configure_nvme_power_management
+configure_psu_max_current
 install_audiomoth_usb_cmd
 
 # Install saviour-config as a system-wide command

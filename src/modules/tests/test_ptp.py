@@ -168,6 +168,59 @@ class TestGetOffsetStatistics:
         assert stats["mean"] == 10.0
 
 
+class TestGetRecentOffsetRange:
+    """get_recent_offset_range -- lets a heartbeat report the full min/max
+    offset range over the interval since the last one, from the existing
+    1s-resolution buffer, rather than a single instantaneous sample."""
+
+    def _entry(self, ts, ptp4l=None, phc2sys=None):
+        return {
+            "timestamp": ts, "ptp4l_offset_ns": ptp4l, "ptp4l_freq": 0,
+            "phc2sys_offset_ns": phc2sys, "phc2sys_freq": 0,
+        }
+
+    def test_empty_buffer_returns_all_none(self):
+        ptp = _make_ptp()
+        result = ptp.get_recent_offset_range(30)
+        assert result == {
+            "ptp4l_offset_ns_min": None, "ptp4l_offset_ns_max": None,
+            "phc2sys_offset_ns_min": None, "phc2sys_offset_ns_max": None,
+        }
+
+    def test_computes_min_max_within_window(self):
+        ptp = _make_ptp()
+        now = time.time()
+        ptp.ptp_buffer = [
+            self._entry(now, ptp4l=10, phc2sys=1),
+            self._entry(now, ptp4l=-30, phc2sys=5),
+            self._entry(now, ptp4l=20, phc2sys=-2),
+        ]
+        result = ptp.get_recent_offset_range(30)
+        assert result == {
+            "ptp4l_offset_ns_min": -30, "ptp4l_offset_ns_max": 20,
+            "phc2sys_offset_ns_min": -2, "phc2sys_offset_ns_max": 5,
+        }
+
+    def test_entries_older_than_window_are_excluded(self):
+        ptp = _make_ptp()
+        now = time.time()
+        ptp.ptp_buffer = [
+            self._entry(now - 60, ptp4l=999),  # outside a 30s window
+            self._entry(now, ptp4l=5),
+        ]
+        result = ptp.get_recent_offset_range(30)
+        assert result["ptp4l_offset_ns_min"] == 5
+        assert result["ptp4l_offset_ns_max"] == 5
+
+    def test_none_values_are_excluded(self):
+        ptp = _make_ptp()
+        now = time.time()
+        ptp.ptp_buffer = [self._entry(now, ptp4l=None), self._entry(now, ptp4l=7)]
+        result = ptp.get_recent_offset_range(30)
+        assert result["ptp4l_offset_ns_min"] == 7
+        assert result["ptp4l_offset_ns_max"] == 7
+
+
 class TestIsSynchronized:
     def test_true_within_timeout(self):
         ptp = _make_ptp(last_sync_time=time.time())

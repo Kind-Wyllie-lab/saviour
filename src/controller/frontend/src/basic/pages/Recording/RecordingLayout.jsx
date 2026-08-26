@@ -23,6 +23,13 @@ function RecordingLayout() {
     const navigate = useNavigate();
     const [drawerOpen, setDrawerOpen] = useState(false);
 
+    // Set by SessionDetailPage's "Copy" button (via the outlet context
+    // below) to seed the New Session form with an existing session's
+    // target/mode/duration/schedule -- null the rest of the time, so the
+    // form's own persisted fields (last-used mode/duration/etc.) are what
+    // show up when opening the drawer normally via "+ New Session".
+    const [copyPrefill, setCopyPrefill] = useState(null);
+
     // useParams() here reflects the matched child route too (react-router
     // merges params up the whole matched tree), so this is populated with
     // the open session's name even though this component sits above the
@@ -52,6 +59,25 @@ function RecordingLayout() {
     // showing the whole fleet.
     const [target, setTarget] = usePersistedState("saviour_session_form_target", "all");
 
+    // "Copy" on the detail page: reopen the New Session drawer targeting
+    // the same modules/group and mode/duration/schedule as an existing
+    // session, so recreating a similar session doesn't mean reconfiguring
+    // everything from scratch. Deliberately doesn't touch the session-name
+    // fields (experiment/rat ID/etc, in SessionName) -- those already
+    // persist globally across sessions on their own, and every session
+    // name gets a fresh timestamp suffix regardless.
+    const openCopyDrawer = (session) => {
+        setTarget(session.target || "all");
+        setCopyPrefill({
+            mode: session.scheduled ? "scheduled" : session.duration_minutes ? "timed" : "immediate",
+            durationMinutes: session.duration_minutes,
+            scheduledStart: session.scheduled_start_time,
+            scheduledEnd: session.scheduled_end_time,
+            scheduledDays: session.scheduled_days,
+        });
+        setDrawerOpen(true);
+    };
+
     return (
         <div className="recording-page">
             <div className="recording-layout recording-layout--split">
@@ -64,7 +90,7 @@ function RecordingLayout() {
                     />
                 </div>
                 <div className="recording-layout__detail">
-                    <Outlet />
+                    <Outlet context={{ openCopyDrawer }} />
                 </div>
             </div>
 
@@ -74,14 +100,20 @@ function RecordingLayout() {
                 long-running habitat deployment), not something worth a
                 permanent slot competing with the rail for space at every
                 other visit. */}
-            <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="New Session">
+            <Drawer
+                open={drawerOpen}
+                onClose={() => { setDrawerOpen(false); setCopyPrefill(null); }}
+                title="New Session"
+            >
                 <NewSessionForm
                     modules={moduleList}
                     sessionList={sessionList}
                     target={target}
                     setTarget={setTarget}
+                    prefill={copyPrefill}
                     onSessionCreated={(sessionName) => {
                         setDrawerOpen(false);
+                        setCopyPrefill(null);
                         navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
                     }}
                 />

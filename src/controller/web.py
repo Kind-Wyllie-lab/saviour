@@ -802,14 +802,33 @@ class Web(ABC):
         def download_ptp_history():
             if not self._check_download_token(request.args.get("token")):
                 return "Unauthorized -- request a download token first", 401
+            # ?hours=N restricts to the last N hours (default 24, matching
+            # export_ptp_history_csv's own default); ?hours=all requests
+            # the entire retained buffer instead.
+            hours_param = request.args.get("hours")
+            if hours_param is None:
+                hours, filename_part = 24.0, "24h"
+            elif hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
             # export_ptp_history_csv() is a generator (one CSV row per
             # yield) -- Response streams it directly rather than buffering
             # the whole export in memory first, same reasoning as
             # _stream_zip_response above for session downloads.
             return Response(
-                self.facade.export_ptp_history_csv(),
+                self.facade.export_ptp_history_csv(hours),
                 mimetype="text/csv",
-                headers={"Content-Disposition": "attachment; filename=ptp_history.csv"},
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=ptp_history_{filename_part}.csv"
+                },
             )
 
         @self.socketio.on("create_session")

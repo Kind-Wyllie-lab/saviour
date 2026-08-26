@@ -233,6 +233,41 @@ class TestPtpHistory:
         csv_text = "".join(health.export_ptp_history_csv())
         assert len(csv_text.strip().splitlines()) == 1
 
+    def test_default_hours_excludes_samples_older_than_24h(self):
+        health, _facade = _make_health()
+        now = time.time()
+        health.module_health_history["cam1"] = deque([
+            {"timestamp": now - 25 * 3600, "ptp4l_offset_ns": 1.0},  # outside default
+            {"timestamp": now - 1 * 3600, "ptp4l_offset_ns": 2.0},   # inside it
+        ])
+        csv_text = "".join(health.export_ptp_history_csv())  # default hours=24.0
+        rows = csv_text.strip().splitlines()[1:]
+        assert len(rows) == 1
+        assert rows[0].split(",")[3] == "2.0"
+
+    def test_hours_none_returns_entire_retained_history(self):
+        health, _facade = _make_health()
+        now = time.time()
+        health.module_health_history["cam1"] = deque([
+            {"timestamp": now - 7 * 24 * 3600, "ptp4l_offset_ns": 1.0},
+            {"timestamp": now - 1 * 3600, "ptp4l_offset_ns": 2.0},
+        ])
+        csv_text = "".join(health.export_ptp_history_csv(hours=None))
+        rows = csv_text.strip().splitlines()[1:]
+        assert len(rows) == 2
+
+    def test_custom_hours_window(self):
+        health, _facade = _make_health()
+        now = time.time()
+        health.module_health_history["cam1"] = deque([
+            {"timestamp": now - 3 * 3600, "ptp4l_offset_ns": 1.0},  # outside 2h
+            {"timestamp": now - 1 * 3600, "ptp4l_offset_ns": 2.0},  # inside it
+        ])
+        csv_text = "".join(health.export_ptp_history_csv(hours=2.0))
+        rows = csv_text.strip().splitlines()[1:]
+        assert len(rows) == 1
+        assert rows[0].split(",")[3] == "2.0"
+
     def test_export_csv_is_a_generator_not_a_prebuilt_string(self):
         """Regression guard for the streaming design -- the whole point is
         that nothing builds the full CSV in memory before the caller

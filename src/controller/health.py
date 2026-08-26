@@ -173,13 +173,19 @@ class Health:
         while history and history[0]['timestamp'] < cutoff:
             history.popleft()
 
-    def export_ptp_history_csv(self):
-        """Yields all modules' recorded PTP history as CSV text, one row (or
-        the header) per yield, oldest first per module -- meant for an
-        operator to plot fleet-wide PTP sync quality over an unattended run
-        (e.g. habitat) rather than for in-app display. timestamp_utc is ISO
-        8601 for direct use in a plotting tool; timestamp_epoch is kept
-        alongside for exact numeric deltas.
+    def export_ptp_history_csv(self, hours: float | None = 24.0):
+        """Yields recorded PTP history as CSV text, one row (or the header)
+        per yield, oldest first per module -- meant for an operator to plot
+        fleet-wide PTP sync quality over an unattended run (e.g. habitat)
+        rather than for in-app display. timestamp_utc is ISO 8601 for direct
+        use in a plotting tool; timestamp_epoch is kept alongside for exact
+        numeric deltas.
+
+        hours: only include samples from the last `hours` hours (default
+        24, matching the "plot the last day" use case this was built for).
+        None means the entire retained history (up to
+        _PTP_HISTORY_RETENTION_S) -- every sample currently buffered, not
+        just a recent window.
 
         A generator rather than a single string so the caller (web.py's
         download route) can stream the response -- at fleet scale over the
@@ -188,12 +194,15 @@ class Health:
         ~106MB transient for a 20-module/8-day export vs. the ~134MB the
         underlying history buffer already holds), for a response nothing
         needs faster than it can be read off the wire anyway."""
+        cutoff = time.time() - hours * 3600 if hours is not None else None
         writer = csv.writer(_CsvEcho())
         yield writer.writerow(
             ['module_id', 'timestamp_utc', 'timestamp_epoch', *self._PTP_HISTORY_FIELDS]
         )
         for module_id, history in self.module_health_history.items():
             for sample in history:
+                if cutoff is not None and sample['timestamp'] < cutoff:
+                    continue
                 ts_utc = datetime.fromtimestamp(sample['timestamp'], tz=UTC).isoformat()
                 yield writer.writerow([
                     module_id, ts_utc, sample['timestamp'],

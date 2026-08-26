@@ -29,6 +29,7 @@ from pathlib import Path
 
 from flask import (
     Flask,
+    Response,
     jsonify,
     request,
     send_file,
@@ -796,6 +797,20 @@ class Web(ABC):
             if not os.path.isdir(session_dir):
                 return "Not found", 404
             return _stream_zip_response(session_dir, f"{session_name}.zip")
+
+        @self.app.route("/api/ptp_history.csv")
+        def download_ptp_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            # export_ptp_history_csv() is a generator (one CSV row per
+            # yield) -- Response streams it directly rather than buffering
+            # the whole export in memory first, same reasoning as
+            # _stream_zip_response above for session downloads.
+            return Response(
+                self.facade.export_ptp_history_csv(),
+                mimetype="text/csv",
+                headers={"Content-Disposition": "attachment; filename=ptp_history.csv"},
+            )
 
         @self.socketio.on("create_session")
         def handle_create_session(data):

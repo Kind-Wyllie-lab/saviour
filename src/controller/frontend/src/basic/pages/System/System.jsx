@@ -5,6 +5,7 @@ import socket from "/src/socket";
 import ClockModal from "../../components/ClockModal/ClockModal";
 import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsMenu";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import { triggerDownload } from "../Recording/sessionFormat";
 import "./System.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -290,6 +291,14 @@ export default function System() {
             title="Collect logs and system state from all devices and download as a ZIP"
           >
             {bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}
+          </button>
+          <button
+            className="refresh-btn"
+            type="button"
+            onClick={() => triggerDownload("/api/ptp_history.csv", "ptp_history.csv")}
+            title="Download every module's recorded PTP offset history as CSV, for plotting fleet sync quality over time"
+          >
+            Download PTP History
           </button>
         </div>
       </div>

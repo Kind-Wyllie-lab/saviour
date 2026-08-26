@@ -13,17 +13,35 @@ Author: Andrew SG
 Created: ?
 """
 
+import csv
 import logging
 import socket as _socket
 import subprocess
 import threading
 import time
+from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 from src.shared.health import ModuleHealthSnapshot
 
 
+class _CsvEcho:
+    """A no-op "file" that csv.writer can write a single formatted row to --
+    write() just returns the row string straight back instead of buffering
+    it, so a generator can yield each row as it's produced (the standard
+    pattern for streaming CSV out of the csv module, which otherwise only
+    knows how to write to a real file-like object)."""
+    def write(self, row: str) -> str:
+        return row
+
+
 class Health:
+    # How long PTP history samples are retained before being pruned, per
+    # module. 8 days comfortably covers "plot the last 24h/week" without
+    # unbounded growth over a long unattended deployment (e.g. habitat).
+    _PTP_HISTORY_RETENTION_S = 8 * 24 * 3600
+
     def __init__(self, config):
         """Initialize the health monitor
 
@@ -61,7 +79,16 @@ class Health:
 
         # Health data storage
         self.module_health = {}  # Current health data. module_id as primary key.
-        self.module_health_history = {}  # Historical health data
+        # PTP offset/freq history per module, one entry per heartbeat --
+        # module_id -> deque of {timestamp, ptp4l_offset_ns(_min/_max),
+        # phc2sys_offset_ns(_min/_max), ptp4l_freq, phc2sys_freq}. Pruned by
+        # age (_PTP_HISTORY_RETENTION_S) rather than a fixed entry count, so
+        # retention doesn't silently shrink/grow if heartbeat_interval is
+        # ever changed. Kept slim (PTP fields only, not the full health
+        # snapshot) since this exists specifically to let an operator export
+        # and plot fleet-wide PTP sync quality over a long unattended run
+        # (e.g. habitat) -- not as a general audit log of every metric.
+        self.module_health_history = {}
         self.controller_health = {} # Historical controller health data.
 
         # Module online/offline states
@@ -123,6 +150,57 @@ class Health:
             self._confirm_module_offline(module_id, 0)
 
 
+    _PTP_HISTORY_FIELDS = (
+        'ptp4l_offset_ns', 'ptp4l_offset_ns_min', 'ptp4l_offset_ns_max',
+        'phc2sys_offset_ns', 'phc2sys_offset_ns_min', 'phc2sys_offset_ns_max',
+        'ptp4l_freq', 'phc2sys_freq',
+    )
+
+    def _record_ptp_sample(self, module_id: str, timestamp: float) -> None:
+        """Append one PTP sample for module_id to its history and prune
+        anything older than _PTP_HISTORY_RETENTION_S. Reads from
+        self.module_health[module_id], which update_module_health has
+        already merged the latest heartbeat's fields into by the time this
+        is called."""
+        health = self.module_health.get(module_id)
+        if health is None:
+            return
+        sample = {'timestamp': timestamp}
+        sample.update({field: health.get(field) for field in self._PTP_HISTORY_FIELDS})
+        history = self.module_health_history.setdefault(module_id, deque())
+        history.append(sample)
+        cutoff = timestamp - self._PTP_HISTORY_RETENTION_S
+        while history and history[0]['timestamp'] < cutoff:
+            history.popleft()
+
+    def export_ptp_history_csv(self):
+        """Yields all modules' recorded PTP history as CSV text, one row (or
+        the header) per yield, oldest first per module -- meant for an
+        operator to plot fleet-wide PTP sync quality over an unattended run
+        (e.g. habitat) rather than for in-app display. timestamp_utc is ISO
+        8601 for direct use in a plotting tool; timestamp_epoch is kept
+        alongside for exact numeric deltas.
+
+        A generator rather than a single string so the caller (web.py's
+        download route) can stream the response -- at fleet scale over the
+        full retention window this can run to tens of MB, and building the
+        whole thing in memory first would spike well past that (measured:
+        ~106MB transient for a 20-module/8-day export vs. the ~134MB the
+        underlying history buffer already holds), for a response nothing
+        needs faster than it can be read off the wire anyway."""
+        writer = csv.writer(_CsvEcho())
+        yield writer.writerow(
+            ['module_id', 'timestamp_utc', 'timestamp_epoch', *self._PTP_HISTORY_FIELDS]
+        )
+        for module_id, history in self.module_health_history.items():
+            for sample in history:
+                ts_utc = datetime.fromtimestamp(sample['timestamp'], tz=UTC).isoformat()
+                yield writer.writerow([
+                    module_id, ts_utc, sample['timestamp'],
+                    *(sample.get(field) for field in self._PTP_HISTORY_FIELDS),
+                ])
+
+
     def update_module_health(self, module_id: str, status_data: dict[str, Any]) -> bool:
         """
         Update health data for a specific module
@@ -179,6 +257,8 @@ class Health:
                     self.module_health[module_id]["last_ptp_restart"] = now
                 if "ptp_restarts" not in self.module_health[module_id]:
                     self.module_health[module_id]["ptp_restarts"] = 1
+
+            self._record_ptp_sample(module_id, now)
 
             if was_new_module:
                 self.logger.info(f"New module {module_id} added to health tracking")

@@ -78,6 +78,10 @@ class ModuleFacade:
         return self.module.ptp.get_status()
 
 
+    def get_ptp_recent_offset_range(self, window_s: float) -> dict:
+        return self.module.ptp.get_recent_offset_range(window_s)
+
+
     def get_health(self) -> dict:
         return self.module.health.get_health()
 

@@ -11,6 +11,7 @@ _mark_module_online), which are tested directly here.
 """
 
 import time
+from collections import deque
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -166,6 +167,79 @@ class TestUpdateModuleHealth:
             side_effect=RuntimeError("bad payload"),
         ):
             assert health.update_module_health("cam1", {}) is False
+
+
+class TestPtpHistory:
+    """_record_ptp_sample (called from update_module_health) and
+    export_ptp_history_csv -- the fleet-wide PTP-sync-over-time tracking
+    added so an operator can plot a long unattended run's PTP quality."""
+
+    def test_heartbeat_records_a_ptp_history_sample(self):
+        health, _facade = _make_health()
+        health.update_module_health("cam1", {"ptp4l_offset_ns": 120.0})
+        history = health.module_health_history["cam1"]
+        assert len(history) == 1
+        assert history[0]["ptp4l_offset_ns"] == 120.0
+
+    def test_multiple_heartbeats_accumulate_samples_in_order(self):
+        health, _facade = _make_health()
+        health.update_module_health("cam1", {"ptp4l_offset_ns": 100.0})
+        health.update_module_health("cam1", {"ptp4l_offset_ns": 200.0})
+        health.update_module_health("cam1", {"ptp4l_offset_ns": 300.0})
+        history = health.module_health_history["cam1"]
+        assert [s["ptp4l_offset_ns"] for s in history] == [100.0, 200.0, 300.0]
+
+    def test_samples_older_than_retention_are_pruned(self):
+        health, _facade = _make_health()
+        now = time.time()
+        # Seed one old sample directly (older than retention), then trigger
+        # a real heartbeat -- the old one should be pruned on that append.
+        old_ts = now - health._PTP_HISTORY_RETENTION_S - 10
+        health.module_health_history["cam1"] = deque([
+            {"timestamp": old_ts, "ptp4l_offset_ns": 1.0},
+        ])
+        _seed_module(health, "cam1")
+        health.update_module_health("cam1", {"ptp4l_offset_ns": 999.0})
+        history = health.module_health_history["cam1"]
+        assert len(history) == 1
+        assert history[0]["ptp4l_offset_ns"] == 999.0
+
+    def test_export_csv_header_and_rows(self):
+        health, _facade = _make_health()
+        health.update_module_health("cam1", {
+            "ptp4l_offset_ns": 50.0,
+            "ptp4l_offset_ns_min": 10.0, "ptp4l_offset_ns_max": 90.0,
+            "phc2sys_offset_ns": 5.0,
+            "phc2sys_offset_ns_min": 1.0, "phc2sys_offset_ns_max": 9.0,
+            "ptp4l_freq": -1234, "phc2sys_freq": -5678,
+        })
+        csv_text = "".join(health.export_ptp_history_csv())
+        lines = csv_text.strip().splitlines()
+        assert lines[0] == (
+            "module_id,timestamp_utc,timestamp_epoch,"
+            "ptp4l_offset_ns,ptp4l_offset_ns_min,ptp4l_offset_ns_max,"
+            "phc2sys_offset_ns,phc2sys_offset_ns_min,phc2sys_offset_ns_max,"
+            "ptp4l_freq,phc2sys_freq"
+        )
+        assert len(lines) == 2
+        row = lines[1].split(",")
+        assert row[0] == "cam1"
+        assert row[3:] == [
+            "50.0", "10.0", "90.0", "5.0", "1.0", "9.0", "-1234", "-5678",
+        ]
+
+    def test_export_csv_with_no_modules_is_just_the_header(self):
+        health, _facade = _make_health()
+        csv_text = "".join(health.export_ptp_history_csv())
+        assert len(csv_text.strip().splitlines()) == 1
+
+    def test_export_csv_is_a_generator_not_a_prebuilt_string(self):
+        """Regression guard for the streaming design -- the whole point is
+        that nothing builds the full CSV in memory before the caller
+        (web.py's download route) can start sending bytes."""
+        health, _facade = _make_health()
+        result = health.export_ptp_history_csv()
+        assert hasattr(result, "__next__")
 
 
 class TestModuleDiscovery:

@@ -120,6 +120,7 @@ export default function SessionDetailPage() {
   const [editName, setEditName] = useState("");
   const [editDurationHours, setEditDurationHours] = useState("0");
   const [editDurationMinutes, setEditDurationMinutes] = useState("0");
+  const [editDurationSeconds, setEditDurationSeconds] = useState("0");
   const [editError, setEditError] = useState(null);
   const [pendingDownload, setPendingDownload] = useState(null); // null | { url, name, sizeBytes }
 
@@ -286,9 +287,12 @@ export default function SessionDetailPage() {
   const handleForceStart = () => socket.emit("force_start_session", { session_name: sessionName });
   const startEditingPending = () => {
     setEditName(session.session_name);
-    const total = session.duration_minutes || 0;
-    setEditDurationHours(String(Math.floor(total / 60)));
-    setEditDurationMinutes(String(total % 60));
+    // duration_minutes may carry a fractional/sub-minute part (e.g. 12.25
+    // == 12m15s) -- convert through whole seconds so it round-trips exactly.
+    const totalSeconds = Math.round((session.duration_minutes || 0) * 60);
+    setEditDurationHours(String(Math.floor(totalSeconds / 3600)));
+    setEditDurationMinutes(String(Math.floor((totalSeconds % 3600) / 60)));
+    setEditDurationSeconds(String(totalSeconds % 60));
     setEditError(null);
     setEditingPending(true);
   };
@@ -297,7 +301,9 @@ export default function SessionDetailPage() {
     setEditError(null);
   };
   const handleSaveEdit = () => {
-    const totalMinutes = parseInt(editDurationHours || 0, 10) * 60 + parseInt(editDurationMinutes || 0, 10);
+    const totalMinutes = parseInt(editDurationHours || 0, 10) * 60
+      + parseInt(editDurationMinutes || 0, 10)
+      + parseInt(editDurationSeconds || 0, 10) / 60;
     setEditError(null);
     socket.emit("update_pending_session", {
       session_name: sessionName,
@@ -433,6 +439,15 @@ export default function SessionDetailPage() {
                     className="session-edit-panel__duration-input"
                   />
                   <span>m</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="59"
+                    value={editDurationSeconds}
+                    onChange={(e) => setEditDurationSeconds(e.target.value)}
+                    className="session-edit-panel__duration-input"
+                  />
+                  <span>s</span>
                   <span className="session-edit-panel__hint">(0 = no time limit)</span>
                 </div>
               </div>

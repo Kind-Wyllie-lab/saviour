@@ -94,11 +94,18 @@ export function formatBytes(bytes) {
 }
 
 export function formatDuration(minutes) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}m`;
-  if (h > 0) return `${h}h`;
-  return `${m}m`;
+  // minutes may carry a fractional/sub-minute part (e.g. 12.25 == 12m15s),
+  // so convert through whole seconds rather than doing `minutes % 60`
+  // directly, which would show the fraction as-is (e.g. "12.25m").
+  const totalSeconds = Math.round(minutes * 60);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (s > 0) parts.push(`${s}s`);
+  return parts.length > 0 ? parts.join(" ") : "0m";
 }
 
 export function formatScheduledDays(days) {

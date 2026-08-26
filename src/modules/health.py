@@ -95,6 +95,10 @@ class Health:
     def get_health(self) -> dict:
         """Get health metrics for the module"""
         ptp_status = self.facade.get_ptp_status()
+        # Full offset range since the last heartbeat, not just the single
+        # instantaneous sample above -- see get_recent_offset_range's
+        # docstring for why.
+        ptp_range = self.facade.get_ptp_recent_offset_range(self.heartbeat_interval)
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         snapshot = ModuleHealthSnapshot(
@@ -111,6 +115,10 @@ class Health:
             ptp4l_freq=ptp_status.get('ptp4l_freq'),
             phc2sys_offset_ns=ptp_status.get('phc2sys_offset_ns'),
             phc2sys_freq=ptp_status.get('phc2sys_freq'),
+            ptp4l_offset_ns_min=ptp_range.get('ptp4l_offset_ns_min'),
+            ptp4l_offset_ns_max=ptp_range.get('ptp4l_offset_ns_max'),
+            phc2sys_offset_ns_min=ptp_range.get('phc2sys_offset_ns_min'),
+            phc2sys_offset_ns_max=ptp_range.get('phc2sys_offset_ns_max'),
             recording=self.facade.get_recording_status(),
             version=self.facade.get_saviour_version(),
         )

@@ -22,6 +22,7 @@ function safeName(str) {
 }
 
 const DEFAULT_DURATION_MINUTES = 12;
+const DEFAULT_DURATION_SECONDS = 15; // researcher-requested default: 12m15s
 
 export default function LoomRecording() {
   const { stage } = useLoomStage();
@@ -40,7 +41,12 @@ export default function LoomRecording() {
     "saviour_loom_form_duration_m",
     String(DEFAULT_DURATION_MINUTES)
   );
-  const durationValid = !timedEnabled || parseInt(durationMinutes || 0) > 0;
+  const [durationSeconds, setDurationSeconds] = usePersistedState(
+    "saviour_loom_form_duration_s",
+    String(DEFAULT_DURATION_SECONDS)
+  );
+  const totalDurationMins = parseInt(durationMinutes || 0) + parseInt(durationSeconds || 0) / 60;
+  const durationValid = !timedEnabled || totalDurationMins > 0;
 
   const cameraModules = useMemo(
     () => moduleList.filter((m) => CAMERA_TYPES.has(m.type)),
@@ -75,7 +81,7 @@ export default function LoomRecording() {
     socket.emit("create_session", {
       target,
       session_name: `${safeName(experimentName)}-${formatTs(now)}`,
-      duration_minutes: timedEnabled ? parseInt(durationMinutes || 0) : null,
+      duration_minutes: timedEnabled ? totalDurationMins : null,
       researcher: experimenter || null,
     });
   };
@@ -120,7 +126,7 @@ export default function LoomRecording() {
             <div className="loom-recording-duration-inputs">
               <input
                 type="number"
-                min="1"
+                min="0"
                 max="999"
                 disabled={!timedEnabled}
                 value={durationMinutes}
@@ -128,6 +134,16 @@ export default function LoomRecording() {
                 className="duration-input"
               />
               <span className="duration-unit">min</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                disabled={!timedEnabled}
+                value={durationSeconds}
+                onChange={(e) => setDurationSeconds(e.target.value)}
+                className="duration-input"
+              />
+              <span className="duration-unit">sec</span>
             </div>
           </div>
           {!durationValid && (

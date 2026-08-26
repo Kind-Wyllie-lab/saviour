@@ -14,6 +14,8 @@ function ModuleActionsMenu({ id, name, isOnline }) {
   const [showActions, setShowActions] = useState(false);
   const [stagedMeta, setStagedMeta] = useState(null);
   const [updateStatus, setUpdateStatus] = useState(null); // null | "updating" | { success, output }
+  const [mendStatus, setMendStatus] = useState(null); // null | "mending" | { success, output }
+  const [mendTarget, setMendTarget] = useState(false);
   const [restartTarget, setRestartTarget] = useState(false);
   const [rebootTarget, setRebootTarget] = useState(false);
   const [shutdownTarget, setShutdownTarget] = useState(false);
@@ -34,6 +36,14 @@ function ModuleActionsMenu({ id, name, isOnline }) {
     };
     socket.on("module_update_result", onResult);
     return () => socket.off("module_update_result", onResult);
+  }, [id]);
+
+  useEffect(() => {
+    const onMendResult = (data) => {
+      if (data.module_id === id) setMendStatus({ success: data.success, output: data.output });
+    };
+    socket.on("module_mend_result", onMendResult);
+    return () => socket.off("module_mend_result", onMendResult);
   }, [id]);
 
   useEffect(() => {
@@ -60,6 +70,12 @@ function ModuleActionsMenu({ id, name, isOnline }) {
     setUpdateStatus("updating");
     setShowActions(false);
     socket.emit("deploy_update_to_module", { module_id: id });
+  };
+
+  const handleMendConfirm = () => {
+    setMendStatus("mending");
+    socket.emit("send_command", { module_id: id, type: "run_mend", params: {} });
+    setMendTarget(false);
   };
 
   const handleRestartConfirm = () => {
@@ -102,6 +118,11 @@ function ModuleActionsMenu({ id, name, isOnline }) {
           {updateStatus.success ? "Updated" : `Failed: ${updateStatus.output}`}
         </span>
       )}
+      {mendStatus && mendStatus !== "mending" && (
+        <span className={`config-sync-badge ${mendStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+          {mendStatus.success ? "Mended" : `Failed: ${mendStatus.output}`}
+        </span>
+      )}
 
       {showActions && (
         <div className="modal-overlay" onClick={() => setShowActions(false)}>
@@ -115,6 +136,11 @@ function ModuleActionsMenu({ id, name, isOnline }) {
                     <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to this module only</span>
                   </button>
                 )}
+                <button type="button" className="actions-modal__item"
+                  onClick={() => { setMendTarget(true); setShowActions(false); }}>
+                  <span>Run mend</span>
+                  <span className="actions-modal__hint">Repairs dependencies/config and regenerates the service file, then restarts - takes a few minutes</span>
+                </button>
                 <button type="button" className="actions-modal__item"
                   onClick={() => { setRestartTarget(true); setShowActions(false); }}>
                   <span>Restart service</span>
@@ -141,6 +167,19 @@ function ModuleActionsMenu({ id, name, isOnline }) {
             </div>
             <div className="modal-buttons" style={{ marginTop: "8px" }}>
               <button className="save-button" type="button" onClick={() => setShowActions(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mendTarget && (
+        <div className="modal-overlay" onClick={() => setMendTarget(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p>Run mend on <strong>{name}</strong>?</p>
+            <p className="modal-subtext">Rebuilds dependencies, regenerates the service file, and restarts the service. Takes a few minutes; the module will briefly go offline then reconnect automatically.</p>
+            <div className="modal-buttons">
+              <button className="reset-button" type="button" onClick={handleMendConfirm}>Run mend</button>
+              <button className="save-button" type="button" onClick={() => setMendTarget(false)}>Cancel</button>
             </div>
           </div>
         </div>

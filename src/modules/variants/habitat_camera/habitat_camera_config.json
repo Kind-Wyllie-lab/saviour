@@ -20,6 +20,8 @@
         "ae_enable": true,
         "brightness": 0,
         "contrast": 1.0,
+        "sharpness": 1.0,
+        "noise_reduction_mode": "fast",
         "overlay_framerate_on_preview": true,
         "_codec": "h264",
         "_profile": "high",

@@ -29,6 +29,7 @@ from pathlib import Path
 
 from flask import (
     Flask,
+    Response,
     jsonify,
     request,
     send_file,
@@ -519,10 +520,18 @@ class Web(ABC):
                 with self._auth_lock:
                     self._authenticated_sids.add(request.sid)
 
-            # Send initial module list
+            # Send initial module list -- event name/payload shape must match
+            # what useModules.js actually listens for (modules_update, raw
+            # dict) and what the 'get_modules' handler below already sends;
+            # this previously emitted a differently-named, differently-shaped
+            # 'module_update' event that no frontend code has ever listened
+            # for, so a reconnect (e.g. after a brief network blip) never
+            # proactively refreshed a client's module/readiness state -- it
+            # silently depended on some future real change to trigger a
+            # fresh broadcast, until the operator did a full page reload.
             modules = self.facade.get_modules()
             self.logger.info(f"Page load get_modules() returned: {modules}, sending {len(modules)} modules to new client")
-            self.socketio.emit('module_update', {"modules": modules})
+            self.socketio.emit('modules_update', modules)
 
             # Send current experiment name to new client
             if self.current_experiment_name:
@@ -796,6 +805,39 @@ class Web(ABC):
             if not os.path.isdir(session_dir):
                 return "Not found", 404
             return _stream_zip_response(session_dir, f"{session_name}.zip")
+
+        @self.app.route("/api/ptp_history.csv")
+        def download_ptp_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            # ?hours=N restricts to the last N hours (default 24, matching
+            # export_ptp_history_csv's own default); ?hours=all requests
+            # the entire retained buffer instead.
+            hours_param = request.args.get("hours")
+            if hours_param is None:
+                hours, filename_part = 24.0, "24h"
+            elif hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
+            # export_ptp_history_csv() is a generator (one CSV row per
+            # yield) -- Response streams it directly rather than buffering
+            # the whole export in memory first, same reasoning as
+            # _stream_zip_response above for session downloads.
+            return Response(
+                self.facade.export_ptp_history_csv(hours),
+                mimetype="text/csv",
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=ptp_history_{filename_part}.csv"
+                },
+            )
 
         @self.socketio.on("create_session")
         def handle_create_session(data):

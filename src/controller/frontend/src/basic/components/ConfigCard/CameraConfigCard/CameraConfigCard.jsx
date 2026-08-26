@@ -419,6 +419,21 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 onChange={e => handleChange(["camera", "contrast"], e)} />
             </div>
             <div className="form-field">
+              <label>Sharpness: {Number(cam.sharpness ?? 1.0).toFixed(2)}</label>
+              <input type="range" min="0" max="8" step="0.1"
+                value={cam.sharpness ?? 1.0} className="brightness-slider"
+                onChange={e => handleChange(["camera", "sharpness"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Noise reduction:</label>
+              <select value={cam.noise_reduction_mode ?? "fast"}
+                onChange={e => handleChange(["camera", "noise_reduction_mode"], e)}>
+                <option value="off">Off (max detail, more visible noise)</option>
+                <option value="fast">Fast (default)</option>
+                <option value="high_quality">High quality (smoother, may cost framerate)</option>
+              </select>
+            </div>
+            <div className="form-field">
               <label>Auto gain/exposure:</label>
               <input type="checkbox"
                 checked={cam.ae_enable ?? false}

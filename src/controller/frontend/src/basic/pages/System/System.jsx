@@ -5,6 +5,7 @@ import socket from "/src/socket";
 import ClockModal from "../../components/ClockModal/ClockModal";
 import ModuleActionsMenu from "../../components/ModuleActionsMenu/ModuleActionsMenu";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
+import { triggerDownload } from "../Recording/sessionFormat";
 import "./System.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -145,6 +146,7 @@ export default function System() {
   // ── Remove module ─────────────────────────────────────────────────────────
   // ── Bug report ────────────────────────────────────────────────────────────
   const [bugReportState, setBugReportState] = useState(null); // null | "collecting" | "ready"
+  const [ptpHistoryHours, setPtpHistoryHours] = useState("24");
 
   useEffect(() => {
     const onStatus = ({ status }) => {
@@ -321,6 +323,31 @@ export default function System() {
           >
             {mendAllStatus === "sent" ? "Mend requested" : "Mend All Modules"}
           </button>
+          <div className="ptp-history-export">
+            <input
+              type="number"
+              min="0.1"
+              step="1"
+              value={ptpHistoryHours}
+              onChange={(e) => setPtpHistoryHours(e.target.value)}
+              title="How many hours of PTP history to include (blank/0 = entire retained history)"
+            />
+            <span>h</span>
+            <button
+              className="refresh-btn"
+              type="button"
+              onClick={() => {
+                const hours = parseFloat(ptpHistoryHours);
+                const url = hours > 0
+                  ? `/api/ptp_history.csv?hours=${hours}`
+                  : "/api/ptp_history.csv?hours=all";
+                triggerDownload(url, `ptp_history_${hours > 0 ? hours : "all"}h.csv`);
+              }}
+              title="Download every module's recorded PTP offset history as CSV, for plotting fleet sync quality over time"
+            >
+              Download PTP History
+            </button>
+          </div>
         </div>
       </div>
 

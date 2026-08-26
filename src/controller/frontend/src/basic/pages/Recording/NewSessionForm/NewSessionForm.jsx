@@ -72,6 +72,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   // Timed mode
   const [durationHours, setDurationHours]     = usePersistedState("saviour_session_form_duration_h", "0");
   const [durationMinutes, setDurationMinutes] = usePersistedState("saviour_session_form_duration_m", "10");
+  const [durationSeconds, setDurationSeconds] = usePersistedState("saviour_session_form_duration_s", "0");
 
   // Scheduled mode
   const [startHour, setStartHour]     = usePersistedState("saviour_session_form_start_h", "19");
@@ -94,9 +95,14 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
     if (!prefill) return;
     setRecordingMode(prefill.mode);
     if (prefill.mode === "timed") {
-      const total = prefill.durationMinutes ?? 0;
-      setDurationHours(String(Math.floor(total / 60)));
-      setDurationMinutes(String(total % 60));
+      // prefill.durationMinutes may carry a fractional/sub-minute part
+      // (e.g. 12.25 == 12m15s) -- convert through whole seconds so the
+      // seconds field round-trips exactly rather than showing "12.25" in
+      // the minutes box.
+      const totalSeconds = Math.round((prefill.durationMinutes ?? 0) * 60);
+      setDurationHours(String(Math.floor(totalSeconds / 3600)));
+      setDurationMinutes(String(Math.floor((totalSeconds % 3600) / 60)));
+      setDurationSeconds(String(totalSeconds % 60));
     } else if (prefill.mode === "scheduled") {
       const [sh, sm] = (prefill.scheduledStart || "19:00").split(":");
       const [eh, em] = (prefill.scheduledEnd || "23:00").split(":");
@@ -107,7 +113,7 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
       setScheduledDays(new Set(prefill.scheduledDays?.length ? prefill.scheduledDays : ALL_DAYS));
     }
   }, [
-    prefill, setRecordingMode, setDurationHours, setDurationMinutes,
+    prefill, setRecordingMode, setDurationHours, setDurationMinutes, setDurationSeconds,
     setStartHour, setStartMinute, setEndHour, setEndMinute, setScheduledDays,
   ]);
 
@@ -124,7 +130,9 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const allTargetReady     = targetModules.length > 0 && targetModules.every(isModuleReady);
   const anyTargetRecording = targetModules.some((m) => m.status === "RECORDING");
 
-  const totalDurationMins = parseInt(durationHours || 0) * 60 + parseInt(durationMinutes || 0);
+  const totalDurationMins = parseInt(durationHours || 0) * 60
+    + parseInt(durationMinutes || 0)
+    + parseInt(durationSeconds || 0) / 60;
   const timedDurationValid = recordingMode !== "timed" || totalDurationMins > 0;
 
   const ptpOk = ptpSyncStatus === null || ptpSyncStatus.ok;
@@ -160,9 +168,12 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const durationLabel = (() => {
     const h = parseInt(durationHours || 0);
     const m = parseInt(durationMinutes || 0);
-    if (h > 0 && m > 0) return `${h}h ${m}m`;
-    if (h > 0) return `${h}h`;
-    return `${m}m`;
+    const s = parseInt(durationSeconds || 0);
+    const parts = [];
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0) parts.push(`${s}s`);
+    return parts.length > 0 ? parts.join(" ") : "0m";
   })();
 
   const handleSubmit = (e) => {
@@ -267,6 +278,15 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
                 className="duration-input"
               />
               <span className="duration-unit">m</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                value={durationSeconds}
+                onChange={(e) => setDurationSeconds(e.target.value)}
+                className="duration-input"
+              />
+              <span className="duration-unit">s</span>
             </div>
           </div>
         )}

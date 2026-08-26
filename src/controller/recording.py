@@ -93,8 +93,9 @@ class RecordingSession:
     # Timestamp (YYYYMMDD-HHMMSS) when this session most recently entered ERROR state.
     # Never cleared after recovery — preserves the fault record for display.
     error_time:                str | None = None
-    # Timed sessions: requested duration in minutes (for display purposes).
-    duration_minutes:          int | None   = None
+    # Timed sessions: requested duration in minutes, e.g. 12.25 == 12m15s
+    # (for display purposes; may carry a fractional/sub-minute part).
+    duration_minutes:          float | None = None
     # Timed sessions: epoch timestamp at which the session should auto-stop.
     # None means no auto-stop (infinite / manual stop).
     timed_stop_at:             float | None = None
@@ -324,7 +325,7 @@ class Recording:
 
 
     def create_session(self, session_name: str, target: str,
-                       duration_minutes: int | None = None,
+                       duration_minutes: float | None = None,
                        researcher: str | None = None,
                        raw_name: bool = False) -> dict:
         """Create a session in PENDING state -- modules assigned, nothing
@@ -383,7 +384,7 @@ class Recording:
 
 
     def update_pending_session(self, session_name: str, new_session_name: str | None,
-                               duration_minutes: int | None) -> dict:
+                               duration_minutes: float | None) -> dict:
         """Edit a PENDING session's name and/or duration before it starts --
         e.g. fixing a typo in the title, or changing a timed duration.
         Locked once the session leaves PENDING (start_pending_session()'s

@@ -706,6 +706,7 @@ class Recording:
             if session.state == SessionState.ERROR:
                 session.state = SessionState.SCHEDULED
                 session.error_message = ""
+                session.error_time = None
         self._start_scheduled_session(session_name, today)
 
         with self._lock:
@@ -927,6 +928,7 @@ class Recording:
                             and not self.facade.is_module_recording(m)):
                         session.module_stop_states[m] = "stopped"
                 session.error_message = ""
+                session.error_time = None
                 session.state = SessionState.ACTIVE
 
             session.modules.append(module_id)
@@ -1097,6 +1099,7 @@ class Recording:
                 session.module_stop_states[module_id] = "recording"
                 if session.state == SessionState.ERROR:
                     session.error_message = ""
+                    session.error_time = None
                     session.state = SessionState.ACTIVE
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
@@ -1886,6 +1889,7 @@ class Recording:
                                 session_name, "RECOVERY", recovery_msg
                             )
                             session.error_message = ""
+                            session.error_time = None
                             session.state = SessionState.ACTIVE
                             for m in session.modules:
                                 self._not_recording_strikes.pop((session_name, m), None)

@@ -459,6 +459,53 @@ Every device in the fleet is a Pi 5 powered over PoE rather than USB-C — contr
 
 - Modules do **not** send a graceful mDNS goodbye on ungraceful disconnection (power loss, switch unplug). The heartbeat timeout (90 s, `HEARTBEAT_TIMEOUT_SECS` in `modules.py`) is the only mechanism for detecting these. The `last_heartbeat_time` field on `Module` must be non-zero before the timeout logic fires, so newly registered modules with no heartbeat yet are not immediately evicted.
 
+### PTP network topology (multi-switch habitats)
+
+The controller is the PTP grandmaster; every module is a slave disciplining its
+PHC from it. The fleet switches (habitat rigs use **TP-Link TL-SG1218MPE**,
+16-port Gigabit PoE+ "Easy Smart") are **plain L2 — not IEEE 1588 transparent
+or boundary clocks**. That has two consequences `ptp4l` cannot correct for:
+
+- **Every switch hop adds variable queuing (residence) delay** to PTP event
+  messages. A non-PTP switch does not measure or subtract it, so it shows up as
+  offset jitter that grows with hop count.
+- **Bulk traffic on a shared link delays PTP packets** — a Samba export frame
+  in flight makes the next Sync/Delay_Req wait behind it. The controller's
+  `ExportQueue` caps this at `max_concurrent_exports` (2), but 2 concurrent
+  ~250 MB transfers across the same trunk a module syncs over is still enough
+  to nudge a marginal slave over threshold.
+
+**This is fixed by wiring, not code.** SAVIOUR must stay topology-agnostic; do
+not add QoS-tuning, VLAN-aware logic, or per-habitat network assumptions to the
+codebase. The standard for any habitat, independent of module count:
+
+1. **Grandmaster (controller) and the export share on the same switch.** That
+   switch is the PTP root.
+2. **No module more than 2 switch hops from the controller** (1 is ideal).
+3. **No third switch in the PTP path.** With two habitat switches, link them
+   *directly* to each other — use the MPE's SFP ports, SFP-to-SFP — not via an
+   aggregation switch.
+4. If a building uplink is needed (internet for NTP fallback / Teams / ZIP
+   deploys), hang it off **one** habitat switch as an edge port so grandmaster
+   traffic never traverses it.
+5. Beyond 2 switches per habitat, or if contention persists at 2 hops, the
+   answer is **PTP transparent-clock switches**, not config — a TC subtracts
+   its own residence time, so hop count and export load stop mattering.
+
+**Found 2026-08-27** (habitat session `CRLLT3-247Cameras-camera-173650`, see the
+Architectural-concerns live-findings note): two TL-SG1218MPEs joined *via a
+third switch* gave far-side modules a 3-hop uncorrected path vs 1 hop for
+modules on the controller's switch, matching the clean-vs-marginal split
+(8 stable / 12 unstable, the 12 including all 4 microphones). Remedy for that
+rig: direct SFP link between the two switches, controller + share on one of
+them, middle switch demoted to edge-uplink-only — targeting 2 hops max. Confirm
+before/after by mapping module MAC → switch port (each switch's web GUI,
+Monitoring → MAC address table) against the controller's `ip neigh`, and by a
+fresh `/api/ptp_history.csv` a day after the rewire. Note this was a *secondary*
+contributor — the primary cause of the hourly sync episodes was the
+`_check_ptp_health()` restart loop (fixed on `fix/ptp-auto-restart-feedback-loop`);
+re-measure after that lands before deciding how much the rewire still buys.
+
 ### Camera framesync (multi-camera timing)
 
 The camera module supports `camera.sync_mode: "server" | "client" | "none"`. This uses **libcamera's software sync mechanism**, not GPIO. The server broadcasts timing packets over UDP; clients adjust their framerate to match. Key facts:

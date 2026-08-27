@@ -1594,7 +1594,7 @@ class Web(ABC):
         @self.socketio.on("upload_update_start")
         def handle_upload_update_start(data):
             from flask_socketio import emit as _emit
-            if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
+            if not self._require_auth("auth_required"):
                 return
             with self._upload_lock:
                 self._upload_chunks = {}
@@ -1612,7 +1612,7 @@ class Web(ABC):
             import zipfile
 
             from flask_socketio import emit as _emit
-            if not self._require_auth("upload_update_error", {"error": "Login required for this action"}):
+            if not self._require_auth("auth_required"):
                 return
             chunk_index = data.get("index")
             chunk_data  = data.get("data")   # bytes from Socket.IO binary frame
@@ -1684,9 +1684,7 @@ class Web(ABC):
         @self.socketio.on("deploy_update")
         def handle_deploy_update(data=None):
             from flask_socketio import emit as _emit
-            if not self._require_auth(
-                "deploy_update_error", {"error": "Login required for this action"}
-            ):
+            if not self._require_auth("auth_required"):
                 return
             if not os.path.exists(_UPDATE_ZIP):
                 _emit("deploy_update_error",
@@ -1723,9 +1721,7 @@ class Web(ABC):
             import shutil
 
             from flask_socketio import emit as _emit
-            if not self._require_auth(
-                "deploy_update_error", {"error": "Login required for this action"}
-            ):
+            if not self._require_auth("auth_required"):
                 return
             if not os.path.exists(_UPDATE_ZIP):
                 _emit("deploy_update_error",
@@ -1800,9 +1796,7 @@ class Web(ABC):
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
-            if not self._require_auth(
-                "upload_update_error", {"error": "Login required for this action"},
-            ):
+            if not self._require_auth("auth_required"):
                 return
 
             def _do_stage():
@@ -1834,9 +1828,7 @@ class Web(ABC):
             git never asked for. Hard reset always lands exactly on
             origin/<branch> regardless of that drift.
             """
-            if not self._require_auth(
-                "upload_update_error", {"error": "Login required for this action"},
-            ):
+            if not self._require_auth("auth_required"):
                 return
             info = _git_checkout_info()
             if not info.get("available"):
@@ -1888,7 +1880,7 @@ class Web(ABC):
         @self.socketio.on("deploy_update_to_module")
         def handle_deploy_update_to_module(data):
             from flask_socketio import emit as _emit
-            if not self._require_auth("deploy_update_error", {"error": "Login required for this action"}):
+            if not self._require_auth("auth_required"):
                 return
             module_id = data.get("module_id") if data else None
             if not module_id:

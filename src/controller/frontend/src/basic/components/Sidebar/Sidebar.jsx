@@ -141,6 +141,28 @@ function Sidebar({ navItems }) {
     };
   }, []);
 
+  // Reopen-login fallback for the whole upload/stage/deploy family: those
+  // handlers reject an unauthenticated connection via the shared
+  // "auth_required" event (see web.py's _require_auth) so the app-wide
+  // AuthGate reopens the login form, rather than a handler-specific *_error
+  // name. Without this, upload/deploy state left mid-flight here would spin
+  // forever, since only the handler-specific *_error events used to clear it.
+  useEffect(() => {
+    const onAuthRequired = () => {
+      if (uploadProgress !== null || stagingCurrent) {
+        setUploadProgress(null);
+        setStagingCurrent(false);
+        setUploadError("Login required — please log in and retry");
+      }
+      if (deployStatus !== null && deployStatus !== "error") {
+        setDeployStatus("error");
+        setDeployError("Login required — please log in and retry");
+      }
+    };
+    socket.on("auth_required", onAuthRequired);
+    return () => socket.off("auth_required", onAuthRequired);
+  }, [uploadProgress, stagingCurrent, deployStatus]);
+
   const handleRebootAll = () => {
     socket.emit("reboot_saviour");
     setShowPowerModal(false);

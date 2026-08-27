@@ -54,6 +54,24 @@ function ModuleActionsMenu({ id, name, isOnline }) {
     return () => socket.off("module_shutdown_ack", onAck);
   }, [id]);
 
+  // Reopen-login fallback: deploy_update_to_module/run_mend reject an
+  // unauthenticated connection via the shared "auth_required" event (see
+  // web.py's _require_auth) so the app-wide AuthGate reopens the login form.
+  // Without this, this row's "updating"/"mending" badge would spin forever,
+  // since only module_update_result/module_mend_result used to clear it.
+  useEffect(() => {
+    const onAuthRequired = () => {
+      setUpdateStatus(prev => (prev === "updating"
+        ? { success: false, output: "Login required — please log in and retry" }
+        : prev));
+      setMendStatus(prev => (prev === "mending"
+        ? { success: false, output: "Login required — please log in and retry" }
+        : prev));
+    };
+    socket.on("auth_required", onAuthRequired);
+    return () => socket.off("auth_required", onAuthRequired);
+  }, []);
+
   // Clear shutdown state once the module actually drops offline; the 90s
   // fallback timer below covers the case where that never happens in this
   // browser session.

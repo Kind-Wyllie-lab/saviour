@@ -265,6 +265,22 @@ export default function System() {
     const onDeployError = (data) => {
       setDeviceStatuses(prev => ({ ...prev, controller: { success: false, output: data.error } }));
     };
+    const onAuthRequired = () => {
+      // A gated action (e.g. "Update") was rejected because the session's
+      // login lapsed server-side even though the client still shows
+      // logged-in (AuthGate reopens the login form for this). Without this,
+      // any row left in the transient "updating"/"restarting" state here
+      // would spin forever, since only deploy_update_error used to clear it.
+      setDeviceStatuses(prev => {
+        const next = { ...prev };
+        for (const id of Object.keys(next)) {
+          if (next[id] === "updating" || next[id] === "restarting") {
+            next[id] = { success: false, output: "Login required — please log in and retry" };
+          }
+        }
+        return next;
+      });
+    };
     const onReconnect = () => {
       setDeviceStatuses(prev => {
         if (prev.controller === "restarting" || prev.controller === "updating") {
@@ -277,11 +293,13 @@ export default function System() {
     socket.on("module_update_result", onModuleResult);
     socket.on("deploy_update_status", onDeployStatus);
     socket.on("deploy_update_error", onDeployError);
+    socket.on("auth_required", onAuthRequired);
     socket.on("connect", onReconnect);
     return () => {
       socket.off("module_update_result", onModuleResult);
       socket.off("deploy_update_status", onDeployStatus);
       socket.off("deploy_update_error", onDeployError);
+      socket.off("auth_required", onAuthRequired);
       socket.off("connect", onReconnect);
     };
   }, [moduleList]);

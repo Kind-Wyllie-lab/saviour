@@ -1209,6 +1209,71 @@ class TestEnsureExportShareMounted:
             assert web.ensure_export_share_mounted() is False
 
 
+class TestUpdateDeployHandlersAuthGate:
+    """The whole update/deploy family (deploy_update, deploy_update_to_controller,
+    stage_current_version, git_pull_update, upload_update_start/chunk) must reject
+    an unauthenticated connection via the generic "auth_required" event, same as
+    every other mutating handler -- see TestAuthGatedHandlers. These previously
+    emitted handler-specific event names (deploy_update_error/upload_update_error)
+    that AuthGate.jsx's generic re-login listener doesn't recognise, so a lapsed
+    session (e.g. after a backend restart) looked like a silent, unrecoverable
+    failure instead of reopening the login form."""
+
+    def test_deploy_update_blocked_without_login(self):
+        # Note: get_modules() is already called once by the "connect" handler
+        # (broadcasts the initial module list), so only the *emitted event*
+        # -- not call counts -- distinguishes a blocked vs. a processed command.
+        web, _facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.get_received()  # drain the connect-time modules_update
+
+        client.emit("deploy_update")
+
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_deploy_update_to_controller_blocked_without_login(self):
+        web, _facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        with patch("src.controller.web.os.path.exists") as exists:
+            client.emit("deploy_update_to_controller")
+            exists.assert_not_called()
+
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_stage_current_version_blocked_without_login(self):
+        web, _facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("stage_current_version")
+
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_git_pull_update_blocked_without_login(self):
+        web, _facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("git_pull_update")
+
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_upload_update_start_blocked_without_login(self):
+        web, _facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("upload_update_start", {"filename": "x.zip"})
+
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_upload_update_chunk_blocked_without_login(self):
+        web, _facade = _make_web_with_facade()
+        client = _connected_client(web)
+
+        client.emit("upload_update_chunk", {"index": 0, "data": b""})
+
+        assert client.get_received()[0]["name"] == "auth_required"
+
+
 class TestDeployUpdateToModule:
     """Forwards an 'update_saviour' command to one module -- doesn't touch
     subprocess itself, just os.path.exists() on the staged package."""
@@ -1220,6 +1285,11 @@ class TestDeployUpdateToModule:
         client.emit("deploy_update_to_module", {"module_id": "cam1"})
 
         facade.send_command.assert_not_called()
+        # Must use the generic "auth_required" event -- it's the only one
+        # AuthGate.jsx listens for to reopen the login modal. A stray
+        # handler-specific event name here leaves the user stuck looking
+        # logged-in with no way to actually re-authenticate.
+        assert client.get_received()[0]["name"] == "auth_required"
 
     def test_missing_module_id_emits_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

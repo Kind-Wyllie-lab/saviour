@@ -28,6 +28,7 @@ def _make_config(**overrides) -> MagicMock:
 def _make_health(**config_overrides) -> tuple:
     health = Health(_make_config(**config_overrides))
     facade = MagicMock()
+    facade.is_module_recording.return_value = False
     health.facade = facade
     return health, facade
 
@@ -703,3 +704,40 @@ class TestCheckPtpHealth:
         health._check_ptp_health()
         assert rec["ptp_breach_count"] == 0
         facade.send_command.assert_not_called()
+
+    def test_no_restart_while_recording_below_catastrophic(self):
+        health, facade = _make_health()
+        facade.is_module_recording.return_value = True
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=200_000,  # over the 50us gate, under the 1ms override
+            last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 5)
+        facade.send_command.assert_not_called()
+
+    def test_restart_while_recording_when_offset_catastrophic(self):
+        health, facade = _make_health()
+        facade.is_module_recording.return_value = True
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=2_000_000,  # over the 1ms recording override
+            last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 3)
+        facade.send_command.assert_called_once_with("cam1", "restart_ptp", {})
+
+    def test_recording_gate_can_be_disabled_by_config(self):
+        health, facade = _make_health(
+            **{"health.ptp_no_restart_while_recording": False}
+        )
+        facade.is_module_recording.return_value = True
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=self.OVER, last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 3)
+        facade.send_command.assert_called_once_with("cam1", "restart_ptp", {})

@@ -661,13 +661,25 @@ class Health:
     # transient routinely blows past any fixed limit — so freq is logged for
     # visibility but never triggers a restart on its own.
     _PTP_FREQ_WARN_PPB = 500_000
+    # A PTP restart mid-recording guarantees a multi-second gap, forces a
+    # segment boundary and a FrameSync re-lock — worse for the data than a
+    # large-but-bounded offset, which per-frame timestamps + analyse_framesync
+    # recover in post. So while a module is recording the watchdog only
+    # restarts on a *catastrophic* sustained offset (the data is worthless
+    # anyway); anything between the normal gate and this is logged, not acted
+    # on. Set health.ptp_no_restart_while_recording=false to revert to gating
+    # a recording module on the plain offset threshold.
+    _PTP_NO_RESTART_WHILE_RECORDING = True
+    _PTP_RECORDING_OVERRIDE_NS = 1_000_000
 
     def _check_ptp_health(self):
         """Per-module PTP watchdog.
 
         Asks a module to restart ptp4l/phc2sys only when its offset is
         *sustained* above the recording gate, with a grace period after each
-        restart and a backoff counter that actually recovers.
+        restart and a backoff counter that actually recovers. A module that is
+        currently recording is held to a much higher (catastrophic-only) bar —
+        see _PTP_RECORDING_OVERRIDE_NS.
 
         Every module is judged entirely on its own state — a breach on one
         module must never cause a restart on another. (Pre-2026-08-27 the
@@ -684,15 +696,20 @@ class Health:
             "health.ptp_restart_grace_secs", self._PTP_RESTART_GRACE_SECS)
         healthy_reset_secs = self.config.get(
             "health.ptp_healthy_reset_secs", self._PTP_HEALTHY_RESET_SECS)
+        no_restart_recording = self.config.get(
+            "health.ptp_no_restart_while_recording",
+            self._PTP_NO_RESTART_WHILE_RECORDING)
+        recording_override_ns = self.config.get(
+            "health.ptp_recording_override_ns", self._PTP_RECORDING_OVERRIDE_NS)
 
         for module in list(self.module_health.keys()):
             h = self.module_health[module]
 
             o4 = h.get("ptp4l_offset_ns")
             op = h.get("phc2sys_offset_ns")
-            over = (
-                (o4 is not None and abs(o4) > offset_limit)
-                or (op is not None and abs(op) > offset_limit)
+            worst = max(
+                abs(o4) if o4 is not None else 0,
+                abs(op) if op is not None else 0,
             )
 
             for label, val in (("ptp4l_freq", h.get("ptp4l_freq")),
@@ -701,6 +718,23 @@ class Health:
                     self.logger.warning(
                         f"{label} very high for {module}: {val} ppb "
                         f"(logged only — not restarting on frequency alone)")
+
+            try:
+                recording = bool(self.facade.is_module_recording(module))
+            except Exception:
+                recording = False
+
+            restart_limit = offset_limit
+            if recording and no_restart_recording:
+                restart_limit = recording_override_ns
+                if offset_limit < worst <= recording_override_ns:
+                    self.logger.warning(
+                        f"{module} PTP offset {worst}ns over {offset_limit}ns "
+                        f"but module is recording — not restarting (recoverable "
+                        f"via per-frame timestamps); would restart above "
+                        f"{recording_override_ns}ns")
+
+            over = worst > restart_limit
 
             # Don't re-judge a module that was just restarted — it is expected
             # to be out of spec while the servo re-locks.
@@ -724,7 +758,7 @@ class Health:
             h["ptp_healthy_since"] = None
             h["ptp_breach_count"] = h.get("ptp_breach_count", 0) + 1
             self.logger.warning(
-                f"PTP offset over {offset_limit}ns for {module}: "
+                f"PTP offset over {restart_limit}ns for {module}: "
                 f"ptp4l={o4}ns phc2sys={op}ns "
                 f"(breach {h['ptp_breach_count']}/{breach_limit})")
             if h["ptp_breach_count"] < breach_limit:

@@ -931,21 +931,39 @@ class Module(ABC):
         self.logger.info(f"Get config called, returning config with {len(response['config'])} keys")
         return response
 
-    def get_diagnostics(self) -> dict:
-        """Collect logs and sanitised config for a controller-initiated bug report."""
+    @staticmethod
+    def _journal(args: list, timeout: int = 15) -> str:
+        """Run a journalctl query, returning stdout or a short error string.
+        Never raises: a bug report should collect whatever it can."""
         try:
-            result = subprocess.run(
-                ["journalctl", "-u", "saviour.service", "-n", "500",
-                 "--no-pager", "--output=short-precise"],
-                capture_output=True, text=True, timeout=10,
+            r = subprocess.run(
+                ["journalctl", "--no-pager", *args],
+                capture_output=True, text=True, timeout=timeout, check=False,
             )
-            logs = result.stdout if result.returncode == 0 else f"journalctl error: {result.stderr}"
+            if r.returncode == 0:
+                return r.stdout or "(no output)"
+            return f"journalctl {' '.join(args)} rc={r.returncode}: {r.stderr.strip()}"
         except Exception as e:
-            logs = f"Could not collect logs: {e}"
+            return f"journalctl {' '.join(args)} failed: {e}"
 
+    def get_diagnostics(self) -> dict:
+        """Collect logs and sanitised config for a controller-initiated bug report.
+
+        Includes the previous boot's service + kernel logs so a module reboot
+        or hang has a chance of being diagnosable after the fact — provided
+        persistent journald is enabled (setup.sh / mend.sh do this) and the
+        service user can read the kernel journal.
+        """
         return {
             "result": "success",
-            "logs": logs,
+            "logs": self._journal(
+                ["-u", "saviour.service", "-n", "3000",
+                 "--output=short-precise"]),
+            "logs_prevboot": self._journal(
+                ["-u", "saviour.service", "-b", "-1", "-n", "1000",
+                 "--output=short-precise"]),
+            "kernel_prevboot": self._journal(["-k", "-b", "-1", "-n", "2000"]),
+            "boots": self._journal(["--list-boots"]),
             "config": _sanitise_config(self.config.get_all()),
             "module_type": self.module_type,
             "version": self.version,

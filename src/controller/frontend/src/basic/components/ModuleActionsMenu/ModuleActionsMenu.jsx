@@ -40,7 +40,7 @@ function ModuleActionsMenu({ id, name, isOnline }) {
 
   useEffect(() => {
     const onMendResult = (data) => {
-      if (data.module_id === id) setMendStatus({ success: data.success, output: data.output });
+      if (data.module_id === id) setMendStatus({ success: data.success, rebootRequired: data.reboot_required, output: data.output });
     };
     socket.on("module_mend_result", onMendResult);
     return () => socket.off("module_mend_result", onMendResult);
@@ -120,7 +120,11 @@ function ModuleActionsMenu({ id, name, isOnline }) {
       )}
       {mendStatus && mendStatus !== "mending" && (
         <span className={`config-sync-badge ${mendStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-          {mendStatus.success ? "Mended" : `Failed: ${mendStatus.output}`}
+          {!mendStatus.success
+            ? `Failed: ${mendStatus.output}`
+            : mendStatus.rebootRequired
+              ? "Mended — reboot required"
+              : "Mended"}
         </span>
       )}
 

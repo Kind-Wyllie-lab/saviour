@@ -2721,10 +2721,11 @@ class Web(ABC):
                             })
                     elif command == "run_mend":
                         result = status.get("result")
-                        if result in ("success", "error"):
+                        if result in ("success", "error", "reboot_required"):
                             self.socketio.emit("module_mend_result", {
                                 "module_id": module_id,
-                                "success": result == "success",
+                                "success": result != "error",
+                                "reboot_required": result == "reboot_required",
                                 "output": status.get("output", ""),
                             })
                     elif command == "shutdown":

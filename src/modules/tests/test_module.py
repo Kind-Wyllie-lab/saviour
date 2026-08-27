@@ -6,6 +6,8 @@ replaces the manual per-subclass command/check dict boilerplate.
 """
 
 
+from unittest.mock import MagicMock, patch
+
 from src.modules.module import Module, check, command
 
 
@@ -115,3 +117,56 @@ def test_manual_registration_wins_over_auto_discovered_same_name():
 
     assert instance.command.commands["do_thing"] is manual_handler
     assert instance.command.commands["do_thing"](x=1) == {"result": "manual", "kwargs": {"x": 1}}
+
+
+# ---------------------------------------------------------------------------
+# run_mend — reboot-pending handling (mend.sh exit 10) and --reboot passthrough
+# ---------------------------------------------------------------------------
+
+class _RunSyncThread:
+    """threading.Thread stand-in that runs the target synchronously on start()."""
+
+    def __init__(self, target=None, **_kw):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+def _mend_instance():
+    inst = _bare_instance(_DummyModule)
+    inst.logger = MagicMock()
+    inst.communication = MagicMock()
+    return inst
+
+
+def _run_mend(inst, returncode, **kwargs):
+    proc = MagicMock(returncode=returncode, stdout="", stderr="boom")
+    with patch("threading.Thread", _RunSyncThread), \
+         patch("src.modules.module.subprocess.run", return_value=proc) as run, \
+         patch("src.modules.module.os.path.isfile", return_value=True):
+        ret = inst.run_mend(**kwargs)
+    return ret, run.call_args[0][0], inst.communication.send_status.call_args[0][0]
+
+
+def test_run_mend_returns_started_immediately():
+    ret, _argv, _ack = _run_mend(_mend_instance(), 0)
+    assert ret["result"] == "started"
+
+
+def test_run_mend_exit_10_reports_reboot_required_not_error():
+    _ret, argv, ack = _run_mend(_mend_instance(), 10)
+    assert "--reboot" not in argv
+    assert ack["command"] == "run_mend"
+    assert ack["result"] == "reboot_required"
+
+
+def test_run_mend_passes_reboot_flag_when_asked():
+    _ret, argv, ack = _run_mend(_mend_instance(), 0, reboot=True)
+    assert argv[-1] == "--reboot"
+    assert ack["result"] == "success"
+
+
+def test_run_mend_nonzero_exit_is_an_error():
+    _ret, _argv, ack = _run_mend(_mend_instance(), 1)
+    assert ack["result"] == "error"

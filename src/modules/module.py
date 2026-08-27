@@ -25,6 +25,10 @@ from typing import Any
 
 INSTALL_DIR = "/usr/local/src/saviour"
 
+# mend.sh exit code meaning "mend ran fine, but a bootloader/kernel setting
+# (NVMe APST / PSU_MAX_CURRENT) needs a reboot to take effect".
+MEND_REBOOT_REQUIRED_EXIT = 10
+
 # Check if running under systemd
 is_systemd = os.environ.get('INVOCATION_ID') is not None
 
@@ -405,7 +409,7 @@ class Module(ABC):
         return {"result": "started", "output": "Update download started."}
 
 
-    def run_mend(self) -> dict:
+    def run_mend(self, reboot: bool = False) -> dict:
         """Run mend.sh to repair/refresh this device's dependencies, config,
         and systemd unit file, then restart the service.
 
@@ -417,6 +421,13 @@ class Module(ABC):
         the "Blocking prerequisite" note in CLAUDE.md's Architectural
         concerns section), so a code change that renames/moves a variant
         folder needs both commands, not just update_saviour alone.
+
+        Args:
+            reboot: pass --reboot to mend.sh so it reboots the device itself
+                iff a reboot-dependent step (NVMe APST, PSU_MAX_CURRENT)
+                actually changed something this run. Without it, mend.sh
+                exits 10 when a reboot is pending and this method reports
+                result "reboot_required" (still a success -- the mend ran).
         """
         import threading
 
@@ -425,17 +436,32 @@ class Module(ABC):
                 mend_script = os.path.join(INSTALL_DIR, "mend.sh")
                 if not os.path.isfile(mend_script):
                     raise FileNotFoundError(f"mend.sh not found at {mend_script}")
-                self.logger.info(f"Running {mend_script}")
+                argv = ["sudo", "bash", mend_script]
+                if reboot:
+                    argv.append("--reboot")
+                self.logger.info(f"Running {' '.join(argv[2:])}")
                 # mend.sh's own last step restarts saviour.service, which
                 # tears down this very process -- same race as
                 # update_saviour's restart above, accepted there for the
                 # same reason: the "started" ack already returned at
                 # dispatch time is the reliable signal, this one is best-effort.
                 result = subprocess.run(
-                    ["sudo", "bash", mend_script],
+                    argv,
                     capture_output=True, text=True, timeout=1200, check=False,
                 )
                 tail = ((result.stdout or "") + (result.stderr or ""))[-2000:]
+                # 10 = mend ran fine but a bootloader/kernel setting needs a
+                # reboot to take effect (and --reboot was not given).
+                if result.returncode == MEND_REBOOT_REQUIRED_EXIT:
+                    self.logger.warning("mend.sh completed — reboot required")
+                    self.communication.send_status({
+                        "type": "cmd_ack",
+                        "command": "run_mend",
+                        "result": "reboot_required",
+                        "output": "mend.sh completed; reboot required to activate "
+                                  "NVMe APST / PSU_MAX_CURRENT",
+                    })
+                    return
                 if result.returncode != 0:
                     raise RuntimeError(f"mend.sh exited {result.returncode}: {tail}")
                 self.logger.info("mend.sh completed successfully")

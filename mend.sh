@@ -12,8 +12,15 @@
 #   5. Installs / refreshes the saviour-config symlink
 #   6. Applies logging and NTP configuration
 #   7. Disables NVMe APST (power-state transitions) on devices with an NVMe root
-#   8. Sets the PoE+ HAT's PSU_MAX_CURRENT bootloader budget on NVMe devices
+#   8. Sets the PoE+ HAT's PSU_MAX_CURRENT bootloader budget (all Pi 4/5 devices)
 #   9. Regenerates the saviour.service systemd unit and restarts it if running
+#
+# Steps 7 and 8 only take effect after a reboot. If either changed something,
+# mend.sh marks /run/reboot-required, prints a REBOOT REQUIRED banner, and
+# exits 10 (rather than 0) so a caller can tell "mended, reboot pending" from
+# "mended, done". Pass --reboot to have it reboot the device itself when (and
+# only when) a reboot is actually pending. Runs fully non-interactively either
+# way (it is also invoked headless via the `run_mend` module command).
 #
 # What it does NOT do:
 #   - Pull or otherwise change the SAVIOUR code itself -- code version is
@@ -31,6 +38,28 @@ trap 'echo "mend.sh failed at line $LINENO (exit $?)" >&2' ERR
 
 TARGET_DIR="/usr/local/src/saviour"
 LOG="/var/log/saviour-mend.log"
+
+# --reboot: reboot the device at the end IFF a reboot-dependent step changed
+# something this run. Any other/unknown arg is rejected so a typo can't be
+# silently ignored.
+AUTO_REBOOT=0
+for arg in "$@"; do
+    case "$arg" in
+        --reboot) AUTO_REBOOT=1 ;;
+        -h|--help)
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "mend.sh: unknown argument '$arg' (accepts: --reboot)" >&2
+            exit 2
+            ;;
+    esac
+done
+
+# Set to 1 by any step whose change only activates on reboot (7: NVMe APST,
+# 8: PSU_MAX_CURRENT).
+REBOOT_REQUIRED=0
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -291,6 +320,7 @@ else
         fix "Disabling NVMe autonomous power-state transitions (APST)"
         sed -i -E "s/\$/ nvme_core.default_ps_max_latency_us=0/" "$CMDLINE_FILE"
         warn "NVMe APST fix requires a reboot to take effect"
+        REBOOT_REQUIRED=1
     fi
 fi
 
@@ -324,6 +354,7 @@ else
     echo "PSU_MAX_CURRENT=5000" >> "$TMP_CONF"
     if rpi-eeprom-config --apply "$TMP_CONF" >> "$LOG" 2>&1; then
         warn "PSU_MAX_CURRENT fix requires a reboot to take effect"
+        REBOOT_REQUIRED=1
     else
         warn "Failed to apply PSU_MAX_CURRENT — check $LOG"
     fi
@@ -387,3 +418,34 @@ fi
 
 echo "======================================="
 echo ""
+
+# ── Reboot handling ───────────────────────────────────────────────────────────
+# Steps 7/8 only take effect on reboot. If either changed something this run,
+# leave a marker (the same one Debian's update-notifier uses so any existing
+# tooling sees it), print an unmissable banner, and exit 10 so a caller can
+# distinguish "reboot pending" from a clean run. With --reboot, do it here.
+if [ "$REBOOT_REQUIRED" -eq 1 ]; then
+    {
+        echo "*** REBOOT REQUIRED ***"
+        echo "mend.sh applied a bootloader/kernel setting (NVMe APST and/or"
+        echo "PSU_MAX_CURRENT) that only activates after a reboot."
+    } | tee -a "$LOG"
+    printf 'saviour mend: NVMe APST / PSU_MAX_CURRENT change pending reboot\n' \
+        > /run/reboot-required 2>/dev/null || true
+
+    if [ "$AUTO_REBOOT" -eq 1 ]; then
+        log "--reboot given and a reboot is pending — rebooting now"
+        echo " Rebooting now (--reboot)."
+        echo "======================================="
+        sync
+        systemctl reboot
+        exit 0
+    fi
+
+    echo ""
+    echo " Reboot this device when convenient:  sudo reboot"
+    echo " (re-run with --reboot to have mend.sh do it automatically)"
+    echo "======================================="
+    echo ""
+    exit 10
+fi

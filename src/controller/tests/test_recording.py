@@ -675,6 +675,40 @@ class TestModuleOffline:
         assert session.state == SessionState.ERROR
         assert "cam1" in session.error_message
 
+    def test_scheduled_session_not_yet_started_is_a_no_op(self):
+        # Regression: a module merely listed on a dormant SCHEDULED session
+        # (hours before its window opens) going offline must not fault the
+        # session -- module_back_online() would then "recover" it by
+        # starting a real recording outside the schedule (found live
+        # 2026-08-27, habitat DailyAudio session).
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.SCHEDULED, modules=["cam1"])
+        rec.module_offline("cam1")
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.SCHEDULED
+        assert session.error_message == ""
+        facade.update_sessions.assert_not_called()
+
+    def test_pending_session_is_a_no_op(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(state=SessionState.PENDING, modules=["cam1"])
+        rec.module_offline("cam1")
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.PENDING
+        facade.update_sessions.assert_not_called()
+
+    def test_already_errored_session_stays_errored_and_updates_message(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ERROR, modules=["cam1", "cam2"],
+            error_message="cam2 is offline",
+        )
+        rec.module_offline("cam1")
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.ERROR
+        assert "cam1" in session.error_message
+        facade.update_sessions.assert_called_once()
+
 
 class TestReportModuleFault:
     def test_no_session_for_module_is_a_no_op(self):

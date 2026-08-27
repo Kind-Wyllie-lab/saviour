@@ -2264,6 +2264,23 @@ class Web(ABC):
             zf.writestr(f"saviour_diagnostics_{ts}/controller/health.json",
                         json.dumps(health, indent=2, default=str))
 
+            # PTP offset history, bounded to the last 24 h so the bundle
+            # stays small (the standalone /api/ptp_history.csv route can
+            # pull a longer / full-retention window for plotting).
+            try:
+                ptp_csv = ""
+                if self.facade:
+                    ptp_csv = "".join(self.facade.export_ptp_history_csv(24.0))
+                zf.writestr(
+                    f"saviour_diagnostics_{ts}/controller/ptp_history_24h.csv",
+                    ptp_csv,
+                )
+            except Exception as e:
+                zf.writestr(
+                    f"saviour_diagnostics_{ts}/controller/ptp_history_24h.csv",
+                    f"Could not collect PTP history: {e}",
+                )
+
             sessions = self.facade.get_recording_sessions() if self.facade else {}
             zf.writestr(f"saviour_diagnostics_{ts}/controller/sessions.json",
                         json.dumps(sessions, indent=2, default=str))

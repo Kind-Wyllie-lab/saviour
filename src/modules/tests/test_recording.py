@@ -12,6 +12,7 @@ distinct branching logic, same reasoning as the controller-side monitor
 loop.
 """
 
+import os
 import tempfile
 import time
 from unittest.mock import MagicMock, patch
@@ -221,7 +222,11 @@ class TestStopRecording:
 
     def test_success_path_reports_stopped_and_stages_health_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            rec, facade = _make_recording(tmpdir, **{"export.auto_export": False})
+            rec, facade = _make_recording(
+                tmpdir,
+                **{"export.auto_export": False,
+                   "recording.export_session_journal": False},
+            )
             rec.is_recording = True
             rec.current_session_name = "exp1"
             rec.current_health_segment = "health.csv"
@@ -236,6 +241,38 @@ class TestStopRecording:
             facade.send_status.assert_called_with({
                 "type": "recording_stopped", "status": "success", "recording": False,
             })
+
+    def test_stop_also_stages_a_session_journal_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir, **{"export.auto_export": False})
+            rec.is_recording = True
+            rec.current_session_name = "exp1"
+            rec.current_health_segment = "health.csv"
+            rec.recording_start_time = 1_787_800_000.0
+            rec.current_filename_prefix = f"{rec.recording_folder}/exp1_cam_ab12cd"
+            facade.stop_recording.return_value = True
+
+            rec.stop_recording()
+
+            staged = [c.args[0] for c in facade.stage_file_for_export.call_args_list]
+            assert "health.csv" in staged
+            journal = [p for p in staged if "_journal_(" in p and p.endswith(".txt")]
+            assert len(journal) == 1
+            assert os.path.exists(journal[0])
+
+    def test_session_journal_disabled_by_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(
+                tmpdir, **{"recording.export_session_journal": False})
+            rec.is_recording = True
+            rec.current_session_name = "exp1"
+            rec.current_health_segment = "health.csv"
+            facade.stop_recording.return_value = True
+
+            rec.stop_recording()
+
+            staged = [c.args[0] for c in facade.stage_file_for_export.call_args_list]
+            assert not any("_journal_(" in p for p in staged)
 
     def test_auto_export_signals_export_ready_with_session_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:

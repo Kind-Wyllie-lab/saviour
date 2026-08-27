@@ -21,10 +21,26 @@ import csv
 import logging
 import os
 import shutil
+import subprocess
 import threading
 import time
 
 from src.modules.config import Config
+
+
+def _journalctl(args: list, timeout: int = 20) -> str:
+    """Run a journalctl query, returning stdout or a short error string.
+    Never raises."""
+    try:
+        r = subprocess.run(
+            ["journalctl", "--no-pager", *args],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+        if r.returncode == 0:
+            return r.stdout or "(no output)"
+        return f"journalctl {' '.join(args)} rc={r.returncode}: {r.stderr.strip()}"
+    except Exception as e:
+        return f"journalctl {' '.join(args)} failed: {e}"
 
 
 class Recording:
@@ -288,6 +304,12 @@ class Recording:
             self.facade.stage_file_for_export(self.current_health_segment)
             self.logger.info("Made it past stop_recording_health_metadata call")
 
+            # Snapshot this session's journal alongside the recording, so a
+            # reboot/hang during a weeks-long unattended run is still
+            # diagnosable once the volatile journal has rotated away and
+            # nobody SSH'd in at the time.
+            self._export_session_journal()
+
             self.facade.send_status({
                 "type": "recording_stopped",
                 "status": "success",
@@ -307,6 +329,39 @@ class Recording:
         except Exception as e:
             self.logger.error(f"Error in stop_recording: {e}")
             return {"result": "failure", "message": f"Error in stop_recording: {e}"}
+
+
+    def _export_session_journal(self) -> None:
+        """Write this session's journal (saviour.service + kernel, since the
+        recording started) into to_export/ so it rides the normal export to
+        the share alongside the footage. Best-effort: never raise out of a
+        stop. Toggle with recording.export_session_journal (default on)."""
+        if not self.config.get("recording.export_session_journal", True):
+            return
+        try:
+            since = self.recording_start_time or (time.time() - 86400)
+            since_arg = f"@{int(since)}"
+            sid = getattr(self, "recording_session_id", "module")
+            prefix = getattr(self, "current_filename_prefix", None) \
+                or f"{self.recording_folder}/{sid}"
+            strtime = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+            path = f"{prefix}_journal_({strtime}).txt"
+            body = "\n".join([
+                f"=== journalctl --since {since_arg} -u saviour.service ===",
+                _journalctl(["--since", since_arg, "-u", "saviour.service",
+                             "-n", "20000", "--output=short-precise"]),
+                "",
+                f"=== journalctl --since {since_arg} -k ===",
+                _journalctl(["--since", since_arg, "-k", "-n", "20000"]),
+                "",
+            ])
+            with open(path, "w") as f:
+                f.write(body)
+            self.facade.stage_file_for_export(path)
+            self.logger.info(
+                f"Staged session journal {os.path.basename(path)} for export")
+        except Exception as e:
+            self.logger.warning(f"Could not export session journal: {e}")
 
 
     def _format_session_name(self, session_name:str ) -> str:

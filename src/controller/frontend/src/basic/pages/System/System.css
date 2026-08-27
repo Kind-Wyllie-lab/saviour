@@ -29,25 +29,14 @@
   color: var(--accent-color);
 }
 
-.ptp-history-export {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.ptp-history-export input {
-  width: 48px;
+.ptp-hours-input {
+  width: 4.5em;
   padding: 4px 6px;
   border-radius: 4px;
   border: 1px solid var(--border-color);
   background: var(--bg-color);
   color: var(--text-color);
-  font-size: 0.85em;
-}
-
-.ptp-history-export span {
-  font-size: 0.85em;
-  color: var(--text-color);
+  font-size: 0.9em;
 }
 
 .system-table-wrapper {

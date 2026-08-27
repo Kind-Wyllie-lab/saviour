@@ -28,6 +28,7 @@ def _make_config(**overrides) -> MagicMock:
 def _make_health(**config_overrides) -> tuple:
     health = Health(_make_config(**config_overrides))
     facade = MagicMock()
+    facade.is_module_recording.return_value = False
     health.facade = facade
     return health, facade
 
@@ -582,36 +583,161 @@ class TestEnterSuspicion:
 
 
 class TestCheckPtpHealth:
-    def test_requests_restart_when_offset_too_high_and_backoff_elapsed(self):
+    # Defaults from health.py: 50us offset gate, 3 consecutive breaches before
+    # acting, 600s post-restart grace, 900s healthy-window backoff reset.
+    OVER = 60_000   # over the 50us restart threshold
+    OK = 500        # comfortably within threshold
+
+    def _run(self, health, n):
+        for _ in range(n):
+            health._check_ptp_health()
+
+    def test_no_restart_when_within_threshold(self):
+        health, facade = _make_health()
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=-50_000, phc2sys_freq=-8_000, phc2sys_offset_ns=self.OK,
+            ptp4l_offset_ns=self.OK, last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 5)
+        facade.send_command.assert_not_called()
+
+    def test_single_breach_does_not_restart(self):
         health, facade = _make_health()
         _seed_module(
             health, "cam1",
             ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
-            ptp4l_offset_ns=50_000,  # exceeds the 10,000ns threshold
-            last_ptp_restart=0, ptp_restarts=1,
+            ptp4l_offset_ns=self.OVER, last_ptp_restart=0, ptp_restarts=1,
         )
         health._check_ptp_health()
+        facade.send_command.assert_not_called()
+        assert health.module_health["cam1"]["ptp_breach_count"] == 1
+
+    def test_restart_after_sustained_breach(self):
+        health, facade = _make_health()
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=self.OVER, last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 3)
         facade.send_command.assert_called_once_with("cam1", "restart_ptp", {})
         assert health.module_health["cam1"]["ptp_restarts"] == 2
+        assert health.module_health["cam1"]["ptp_breach_count"] == 0
 
-    def test_no_restart_requested_when_all_metrics_within_range(self):
-        health, facade = _make_health()
-        _seed_module(
-            health, "cam1",
-            ptp4l_freq=100, phc2sys_freq=100, phc2sys_offset_ns=500,
-            ptp4l_offset_ns=500, last_ptp_restart=0, ptp_restarts=1,
-        )
-        health._check_ptp_health()
-        facade.send_command.assert_not_called()
-
-    def test_backoff_suppresses_restart_immediately_after_a_previous_one(self):
+    def test_grace_period_blocks_restart_right_after_a_previous_one(self):
         health, facade = _make_health()
         _seed_module(
             health, "cam1",
             ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
-            ptp4l_offset_ns=50_000,
-            last_ptp_restart=time.time(),  # just restarted -- backoff window active
+            ptp4l_offset_ns=self.OVER,
+            last_ptp_restart=time.time(),  # inside the 600s grace window
             ptp_restarts=1,
         )
-        health._check_ptp_health()
+        self._run(health, 5)
         facade.send_command.assert_not_called()
+        # breach counting doesn't even start while in grace
+        assert health.module_health["cam1"].get("ptp_breach_count", 0) == 0
+
+    def test_backoff_blocks_restart_within_window(self):
+        health, facade = _make_health()
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=self.OVER,
+            last_ptp_restart=time.time() - 700,  # past 600s grace...
+            ptp_restarts=5,                      # ...but backoff is 2**5*60 = 1920s
+        )
+        self._run(health, 3)
+        facade.send_command.assert_not_called()
+
+    def test_one_bad_module_does_not_restart_a_healthy_one(self):
+        """Regression: pre-2026-08-27 the function-scoped `reset_flag` meant a
+        breach on cam_bad also triggered restart_ptp on cam_good."""
+        health, facade = _make_health()
+        _seed_module(
+            health, "cam_bad",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=200_000, last_ptp_restart=0, ptp_restarts=1,
+        )
+        _seed_module(
+            health, "cam_good",
+            ptp4l_freq=-50_000, phc2sys_freq=-8_000, phc2sys_offset_ns=self.OK,
+            ptp4l_offset_ns=self.OK, last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 3)
+        facade.send_command.assert_called_once_with("cam_bad", "restart_ptp", {})
+
+    def test_frequency_alone_does_not_trigger_restart(self):
+        health, facade = _make_health()
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=600_000, phc2sys_freq=600_000,  # over the warn line
+            phc2sys_offset_ns=self.OK, ptp4l_offset_ns=self.OK,
+            last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 5)
+        facade.send_command.assert_not_called()
+
+    def test_backoff_counter_resets_after_sustained_health(self):
+        health, facade = _make_health()
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=-50_000, phc2sys_freq=-8_000, phc2sys_offset_ns=self.OK,
+            ptp4l_offset_ns=self.OK, last_ptp_restart=0, ptp_restarts=4,
+            ptp_healthy_since=time.time() - 1000,  # healthy for > 900s
+        )
+        health._check_ptp_health()
+        assert health.module_health["cam1"]["ptp_restarts"] == 1
+        facade.send_command.assert_not_called()
+
+    def test_breach_streak_clears_when_offset_recovers(self):
+        health, facade = _make_health()
+        rec = _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=self.OVER, last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 2)               # two breaches, not yet acted on
+        assert rec["ptp_breach_count"] == 2
+        rec["ptp4l_offset_ns"] = self.OK    # recovers before the 3rd
+        health._check_ptp_health()
+        assert rec["ptp_breach_count"] == 0
+        facade.send_command.assert_not_called()
+
+    def test_no_restart_while_recording_below_catastrophic(self):
+        health, facade = _make_health()
+        facade.is_module_recording.return_value = True
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=200_000,  # over the 50us gate, under the 1ms override
+            last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 5)
+        facade.send_command.assert_not_called()
+
+    def test_restart_while_recording_when_offset_catastrophic(self):
+        health, facade = _make_health()
+        facade.is_module_recording.return_value = True
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=2_000_000,  # over the 1ms recording override
+            last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 3)
+        facade.send_command.assert_called_once_with("cam1", "restart_ptp", {})
+
+    def test_recording_gate_can_be_disabled_by_config(self):
+        health, facade = _make_health(
+            **{"health.ptp_no_restart_while_recording": False}
+        )
+        facade.is_module_recording.return_value = True
+        _seed_module(
+            health, "cam1",
+            ptp4l_freq=0, phc2sys_freq=0, phc2sys_offset_ns=0,
+            ptp4l_offset_ns=self.OVER, last_ptp_restart=0, ptp_restarts=1,
+        )
+        self._run(health, 3)
+        facade.send_command.assert_called_once_with("cam1", "restart_ptp", {})

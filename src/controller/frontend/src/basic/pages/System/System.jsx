@@ -147,6 +147,7 @@ export default function System() {
   // ── Bug report ────────────────────────────────────────────────────────────
   const [bugReportState, setBugReportState] = useState(null); // null | "collecting" | "ready"
   const [ptpHistoryHours, setPtpHistoryHours] = useState("24");
+  const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false);
 
   useEffect(() => {
     const onStatus = ({ status }) => {
@@ -169,7 +170,17 @@ export default function System() {
 
   const handleBugReport = () => {
     setBugReportState("collecting");
+    setShowDiagnosticsModal(false);
     socket.emit("get_bug_report");
+  };
+
+  const handleDownloadPtpHistory = () => {
+    const hours = parseFloat(ptpHistoryHours);
+    const url = hours > 0
+      ? `/api/ptp_history.csv?hours=${hours}`
+      : "/api/ptp_history.csv?hours=all";
+    triggerDownload(url, `ptp_history_${hours > 0 ? hours : "all"}h.csv`);
+    setShowDiagnosticsModal(false);
   };
 
   // ── Controller actions ────────────────────────────────────────────────────
@@ -240,9 +251,12 @@ export default function System() {
     };
     const onDeployStatus = (data) => {
       if (data.stage === "modules_notified") {
-        // Sidebar triggered a full deploy — initialise all module rows as updating
+        // Sidebar's "Deploy to All Modules" targets modules only — the
+        // controller is updated via its own deliberate action
+        // (handleUpdateController → deploy_update_to_controller), so it is
+        // not swept into this broadcast and gets no row here.
         setDeviceStatuses(prev => {
-          const next = { ...prev, controller: "restarting" };
+          const next = { ...prev };
           moduleList.forEach(m => { if (!next[m.id]) next[m.id] = "updating"; });
           return next;
         });
@@ -326,9 +340,9 @@ export default function System() {
           <button
             className="refresh-btn"
             type="button"
-            onClick={handleBugReport}
+            onClick={() => setShowDiagnosticsModal(true)}
             disabled={bugReportState === "collecting"}
-            title="Collect logs and system state from all devices and download as a ZIP"
+            title="Diagnostics bundle or PTP offset history"
           >
             {bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}
           </button>
@@ -341,31 +355,6 @@ export default function System() {
           >
             {mendAllStatus === "sent" ? "Mend requested" : "Mend All Modules"}
           </button>
-          <div className="ptp-history-export">
-            <input
-              type="number"
-              min="0.1"
-              step="1"
-              value={ptpHistoryHours}
-              onChange={(e) => setPtpHistoryHours(e.target.value)}
-              title="How many hours of PTP history to include (blank/0 = entire retained history)"
-            />
-            <span>h</span>
-            <button
-              className="refresh-btn"
-              type="button"
-              onClick={() => {
-                const hours = parseFloat(ptpHistoryHours);
-                const url = hours > 0
-                  ? `/api/ptp_history.csv?hours=${hours}`
-                  : "/api/ptp_history.csv?hours=all";
-                triggerDownload(url, `ptp_history_${hours > 0 ? hours : "all"}h.csv`);
-              }}
-              title="Download every module's recorded PTP offset history as CSV, for plotting fleet sync quality over time"
-            >
-              Download PTP History
-            </button>
-          </div>
         </div>
       </div>
 
@@ -528,16 +517,67 @@ export default function System() {
       )}
 
 
+      {showDiagnosticsModal && (
+        <div className="modal-overlay" onClick={() => setShowDiagnosticsModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p className="actions-modal__title">Export Diagnostics</p>
+
+            <p className="modal-subtext">
+              Logs, config, health and recording state from the controller and
+              every online module, plus the last 24 h of PTP offset history, as
+              a single ZIP.
+            </p>
+            <div className="modal-buttons">
+              <button className="save-button" type="button"
+                onClick={handleBugReport}
+                disabled={bugReportState === "collecting"}>
+                {bugReportState === "collecting" ? "Collecting…" : "Download diagnostics bundle"}
+              </button>
+            </div>
+
+            <div className="actions-modal__divider" style={{ margin: "14px 0" }} />
+
+            <p className="actions-modal__title">PTP offset history</p>
+            <p className="modal-subtext">
+              Per-module PTP offset samples as CSV, for plotting fleet sync
+              quality over an unattended run. Blank or 0 exports the entire
+              retained history.
+            </p>
+            <div className="modal-buttons" style={{ alignItems: "center", gap: "6px" }}>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                className="ptp-hours-input"
+                value={ptpHistoryHours}
+                onChange={(e) => setPtpHistoryHours(e.target.value)}
+                title="How many hours of PTP history to include (blank/0 = entire retained history)"
+              />
+              <span>hours</span>
+              <button className="save-button" type="button" onClick={handleDownloadPtpHistory}>
+                Download CSV
+              </button>
+            </div>
+
+            <div className="modal-buttons" style={{ marginTop: "12px" }}>
+              <button className="save-button" type="button" onClick={() => setShowDiagnosticsModal(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showControllerActions && (
         <div className="modal-overlay" onClick={() => setShowControllerActions(false)}>
           <div className="modal actions-modal" onClick={e => e.stopPropagation()}>
             <p className="actions-modal__title">Controller</p>
             <div className="actions-modal__list">
               <button type="button" className="actions-modal__item"
-                onClick={() => { handleBugReport(); setShowControllerActions(false); }}
+                onClick={() => { setShowDiagnosticsModal(true); setShowControllerActions(false); }}
                 disabled={bugReportState === "collecting"}>
                 <span>{bugReportState === "collecting" ? "Collecting…" : "Export Diagnostics"}</span>
-                <span className="actions-modal__hint">Collect logs and system state from all devices</span>
+                <span className="actions-modal__hint">Diagnostics bundle, or PTP offset history</span>
               </button>
               <div className="actions-modal__divider" />
               <button type="button" className="actions-modal__item" disabled={!loggedIn}

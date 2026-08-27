@@ -633,36 +633,146 @@ class Health:
             self.logger.error(f"Error in status change callback: {e}")
 
 
+    # ----- PTP auto-restart tuning ---------------------------------------------
+    # Offset above which a module's PTP servo is considered broken enough to
+    # justify a restart. Deliberately AT the recording gate (50us), not below
+    # it: a transient 10-20us excursion is harmless to a recording (frames
+    # carry their own wall-clock timestamps and analyse_framesync.py detrends
+    # slow drift), whereas a restart *guarantees* a multi-second sync loss and
+    # a minutes-long reconvergence. Found 2026-08-27: the old 10us threshold,
+    # combined with a function-scoped `reset_flag` bug (one bad module dragged
+    # every other module into a restart) and a backoff counter that only ever
+    # ratcheted up, turned this watchdog into a self-sustaining fleet-wide
+    # restart loop on a 16-camera habitat rig.
+    _PTP_OFFSET_RESTART_NS = 50_000
+    # Consecutive over-threshold checks before acting — rides out a single
+    # noisy sample (e.g. an export burst crossing a non-PTP switch).
+    _PTP_BREACH_COUNT_TO_RESTART = 3
+    # After issuing a restart, leave the module alone this long: ptp4l/phc2sys
+    # need minutes to re-lock and their offset/freq legitimately spike during
+    # that window — counting it as "still broken" is what sustained the loop.
+    _PTP_RESTART_GRACE_SECS = 600
+    # Under threshold continuously for this long → decay the restart backoff
+    # counter back to 1, so a module that recovers stops being on a 32-min
+    # restart cadence forever.
+    _PTP_HEALTHY_RESET_SECS = 900
+    # Frequency magnitude is not a meaningful health signal (settled hardware
+    # sits at 20-70k ppb; see the camera-framesync notes) and a post-restart
+    # transient routinely blows past any fixed limit — so freq is logged for
+    # visibility but never triggers a restart on its own.
+    _PTP_FREQ_WARN_PPB = 500_000
+    # A PTP restart mid-recording guarantees a multi-second gap, forces a
+    # segment boundary and a FrameSync re-lock — worse for the data than a
+    # large-but-bounded offset, which per-frame timestamps + analyse_framesync
+    # recover in post. So while a module is recording the watchdog only
+    # restarts on a *catastrophic* sustained offset (the data is worthless
+    # anyway); anything between the normal gate and this is logged, not acted
+    # on. Set health.ptp_no_restart_while_recording=false to revert to gating
+    # a recording module on the plain offset threshold.
+    _PTP_NO_RESTART_WHILE_RECORDING = True
+    _PTP_RECORDING_OVERRIDE_NS = 1_000_000
+
     def _check_ptp_health(self):
+        """Per-module PTP watchdog.
+
+        Asks a module to restart ptp4l/phc2sys only when its offset is
+        *sustained* above the recording gate, with a grace period after each
+        restart and a backoff counter that actually recovers. A module that is
+        currently recording is held to a much higher (catastrophic-only) bar —
+        see _PTP_RECORDING_OVERRIDE_NS.
+
+        Every module is judged entirely on its own state — a breach on one
+        module must never cause a restart on another. (Pre-2026-08-27 the
+        `reset_flag` was function-scoped, so the first over-threshold module in
+        iteration order pulled every other module past its backoff window into
+        a restart too, which is what made the restarts look fleet-wide.)
         """
-        Check received PTP stats and reset PTP if necessary
-        """
-        reset_flag = False
-        for module in self.module_health:
-            # TODO: Consider putting all ptp params in a nested dict here that we could loop through e.g. for param in self.module_health[module]["ptp"]:
-            if self.module_health[module]["ptp4l_freq"] is not None:
-                if abs(self.module_health[module]["ptp4l_freq"]) > 100000:
-                    self.logger.warning(f"ptp4l_freq offset too high for module {module}: {self.module_health[module]['ptp4l_freq']}")
-                    reset_flag = True
-            if self.module_health[module]["phc2sys_freq"] is not None:
-                if abs(self.module_health[module]["phc2sys_freq"]) > 100000:
-                    self.logger.warning(f"phc2sys_freq offset too high for module {module}: {self.module_health[module]['phc2sys_freq']}")
-                    reset_flag = True
-            if self.module_health[module]["ptp4l_offset_ns"] is not None:
-                if abs(self.module_health[module]["ptp4l_offset_ns"]) > 10000:
-                    self.logger.warning(f"ptp4l_offset_ns too high for module {module}: {self.module_health[module]['ptp4l_offset_ns']}")
-                    reset_flag = True
-            if self.module_health[module]["phc2sys_offset_ns"] is not None:
-                if abs(self.module_health[module]["phc2sys_offset_ns"]) > 10000:
-                    self.logger.warning(f"phc2sys_offset_ns too high for module {module}: {self.module_health[module]['phc2sys_offset_ns']}")
-                    reset_flag = True
-            if reset_flag == True:
-                if (time.time() - self.module_health[module]["last_ptp_restart"]) > (2**self.module_health[module]["ptp_restarts"]) * 60: # Exponential backoff? Sort of.
-                    self.logger.info(f"Telling {module} to restart_ptp")
-                    self.module_health[module]["last_ptp_restart"] = time.time()
-                    self.module_health[module]["ptp_restarts"] += 1
-                    self.module_health[module]["ptp_restarts"] = min(5, self.module_health[module]["ptp_restarts"])
-                    self.facade.send_command(module, "restart_ptp", {})
+        now = time.time()
+        offset_limit = self.config.get(
+            "health.ptp_offset_restart_ns", self._PTP_OFFSET_RESTART_NS)
+        breach_limit = self.config.get(
+            "health.ptp_breach_count_to_restart", self._PTP_BREACH_COUNT_TO_RESTART)
+        grace_secs = self.config.get(
+            "health.ptp_restart_grace_secs", self._PTP_RESTART_GRACE_SECS)
+        healthy_reset_secs = self.config.get(
+            "health.ptp_healthy_reset_secs", self._PTP_HEALTHY_RESET_SECS)
+        no_restart_recording = self.config.get(
+            "health.ptp_no_restart_while_recording",
+            self._PTP_NO_RESTART_WHILE_RECORDING)
+        recording_override_ns = self.config.get(
+            "health.ptp_recording_override_ns", self._PTP_RECORDING_OVERRIDE_NS)
+
+        for module in list(self.module_health.keys()):
+            h = self.module_health[module]
+
+            o4 = h.get("ptp4l_offset_ns")
+            op = h.get("phc2sys_offset_ns")
+            worst = max(
+                abs(o4) if o4 is not None else 0,
+                abs(op) if op is not None else 0,
+            )
+
+            for label, val in (("ptp4l_freq", h.get("ptp4l_freq")),
+                               ("phc2sys_freq", h.get("phc2sys_freq"))):
+                if val is not None and abs(val) > self._PTP_FREQ_WARN_PPB:
+                    self.logger.warning(
+                        f"{label} very high for {module}: {val} ppb "
+                        f"(logged only — not restarting on frequency alone)")
+
+            try:
+                recording = bool(self.facade.is_module_recording(module))
+            except Exception:
+                recording = False
+
+            restart_limit = offset_limit
+            if recording and no_restart_recording:
+                restart_limit = recording_override_ns
+                if offset_limit < worst <= recording_override_ns:
+                    self.logger.warning(
+                        f"{module} PTP offset {worst}ns over {offset_limit}ns "
+                        f"but module is recording — not restarting (recoverable "
+                        f"via per-frame timestamps); would restart above "
+                        f"{recording_override_ns}ns")
+
+            over = worst > restart_limit
+
+            # Don't re-judge a module that was just restarted — it is expected
+            # to be out of spec while the servo re-locks.
+            if now - h.get("last_ptp_restart", 0) < grace_secs:
+                continue
+
+            if not over:
+                h["ptp_breach_count"] = 0
+                healthy_since = h.get("ptp_healthy_since")
+                if healthy_since is None:
+                    h["ptp_healthy_since"] = now
+                elif (now - healthy_since > healthy_reset_secs
+                      and h.get("ptp_restarts", 1) > 1):
+                    self.logger.info(
+                        f"{module} PTP within threshold for "
+                        f">{healthy_reset_secs // 60} min — resetting restart backoff")
+                    h["ptp_restarts"] = 1
+                continue
+
+            # Over threshold — require it to persist before acting.
+            h["ptp_healthy_since"] = None
+            h["ptp_breach_count"] = h.get("ptp_breach_count", 0) + 1
+            self.logger.warning(
+                f"PTP offset over {restart_limit}ns for {module}: "
+                f"ptp4l={o4}ns phc2sys={op}ns "
+                f"(breach {h['ptp_breach_count']}/{breach_limit})")
+            if h["ptp_breach_count"] < breach_limit:
+                continue
+
+            backoff = (2 ** h.get("ptp_restarts", 1)) * 60
+            if now - h.get("last_ptp_restart", 0) > backoff:
+                self.logger.info(
+                    f"Telling {module} to restart_ptp "
+                    f"(offset over threshold for {breach_limit} consecutive checks)")
+                h["last_ptp_restart"] = now
+                h["ptp_restarts"] = min(5, h.get("ptp_restarts", 1) + 1)
+                h["ptp_breach_count"] = 0
+                self.facade.send_command(module, "restart_ptp", {})
 
 
     def start_monitoring(self):

@@ -806,6 +806,8 @@ class TestModuleBackOnline:
             state=SessionState.ERROR,
             modules=["cam1"],
             module_stop_states={"cam1": "unknown"},
+            error_message="Not recording: cam1",
+            error_time="20260827-054711",
         )
         facade.is_module_recording.return_value = False
 
@@ -814,6 +816,9 @@ class TestModuleBackOnline:
         session = rec.sessions["exp1"]
         assert session.state == SessionState.ACTIVE
         assert session.module_stop_states["cam1"] == "recording"
+        # the fault marker must clear on recovery, not linger as a stale badge
+        assert session.error_message == ""
+        assert session.error_time is None
         facade.send_command.assert_any_call(
             "cam1", "start_recording", {"duration": 0, "session_name": "exp1"}
         )

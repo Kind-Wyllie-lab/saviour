@@ -73,6 +73,21 @@ def _sanitise_config_dict(cfg: dict) -> dict:
     return out
 
 
+def _journalctl(args: list, timeout: int = 20) -> str:
+    """Run a journalctl query, returning stdout or a short error string.
+    Never raises — a bug report should collect whatever it can."""
+    try:
+        r = subprocess.run(
+            ["journalctl", "--no-pager", *args],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+        if r.returncode == 0:
+            return r.stdout or "(no output)"
+        return f"journalctl {' '.join(args)} -> rc={r.returncode}: {r.stderr.strip()}"
+    except Exception as e:
+        return f"journalctl {' '.join(args)} failed: {e}"
+
+
 def _filter_private_keys(d: dict) -> dict:
     """Return a deep copy of *d* with all keys starting with '_' removed.
 
@@ -2231,22 +2246,26 @@ class Web(ABC):
             for mid in online_ids:
                 self._diag_pending.pop(mid, None)
 
-        # Collect controller logs
-        try:
-            ctrl_log_result = subprocess.run(
-                ["journalctl", "-u", "saviour.service", "-n", "500",
-                 "--no-pager", "--output=short-precise"],
-                capture_output=True, text=True, timeout=10,
-            )
-            ctrl_logs = ctrl_log_result.stdout if ctrl_log_result.returncode == 0 else ctrl_log_result.stderr
-        except Exception as e:
-            ctrl_logs = f"Could not collect controller logs: {e}"
+        # Collect controller logs, including the previous boot's service +
+        # kernel journal so a controller reboot/hang is diagnosable after the
+        # fact (needs persistent journald — setup.sh / mend.sh enable it).
+        ctrl_journals = {
+            "logs.txt": _journalctl(
+                ["-u", "saviour.service", "-n", "5000", "--output=short-precise"]),
+            "logs_prevboot.txt": _journalctl(
+                ["-u", "saviour.service", "-b", "-1", "-n", "2000",
+                 "--output=short-precise"]),
+            "kernel.txt": _journalctl(["-k", "-b", "0", "-n", "3000"]),
+            "kernel_prevboot.txt": _journalctl(["-k", "-b", "-1", "-n", "3000"]),
+            "boots.txt": _journalctl(["--list-boots"]),
+        }
 
         # Build ZIP in memory
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"saviour_diagnostics_{ts}/controller/logs.txt", ctrl_logs)
+            for fname, content in ctrl_journals.items():
+                zf.writestr(f"saviour_diagnostics_{ts}/controller/{fname}", content)
 
             ctrl_config = _sanitise_config_dict(self.facade.get_config() if self.facade else {})
             zf.writestr(f"saviour_diagnostics_{ts}/controller/config.json",
@@ -2256,6 +2275,23 @@ class Web(ABC):
             zf.writestr(f"saviour_diagnostics_{ts}/controller/health.json",
                         json.dumps(health, indent=2, default=str))
 
+            # PTP offset history, bounded to the last 24 h so the bundle
+            # stays small (the standalone /api/ptp_history.csv route can
+            # pull a longer / full-retention window for plotting).
+            try:
+                ptp_csv = ""
+                if self.facade:
+                    ptp_csv = "".join(self.facade.export_ptp_history_csv(24.0))
+                zf.writestr(
+                    f"saviour_diagnostics_{ts}/controller/ptp_history_24h.csv",
+                    ptp_csv,
+                )
+            except Exception as e:
+                zf.writestr(
+                    f"saviour_diagnostics_{ts}/controller/ptp_history_24h.csv",
+                    f"Could not collect PTP history: {e}",
+                )
+
             sessions = self.facade.get_recording_sessions() if self.facade else {}
             zf.writestr(f"saviour_diagnostics_{ts}/controller/sessions.json",
                         json.dumps(sessions, indent=2, default=str))
@@ -2264,14 +2300,24 @@ class Web(ABC):
 
             for mid in online_ids:
                 data = pending[mid].get('data')
+                base = f"saviour_diagnostics_{ts}/modules/{mid}"
                 if data:
-                    zf.writestr(f"saviour_diagnostics_{ts}/modules/{mid}/logs.txt",
-                                data.get('logs', '(no logs)'))
+                    zf.writestr(f"{base}/logs.txt", data.get('logs', '(no logs)'))
+                    # Previous-boot service + kernel journal (added 2026-08-27):
+                    # the field is absent from an older module that predates
+                    # this, so only write what's actually present.
+                    for key, fname in (
+                        ("logs_prevboot", "logs_prevboot.txt"),
+                        ("kernel_prevboot", "kernel_prevboot.txt"),
+                        ("boots", "boots.txt"),
+                    ):
+                        if data.get(key):
+                            zf.writestr(f"{base}/{fname}", data[key])
                     cfg = _sanitise_config_dict(data.get('config', {}))
-                    zf.writestr(f"saviour_diagnostics_{ts}/modules/{mid}/config.json",
+                    zf.writestr(f"{base}/config.json",
                                 json.dumps(cfg, indent=2, default=str))
                 else:
-                    zf.writestr(f"saviour_diagnostics_{ts}/modules/{mid}/logs.txt",
+                    zf.writestr(f"{base}/logs.txt",
                                 "(no response within timeout)")
 
             manifest = {
@@ -2696,10 +2742,11 @@ class Web(ABC):
                             })
                     elif command == "run_mend":
                         result = status.get("result")
-                        if result in ("success", "error"):
+                        if result in ("success", "error", "reboot_required"):
                             self.socketio.emit("module_mend_result", {
                                 "module_id": module_id,
-                                "success": result == "success",
+                                "success": result != "error",
+                                "reboot_required": result == "reboot_required",
                                 "output": status.get("output", ""),
                             })
                     elif command == "shutdown":

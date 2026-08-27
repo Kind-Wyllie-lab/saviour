@@ -959,7 +959,17 @@ class Recording:
                 session.module_stop_states[module_id] = "stopped"
             self._check_all_stopped(session_name)
 
-        if session.state != SessionState.STOPPED:
+        # Only a session that's actually recording (or already faulted) can be
+        # broken by a module dropping offline. get_session_name_from_target()
+        # deliberately returns any non-stopped session -- including PENDING
+        # and SCHEDULED ones that haven't started yet -- for other callers
+        # (add_module_to_session, module_back_online) that need those states
+        # too. Without this check, a module merely listed on a dormant
+        # SCHEDULED session going offline hours before its window even opens
+        # got flagged as a session fault; module_back_online() then "recovered"
+        # it by starting a real recording outside the schedule (found live
+        # 2026-08-27, habitat DailyAudio session — see CHANGELOG).
+        if session.state in (SessionState.ACTIVE, SessionState.ERROR):
             session.error_message = f"{module_id} is offline"
             if session.state != SessionState.ERROR:
                 session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")

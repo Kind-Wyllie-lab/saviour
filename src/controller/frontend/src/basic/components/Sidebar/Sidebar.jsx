@@ -125,7 +125,8 @@ function Sidebar({ navItems }) {
   useEffect(() => {
     const onStatus = ({ stage, count }) => {
       if (stage === "modules_notified") {
-        setDeployStatus(`Notified ${count} module${count !== 1 ? "s" : ""} - applying to controller…`);
+        // Modules only — the controller is not updated by this action.
+        setDeployStatus(`Update sent to ${count} module${count !== 1 ? "s" : ""}`);
       }
     };
     const onError = ({ error }) => {

@@ -240,9 +240,12 @@ export default function System() {
     };
     const onDeployStatus = (data) => {
       if (data.stage === "modules_notified") {
-        // Sidebar triggered a full deploy — initialise all module rows as updating
+        // Sidebar's "Deploy to All Modules" targets modules only — the
+        // controller is updated via its own deliberate action
+        // (handleUpdateController → deploy_update_to_controller), so it is
+        // not swept into this broadcast and gets no row here.
         setDeviceStatuses(prev => {
-          const next = { ...prev, controller: "restarting" };
+          const next = { ...prev };
           moduleList.forEach(m => { if (!next[m.id]) next[m.id] = "updating"; });
           return next;
         });

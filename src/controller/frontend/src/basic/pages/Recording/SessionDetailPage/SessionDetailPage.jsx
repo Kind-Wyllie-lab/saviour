@@ -238,10 +238,23 @@ export default function SessionDetailPage() {
   // never sees the new log line for an action they just took (e.g. "Session
   // started" after pressing Start Recording) without manually toggling the
   // section closed and open again.
+  const sessionState = session?.state;
+
   useEffect(() => {
     setSessionLog("loading");
     socket.emit("get_session_log", { session_name: sessionName });
-  }, [sessionName, session?.state]);
+  }, [sessionName, sessionState]);
+
+  // Populate the per-module recording-pipeline table right away on mount /
+  // session change / state transition, instead of waiting up to 5 min for
+  // the next server-side poll (the reason it showed "-" / "never" for every
+  // module until the operator clicked Refresh). Same request that button sends.
+  useEffect(() => {
+    setModuleRecordingStates({});
+    if (sessionState && sessionState !== "stopped" && sessionState !== "pending") {
+      socket.emit("request_recording_state_refresh", { session_name: sessionName });
+    }
+  }, [sessionName, sessionState]);
 
   if (!session) {
     return (

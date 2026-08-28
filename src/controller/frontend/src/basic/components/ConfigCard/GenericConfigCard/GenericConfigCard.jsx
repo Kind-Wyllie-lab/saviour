@@ -22,7 +22,7 @@ const TABS = [
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
-  const [activeTab, setActiveTab] = useHashTab("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });

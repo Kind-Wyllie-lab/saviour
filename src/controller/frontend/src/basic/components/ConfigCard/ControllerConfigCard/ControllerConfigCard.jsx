@@ -156,14 +156,16 @@ function ControllerConfigCard() {
             {activeTab === "thresholds" && (
               <>
                 {THRESHOLD_FIELDS.map(({ key, label, step, hint }) => (
-                  <div className="form-field" key={key}>
-                    <label>{label}</label>
-                    <input
-                      type="number"
-                      step={step}
-                      value={formData?.recording?.[key] ?? ""}
-                      onChange={e => handleChange(["recording", key], e)}
-                    />
+                  <div className="threshold-field" key={key}>
+                    <div className="form-field">
+                      <label>{label}</label>
+                      <input
+                        type="number"
+                        step={step}
+                        value={formData?.recording?.[key] ?? ""}
+                        onChange={e => handleChange(["recording", key], e)}
+                      />
+                    </div>
                     <span className="field-hint">{hint}</span>
                   </div>
                 ))}

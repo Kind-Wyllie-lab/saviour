@@ -21,6 +21,22 @@
   margin-top: 6px;
 }
 
+/* Thresholds tab: keep label + input as one flex row (.form-field), with the
+   hint on its own line below it -- putting the hint inside .form-field made it
+   a third flex item competing with the input for width, squashing the input
+   to near-zero. */
+.threshold-field {
+  margin-bottom: 14px;
+}
+
+.threshold-field .form-field {
+  margin-bottom: 0;
+}
+
+.threshold-field .field-hint {
+  margin-top: 3px;
+}
+
 .toggle-switch {
   position: relative;
   display: inline-flex;

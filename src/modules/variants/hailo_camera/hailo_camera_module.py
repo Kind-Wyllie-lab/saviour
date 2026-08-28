@@ -35,6 +35,7 @@ from modules.hailo_infer import (
     CURATED_MODELS,
     DEFAULT_MODEL,
     MODEL_DIR,
+    HailoDepthEstimator,
     HailoDetector,
     HailoPoseDetector,
     HailoSegDetector,
@@ -161,6 +162,8 @@ class HailoCameraModule(CameraBase):
                     elif task == "segmentation":
                         new_detector = HailoSegDetector(hef_path, threshold=threshold,
                                                        max_det=max_det)
+                    elif task == "depth":
+                        new_detector = HailoDepthEstimator(hef_path, threshold=threshold)
                     else:
                         new_detector = HailoDetector(hef_path, threshold=threshold)
                 except Exception as e:  # no Hailo device, driver missing, arch mismatch …
@@ -227,6 +230,8 @@ class HailoCameraModule(CameraBase):
             summary = self._draw_poses(m.array, results)
         elif task == "segmentation":
             summary = self._draw_masks(m.array, results, labels)
+        elif task == "depth":
+            summary = self._draw_depth(m.array, results)
         else:
             summary = self._draw_detections(m.array, results, labels)
         self._status_line(m, f"[{model_key}] {summary}", (255, 255, 255))
@@ -278,6 +283,12 @@ class HailoCameraModule(CameraBase):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
         return "  ".join(f"{n}x {k}" for k, n in
                          sorted(counts.items(), key=lambda kv: -kv[1])) or "nothing"
+
+    def _draw_depth(self, frame, results) -> str:
+        if not results:
+            return "no depth"
+        cv2.addWeighted(results[0].colored, 0.7, frame, 0.3, 0, frame)
+        return "depth map"
 
     # ── commands / checks ────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@ the confidence threshold.
 import numpy as np
 import pytest
 
-from modules.hailo_infer import HailoPoseDetector, _as_prob
+from modules.hailo_infer import HailoPoseDetector, HailoSegDetector, _as_prob
 
 
 def _blank_pose_detector(threshold=0.5):
@@ -91,6 +91,67 @@ class TestDecodeRaw:
         # box centre near the hot cell, mapped into a 320x240 frame
         assert 0 <= x <= 320
         assert 0 <= y <= 240
+
+
+def _blank_seg_detector(threshold=0.5):
+    d = HailoSegDetector.__new__(HailoSegDetector)
+    d._threshold = threshold
+    return d
+
+
+def _seg_run(grids=(80, 40, 20), nc=80, proto=160, hot=None, hot_score=0.95,
+             proto_layout="hwc"):
+    """Build the raw conv-tensor dict a yolov8*_seg HEF emits."""
+    out = {}
+    for i, g in enumerate(grids):
+        out[f"box{i}"] = np.zeros((g, g, 64), np.float32)
+        cls = np.zeros((g, g, nc), np.float32)
+        if hot is not None and g == grids[0]:
+            cls[hot[0], hot[1], 0] = hot_score
+        out[f"cls{i}"] = cls
+        out[f"mc{i}"] = np.zeros((g, g, 32), np.float32)
+    if proto_layout == "hwc":
+        out["proto"] = np.zeros((proto, proto, 32), np.float32)
+    else:
+        out["proto"] = np.zeros((32, proto, proto), np.float32)
+    return out
+
+
+class TestSegDecode:
+    def test_no_detections_on_empty_cls(self):
+        d = _blank_seg_detector(threshold=0.5)
+        res = d._decode(_seg_run(), (480, 640, 3))
+        assert res == []
+
+    def test_single_hot_cell_yields_one_instance(self):
+        d = _blank_seg_detector(threshold=0.5)
+        run = _seg_run(hot=(10, 10), hot_score=0.95)
+        res = d._decode(run, (480, 640, 3))
+        assert len(res) == 1
+        s = res[0]
+        assert 0.9 <= s.score <= 1.0
+        assert s.category == 0
+        assert s.mask.shape == (480, 640)
+        assert s.mask.dtype == np.uint8
+
+    def test_proto_chw_layout_accepted(self):
+        d = _blank_seg_detector(threshold=0.5)
+        run = _seg_run(hot=(10, 10), proto_layout="chw")
+        res = d._decode(run, (480, 640, 3))
+        assert len(res) == 1
+        assert res[0].mask.shape == (480, 640)
+
+    def test_decoded_output_returns_empty(self):
+        """A HEF that ships a non-dict (already decoded) output -> [] so the
+        module falls back to a plain preview instead of raising."""
+        d = _blank_seg_detector(threshold=0.5)
+        assert d._decode(np.zeros((1, 100, 39), np.float32), (480, 640, 3)) == []
+
+    def test_missing_proto_returns_empty(self):
+        d = _blank_seg_detector(threshold=0.5)
+        run = _seg_run(hot=(10, 10))
+        del run["proto"]
+        assert d._decode(run, (480, 640, 3)) == []
 
 
 if __name__ == "__main__":

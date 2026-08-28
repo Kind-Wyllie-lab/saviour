@@ -112,6 +112,20 @@ CURATED_MODELS = {
         "hef": "yolov8m_pose.hef",
         "task": "pose",
     },
+    "yolov8s_seg": {
+        "label": "YOLOv8s-seg - instance masks",
+        "category": "Instance segmentation",
+        "hef": "yolov8s_seg.hef",
+        "task": "segmentation",
+        "labels": "coco",
+    },
+    "yolov8m_seg": {
+        "label": "YOLOv8m-seg - masks, more accurate",
+        "category": "Instance segmentation",
+        "hef": "yolov8m_seg.hef",
+        "task": "segmentation",
+        "labels": "coco",
+    },
 }
 
 DEFAULT_MODEL = "yolov8s"
@@ -467,6 +481,163 @@ class HailoPoseDetector:
             out.append(PoseResult(box, score, kps))
         out.sort(key=lambda p: p.score, reverse=True)
         return out
+
+    def set_threshold(self, threshold: float) -> None:
+        self._threshold = threshold
+
+    def close(self):
+        self._hailo.close()
+
+
+class SegResult:
+    """One instance-segmentation result."""
+    def __init__(self, box: tuple, score: float, category: int, mask: np.ndarray):
+        self.box = box            # (x, y, w, h) pixels on the original frame
+        self.score = score        # confidence 0-1
+        self.category = category  # integer class index
+        self.mask = mask          # uint8 {0,1}, original-frame resolution
+
+
+class HailoSegDetector:
+    """
+    Wraps picamera2's Hailo integration for yolov8*-seg (COCO instance masks).
+
+    Like the pose HEFs, the model-zoo yolov8*_seg HEFs ship the raw multi-scale
+    head UNDECODED: `Hailo.run()` returns a dict of conv tensors -- per scale
+    {box HxWx64 (DFL), cls HxWxNC, mask-coeff HxWx32} plus one prototype tensor
+    (~160x160x32). Mask for a kept detection = sigmoid(proto @ coeffs), cropped
+    to the box, thresholded, upsampled to the frame. If the HEF instead ships a
+    decoded output this returns [] (caller falls back to a plain preview).
+    """
+
+    _REG = 16            # DFL bins
+    _NM = 32             # mask prototypes
+    _INPUT = 640         # yolov8*_seg model-zoo HEFs are 640x640
+    _MAX_PER_SCALE = 200
+    _MAX_DET = 30        # post-NMS cap (mask assembly is the per-frame cost)
+    _MASK_THR = 0.5
+
+    def __init__(self, hef_path: str, threshold: float = 0.4):
+        from picamera2.devices.hailo import Hailo
+        self._hailo = Hailo(hef_path)
+        self._input_shape = self._hailo.get_input_shape()
+        self._threshold = threshold
+
+    @property
+    def input_size(self) -> tuple:
+        shape = self._input_shape
+        if len(shape) == 4:
+            return shape[1], shape[2]
+        return shape[0], shape[1]
+
+    def detect(self, frame: np.ndarray, labels=None) -> list[SegResult]:
+        h, w = self.input_size
+        rgb = cv2.cvtColor(cv2.resize(frame, (w, h)), cv2.COLOR_BGR2RGB)
+        return self._decode(self._hailo.run(rgb), frame.shape)
+
+    def _raw_scales(self, raw):
+        """Group the conv-tensor dict into
+        ({grid: {'box','cls','mc'}}, proto HxWx32) or (None, None)."""
+        node = raw
+        while isinstance(node, (list, tuple)) and len(node) == 1:
+            node = node[0]
+        if not isinstance(node, dict):
+            return None, None
+        scales: dict = {}
+        proto = None
+        for arr in node.values():
+            a = np.asarray(arr, dtype=np.float32)
+            if a.ndim != 3:
+                return None, None
+            # prototype tensor: a 32 dim + two equal large spatial dims
+            if a.shape[0] == self._NM and a.shape[1] == a.shape[2]:
+                proto = np.transpose(a, (1, 2, 0))          # CHW -> HWC
+                continue
+            if a.shape[2] == self._NM and a.shape[0] == a.shape[1] \
+                    and a.shape[0] > self._INPUT // 8:
+                proto = a
+                continue
+            if a.shape[0] != a.shape[1]:
+                return None, None
+            g, c = a.shape[0], a.shape[2]
+            d = scales.setdefault(g, {})
+            if c == 4 * self._REG:
+                d["box"] = a
+            elif c == self._NM:
+                d["mc"] = a
+            else:
+                d["cls"] = a                                # NC channels
+        if proto is None or not scales:
+            return None, None
+        if any({"box", "cls", "mc"} - set(d) for d in scales.values()):
+            return None, None
+        return scales, proto
+
+    def _decode_raw(self, scales, proto, orig_shape) -> list[SegResult]:
+        oh, ow = orig_shape[:2]
+        mh, mw, _ = proto.shape
+        proto_flat = proto.reshape(-1, self._NM)            # (mh*mw, 32)
+        bins = np.arange(self._REG, dtype=np.float32)
+        all_box, all_sc, all_cls, all_mc = [], [], [], []
+        for g, d in scales.items():
+            stride = self._INPUT / g
+            gy, gx = np.mgrid[0:g, 0:g].astype(np.float32)
+            gx, gy = gx.ravel(), gy.ravel()
+            cls = _as_prob(d["cls"].reshape(-1, d["cls"].shape[2]))
+            conf = cls.max(1)
+            cid = cls.argmax(1)
+            keep = conf > self._threshold
+            if keep.sum() > self._MAX_PER_SCALE:
+                cut = np.sort(conf[keep])[-self._MAX_PER_SCALE]
+                keep &= conf >= cut
+            if not keep.any():
+                continue
+            box = d["box"].reshape(-1, 4, self._REG)[keep]
+            box = box - box.max(-1, keepdims=True)
+            box = np.exp(box)
+            box /= box.sum(-1, keepdims=True)
+            dist = (box * bins).sum(-1)
+            cx, cy = gx[keep] + 0.5, gy[keep] + 0.5
+            x1 = (cx - dist[:, 0]) * stride
+            y1 = (cy - dist[:, 1]) * stride
+            x2 = (cx + dist[:, 2]) * stride
+            y2 = (cy + dist[:, 3]) * stride
+            all_box.append(np.stack([x1, y1, x2, y2], 1))
+            all_sc.append(conf[keep])
+            all_cls.append(cid[keep])
+            all_mc.append(d["mc"].reshape(-1, self._NM)[keep])   # raw coeffs
+
+        if not all_box:
+            return []
+        boxes = np.concatenate(all_box)
+        scores = np.concatenate(all_sc)
+        cids = np.concatenate(all_cls)
+        coeffs = np.concatenate(all_mc)
+        rx, ry = ow / self._INPUT, oh / self._INPUT
+        out: list[SegResult] = []
+        for i in HailoPoseDetector._nms(boxes, scores)[: self._MAX_DET]:
+            m = _sigmoid(proto_flat @ coeffs[i]).reshape(mh, mw)
+            # zero everything outside the box (in proto coords)
+            px1 = int(np.clip(boxes[i, 0] * mw / self._INPUT, 0, mw))
+            px2 = int(np.clip(np.ceil(boxes[i, 2] * mw / self._INPUT), 0, mw))
+            py1 = int(np.clip(boxes[i, 1] * mh / self._INPUT, 0, mh))
+            py2 = int(np.clip(np.ceil(boxes[i, 3] * mh / self._INPUT), 0, mh))
+            cropped = np.zeros_like(m)
+            cropped[py1:py2, px1:px2] = m[py1:py2, px1:px2]
+            mask_bin = (cropped >= self._MASK_THR).astype(np.uint8)
+            mask_full = cv2.resize(mask_bin, (ow, oh), interpolation=cv2.INTER_NEAREST)
+            bx1, by1, bx2, by2 = boxes[i]
+            box = (int(bx1 * rx), int(by1 * ry),
+                   int((bx2 - bx1) * rx), int((by2 - by1) * ry))
+            out.append(SegResult(box, float(scores[i]), int(cids[i]), mask_full))
+        out.sort(key=lambda s: s.score, reverse=True)
+        return out
+
+    def _decode(self, raw, orig_shape: tuple) -> list[SegResult]:
+        scales, proto = self._raw_scales(raw)
+        if scales is not None:
+            return self._decode_raw(scales, proto, orig_shape)
+        return []
 
     def set_threshold(self, threshold: float) -> None:
         self._threshold = threshold

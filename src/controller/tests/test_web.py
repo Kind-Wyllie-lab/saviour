@@ -948,6 +948,90 @@ class TestSaveModuleConfig:
             assert not any(c.args[0] == "camera_b" for c in facade.send_command.call_args_list)
 
 
+class TestConfigChangeRecordingGuards:
+    """reset_module_config and the fleet-wide apply_section_* handlers must
+    reject a config change that would hit a module mid-recording -- the same
+    protection save_module_config already applies per-module."""
+
+    def test_reset_module_config_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.side_effect = lambda mid: mid == "camera_a"
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("reset_module_config", {"module_id": "camera_a"})
+
+            facade.send_command.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
+
+    def test_reset_module_config_allowed_when_not_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = False
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("reset_module_config", {"module_id": "camera_a"})
+
+            facade.send_command.assert_called_once_with("camera_a", "reset_config", {})
+
+    def test_apply_section_to_type_blocked_when_a_target_is_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules.return_value = {
+                "camera_a": {"type": "camera"}, "camera_b": {"type": "camera"},
+            }
+            facade.is_module_recording.side_effect = lambda mid: mid == "camera_b"
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("apply_section_to_type", {
+                "module_type": "camera", "section": "export",
+                "data": {"max_bitrate_mb": 100},
+            })
+
+            facade.apply_section_to_type.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
+
+    def test_apply_section_to_type_allowed_when_none_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules.return_value = {
+                "camera_a": {"type": "camera"}, "camera_b": {"type": "camera"},
+            }
+            facade.is_module_recording.return_value = False
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("apply_section_to_type", {
+                "module_type": "camera", "section": "export",
+                "data": {"max_bitrate_mb": 100},
+            })
+
+            facade.apply_section_to_type.assert_called_once_with(
+                "camera", "export", {"max_bitrate_mb": 100}
+            )
+
+    def test_apply_section_to_cameras_blocked_when_a_camera_is_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules.return_value = {
+                "camera_a": {"type": "camera"},
+                "ttl_x": {"type": "ttl"},
+            }
+            facade.is_module_recording.side_effect = lambda mid: mid == "camera_a"
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("apply_section_to_cameras", {
+                "section": "camera", "data": {"rotation": 90},
+            })
+
+            facade.apply_section_to_cameras.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
+
+
 class TestSendCommandDispatch:
     """The generic 'send_command' event -- routes to one module or broadcasts
     to every connected module when module_id == 'all'."""

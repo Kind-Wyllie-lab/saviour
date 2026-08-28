@@ -56,16 +56,16 @@ const EXPORT_TAB = { key: "export", label: "Export" };
 // dropdown. (A live list_hailo_models fetch would be nicer, but the demo just
 // needs the picker.)
 const HAILO_MODELS = [
-  { key: "yolov8s",      label: "YOLOv8s — balanced (default)",         category: "Object detection" },
-  { key: "yolov6n",      label: "YOLOv6n — fastest",                    category: "Object detection" },
-  { key: "yolov8m",      label: "YOLOv8m — most accurate",              category: "Object detection" },
-  { key: "yolov11n",     label: "YOLOv11n — newest, fast",              category: "Object detection" },
-  { key: "yolov8s_pose", label: "YOLOv8s-pose — body keypoints",        category: "Pose estimation" },
-  { key: "yolov8m_pose", label: "YOLOv8m-pose — keypoints, accurate",   category: "Pose estimation" },
-  { key: "yolov8s_seg",  label: "YOLOv8s-seg - instance masks",         category: "Instance segmentation" },
-  { key: "yolov8m_seg",  label: "YOLOv8m-seg - masks, accurate",        category: "Instance segmentation" },
-  { key: "scdepthv3",    label: "SC-Depth v3 - monocular depth",        category: "Depth estimation" },
-  { key: "fast_depth",   label: "FastDepth - monocular depth, fastest", category: "Depth estimation" },
+  { key: "yolov8s",      label: "YOLOv8s — balanced (default)",         category: "Object detection",     task: "detection" },
+  { key: "yolov6n",      label: "YOLOv6n — fastest",                    category: "Object detection",     task: "detection" },
+  { key: "yolov8m",      label: "YOLOv8m — most accurate",              category: "Object detection",     task: "detection" },
+  { key: "yolov11n",     label: "YOLOv11n — newest, fast",              category: "Object detection",     task: "detection" },
+  { key: "yolov8s_pose", label: "YOLOv8s-pose — body keypoints",        category: "Pose estimation",      task: "pose" },
+  { key: "yolov8m_pose", label: "YOLOv8m-pose — keypoints, accurate",   category: "Pose estimation",      task: "pose" },
+  { key: "yolov8s_seg",  label: "YOLOv8s-seg - instance masks",         category: "Instance segmentation", task: "segmentation" },
+  { key: "yolov8m_seg",  label: "YOLOv8m-seg - masks, accurate",        category: "Instance segmentation", task: "segmentation" },
+  { key: "scdepthv3",    label: "SC-Depth v3 - monocular depth",        category: "Depth estimation",     task: "depth" },
+  { key: "fast_depth",   label: "FastDepth - monocular depth, fastest", category: "Depth estimation",     task: "depth" },
 ];
 
 // Every tab key any camera-card variant can show — passed to useHashTab so a
@@ -968,7 +968,11 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         )}
 
         {/* AI (hailo_camera) */}
-        {activeTab === "hailo" && (
+        {activeTab === "hailo" && (() => {
+          const hailoTask = (HAILO_MODELS.find(
+            m => m.key === (formData?.hailo?.model ?? "yolov8s")
+          )?.task) ?? "detection";
+          return (
           <>
             <div className="form-field">
               <label>Model:</label>
@@ -984,29 +988,35 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 ))}
               </select>
             </div>
-            <div className="form-field">
-              <label>Confidence threshold:</label>
-              <input type="number" min="0.05" max="0.95" step="0.05"
-                value={formData?.hailo?.threshold ?? 0.4}
-                onChange={e => handleChange(["hailo", "threshold"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Max boxes drawn per frame:</label>
-              <input type="number" min="1" max="100" step="1"
-                value={formData?.hailo?.max_labels ?? 40}
-                onChange={e => handleChange(["hailo", "max_labels"], e)} />
-            </div>
+            {hailoTask !== "depth" && (
+              <div className="form-field">
+                <label>Confidence threshold:</label>
+                <input type="number" min="0.05" max="0.95" step="0.05"
+                  value={formData?.hailo?.threshold ?? 0.4}
+                  onChange={e => handleChange(["hailo", "threshold"], e)} />
+              </div>
+            )}
+            {(hailoTask === "detection" || hailoTask === "pose") && (
+              <div className="form-field">
+                <label>Max overlays drawn per frame:</label>
+                <input type="number" min="1" max="100" step="1"
+                  value={formData?.hailo?.max_labels ?? 40}
+                  onChange={e => handleChange(["hailo", "max_labels"], e)} />
+              </div>
+            )}
+            {hailoTask === "segmentation" && (
+              <div className="form-field">
+                <label>Max instances:</label>
+                <input type="number" min="1" max="50" step="1"
+                  value={formData?.hailo?.max_detections ?? 12}
+                  onChange={e => handleChange(["hailo", "max_detections"], e)} />
+              </div>
+            )}
             <div className="form-field">
               <label>Run inference every N frames:</label>
               <input type="number" min="1" max="10" step="1"
                 value={formData?.hailo?.infer_every_n ?? 2}
                 onChange={e => handleChange(["hailo", "infer_every_n"], e)} />
-            </div>
-            <div className="form-field">
-              <label>Max instances (segmentation):</label>
-              <input type="number" min="1" max="50" step="1"
-                value={formData?.hailo?.max_detections ?? 12}
-                onChange={e => handleChange(["hailo", "max_detections"], e)} />
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
               Live inference overlay on the preview stream only — the recorded
@@ -1014,9 +1024,14 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               at module setup; switching model reloads on the device and takes a
               few seconds. No Hailo device / missing HEF → still records, overlay
               shows why.
+              {hailoTask === "depth" && (
+                <> Depth nets output one relative-depth map — there are no
+                boxes, instances or confidence, so only the frame-skip applies.</>
+              )}
             </div>
           </>
-        )}
+          );
+        })()}
 
         {/* EXPORT */}
         {activeTab === "export" && (

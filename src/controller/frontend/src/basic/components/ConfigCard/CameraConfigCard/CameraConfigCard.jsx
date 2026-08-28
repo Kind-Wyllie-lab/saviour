@@ -979,15 +979,6 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </select>
             </div>
             <div className="form-field">
-              <label>Hailo chip:</label>
-              <select
-                value={formData?.hailo?.arch ?? "hailo8"}
-                onChange={e => handleChange(["hailo", "arch"], e)}>
-                <option value="hailo8">Hailo-8 (26 TOPS)</option>
-                <option value="hailo8l">Hailo-8L (13 TOPS — AI Kit / AI HAT+)</option>
-              </select>
-            </div>
-            <div className="form-field">
               <label>Confidence threshold:</label>
               <input type="number" min="0.05" max="0.95" step="0.05"
                 value={formData?.hailo?.threshold ?? 0.4}
@@ -1001,9 +992,10 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
               Live inference overlay on the preview stream only — the recorded
-              video is unaffected. The selected model's HEF must already be on
-              the module (<code>download_hefs.sh</code>); if it isn't, or there's
-              no Hailo device, the camera still records and the overlay shows why.
+              video is unaffected. HEFs (Hailo-8 vs 8L auto-detected) are fetched
+              at module setup; switching model reloads on the device and takes a
+              few seconds. No Hailo device / missing HEF → still records, overlay
+              shows why.
             </div>
           </>
         )}

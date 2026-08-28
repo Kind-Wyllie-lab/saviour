@@ -34,7 +34,6 @@
     },
     "hailo": {
         "model": "yolov8s",
-        "arch": "hailo8",
         "threshold": 0.4,
         "max_labels": 40
     },

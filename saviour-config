@@ -1357,18 +1357,38 @@ EOF
 # + PipeWire config, not just package installs, so it doesn't fit this.
 configure_module_dependencies() {
     local conf="$DIR/src/modules/variants/${DEVICE_TYPE}/variant.conf"
-    local packages
+    local packages post
     packages=$(read_variant_value "$conf" APT_PACKAGES)
-    [ -n "$packages" ] || return 0
 
-    progress "Installing ${DEVICE_TYPE} dependencies…"
-    log "Installing packages for ${DEVICE_TYPE}: ${packages}"
-    local pkg
-    for pkg in $packages; do
-        if ! is_installed "$pkg"; then
-            run_logged apt-get install -y "$pkg"
+    if [ -n "$packages" ]; then
+        progress "Installing ${DEVICE_TYPE} dependencies…"
+        log "Installing packages for ${DEVICE_TYPE}: ${packages}"
+        local pkg
+        for pkg in $packages; do
+            if ! is_installed "$pkg"; then
+                run_logged apt-get install -y "$pkg"
+            fi
+        done
+    fi
+
+    # POST_INSTALL: a script (relative to the variant folder) to run once the
+    # apt deps are in. Used by hailo_camera to auto-detect Hailo-8/8L and fetch
+    # the matching model-zoo HEFs -- hailortcli is available by now.
+    post=$(read_variant_value "$conf" POST_INSTALL)
+    if [ -n "$post" ]; then
+        local script="$DIR/src/modules/variants/${DEVICE_TYPE}/${post}"
+        if [ -f "$script" ]; then
+            progress "Running ${DEVICE_TYPE} post-install (${post})…"
+            log "Post-install for ${DEVICE_TYPE}: ${script}"
+            if ! run_logged bash "$script"; then
+                echo "    (${post} failed — see $LOG; can be re-run manually)"
+                log "Post-install ${post} FAILED"
+            fi
+        else
+            echo "    (POST_INSTALL '${post}' not found at ${script} — skipping)"
+            log "POST_INSTALL not found: ${script}"
         fi
-    done
+    fi
 }
 
 build_frontend() {

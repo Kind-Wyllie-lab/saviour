@@ -5,25 +5,48 @@ import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
-import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "./ExportConfigSection";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 
 const TABS = [
-  { key: "basic",    label: "Basic"    },
-  { key: "settings", label: "Settings" },
-  { key: "export",   label: "Export"   },
-  { key: "frontend", label: "Frontend" },
+  { key: "basic",      label: "Basic"      },
+  { key: "thresholds", label: "Thresholds" },
+  { key: "export",     label: "Export"     },
+  { key: "alerts",     label: "Alerts"     },
+  { key: "frontend",   label: "Frontend"   },
 ];
 
 const DEFAULT_ACCENT_COLOR = "#6495ed"; // matches index.css's static fallback (cornflowerblue)
+
+// recording.* keys surfaced on the Thresholds tab. Every one is wired:
+//  - ptp_start_gate_us   -> recording-START gate: _check_ptp_sync (recording.py) blocks
+//                           a session start until every target module is under this
+//  - ptp_threshold_us    -> mid-recording "PTP sync degraded" warning (recording.py)
+//  - nas_min_free_pct     -> scheduled-session pre-flight block + mid-recording NAS check
+//  - nas_warn_free_pct    -> "NAS space low" warning
+//  - local_min_free_pct   -> scheduled-session pre-flight per-module low-disk warning
+//  - export_stale_mins    -> "export stalled" alert for a session still exporting
+const THRESHOLD_FIELDS = [
+  { key: "ptp_start_gate_us",  label: "PTP start gate (µs)", step: 1,
+    hint: "A session won't start until every target module's clock offset (both servos) is under this. Kept tight so recording only begins on a converged, stable offset — 50 µs is sub-frame at every fps. Raise it on a multi-hop network if transient jitter causes start retries." },
+  { key: "ptp_threshold_us",   label: "PTP degraded warning (µs)", step: 1,
+    hint: "Warn (not block) mid-recording if a module's offset exceeds this. Deliberately looser than the start gate so routine sub-ms jitter doesn't alert." },
+  { key: "nas_min_free_pct",   label: "NAS minimum free (%)", step: 1,
+    hint: "A scheduled session will not start, and a running one alerts, below this much free space on the export share." },
+  { key: "nas_warn_free_pct",  label: "NAS warning free (%)", step: 1,
+    hint: "Advisory 'NAS space low' alert threshold. Should be above the minimum." },
+  { key: "local_min_free_pct", label: "Module local minimum free (%)", step: 1,
+    hint: "Per-module SD-card free space below which a scheduled session flags a low-disk warning at start." },
+  { key: "export_stale_mins",  label: "Export stall alert (min)", step: 5,
+    hint: "Alert if a session still has files waiting to export this long after they were recorded." },
+];
 
 function ControllerConfigCard() {
   const loggedIn = useIsLoggedIn();
   const { formData, setFormData, handleChange, markSaved } = useConfigForm();
   const [controllerInfo, setControllerInfo] = useState({ ip: null, version: null });
   const [saveStatus, setSaveStatus] = useState(null);
-  const [activeTab, setActiveTab] = useHashTab("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
   const saveTimerRef = useRef(null);
 
@@ -72,17 +95,6 @@ function ControllerConfigCard() {
     socket.emit("save_controller_config", { config: filterPrivateKeys(formData) });
     markSaved();
   };
-
-  // Settings tab: everything except controller.name/location, export, and teams (rendered custom below)
-  const settingsData = (() => {
-    if (!formData) return formData;
-    const { export: _e, controller: ctrl, teams: _t, ...rest } = filterPrivateKeys(formData) ?? {};
-    // Keep controller section only if it has fields beyond `name`/`location` (those go in Basic)
-    const { name: _n, location: _l, ...ctrlRest } = ctrl ?? {};
-    const result = { ...rest };
-    if (Object.keys(ctrlRest).length > 0) result.controller = ctrlRest;
-    return result;
-  })();
 
   const NOTIFY_TOGGLES = [
     { key: "notify_recording_started", label: "Recording started" },
@@ -144,72 +156,23 @@ function ControllerConfigCard() {
               </>
             )}
 
-            {/* SETTINGS */}
-            {activeTab === "settings" && (
+            {/* THRESHOLDS */}
+            {activeTab === "thresholds" && (
               <>
-                <form>
-                  <ConfigFields data={settingsData} handleChange={handleChange} />
-                </form>
-
-                {/* Teams / Notifications — custom section */}
-                <fieldset className="nested-fieldset teams-fieldset">
-                  <legend className="nested-fieldset-legend teams-fieldset-legend">
-                    teams
-                  </legend>
-                  <div className="nested">
+                {THRESHOLD_FIELDS.map(({ key, label, step, hint }) => (
+                  <div className="threshold-field" key={key}>
                     <div className="form-field">
-                      <label>webhook_url:</label>
-                      <input
-                        type="text"
-                        value={formData?.teams?.webhook_url ?? ""}
-                        onChange={e => handleChange(["teams", "webhook_url"], e)}
-                      />
-                    </div>
-                    <div className="form-field">
-                      <label>alert_cooldown_secs:</label>
+                      <label>{label}</label>
                       <input
                         type="number"
-                        value={formData?.teams?.alert_cooldown_secs ?? 600}
-                        onChange={e => handleChange(["teams", "alert_cooldown_secs"], e)}
+                        step={step}
+                        value={formData?.recording?.[key] ?? ""}
+                        onChange={e => handleChange(["recording", key], e)}
                       />
                     </div>
-                    <div className="teams-notify-section">
-                      <span className="teams-notify-label">Notify on:</span>
-                      <div className="teams-notify-grid">
-                        {NOTIFY_TOGGLES.map(({ key, label }) => (
-                          <label key={key} className="teams-notify-row">
-                            <input
-                              type="checkbox"
-                              checked={formData?.teams?.[key] ?? false}
-                              onChange={e => handleChange(["teams", key], e)}
-                            />
-                            <span>{label}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    {formData?.teams?.webhook_url && (
-                      <div className="teams-test-row">
-                        <button
-                          type="button"
-                          className="teams-test-btn"
-                          disabled={teamsTestStatus === "testing"}
-                          onClick={() => {
-                            setTeamsTestStatus("testing");
-                            socket.emit("test_teams_webhook");
-                          }}
-                        >
-                          {teamsTestStatus === "testing" ? "Sending…" : "Send test message"}
-                        </button>
-                        {teamsTestStatus && teamsTestStatus !== "testing" && (
-                          <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
-                            {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    <span className="field-hint">{hint}</span>
                   </div>
-                </fieldset>
+                ))}
               </>
             )}
 
@@ -219,6 +182,72 @@ function ControllerConfigCard() {
                 exportConfig={formData?.export}
                 handleChange={handleChange}
               />
+            )}
+
+            {/* ALERTS (Teams webhook + notification toggles) */}
+            {activeTab === "alerts" && (
+              <fieldset className="nested-fieldset teams-fieldset">
+                <legend className="nested-fieldset-legend teams-fieldset-legend">
+                  Teams webhook
+                </legend>
+                <div className="nested">
+                  <div className="form-field">
+                    <label>Webhook URL:</label>
+                    <input
+                      type="text"
+                      value={formData?.teams?.webhook_url ?? ""}
+                      onChange={e => handleChange(["teams", "webhook_url"], e)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label>Alert cooldown (secs):</label>
+                    <input
+                      type="number"
+                      value={formData?.teams?.alert_cooldown_secs ?? 600}
+                      onChange={e => handleChange(["teams", "alert_cooldown_secs"], e)}
+                    />
+                  </div>
+                  <div className="teams-notify-section">
+                    <span className="teams-notify-label">Notify on:</span>
+                    <div className="teams-notify-grid">
+                      {NOTIFY_TOGGLES.map(({ key, label }) => (
+                        <label key={key} className="teams-notify-row">
+                          <input
+                            type="checkbox"
+                            checked={formData?.teams?.[key] ?? false}
+                            onChange={e => handleChange(["teams", key], e)}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="teams-test-row">
+                    <button
+                      type="button"
+                      className="teams-test-btn"
+                      disabled={teamsTestStatus === "testing" || !formData?.teams?.webhook_url?.trim()}
+                      title={formData?.teams?.webhook_url?.trim()
+                        ? "Sends a real alert to the webhook URL above (the typed value, saved or not)"
+                        : "Enter a webhook URL above first"}
+                      onClick={() => {
+                        setTeamsTestStatus("testing");
+                        socket.emit("test_teams_webhook", { webhook_url: formData?.teams?.webhook_url });
+                      }}
+                    >
+                      {teamsTestStatus === "testing" ? "Sending…" : "Send test alert"}
+                    </button>
+                    {teamsTestStatus && teamsTestStatus !== "testing" && (
+                      <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
+                        {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
+                      </span>
+                    )}
+                  </div>
+                  <span className="field-hint">
+                    Posts a real alert card to the webhook (tests the URL you've typed, even before Save) — bypasses the cooldown and the "Notify on" filters.
+                  </span>
+                </div>
+              </fieldset>
             )}
 
             {/* FRONTEND */}

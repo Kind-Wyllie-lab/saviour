@@ -282,6 +282,34 @@ class Web(ABC):
         return False
 
 
+    def _recording_module_ids(self, candidates=None) -> list:
+        """Return the subset of *candidates* (default: all known modules) whose
+        status is RECORDING. Used to reject config changes that would hit a
+        module mid-recording -- the same protection save_module_config already
+        applies per-module, extended to the fleet-wide apply/reset paths."""
+        ids = candidates if candidates is not None else list(self.facade.get_modules().keys())
+        return [mid for mid in ids if self.facade.is_module_recording(mid)]
+
+    def _reject_config_change_if_recording(self, candidates=None, module_id=None) -> bool:
+        """If any target module is recording, emit module_config_error and
+        return True (caller should return). Returns False when it's safe to
+        proceed."""
+        busy = self._recording_module_ids(candidates)
+        if not busy:
+            return False
+        self.logger.warning(f"Rejected config change: modules recording: {busy}")
+        from flask_socketio import emit as _emit
+        _emit("module_config_error", {
+            "module_id": module_id,
+            "error": (
+                "Cannot change settings while "
+                + (", ".join(busy) if len(busy) <= 4 else f"{len(busy)} modules")
+                + " recording — stop the session first."
+            ),
+        })
+        return True
+
+
     _DOWNLOAD_TOKEN_TTL_SECS = 300
 
     def _issue_download_token(self) -> str:
@@ -862,13 +890,17 @@ class Web(ABC):
             session_name = data.get("session_name")
             duration_minutes = data.get("duration_minutes")  # None = infinite
             researcher = data.get("researcher") or None
-            self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
+            unattended = bool(data.get("unattended"))
+            self.logger.info(
+                f"Received request to create session {session_name} targeting {target} "
+                f"(duration_minutes={duration_minutes}, unattended={unattended})"
+            )
             nas_error = self._check_nas_free_space()
             if nas_error:
                 self.logger.error(f"NAS pre-check failed: {nas_error}")
                 self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
                 return
-            result = self.facade.create_session(session_name, target, duration_minutes, researcher)
+            result = self.facade.create_session(session_name, target, duration_minutes, researcher, unattended=unattended)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):
@@ -1196,6 +1228,8 @@ class Web(ABC):
             if not self._require_auth("auth_required"):
                 return
             module_id = data.get('module_id')
+            if self._reject_config_change_if_recording([module_id], module_id=module_id):
+                return
             self.logger.info(f"Received reset_module_config request for {module_id}")
             self.facade.send_command(module_id, "reset_config", {})
 
@@ -1209,6 +1243,10 @@ class Web(ABC):
             section_data = data.get("data", {})
             if not section or not isinstance(section_data, dict) or not section_data:
                 self.logger.warning(f"apply_section_to_cameras: invalid payload {data}")
+                return
+            cameras = [mid for mid, m in self.facade.get_modules().items()
+                       if "camera" in (m.get("type") or "")]
+            if self._reject_config_change_if_recording(cameras):
                 return
             self.logger.info(f"Applying section '{section}' to all camera modules")
             self.facade.apply_section_to_cameras(section, section_data)
@@ -1224,6 +1262,10 @@ class Web(ABC):
             section_data = data.get("data", {})
             if not section or not isinstance(section_data, dict) or not section_data:
                 self.logger.warning(f"apply_section_to_type: invalid payload {data}")
+                return
+            targets = [mid for mid, m in self.facade.get_modules().items()
+                       if module_type is None or module_type in (m.get("type") or "")]
+            if self._reject_config_change_if_recording(targets):
                 return
             label = module_type if module_type else "all"
             self.logger.info(f"Applying section '{section}' to all {label} modules")
@@ -1352,23 +1394,18 @@ class Web(ABC):
             export_changed = any(
                 old_export.get(k) != new_export.get(k) for k in share_keys
             )
-            # export.sync_all_modules (default True): most deployments point
-            # every module at the same share, so the default assumes that and
-            # pushes a changed share config out immediately rather than
-            # leaving already-connected modules on stale credentials until
-            # they reconnect or an operator remembers to click "Sync to all
-            # modules" by hand. Turn it off for a deployment that genuinely
-            # needs modules to diverge (the manual button still works either way).
+            # The controller is the single authority for the export destination
+            # (the per-module "manual" override was removed 2026-08-28), so a
+            # changed share config is always pushed to every connected module
+            # here rather than leaving them on stale credentials until they
+            # reconnect. The "Sync to All Modules" button remains as a manual
+            # re-push. ensure_export_share_mounted() is for the controller's own
+            # file browser and is independent of the module push.
             if export_changed:
-                # Independent of sync_all_modules above -- the controller's
-                # own ability to browse/download exported files (session
-                # detail page) shouldn't depend on whether modules are also
-                # being auto-pushed the same credentials.
                 self.ensure_export_share_mounted()
-                if self.config.get("export.sync_all_modules", True):
-                    creds = self.facade.get_export_credentials()
-                    if creds:
-                        _sync_export_to_all_modules(creds)
+                creds = self.facade.get_export_credentials()
+                if creds:
+                    _sync_export_to_all_modules(creds)
 
 
         @self.socketio.on("get_controller_info")
@@ -1975,8 +2012,11 @@ class Web(ABC):
         def handle_test_teams_webhook(data=None):
             if not self._require_auth("auth_required"):
                 return
+            # Optional: test the URL the operator has typed into the Alerts tab
+            # (unsaved) rather than the saved config value.
+            override_url = (data or {}).get("webhook_url") if isinstance(data, dict) else None
             def _run():
-                success, detail = self.facade.controller.notifier.send_test()
+                success, detail = self.facade.controller.notifier.send_test(webhook_url=override_url)
                 self.socketio.emit("teams_test_result", {"success": success, "detail": detail})
             threading.Thread(target=_run, daemon=True, name="teams-test").start()
 

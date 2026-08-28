@@ -9,6 +9,7 @@
         "share_password": ""
     },
     "recording": {
+        "ptp_start_gate_us": 50.0,
         "ptp_threshold_us": 1000.0,
         "nas_min_free_pct": 5,
         "nas_warn_free_pct": 15,
@@ -18,10 +19,5 @@
             "camera": 0,
             "microphone": 0
         }
-    },
-    "habitat": {
-        "name": "Habitat1",
-        "audio_start": "20:00",
-        "audio_end": "02:00"
     }
 }

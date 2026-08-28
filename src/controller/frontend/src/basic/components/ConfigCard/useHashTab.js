@@ -4,7 +4,11 @@ import { useState, useEffect, useRef } from "react";
  * Tracks a config card's active tab in the URL hash, alongside the selected
  * device id that Settings.jsx already puts there (`#<deviceId>/<tab>`) — so
  * refreshing the page, or sharing the link, returns to the same tab and not
- * just the same device.
+ * just the same device. Settings.jsx also carries the tab suffix across a
+ * device switch, so different card types can see a tab that isn't one of
+ * theirs — pass `validKeys` and this falls back to `defaultTab` for those
+ * (without rewriting the hash, so switching back to a card that *does* have
+ * that tab still lands on it).
  */
 function readTabFromHash() {
   const raw = window.location.hash.slice(1);
@@ -12,8 +16,14 @@ function readTabFromHash() {
   return slash === -1 ? null : raw.slice(slash + 1);
 }
 
-export function useHashTab(defaultTab) {
-  const [activeTab, setActiveTabState] = useState(() => readTabFromHash() || defaultTab);
+export function useHashTab(defaultTab, validKeys = null) {
+  const resolve = (tab) => {
+    if (!tab) return defaultTab;
+    if (validKeys && !validKeys.includes(tab)) return defaultTab;
+    return tab;
+  };
+
+  const [activeTab, setActiveTabState] = useState(() => resolve(readTabFromHash()));
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
 
@@ -22,7 +32,7 @@ export function useHashTab(defaultTab) {
   // the device id.
   useEffect(() => {
     const onHashChange = () => {
-      const tab = readTabFromHash() || defaultTab;
+      const tab = resolve(readTabFromHash());
       if (tab !== activeTabRef.current) setActiveTabState(tab);
     };
     window.addEventListener("hashchange", onHashChange);

@@ -49,6 +49,12 @@ class Export:
         self.samba_share_path = None # The name of the top level folder on the samba share
         self.samba_share_username = None
         self.samba_share_password = None
+        # Last traffic-shaping (tc) failure, if any; None once shaping applies
+        # cleanly. Set + logged at ERROR by _apply_traffic_control_filter() so a
+        # config push that changed max_bitrate_mb but silently failed to re-rate
+        # the egress qdisc leaves a trace, rather than the save just reporting
+        # success. Kept as an attribute for a future health/readiness surface.
+        self.tc_last_error: str | None = None
         self._update_samba_settings()
 
         self.exporting = False # Flag to indicate whether export in progress
@@ -555,16 +561,39 @@ class Export:
             self.logger.error(f"Unexpected error: {e}")
 
 
-    def _run_shell_command(self, cmd: list):
+    def _run_shell_command(self, cmd: list) -> bool:
+        """Run *cmd*, logging stdout/stderr. Returns True on exit 0, False otherwise
+        (including if the binary is missing) so callers can react to a failure
+        rather than silently continuing."""
         try:
             result = subprocess.run(cmd, check=True, text=True, capture_output=True)
             self.logger.info(f"Command succeeded: {result.stdout}")
+            return True
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Command failed: {e.stderr}")
+            self.logger.error(f"Command failed ({' '.join(cmd)}): {e.stderr.strip()}")
+            return False
+        except (FileNotFoundError, OSError) as e:
+            self.logger.error(f"Command could not be run ({' '.join(cmd)}): {e}")
+            return False
 
 
-    def _apply_traffic_control_filter(self):
+    def _apply_traffic_control_filter(self) -> bool:
+        """(Re)build the egress HTB qdisc/class/filter that rate-limits Samba
+        export traffic to the share on port 445.
+
+        Returns True only if the rate-limiting class AND the classifying filter
+        both applied. The root qdisc `add` is allowed to fail benignly (it
+        already exists if a prior _clear_traffic_control_filter() didn't run) as
+        long as the class/filter then succeed. On failure, self.tc_last_error is
+        set and logged loudly -- otherwise a config push that changed the rate
+        would report a successful save while the OS-level shaping never changed.
+        """
         self.logger.info(f"Applying new traffic control filter for {self.samba_share_ip} on samba port 445")
+
+        if not self.samba_share_ip:
+            self.tc_last_error = "no share IP configured — traffic shaping not applied"
+            self.logger.warning(self.tc_last_error)
+            return False
 
         add_qdisc_cmd = [
             "sudo", "tc", "qdisc", "add",
@@ -574,11 +603,12 @@ class Export:
             "htb", # Hierarchical token bucket
             "default", "10" # Default class for packets that don't match any criteria
         ]
-
-        # result = subprocess.run(add_qdisc_cmd, shell=True, check=True, text=True, capture_output=True)
+        # Non-fatal: a leftover root qdisc from a prior run means the class/filter
+        # below still land on it. _clear_traffic_control_filter() normally removes
+        # it first on the reconfigure path.
         self._run_shell_command(add_qdisc_cmd)
 
-        max_bitrate_mb = self.config.get("export.max_bitrate_mb", 10)
+        max_bitrate_mb = self.config.get("export.max_bitrate_mb", 100)
         max_burst_kb = self.config.get("export.max_burst_kb", 30)
         add_class_cmd = [
             "sudo", "tc", "class", "add",
@@ -589,8 +619,7 @@ class Export:
             "rate", f"{max_bitrate_mb}mbit",
             "burst", f"{max_burst_kb}k"
         ]
-        # result = subprocess.run(add_class_cmd, shell=True, check=True, text=True, capture_output=True)
-        self._run_shell_command(add_class_cmd)
+        class_ok = self._run_shell_command(add_class_cmd)
 
         add_filter_cmd = [
             "sudo", "tc", "filter", "add",
@@ -603,8 +632,22 @@ class Export:
             "0xffff", # Bitmask for header - match exactly on port 445
             "flowid", "1:1" # Direct matching traffic to the class with identifier 1:1 (the one that rate limits traffic)
         ]
-        # result = subprocess.run(add_filter_cmd, shell=True, check=True, text=True, capture_output=True)
-        self._run_shell_command(add_filter_cmd)
+        filter_ok = self._run_shell_command(add_filter_cmd)
+
+        if class_ok and filter_ok:
+            self.tc_last_error = None
+            self.logger.info(
+                f"Export traffic shaping active: {max_bitrate_mb} mbit to "
+                f"{self.samba_share_ip}:445"
+            )
+            return True
+
+        self.tc_last_error = (
+            f"tc failed (class_ok={class_ok}, filter_ok={filter_ok}) — export "
+            f"bandwidth to {self.samba_share_ip} is NOT rate-limited"
+        )
+        self.logger.error(self.tc_last_error)
+        return False
 
     _MOUNT_MAX_ATTEMPTS = 3
     _MOUNT_RETRY_DELAY_S = 2.0

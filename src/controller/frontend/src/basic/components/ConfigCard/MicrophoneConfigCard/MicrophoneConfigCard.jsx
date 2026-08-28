@@ -105,7 +105,7 @@ const MIC_TABS = [
 
 function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
-  const [activeTab, setActiveTab]               = useHashTab("basic");
+  const [activeTab, setActiveTab]               = useHashTab("basic", MIC_TABS.map(t => t.key));
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
   const [streamEnabled, setStreamEnabled] = useState(true);
 

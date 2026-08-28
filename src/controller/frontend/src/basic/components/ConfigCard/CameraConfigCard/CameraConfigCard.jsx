@@ -45,7 +45,35 @@ const HABITAT_TABS = [
   { key: "motion", label: "Motion" },
 ];
 
+const HAILO_TABS = [
+  { key: "hailo", label: "AI" },
+];
+
 const EXPORT_TAB = { key: "export", label: "Export" };
+
+// Curated stock Hailo model-zoo nets - keep in sync with
+// src/modules/hailo_infer.py CURATED_MODELS. Grouped by `category` in the
+// dropdown. (A live list_hailo_models fetch would be nicer, but the demo just
+// needs the picker.)
+const HAILO_MODELS = [
+  { key: "yolov8s",      label: "YOLOv8s - balanced (default)",         category: "Object detection",     task: "detection" },
+  { key: "yolov6n",      label: "YOLOv6n - fastest",                    category: "Object detection",     task: "detection" },
+  { key: "yolov8m",      label: "YOLOv8m - most accurate",              category: "Object detection",     task: "detection" },
+  { key: "yolov11n",     label: "YOLOv11n - newest, fast",              category: "Object detection",     task: "detection" },
+  { key: "yolov8s_pose", label: "YOLOv8s-pose - body keypoints",        category: "Pose estimation",      task: "pose" },
+  { key: "yolov8m_pose", label: "YOLOv8m-pose - keypoints, accurate",   category: "Pose estimation",      task: "pose" },
+  { key: "yolov8s_seg",  label: "YOLOv8s-seg - instance masks",         category: "Instance segmentation", task: "segmentation" },
+  { key: "yolov8m_seg",  label: "YOLOv8m-seg - masks, accurate",        category: "Instance segmentation", task: "segmentation" },
+  { key: "scdepthv3",    label: "SC-Depth v3 - monocular depth",        category: "Depth estimation",     task: "depth" },
+  { key: "fast_depth",   label: "FastDepth - monocular depth, fastest", category: "Depth estimation",     task: "depth" },
+];
+
+// Every tab key any camera-card variant can show - passed to useHashTab so a
+// tab carried over from switching device (Settings.jsx) that isn't one of
+// this card's falls back to the default instead of rendering blank.
+const ALL_TAB_KEYS = [
+  ...BASE_TABS, ...LOOM_TABS, ...HABITAT_TABS, ...HAILO_TABS, EXPORT_TAB,
+].map(t => t.key);
 
 const TAB_COPY_SECTION = {
   basic:    { key: "module",         label: "Basic"    },
@@ -55,6 +83,7 @@ const TAB_COPY_SECTION = {
   tracking: { key: "loom_tracking",  label: "Tracking" },
   stimulus: { key: "loom_stimulus",  label: "Stimulus" },
   motion:   { key: "habitat_motion", label: "Motion"   },
+  hailo:    { key: "hailo",          label: "AI"       },
   export:   { key: "export",         label: "Export"   },
 };
 
@@ -80,7 +109,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [sensorModel, setSensorModel] = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
-  const [activeTab, setActiveTab] = useHashTab("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic", ALL_TAB_KEYS);
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
   const [roiInfo, setRoiInfo] = useState(null);
   const [showCropEditor, setShowCropEditor] = useState(false);
@@ -235,6 +264,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
     ...BASE_TABS,
     ...(module.type === "loom_camera" ? LOOM_TABS : []),
     ...(module.type === "habitat_camera" ? HABITAT_TABS : []),
+    ...(module.type === "hailo_camera" ? HAILO_TABS : []),
     EXPORT_TAB,
   ];
 
@@ -263,7 +293,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </button>
               {cropStale && (
                 <div className="fov-label fov-cropped">
-                  Saved crop was drawn at {cropRect.preview_width}×{cropRect.preview_height}, current output is {currentWidth}×{currentHeight} — redraw to match.
+                  Saved crop was drawn at {cropRect.preview_width}×{cropRect.preview_height}, current output is {currentWidth}×{currentHeight} - redraw to match.
                 </div>
               )}
             </div>
@@ -869,13 +899,13 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
           <>
             <div className="sensor-mode-info sensor-mode-info--muted">
               While recording (armed), a clip is only written while the
-              activity score below stays above threshold — the score itself
+              activity score below stays above threshold - the score itself
               is always computed every frame and logged to the timestamp CSV
               (and shown live on the preview, including while idle) so you
               can tune these values against real activity. A score spike
               right after the camera's auto-exposure adjusts (e.g. as ambient
               light changes) is ignored for the settle time below, rather
-              than treated as motion — the preview shows "AE settling" during
+              than treated as motion - the preview shows "AE settling" during
               that window.
             </div>
             <div className="form-field">
@@ -883,7 +913,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               <select value={formData?.habitat_motion?.algorithm ?? "frame_diff"}
                 onChange={e => handleChange(["habitat_motion", "algorithm"], e)}>
                 <option value="frame_diff">Frame differencing (fast, simple)</option>
-                <option value="mog2">Background subtraction — MOG2 (more robust to lighting drift)</option>
+                <option value="mog2">Background subtraction - MOG2 (more robust to lighting drift)</option>
               </select>
             </div>
             <div className="form-field">
@@ -931,11 +961,77 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
             <div className="sensor-mode-info sensor-mode-info--muted">
               A waiting/triggered state otherwise only clears once the score
               has stayed below threshold for the full inactivity duration
-              above (120s by default) — the same wait a real clip close-out
+              above (120s by default) - the same wait a real clip close-out
               would take. Use this to reset instantly while tuning.
             </div>
           </>
         )}
+
+        {/* AI (hailo_camera) */}
+        {activeTab === "hailo" && (() => {
+          const hailoTask = (HAILO_MODELS.find(
+            m => m.key === (formData?.hailo?.model ?? "yolov8s")
+          )?.task) ?? "detection";
+          return (
+          <>
+            <div className="form-field">
+              <label>Model:</label>
+              <select
+                value={formData?.hailo?.model ?? "yolov8s"}
+                onChange={e => handleChange(["hailo", "model"], e)}>
+                {[...new Set(HAILO_MODELS.map(m => m.category))].map(cat => (
+                  <optgroup key={cat} label={cat}>
+                    {HAILO_MODELS.filter(m => m.category === cat).map(m => (
+                      <option key={m.key} value={m.key}>{m.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            {hailoTask !== "depth" && (
+              <div className="form-field">
+                <label>Confidence threshold:</label>
+                <input type="number" min="0.05" max="0.95" step="0.05"
+                  value={formData?.hailo?.threshold ?? 0.4}
+                  onChange={e => handleChange(["hailo", "threshold"], e)} />
+              </div>
+            )}
+            {(hailoTask === "detection" || hailoTask === "pose") && (
+              <div className="form-field">
+                <label>Max overlays drawn per frame:</label>
+                <input type="number" min="1" max="100" step="1"
+                  value={formData?.hailo?.max_labels ?? 40}
+                  onChange={e => handleChange(["hailo", "max_labels"], e)} />
+              </div>
+            )}
+            {hailoTask === "segmentation" && (
+              <div className="form-field">
+                <label>Max instances:</label>
+                <input type="number" min="1" max="50" step="1"
+                  value={formData?.hailo?.max_detections ?? 12}
+                  onChange={e => handleChange(["hailo", "max_detections"], e)} />
+              </div>
+            )}
+            <div className="form-field">
+              <label>Run inference every N frames:</label>
+              <input type="number" min="1" max="10" step="1"
+                value={formData?.hailo?.infer_every_n ?? 2}
+                onChange={e => handleChange(["hailo", "infer_every_n"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Live inference overlay on the preview stream only - the recorded
+              video is unaffected. HEFs (Hailo-8 vs 8L auto-detected) are fetched
+              at module setup; switching model reloads on the device and takes a
+              few seconds. No Hailo device / missing HEF → still records, overlay
+              shows why.
+              {hailoTask === "depth" && (
+                <> Depth nets output one relative-depth map - there are no
+                boxes, instances or confidence, so only the frame-skip applies.</>
+              )}
+            </div>
+          </>
+          );
+        })()}
 
         {/* EXPORT */}
         {activeTab === "export" && (

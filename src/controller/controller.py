@@ -394,10 +394,6 @@ class Controller(ABC):
             self.logger.info("Cleaning up communication manager")
             self.communication.cleanup()
 
-            # Clean up database manager
-            self.logger.info("Cleaning up database manager")
-            # self.database.cleanup()
-
             # Give modules time to detect the controller is gone
             time.sleep(1)
 

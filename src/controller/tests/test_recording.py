@@ -420,6 +420,28 @@ class TestCreateScheduledSession:
         assert session.state == SessionState.SCHEDULED
         assert session.scheduled_days == [0, 1]
 
+    def test_logs_a_creation_event_with_schedule_provenance(self):
+        rec, _facade = _make_recording()
+        with patch.object(rec, "_log_session_event") as mock_log:
+            rec.create_scheduled_session(
+                "exp1", "camera", "18:00", "20:00", days=[0, 4],
+                researcher="Andrew",
+            )
+        mock_log.assert_called_once()
+        _name, level, message = mock_log.call_args[0]
+        assert level == "INFO"
+        assert "Scheduled session created" in message
+        assert "18:00–20:00" in message
+        assert "Mon, Fri" in message
+        assert "researcher: Andrew" in message
+
+    def test_creation_event_says_every_day_when_no_days_given(self):
+        rec, _facade = _make_recording()
+        with patch.object(rec, "_log_session_event") as mock_log:
+            rec.create_scheduled_session("exp2", "camera", "09:00", "17:00")
+        _name, _level, message = mock_log.call_args[0]
+        assert "every day" in message
+
 
 class TestDeleteSession:
     def test_unknown_session_returns_error(self):
@@ -1064,6 +1086,139 @@ class TestForceStartScheduledSession:
 # ---------------------------------------------------------------------------
 # Tier C: filesystem-touching helpers -- real tmp paths, no hardcoded /var or /home
 # ---------------------------------------------------------------------------
+
+class TestUnattendedSession:
+    """Unattended (long-term) sessions self-heal instead of parking in ERROR,
+    and fold per-fault alerts into a daily digest."""
+
+    def _faulted_session(self, unattended: bool):
+        # module_back_online is patched out so these exercise
+        # _check_session_recording_liveness' own fault/recovery logic in
+        # isolation (module_back_online has its own optimistic state flipping,
+        # covered by TestModuleBackOnline).
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1"],
+            module_stop_states={"cam1": "recording"}, unattended=unattended,
+        )
+        facade.is_module_recording.return_value = False
+        rec.module_back_online = MagicMock()
+        return rec, facade
+
+    def _run(self, rec, n=2):
+        for _ in range(n):  # n strikes
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+
+    def test_normal_session_goes_error_on_not_recording(self):
+        rec, _f = self._faulted_session(unattended=False)
+        self._run(rec)
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ERROR
+        assert s.error_message == "Not recording: cam1"
+        rec.module_back_online.assert_called_with("cam1")
+
+    def test_unattended_session_stays_active_but_records_fault(self):
+        rec, _f = self._faulted_session(unattended=True)
+        self._run(rec)
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ACTIVE          # never terminal-ERROR
+        assert s.error_message == "Not recording: cam1"  # still recorded for the badge
+        assert s.error_time is not None
+        rec.module_back_online.assert_called_with("cam1")  # still self-heals
+
+    def test_unattended_fault_goes_to_digest_not_immediate_alert(self):
+        rec, facade = self._faulted_session(unattended=True)
+        self._run(rec)
+        facade.send_alert.assert_not_called()
+        assert rec._unattended_fault_digest == {"exp1": {"cam1": 1}}
+
+    def test_unattended_session_recovers_and_clears_fault(self):
+        rec, facade = self._faulted_session(unattended=True)
+        self._run(rec)
+        assert rec.sessions["exp1"].error_message  # faulted
+        facade.is_module_recording.return_value = True
+        rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ACTIVE
+        assert s.error_message == ""
+        assert s.error_time is None
+
+    def test_flush_digest_emits_one_summary_alert_then_clears(self):
+        rec, facade = _make_recording()
+        rec._unattended_fault_digest = {"exp1": {"cam1": 3, "cam2": 1}}
+        rec._flush_unattended_digest(force=True)
+        facade.send_alert.assert_called_once()
+        msg = facade.send_alert.call_args.kwargs["message"]
+        assert "self-healed 4" in msg
+        assert "cam1 ×3" in msg
+        assert rec._unattended_fault_digest == {}
+
+    def test_flush_digest_noop_before_interval(self):
+        rec, facade = _make_recording()
+        rec._unattended_fault_digest = {"exp1": {"cam1": 1}}
+        rec._unattended_digest_flushed_at = time.time()  # just flushed
+        rec._flush_unattended_digest(force=False)
+        facade.send_alert.assert_not_called()
+        assert rec._unattended_fault_digest == {"exp1": {"cam1": 1}}
+
+    def test_load_keeps_unattended_active_session_active(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            rec, _f = _make_recording(sessions_file=sessions_file)
+            rec.sessions["exp1"] = _session(
+                state=SessionState.ACTIVE, modules=["cam1"], unattended=True,
+            )
+            rec._save_sessions()
+            with patch("src.controller.recording.threading.Thread"):
+                rec2 = Recording()
+            s = rec2.sessions["exp1"]
+            assert s.state == SessionState.ACTIVE
+            assert s.error_message == "Controller restarted during active session"
+
+
+class TestCheckPtpSync:
+    """_check_ptp_sync is the recording-START gate — its own key
+    (recording.ptp_start_gate_us, default 50 us), deliberately tighter than
+    ptp_threshold_us (the mid-recording degraded warning)."""
+
+    def _health(self, ptp4l_ns, phc2sys_ns=0):
+        return {
+            "status": "online", "last_heartbeat": time.time(),
+            "ptp4l_offset_ns": ptp4l_ns, "phc2sys_offset_ns": phc2sys_ns,
+        }
+
+    def test_passes_when_all_offsets_under_default_gate(self):
+        rec, facade = _make_recording()  # no config -> gate defaults to 50 us
+        facade.get_module_health.return_value = self._health(2_000, 1_500)  # 2 / 1.5 us
+        assert rec._check_ptp_sync(["camera_a"])["ok"] is True
+
+    def test_fails_when_ptp4l_offset_exceeds_gate(self):
+        rec, facade = _make_recording()
+        facade.get_module_health.return_value = self._health(80_000)  # 80 us > 50
+        result = rec._check_ptp_sync(["camera_a"])
+        assert result["ok"] is False
+        assert "start gate" in result["failures"][0]["reason"]
+
+    def test_fails_when_phc2sys_offset_exceeds_gate(self):
+        rec, facade = _make_recording()
+        facade.get_module_health.return_value = self._health(1_000, 90_000)  # ptp4l ok, phc2sys 90 us
+        result = rec._check_ptp_sync(["camera_a"])
+        assert result["ok"] is False
+        assert "phc2sys" in result["failures"][0]["reason"]
+
+    def test_uses_configured_start_gate(self):
+        rec, facade = _make_recording(recording={"ptp_start_gate_us": 200.0})
+        facade.get_module_health.return_value = self._health(120_000)  # 120 us < 200
+        assert rec._check_ptp_sync(["camera_a"])["ok"] is True
+
+    def test_start_gate_is_independent_of_ptp_threshold_us(self):
+        # A loose degraded-warning threshold must NOT loosen the start gate.
+        rec, facade = _make_recording(
+            recording={"ptp_start_gate_us": 50.0, "ptp_threshold_us": 5000.0}
+        )
+        facade.get_module_health.return_value = self._health(100_000)  # 100 us
+        assert rec._check_ptp_sync(["camera_a"])["ok"] is False
+
 
 class TestCheckShareWritable:
     def test_writable_share_returns_none(self):

@@ -28,14 +28,13 @@
     "_health_check_camera_silence_secs": 5
   },
   "export": {
-    "export_target": "controller",
     "auto_export": true,
     "delete_on_export": true,
     "_manifest_enabled": false,
     "share_ip": "10.0.0.1",
     "share_path": "controller_share",
     "share_username": "saviour_module",
-    "max_bitrate_mb": 950,
+    "max_bitrate_mb": 100,
     "max_burst_kb": 30
   }
 }

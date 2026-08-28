@@ -74,12 +74,16 @@ class Notifier:
             name=f"teams-alert-{key}",
         ).start()
 
-    def send_test(self, title: str = "SAVIOUR Test Alert", message: str = "This is a test message from the SAVIOUR controller.") -> tuple:
+    def send_test(self, title: str = "SAVIOUR Test Alert", message: str = "This is a test message from the SAVIOUR controller.", webhook_url: str | None = None) -> tuple:
         """Send a one-off test alert synchronously, bypassing cooldown.
+
+        webhook_url — test this URL instead of the saved teams.webhook_url, so
+        an operator can verify a webhook they've typed into the Alerts tab
+        before saving it. Falls back to the saved config value when None/empty.
 
         Returns (success: bool, detail: str).
         """
-        webhook_url = self.config.get("teams.webhook_url", "")
+        webhook_url = (webhook_url or "").strip() or self.config.get("teams.webhook_url", "")
         if not webhook_url:
             return False, "No webhook URL configured (teams.webhook_url is empty)"
         if not self.check_internet():
@@ -106,8 +110,16 @@ class Notifier:
                             },
                             {"type": "TextBlock", "text": message, "wrap": True},
                             {
+                                "type": "FactSet",
+                                "facts": [
+                                    {"title": "Controller", "value": self._controller_name()},
+                                    {"title": "Variant", "value": self._variant()},
+                                    {"title": "Version", "value": self._saviour_version()},
+                                ],
+                            },
+                            {
                                 "type": "TextBlock",
-                                "text": f"{self._controller_name()} · {timestamp}",
+                                "text": timestamp,
                                 "size": "Small",
                                 "isSubtle": True,
                             },
@@ -158,6 +170,35 @@ class Notifier:
         except Exception:
             return "unknown"
 
+    def _saviour_version(self) -> str:
+        """Running version from src/__version__.py (pre-commit-hook-written,
+        travels inside ZIP deploys) — same source web.py's version read uses."""
+        try:
+            from src.__version__ import __version__
+            return __version__ or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _variant(self) -> str:
+        """Controller variant/type from the shell-style /etc/saviour/config
+        (TYPE=habitat, etc.). "unknown" off-device or if unreadable."""
+        try:
+            with open("/etc/saviour/config") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("TYPE="):
+                        return line.split("=", 1)[1].strip().strip('"\'') or "unknown"
+        except Exception:
+            pass
+        return "unknown"
+
+    def _footer(self, timestamp: str) -> str:
+        """Compact one-line context footer for alert cards."""
+        return " · ".join([
+            self._controller_name(), self._variant(),
+            self._saviour_version(), timestamp,
+        ])
+
     def _send(self, webhook_url: str, title: str, message: str, severity: str) -> None:
         if not self.check_internet():
             self.logger.warning(f"Teams alert '{title}' skipped — no internet access")
@@ -192,9 +233,10 @@ class Notifier:
                             },
                             {
                                 "type": "TextBlock",
-                                "text": f"{self._controller_name()} · {timestamp}",
+                                "text": self._footer(timestamp),
                                 "size": "Small",
                                 "isSubtle": True,
+                                "wrap": True,
                             },
                         ],
                     },

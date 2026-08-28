@@ -539,9 +539,9 @@ class TestAuthGatedHandlers:
             facade.set_config.assert_called_once_with({"name": "hab1"})
 
     def test_save_controller_config_auto_syncs_export_when_share_changed(self):
-        """export.sync_all_modules defaults True -- a changed share config
-        should push out to every connected module without a separate manual
-        'Sync to All Modules' click."""
+        """The controller is the sole authority for the export destination, so
+        a changed share config always pushes out to every connected module
+        without a separate manual 'Sync to All Modules' click."""
         with tempfile.TemporaryDirectory() as tmpdir:
             web, facade = _make_web_with_facade()
             facade.get_config.side_effect = [
@@ -581,32 +581,11 @@ class TestAuthGatedHandlers:
 
             facade.sync_export_with_creds.assert_not_called()
 
-    def test_save_controller_config_no_auto_sync_when_disabled(self):
-        """export.sync_all_modules: false opts out of the auto-push -- the
-        manual 'Sync to All Modules' button still works either way, it just
-        isn't exercised by this handler."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            web, facade = _make_web_with_facade(**{"export.sync_all_modules": False})
-            facade.get_config.side_effect = [
-                {"export": {"share_ip": "10.0.0.1"}},
-                {"export": {"share_ip": "10.0.0.2"}},
-            ]
-            client = _connected_client(web)
-            _login(web, client, tmpdir)
-
-            client.emit("save_controller_config", {
-                "config": {"export": {"share_ip": "10.0.0.2"}}
-            })
-
-            facade.sync_export_with_creds.assert_not_called()
-
-    def test_save_controller_config_mounts_locally_even_when_module_sync_disabled(self):
+    def test_save_controller_config_mounts_locally_on_export_change(self):
         """The controller's own file-browser mount (ensure_export_share_mounted)
-        is independent of export.sync_all_modules -- that flag only controls
-        whether *other modules* get auto-pushed the new credentials, not
-        whether the controller itself can browse/download from the share."""
+        fires on any export-credential change, independent of the module push."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            web, facade = _make_web_with_facade(**{"export.sync_all_modules": False})
+            web, facade = _make_web_with_facade()
             web.ensure_export_share_mounted = MagicMock(return_value=True)
             facade.get_config.side_effect = [
                 {"export": {"share_ip": "10.0.0.1"}},
@@ -946,6 +925,90 @@ class TestSaveModuleConfig:
             })
 
             assert not any(c.args[0] == "camera_b" for c in facade.send_command.call_args_list)
+
+
+class TestConfigChangeRecordingGuards:
+    """reset_module_config and the fleet-wide apply_section_* handlers must
+    reject a config change that would hit a module mid-recording -- the same
+    protection save_module_config already applies per-module."""
+
+    def test_reset_module_config_blocked_while_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.side_effect = lambda mid: mid == "camera_a"
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("reset_module_config", {"module_id": "camera_a"})
+
+            facade.send_command.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
+
+    def test_reset_module_config_allowed_when_not_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.is_module_recording.return_value = False
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("reset_module_config", {"module_id": "camera_a"})
+
+            facade.send_command.assert_called_once_with("camera_a", "reset_config", {})
+
+    def test_apply_section_to_type_blocked_when_a_target_is_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules.return_value = {
+                "camera_a": {"type": "camera"}, "camera_b": {"type": "camera"},
+            }
+            facade.is_module_recording.side_effect = lambda mid: mid == "camera_b"
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("apply_section_to_type", {
+                "module_type": "camera", "section": "export",
+                "data": {"max_bitrate_mb": 100},
+            })
+
+            facade.apply_section_to_type.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
+
+    def test_apply_section_to_type_allowed_when_none_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules.return_value = {
+                "camera_a": {"type": "camera"}, "camera_b": {"type": "camera"},
+            }
+            facade.is_module_recording.return_value = False
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("apply_section_to_type", {
+                "module_type": "camera", "section": "export",
+                "data": {"max_bitrate_mb": 100},
+            })
+
+            facade.apply_section_to_type.assert_called_once_with(
+                "camera", "export", {"max_bitrate_mb": 100}
+            )
+
+    def test_apply_section_to_cameras_blocked_when_a_camera_is_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_modules.return_value = {
+                "camera_a": {"type": "camera"},
+                "ttl_x": {"type": "ttl"},
+            }
+            facade.is_module_recording.side_effect = lambda mid: mid == "camera_a"
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            client.emit("apply_section_to_cameras", {
+                "section": "camera", "data": {"rotation": 90},
+            })
+
+            facade.apply_section_to_cameras.assert_not_called()
+            assert client.get_received()[-1]["name"] == "module_config_error"
 
 
 class TestSendCommandDispatch:
@@ -1432,3 +1495,44 @@ class TestSetControllerTime:
             assert received[0]["name"] == "set_time_result"
             assert received[0]["args"][0]["success"] is False
             assert "Failed to set time" in received[0]["args"][0]["error"]
+
+
+class TestTeamsWebhookTest:
+    """test_teams_webhook: auth-gated, runs notifier.send_test in a thread,
+    and forwards the operator's typed (possibly unsaved) webhook_url."""
+
+    def test_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("test_teams_webhook", {"webhook_url": "https://x.invalid/h"})
+        facade.controller.notifier.send_test.assert_not_called()
+
+    def test_forwards_typed_webhook_url_to_send_test(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.controller.notifier.send_test.return_value = (True, "Message delivered (HTTP 200)")
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch("src.controller.web.threading.Thread") as mock_thread:
+                client.emit("test_teams_webhook", {"webhook_url": "https://typed.invalid/h"})
+                target = mock_thread.call_args.kwargs["target"]
+                target()
+
+            facade.controller.notifier.send_test.assert_called_once_with(
+                webhook_url="https://typed.invalid/h"
+            )
+            assert client.get_received()[-1]["name"] == "teams_test_result"
+
+    def test_no_payload_passes_none_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.controller.notifier.send_test.return_value = (False, "no webhook")
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch("src.controller.web.threading.Thread") as mock_thread:
+                client.emit("test_teams_webhook")
+                mock_thread.call_args.kwargs["target"]()
+
+            facade.controller.notifier.send_test.assert_called_once_with(webhook_url=None)

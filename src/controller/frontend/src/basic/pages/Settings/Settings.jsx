@@ -13,6 +13,15 @@ const getHashId = () => {
   return (slash === -1 ? raw : raw.slice(0, slash)) || "controller";
 };
 
+// The current tab suffix (or "") — preserved across a device switch so
+// changing module keeps you on the same section (Export/Thresholds/...),
+// not reset to the default tab.
+const getHashTab = () => {
+  const raw = window.location.hash.slice(1);
+  const slash = raw.indexOf("/");
+  return slash === -1 ? "" : raw.slice(slash + 1);
+};
+
 function Settings() {
   const { modules } = useModules();
   const [selectedId, setSelectedId] = useState(getHashId);
@@ -39,12 +48,13 @@ function Settings() {
   };
 
   // Write hash whenever selection changes — but only if the device id
-  // actually changed (e.g. on mount, it hasn't) so a tab suffix already in
-  // the hash isn't wiped out before the newly-mounted card's useHashTab
-  // gets a chance to read it.
+  // actually changed (e.g. on mount, it hasn't). Carry the current tab
+  // suffix across so switching module keeps the same section rather than
+  // dropping back to each card's default tab.
   useEffect(() => {
     if (getHashId() === selectedId) return;
-    window.location.hash = selectedId;
+    const tab = getHashTab();
+    window.location.hash = tab ? `${selectedId}/${tab}` : selectedId;
   }, [selectedId]);
 
   // Sync from hash on browser back/forward — same unsaved-changes guard,

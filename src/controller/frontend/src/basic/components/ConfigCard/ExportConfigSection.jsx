@@ -1,101 +1,52 @@
-import { useState } from "react";
 import { useExportSync } from "/src/hooks/useExportSync";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 
 /**
- * Renders the export section for any module config card.
+ * Export section for a module config card.
  *
- * When export_target === "controller" (default):
- *   - Samba credential fields are hidden; a one-click sync button fills them
- *     from the controller's own credentials automatically.
- *
- * When export_target === "manual":
- *   - Samba fields (IP, share, username, password) are shown for direct entry.
- *   - The sync button is hidden.
+ * The export destination (Samba share IP / path / credentials) is set once on
+ * the Controller (Settings → Controller → Export) and pushed to every module —
+ * the per-module "manual / custom Samba" override was removed 2026-08-28. This
+ * section shows the module's current destination read-only, a button to
+ * re-pull it from the controller on demand, and the module-local export
+ * behaviour (auto-export, delete-after-export, bandwidth cap).
  */
 function ExportConfigSection({ exportConfig, handleChange, moduleId }) {
-  const [showPassword, setShowPassword] = useState(false);
   const { syncStatus, syncExport } = useExportSync(moduleId);
   const loggedIn = useIsLoggedIn();
 
   const cfg = exportConfig ?? {};
-  const target = cfg.export_target ?? "controller";
-  const isManual = target === "manual";
-
   const onChange = (key, e) => handleChange(["export", key], e);
+
+  const dest = cfg.share_ip
+    ? `//${cfg.share_ip}/${cfg.share_path || "controller_share"}`
+    : null;
 
   return (
     <>
-      {/* ── Target ── */}
+      {/* ── Destination (read-only — set on the Controller) ── */}
       <div className="form-field">
-        <label>Target:</label>
-        <select
-          value={target}
-          onChange={e => onChange("export_target", e)}
-        >
-          <option value="controller">Controller (auto)</option>
-          <option value="manual">Manual (custom Samba)</option>
-        </select>
+        <label>Exports to:</label>
+        <span className="form-field-computed">
+          {dest ?? "not set — configure on the Controller"}
+          {cfg.share_username ? ` (${cfg.share_username})` : dest ? " (guest)" : ""}
+        </span>
+      </div>
+      <div className="config-action-buttons">
+        <button type="button" className="save-button"
+          onClick={syncExport}
+          disabled={!loggedIn || syncStatus === "syncing"}
+          title={loggedIn ? undefined : "Login required for this action"}>
+          {syncStatus === "syncing" ? "Syncing…" : "Re-sync destination from controller"}
+        </button>
+        {syncStatus && syncStatus !== "syncing" && (
+          <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
+            {syncStatus.success ? "Synced" : `Sync failed: ${syncStatus.error}`}
+          </span>
+        )}
       </div>
 
-      {/* ── Samba credentials — manual mode only ── */}
-      {isManual && (
-        <>
-          <div className="form-field">
-            <label>Share IP:</label>
-            <input type="text"
-              value={cfg.share_ip ?? ""}
-              onChange={e => onChange("share_ip", e)} />
-          </div>
-          <div className="form-field">
-            <label>Share name:</label>
-            <input type="text"
-              value={cfg.share_path ?? ""}
-              onChange={e => onChange("share_path", e)} />
-          </div>
-          <div className="form-field">
-            <label>Username:</label>
-            <input type="text"
-              value={cfg.share_username ?? ""}
-              onChange={e => onChange("share_username", e)} />
-          </div>
-          <div className="form-field">
-            <label>Password:</label>
-            <div className="exposure-control">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={cfg.share_password ?? ""}
-                onChange={e => onChange("share_password", e)}
-              />
-              <label className="exposure-manual-label">
-                <input type="checkbox"
-                  checked={showPassword}
-                  onChange={e => setShowPassword(e.target.checked)} />
-                Show
-              </label>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* ── Sync button — controller mode only ── */}
-      {!isManual && (
-        <div className="config-action-buttons">
-          <button type="button" className="save-button"
-            onClick={syncExport}
-            disabled={!loggedIn || syncStatus === "syncing"}
-            title={loggedIn ? undefined : "Login required for this action"}>
-            {syncStatus === "syncing" ? "Syncing…" : "Sync credentials from controller"}
-          </button>
-          {syncStatus && syncStatus !== "syncing" && (
-            <span className={`config-sync-badge ${syncStatus.success ? "config-sync-badge--synced" : "config-sync-badge--failed"}`}>
-              {syncStatus.success ? "Synced" : `Sync failed: ${syncStatus.error}`}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* ── Common fields ── */}
+      {/* ── Module-local export behaviour ── */}
       <div className="form-field">
         <label>Auto export:</label>
         <input type="checkbox"

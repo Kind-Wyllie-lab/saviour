@@ -18,6 +18,22 @@ repo's `tools/convert_to_hailo.py`. For a HEF that only emits raw YOLO tensors
 import cv2
 import numpy as np
 
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(x, -30.0, 30.0)))
+
+
+def _as_prob(x: np.ndarray) -> np.ndarray:
+    """Return `x` as a probability. Some Hailo-compiled YOLO heads bake the
+    final sigmoid into the score / keypoint-visibility branch and some don't —
+    a raw-logit tensor spans well outside [0, 1], an already-activated one does
+    not. Double-sigmoiding an activated branch squashes the usable range so the
+    confidence threshold stops discriminating (every cell reads ~0.5+), which is
+    exactly the "hundreds of false people" failure. Detect and skip it."""
+    if x.size and x.min() >= -1e-3 and x.max() <= 1.0 + 1e-3:
+        return np.clip(x, 0.0, 1.0)
+    return _sigmoid(x)
+
 # Where download_hefs.sh drops the curated stock HEFs on a deployed module.
 MODEL_DIR = "/usr/local/src/saviour/hailo_models"
 
@@ -198,6 +214,7 @@ class HailoPoseDetector:
     _ROW = 5 + _KP * 3   # 56
     _REG = 16            # DFL bins
     _INPUT = 640         # yolov8*_pose model-zoo HEFs are 640x640
+    _MAX_PER_SCALE = 200  # pre-NMS cap per scale (CPU guard, see _decode_raw)
 
     def __init__(self, hef_path: str, threshold: float = 0.3):
         from picamera2.devices.hailo import Hailo
@@ -372,8 +389,13 @@ class HailoPoseDetector:
             stride = self._INPUT / g
             gy, gx = np.mgrid[0:g, 0:g].astype(np.float32)
             gx, gy = gx.ravel(), gy.ravel()
-            sc = 1.0 / (1.0 + np.exp(-d["score"].reshape(-1)))
+            sc = _as_prob(d["score"].reshape(-1))
             keep = sc > self._threshold
+            # Safety cap: a mis-scaled score branch can pass most of the grid
+            # and wedge NMS + keypoint decode on the Pi CPU. Keep the strongest.
+            if keep.sum() > self._MAX_PER_SCALE:
+                cut = np.sort(sc[keep])[-self._MAX_PER_SCALE]
+                keep &= sc >= cut
             if not keep.any():
                 continue
             # box: DFL softmax over 16 bins per side -> l,t,r,b in grid units
@@ -391,7 +413,7 @@ class HailoPoseDetector:
             kp = d["kpt"].reshape(-1, self._KP, 3)[keep]
             kx = (kp[:, :, 0] * 2.0 + gx[keep][:, None]) * stride
             ky = (kp[:, :, 1] * 2.0 + gy[keep][:, None]) * stride
-            kv = 1.0 / (1.0 + np.exp(-kp[:, :, 2]))
+            kv = _as_prob(kp[:, :, 2])
             all_box.append(np.stack([x1, y1, x2, y2], 1))
             all_sc.append(sc[keep])
             all_kp.append(np.stack([kx, ky, kv], -1))

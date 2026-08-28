@@ -243,7 +243,6 @@ class TestCheckPtp:
 
 def _export_config(**overrides) -> MagicMock:
     defaults = {
-        "export.export_target":   "controller",
         "export.share_password":  "sekret",
         "export.share_ip":        "10.0.0.1",
         "export.share_path":      "controller_share",
@@ -254,23 +253,16 @@ def _export_config(**overrides) -> MagicMock:
 
 
 class TestCheckExport:
-    def test_non_controller_target_skips_check(self):
-        m = _bare_module(config=_export_config(**{"export.export_target": "local"}))
-        with patch("src.modules.module.subprocess.run") as mock_run:
-            result, message = m._check_export()
-        assert result is True
-        assert "skipping" in message
-        mock_run.assert_not_called()
-
     def test_missing_share_ip_fails_without_touching_network(self):
-        """share_ip, not password, is the real "nothing configured yet"
-        signal -- a blank password alone is a legitimate guest-share
-        configuration (see the guest-mount tests below)."""
+        """share_ip is the "nothing configured yet" signal -- a blank password
+        alone is a legitimate guest-share configuration (see the guest-mount
+        tests below). The controller is the sole authority for this value now,
+        so an empty share_ip means the operator hasn't set it there yet."""
         m = _bare_module(config=_export_config(**{"export.share_ip": ""}))
         with patch("src.modules.module.subprocess.run") as mock_run:
             result, message = m._check_export()
         assert result is False
-        assert "credentials not set" in message
+        assert "No export destination" in message
         mock_run.assert_not_called()
 
     def test_blank_username_and_password_mounts_as_guest(self):

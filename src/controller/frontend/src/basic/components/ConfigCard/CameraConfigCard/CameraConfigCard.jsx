@@ -45,13 +45,28 @@ const HABITAT_TABS = [
   { key: "motion", label: "Motion" },
 ];
 
+const HAILO_TABS = [
+  { key: "hailo", label: "AI" },
+];
+
 const EXPORT_TAB = { key: "export", label: "Export" };
+
+// Curated stock Hailo model-zoo nets — keep in sync with
+// src/modules/hailo_infer.py CURATED_MODELS. Grouped by `category` in the
+// dropdown. (A live list_hailo_models fetch would be nicer, but the demo just
+// needs the picker.)
+const HAILO_MODELS = [
+  { key: "yolov8s",  label: "YOLOv8s — balanced (default)", category: "Object detection" },
+  { key: "yolov6n",  label: "YOLOv6n — fastest",            category: "Object detection" },
+  { key: "yolov8m",  label: "YOLOv8m — most accurate",      category: "Object detection" },
+  { key: "yolov11n", label: "YOLOv11n — newest, fast",      category: "Object detection" },
+];
 
 // Every tab key any camera-card variant can show — passed to useHashTab so a
 // tab carried over from switching device (Settings.jsx) that isn't one of
 // this card's falls back to the default instead of rendering blank.
 const ALL_TAB_KEYS = [
-  ...BASE_TABS, ...LOOM_TABS, ...HABITAT_TABS, EXPORT_TAB,
+  ...BASE_TABS, ...LOOM_TABS, ...HABITAT_TABS, ...HAILO_TABS, EXPORT_TAB,
 ].map(t => t.key);
 
 const TAB_COPY_SECTION = {
@@ -62,6 +77,7 @@ const TAB_COPY_SECTION = {
   tracking: { key: "loom_tracking",  label: "Tracking" },
   stimulus: { key: "loom_stimulus",  label: "Stimulus" },
   motion:   { key: "habitat_motion", label: "Motion"   },
+  hailo:    { key: "hailo",          label: "AI"       },
   export:   { key: "export",         label: "Export"   },
 };
 
@@ -242,6 +258,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
     ...BASE_TABS,
     ...(module.type === "loom_camera" ? LOOM_TABS : []),
     ...(module.type === "habitat_camera" ? HABITAT_TABS : []),
+    ...(module.type === "hailo_camera" ? HAILO_TABS : []),
     EXPORT_TAB,
   ];
 
@@ -940,6 +957,53 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               has stayed below threshold for the full inactivity duration
               above (120s by default) — the same wait a real clip close-out
               would take. Use this to reset instantly while tuning.
+            </div>
+          </>
+        )}
+
+        {/* AI (hailo_camera) */}
+        {activeTab === "hailo" && (
+          <>
+            <div className="form-field">
+              <label>Model:</label>
+              <select
+                value={formData?.hailo?.model ?? "yolov8s"}
+                onChange={e => handleChange(["hailo", "model"], e)}>
+                {[...new Set(HAILO_MODELS.map(m => m.category))].map(cat => (
+                  <optgroup key={cat} label={cat}>
+                    {HAILO_MODELS.filter(m => m.category === cat).map(m => (
+                      <option key={m.key} value={m.key}>{m.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Hailo chip:</label>
+              <select
+                value={formData?.hailo?.arch ?? "hailo8"}
+                onChange={e => handleChange(["hailo", "arch"], e)}>
+                <option value="hailo8">Hailo-8 (26 TOPS)</option>
+                <option value="hailo8l">Hailo-8L (13 TOPS — AI Kit / AI HAT+)</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Confidence threshold:</label>
+              <input type="number" min="0.05" max="0.95" step="0.05"
+                value={formData?.hailo?.threshold ?? 0.4}
+                onChange={e => handleChange(["hailo", "threshold"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Max boxes drawn per frame:</label>
+              <input type="number" min="1" max="100" step="1"
+                value={formData?.hailo?.max_labels ?? 40}
+                onChange={e => handleChange(["hailo", "max_labels"], e)} />
+            </div>
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Live inference overlay on the preview stream only — the recorded
+              video is unaffected. The selected model's HEF must already be on
+              the module (<code>download_hefs.sh</code>); if it isn't, or there's
+              no Hailo device, the camera still records and the overlay shows why.
             </div>
           </>
         )}

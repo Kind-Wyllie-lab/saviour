@@ -27,74 +27,10 @@ from picamera2 import MappedArray
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
+# Detection + the on-chip-NMS picamera2 wrapper are shared with hailo_camera.
+from modules.hailo_infer import Detection, HailoDetector
 
-# ---------------------------------------------------------------------------
-# Data types
-# ---------------------------------------------------------------------------
-
-class Detection:
-    """A single object detection result."""
-    def __init__(self, category: int, conf: float, box: tuple):
-        self.category = category   # integer class index
-        self.conf = conf           # confidence 0–1
-        self.box = box             # (x, y, w, h) pixels on the original frame
-
-
-# ---------------------------------------------------------------------------
-# Hailo inference backend
-# ---------------------------------------------------------------------------
-
-class HailoDetector:
-    """
-    Wraps picamera2's Hailo integration for object detection.
-
-    Expected model output (hailo-all yolov8n and compatible models):
-        results[class_id] = ndarray (N, 5): [y_min, x_min, y_max, x_max, confidence]
-        all values normalised 0–1.
-    """
-
-    def __init__(self, hef_path: str, threshold: float = 0.5):
-        from picamera2.devices.hailo import Hailo
-        self._hailo = Hailo(hef_path)
-        self._input_shape = self._hailo.get_input_shape()
-        self._threshold = threshold
-
-    @property
-    def input_size(self) -> tuple:
-        shape = self._input_shape
-        if len(shape) == 4:
-            return shape[1], shape[2]
-        return shape[0], shape[1]
-
-    def detect(self, frame: np.ndarray, labels: list[str]) -> list[Detection]:
-        """Run inference on a BGR frame. Returns detections by descending confidence."""
-        h, w = self.input_size
-        rgb = cv2.cvtColor(cv2.resize(frame, (w, h)), cv2.COLOR_BGR2RGB)
-        return self._decode(self._hailo.run(rgb), frame.shape, labels)
-
-    def _decode(self, results, orig_shape: tuple, labels: list[str]) -> list[Detection]:
-        detections = []
-        oh, ow = orig_shape[:2]
-        for class_id, class_dets in enumerate(results):
-            if class_dets is None or len(class_dets) == 0:
-                continue
-            for det in class_dets:
-                if len(det) < 5:
-                    continue
-                y1, x1, y2, x2 = float(det[0]), float(det[1]), float(det[2]), float(det[3])
-                score = float(det[4])
-                if score < self._threshold:
-                    continue
-                box = (int(x1 * ow), int(y1 * oh),
-                       int((x2 - x1) * ow), int((y2 - y1) * oh))
-                detections.append(Detection(
-                    class_id if class_id < len(labels) else 0, score, box
-                ))
-        detections.sort(key=lambda d: d.conf, reverse=True)
-        return detections
-
-    def close(self):
-        self._hailo.close()
+__all__ = ["Detection", "HailoDetector"]  # re-exported for existing importers
 
 
 # ---------------------------------------------------------------------------

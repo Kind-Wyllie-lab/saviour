@@ -103,6 +103,13 @@ class RecordingSession:
     # Empty list means every day.
     scheduled_days:            list = field(default_factory=list)
     researcher:                str | None = None
+    # Long-term / unattended posture (weeks-long habitat runs). When True the
+    # session self-heals instead of parking terminally in ERROR: a module
+    # dropping its recording state stays ACTIVE while _monitor_sessions keeps
+    # re-issuing start_recording, and the per-fault alert is folded into a
+    # once-daily digest instead of firing every event. Orthogonal to
+    # scheduled/timed — an unattended session can still carry a timed_stop_at.
+    unattended:                bool = False
     # Set while PTP offset exceeds threshold on any recording module; cleared on recovery.
     ptp_warning:               str | None = None
     # Set while a module self-reports its recording capture has gone unhealthy
@@ -131,6 +138,10 @@ class Recording:
         self._gap_check_date: str | None = None          # last date gap-check ran
         self._monitor_cycle: int = 0                        # loop counter for periodic tasks
         self._readiness_checks: dict[str, float] = {}       # session_name → epoch when validate_readiness was dispatched
+        # Unattended-session fault digest: session_name → {module_id → count of
+        # self-healed "not recording" episodes since the last digest flush}.
+        self._unattended_fault_digest: dict[str, dict] = {}
+        self._unattended_digest_flushed_at: float = time.time()
 
         self._load_sessions()
 
@@ -333,13 +344,62 @@ class Recording:
             )
 
 
+    # -----------------------------------------------------------------------
+    # Unattended-session fault digest
+    # -----------------------------------------------------------------------
+
+    _UNATTENDED_DIGEST_INTERVAL_S = 86_400  # 24 h
+
+    def _record_unattended_fault(self, session_name: str, module_ids: list) -> None:
+        """Accumulate a self-healed 'not recording' episode for the daily digest
+        instead of firing a per-event alert."""
+        counts = self._unattended_fault_digest.setdefault(session_name, {})
+        for m in module_ids:
+            counts[m] = counts.get(m, 0) + 1
+
+    def _flush_unattended_digest(self, force: bool = False) -> None:
+        """Emit one Teams alert per unattended session that has accumulated
+        self-healed faults, then clear. Called on a 24 h cadence from the
+        monitor loop, and with force=True when such a session stops."""
+        now = time.time()
+        if not force and now - self._unattended_digest_flushed_at < self._UNATTENDED_DIGEST_INTERVAL_S:
+            return
+        self._unattended_digest_flushed_at = now
+        if not self._unattended_fault_digest:
+            return
+        pending = self._unattended_fault_digest
+        self._unattended_fault_digest = {}
+        if not self._notify_enabled("notify_session_faults"):
+            return
+        for session_name, counts in pending.items():
+            total = sum(counts.values())
+            per_module = ", ".join(
+                f"{m} ×{n}" if n > 1 else m
+                for m, n in sorted(counts.items(), key=lambda kv: -kv[1])
+            )
+            self.facade.send_alert(
+                key=f"unattended_digest_{session_name}_{int(now)}",
+                title=f"Unattended session digest — {session_name}",
+                message=(
+                    f"Session **{session_name}** self-healed {total} module "
+                    f"recording dropout(s) in the last 24 h and is still running: "
+                    f"{per_module}. No action needed unless this count is climbing."
+                ),
+                severity="info",
+            )
+
+
     def create_session(self, session_name: str, target: str,
                        duration_minutes: float | None = None,
                        researcher: str | None = None,
-                       raw_name: bool = False) -> dict:
+                       raw_name: bool = False,
+                       unattended: bool = False) -> dict:
         """Create a session in PENDING state -- modules assigned, nothing
         recording yet. Call start_pending_session() (via the unified
         force_start_session()) to actually begin recording.
+
+        unattended: long-term posture -- self-heal instead of terminal ERROR,
+        digest fault alerts. See RecordingSession.unattended.
 
         Returns a result dict so the caller can surface errors to the frontend.
         """
@@ -372,6 +432,7 @@ class Recording:
             modules=modules,
             duration_minutes=duration_minutes,
             researcher=researcher or None,
+            unattended=bool(unattended),
         )
 
         with self._lock:
@@ -1246,6 +1307,9 @@ class Recording:
                 severity="info",
             )
 
+        if new_state == SessionState.STOPPED and session_name in self._unattended_fault_digest:
+            self._flush_unattended_digest(force=True)
+
         if new_state == SessionState.SCHEDULED:
             self._send_daily_summary(session_name, session)
 
@@ -1807,6 +1871,7 @@ class Recording:
                 self._check_export_staleness()
                 self._check_export_stall_after_stop()
                 self._poll_recording_state()
+                self._flush_unattended_digest()
 
             # ── Daily gap detection (once per calendar day) ───────────────────
             if self._gap_check_date != today:
@@ -1864,78 +1929,102 @@ class Recording:
                                 except Exception as e:
                                     self.logger.warning(f"Could not probe {m}: {e}")
 
-                        # Check every module that should be recording actually is.
-                        # Require _NOT_RECORDING_STRIKES_THRESHOLD consecutive misses before
-                        # declaring ERROR — one miss is normal during a segment transition.
-                        _NOT_RECORDING_STRIKES_THRESHOLD = 2
-                        should_be_recording = [
-                            m for m in session.modules
-                            if session.module_stop_states.get(m) == "recording"
-                        ]
-                        not_recording = []
-                        for m in should_be_recording:
-                            key = (session_name, m)
-                            if not self.facade.is_module_recording(m):
-                                strikes = self._not_recording_strikes.get(key, 0) + 1
-                                self._not_recording_strikes[key] = strikes
-                                if strikes >= _NOT_RECORDING_STRIKES_THRESHOLD:
-                                    not_recording.append(m)
-                            else:
-                                self._not_recording_strikes.pop(key, None)
-                        if not_recording:
-                            msg = f"Not recording: {', '.join(not_recording)}"
-                            if session.error_message != msg or session.state != SessionState.ERROR:
-                                session.error_message = msg
-                                if session.state != SessionState.ERROR:
-                                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-                                session.state = SessionState.ERROR
-                                self.facade.update_sessions(self.sessions)
-                                self._log_session_event(session_name, "FAULT", msg)
-                                if self._notify_enabled("notify_session_faults"):
-                                    self.facade.send_alert(
-                                        key=f"session_error_{session_name}",
-                                        title=f"Recording error — {session_name}",
-                                        message=(
-                                            f"Session **{session_name}** has entered an error state. "
-                                            f"The following modules are not recording: {', '.join(not_recording)}."
-                                        ),
-                                    )
-                            # Actively attempt recovery, not just flag the fault -- this is the
-                            # only place that notices a module lost its recording state without
-                            # the module ever having been marked offline (e.g. a service restart
-                            # fast enough to stay under health.py's suspicion_timeout, so the
-                            # offline->online edge that module_back_online() normally hangs off
-                            # of never fires). Confirmed live: a module restarted mid-recording,
-                            # the fault above correctly triggered ("Not recording: <module>"),
-                            # but nothing ever re-sent start_recording -- the session just sat in
-                            # ERROR indefinitely. module_back_online() already has the right
-                            # guards (session.state in ACTIVE/ERROR, skips a redundant resend if
-                            # already confirmed recording) and retries harmlessly on the next
-                            # cycle if this attempt doesn't stick (the module's own
-                            # start_recording is a no-op error, not a crash, if already recording).
-                            for m in not_recording:
-                                self.module_back_online(m)
-                        elif session.state == SessionState.ERROR and should_be_recording:
-                            # All modules we were actively checking are now recording — recover.
-                            # Guard: if should_be_recording is empty (e.g. all states are "unknown"
-                            # after a restart) we cannot confirm recovery, so leave the ERROR state.
-                            reason = session.error_message or "faulted modules"
-                            recovery_msg = f"Recovered — {reason} now recording"
-                            self._log_session_event(
-                                session_name, "RECOVERY", recovery_msg
-                            )
-                            session.error_message = ""
-                            session.error_time = None
-                            session.state = SessionState.ACTIVE
-                            for m in session.modules:
-                                self._not_recording_strikes.pop((session_name, m), None)
-                            self.facade.update_sessions(self.sessions)
+                        self._check_session_recording_liveness(session_name, session)
 
                         if session.state == SessionState.ACTIVE:
                             self._check_ptp_mid_recording(session_name, session)
 
                 except Exception as e:
                     self.logger.error(f"Error monitoring session '{session_name}': {e}")
+
+
+    # Consecutive monitor cycles a module can be seen "not recording" before it
+    # counts as a fault — one miss is normal during a segment transition.
+    _NOT_RECORDING_STRIKES_THRESHOLD = 2
+
+    def _check_session_recording_liveness(self, session_name: str, session: "RecordingSession") -> None:
+        """One monitor pass over an ACTIVE/ERROR session: confirm every module
+        that should be recording actually is, fault (or, for an unattended
+        session, just record + self-heal) if not, and recover when they're back.
+
+        Extracted from _monitor_sessions' loop body so it can be exercised
+        directly in tests."""
+        should_be_recording = [
+            m for m in session.modules
+            if session.module_stop_states.get(m) == "recording"
+        ]
+        not_recording = []
+        for m in should_be_recording:
+            key = (session_name, m)
+            if not self.facade.is_module_recording(m):
+                strikes = self._not_recording_strikes.get(key, 0) + 1
+                self._not_recording_strikes[key] = strikes
+                if strikes >= self._NOT_RECORDING_STRIKES_THRESHOLD:
+                    not_recording.append(m)
+            else:
+                self._not_recording_strikes.pop(key, None)
+
+        if not_recording:
+            msg = f"Not recording: {', '.join(not_recording)}"
+            # An unattended (long-term) session never parks terminally in
+            # ERROR -- it stays ACTIVE and lets the recovery below keep
+            # re-issuing start_recording. The fault is still recorded
+            # (error_message/error_time for the UI badge, session_events.log)
+            # but the per-event alert is folded into a daily digest.
+            wants_error_state = not session.unattended
+            faulted_now = (
+                session.error_message != msg
+                or (wants_error_state and session.state != SessionState.ERROR)
+            )
+            if faulted_now:
+                session.error_message = msg
+                if not session.error_time:
+                    session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+                if wants_error_state:
+                    session.state = SessionState.ERROR
+                self.facade.update_sessions(self.sessions)
+                self._log_session_event(session_name, "FAULT", msg)
+                if self._notify_enabled("notify_session_faults"):
+                    if session.unattended:
+                        self._record_unattended_fault(session_name, not_recording)
+                    else:
+                        self.facade.send_alert(
+                            key=f"session_error_{session_name}",
+                            title=f"Recording error — {session_name}",
+                            message=(
+                                f"Session **{session_name}** has entered an error state. "
+                                f"The following modules are not recording: {', '.join(not_recording)}."
+                            ),
+                        )
+            # Actively attempt recovery, not just flag the fault -- this is the
+            # only place that notices a module lost its recording state without
+            # ever being marked offline (e.g. a service restart fast enough to
+            # stay under health.py's suspicion_timeout, so the offline->online
+            # edge module_back_online() normally hangs off never fires). It has
+            # the right guards (session ACTIVE/ERROR, skips a redundant resend
+            # if already recording) and retries harmlessly next cycle.
+            for m in not_recording:
+                self.module_back_online(m)
+        elif should_be_recording and (
+            session.state == SessionState.ERROR
+            or (session.unattended and session.error_message)
+        ):
+            # Every module we were checking is now recording — recover. If
+            # should_be_recording is empty (e.g. all "unknown" after a restart)
+            # we can't confirm recovery, so leave the fault as-is. For an
+            # unattended session the state is still ACTIVE here — we're just
+            # clearing the fault record.
+            reason = session.error_message or "faulted modules"
+            self._log_session_event(
+                session_name, "RECOVERY", f"Recovered — {reason} now recording"
+            )
+            session.error_message = ""
+            session.error_time = None
+            if session.state == SessionState.ERROR:
+                session.state = SessionState.ACTIVE
+            for m in session.modules:
+                self._not_recording_strikes.pop((session_name, m), None)
+            self.facade.update_sessions(self.sessions)
 
 
     # -----------------------------------------------------------------------
@@ -1971,10 +2060,14 @@ class Recording:
             for name, d in data.items():
                 session = RecordingSession(**d)
                 if session.state == SessionState.ACTIVE:
-                    session.state = SessionState.ERROR
                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"
                     session.module_stop_states = {m: "unknown" for m in session.modules}
+                    # An unattended (long-term) session stays ACTIVE so the
+                    # monitor loop re-arms its modules instead of parking it in
+                    # ERROR for an operator who isn't watching.
+                    if not session.unattended:
+                        session.state = SessionState.ERROR
                     self._log_session_event(name, "FAULT",
                         "Controller restarted during active session — awaiting module reconnect")
                 self.sessions[name] = session

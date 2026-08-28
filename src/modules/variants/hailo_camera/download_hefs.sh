@@ -29,9 +29,12 @@ done
 # ── Detect the fitted accelerator ────────────────────────────────────────────
 if [ -z "$ARCH" ]; then
     if command -v hailortcli >/dev/null 2>&1; then
-        # "Device Architecture: HAILO8" | "HAILO8L"
+        # "Device Architecture: HAILO8" | "HAILO8L". -a: hailortcli output
+        # carries a control char that makes plain grep report "binary file
+        # matches" and drop the line.
         det=$(hailortcli fw-control identify 2>/dev/null \
-              | grep -i 'Device Architecture' | tr -d ' ' | cut -d: -f2 | tr 'A-Z' 'a-z' || true)
+              | grep -a -i 'Device Architecture' | tr -cd 'A-Za-z0-9:' \
+              | cut -d: -f2 | tr 'A-Z' 'a-z' || true)
         case "$det" in
             hailo8l) ARCH="hailo8l" ;;
             hailo8)  ARCH="hailo8"  ;;

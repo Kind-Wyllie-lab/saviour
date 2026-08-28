@@ -890,13 +890,17 @@ class Web(ABC):
             session_name = data.get("session_name")
             duration_minutes = data.get("duration_minutes")  # None = infinite
             researcher = data.get("researcher") or None
-            self.logger.info(f"Received request to create session {session_name} targeting {target} (duration_minutes={duration_minutes})")
+            unattended = bool(data.get("unattended"))
+            self.logger.info(
+                f"Received request to create session {session_name} targeting {target} "
+                f"(duration_minutes={duration_minutes}, unattended={unattended})"
+            )
             nas_error = self._check_nas_free_space()
             if nas_error:
                 self.logger.error(f"NAS pre-check failed: {nas_error}")
                 self.socketio.emit("session_error", {"error": f"NAS unreachable — {nas_error}"})
                 return
-            result = self.facade.create_session(session_name, target, duration_minutes, researcher)
+            result = self.facade.create_session(session_name, target, duration_minutes, researcher, unattended=unattended)
             if result and not result.get("success"):
                 self.socketio.emit("session_error", {"error": result.get("error")})
             elif result and result.get("success"):

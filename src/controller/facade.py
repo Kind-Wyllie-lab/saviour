@@ -138,8 +138,8 @@ class ControllerFacade:
             return {"ok": True}
         return self.controller.recording._check_ptp_sync(modules)
 
-    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False) -> dict:
-        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name)
+    def create_session(self, session_name: str, target: str, duration_minutes=None, researcher=None, raw_name=False, unattended=False) -> dict:
+        return self.controller.recording.create_session(session_name, target, duration_minutes, researcher, raw_name, unattended)
 
     def update_pending_session(self, session_name: str, new_session_name=None, duration_minutes=None) -> dict:
         return self.controller.recording.update_pending_session(session_name, new_session_name, duration_minutes)

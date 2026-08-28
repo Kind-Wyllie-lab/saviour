@@ -1087,6 +1087,95 @@ class TestForceStartScheduledSession:
 # Tier C: filesystem-touching helpers -- real tmp paths, no hardcoded /var or /home
 # ---------------------------------------------------------------------------
 
+class TestUnattendedSession:
+    """Unattended (long-term) sessions self-heal instead of parking in ERROR,
+    and fold per-fault alerts into a daily digest."""
+
+    def _faulted_session(self, unattended: bool):
+        # module_back_online is patched out so these exercise
+        # _check_session_recording_liveness' own fault/recovery logic in
+        # isolation (module_back_online has its own optimistic state flipping,
+        # covered by TestModuleBackOnline).
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(
+            state=SessionState.ACTIVE, modules=["cam1"],
+            module_stop_states={"cam1": "recording"}, unattended=unattended,
+        )
+        facade.is_module_recording.return_value = False
+        rec.module_back_online = MagicMock()
+        return rec, facade
+
+    def _run(self, rec, n=2):
+        for _ in range(n):  # n strikes
+            rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+
+    def test_normal_session_goes_error_on_not_recording(self):
+        rec, _f = self._faulted_session(unattended=False)
+        self._run(rec)
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ERROR
+        assert s.error_message == "Not recording: cam1"
+        rec.module_back_online.assert_called_with("cam1")
+
+    def test_unattended_session_stays_active_but_records_fault(self):
+        rec, _f = self._faulted_session(unattended=True)
+        self._run(rec)
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ACTIVE          # never terminal-ERROR
+        assert s.error_message == "Not recording: cam1"  # still recorded for the badge
+        assert s.error_time is not None
+        rec.module_back_online.assert_called_with("cam1")  # still self-heals
+
+    def test_unattended_fault_goes_to_digest_not_immediate_alert(self):
+        rec, facade = self._faulted_session(unattended=True)
+        self._run(rec)
+        facade.send_alert.assert_not_called()
+        assert rec._unattended_fault_digest == {"exp1": {"cam1": 1}}
+
+    def test_unattended_session_recovers_and_clears_fault(self):
+        rec, facade = self._faulted_session(unattended=True)
+        self._run(rec)
+        assert rec.sessions["exp1"].error_message  # faulted
+        facade.is_module_recording.return_value = True
+        rec._check_session_recording_liveness("exp1", rec.sessions["exp1"])
+        s = rec.sessions["exp1"]
+        assert s.state == SessionState.ACTIVE
+        assert s.error_message == ""
+        assert s.error_time is None
+
+    def test_flush_digest_emits_one_summary_alert_then_clears(self):
+        rec, facade = _make_recording()
+        rec._unattended_fault_digest = {"exp1": {"cam1": 3, "cam2": 1}}
+        rec._flush_unattended_digest(force=True)
+        facade.send_alert.assert_called_once()
+        msg = facade.send_alert.call_args.kwargs["message"]
+        assert "self-healed 4" in msg
+        assert "cam1 ×3" in msg
+        assert rec._unattended_fault_digest == {}
+
+    def test_flush_digest_noop_before_interval(self):
+        rec, facade = _make_recording()
+        rec._unattended_fault_digest = {"exp1": {"cam1": 1}}
+        rec._unattended_digest_flushed_at = time.time()  # just flushed
+        rec._flush_unattended_digest(force=False)
+        facade.send_alert.assert_not_called()
+        assert rec._unattended_fault_digest == {"exp1": {"cam1": 1}}
+
+    def test_load_keeps_unattended_active_session_active(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_file = os.path.join(tmpdir, "sessions.json")
+            rec, _f = _make_recording(sessions_file=sessions_file)
+            rec.sessions["exp1"] = _session(
+                state=SessionState.ACTIVE, modules=["cam1"], unattended=True,
+            )
+            rec._save_sessions()
+            with patch("src.controller.recording.threading.Thread"):
+                rec2 = Recording()
+            s = rec2.sessions["exp1"]
+            assert s.state == SessionState.ACTIVE
+            assert s.error_message == "Controller restarted during active session"
+
+
 class TestCheckPtpSync:
     """_check_ptp_sync is the recording-START gate — its own key
     (recording.ptp_start_gate_us, default 50 us), deliberately tighter than

@@ -2013,8 +2013,11 @@ class Web(ABC):
         def handle_test_teams_webhook(data=None):
             if not self._require_auth("auth_required"):
                 return
+            # Optional: test the URL the operator has typed into the Alerts tab
+            # (unsaved) rather than the saved config value.
+            override_url = (data or {}).get("webhook_url") if isinstance(data, dict) else None
             def _run():
-                success, detail = self.facade.controller.notifier.send_test()
+                success, detail = self.facade.controller.notifier.send_test(webhook_url=override_url)
                 self.socketio.emit("teams_test_result", {"success": success, "detail": detail})
             threading.Thread(target=_run, daemon=True, name="teams-test").start()
 

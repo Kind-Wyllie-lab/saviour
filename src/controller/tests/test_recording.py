@@ -1087,6 +1087,50 @@ class TestForceStartScheduledSession:
 # Tier C: filesystem-touching helpers -- real tmp paths, no hardcoded /var or /home
 # ---------------------------------------------------------------------------
 
+class TestCheckPtpSync:
+    """_check_ptp_sync is the recording-START gate — its own key
+    (recording.ptp_start_gate_us, default 50 us), deliberately tighter than
+    ptp_threshold_us (the mid-recording degraded warning)."""
+
+    def _health(self, ptp4l_ns, phc2sys_ns=0):
+        return {
+            "status": "online", "last_heartbeat": time.time(),
+            "ptp4l_offset_ns": ptp4l_ns, "phc2sys_offset_ns": phc2sys_ns,
+        }
+
+    def test_passes_when_all_offsets_under_default_gate(self):
+        rec, facade = _make_recording()  # no config -> gate defaults to 50 us
+        facade.get_module_health.return_value = self._health(2_000, 1_500)  # 2 / 1.5 us
+        assert rec._check_ptp_sync(["camera_a"])["ok"] is True
+
+    def test_fails_when_ptp4l_offset_exceeds_gate(self):
+        rec, facade = _make_recording()
+        facade.get_module_health.return_value = self._health(80_000)  # 80 us > 50
+        result = rec._check_ptp_sync(["camera_a"])
+        assert result["ok"] is False
+        assert "start gate" in result["failures"][0]["reason"]
+
+    def test_fails_when_phc2sys_offset_exceeds_gate(self):
+        rec, facade = _make_recording()
+        facade.get_module_health.return_value = self._health(1_000, 90_000)  # ptp4l ok, phc2sys 90 us
+        result = rec._check_ptp_sync(["camera_a"])
+        assert result["ok"] is False
+        assert "phc2sys" in result["failures"][0]["reason"]
+
+    def test_uses_configured_start_gate(self):
+        rec, facade = _make_recording(recording={"ptp_start_gate_us": 200.0})
+        facade.get_module_health.return_value = self._health(120_000)  # 120 us < 200
+        assert rec._check_ptp_sync(["camera_a"])["ok"] is True
+
+    def test_start_gate_is_independent_of_ptp_threshold_us(self):
+        # A loose degraded-warning threshold must NOT loosen the start gate.
+        rec, facade = _make_recording(
+            recording={"ptp_start_gate_us": 50.0, "ptp_threshold_us": 5000.0}
+        )
+        facade.get_module_health.return_value = self._health(100_000)  # 100 us
+        assert rec._check_ptp_sync(["camera_a"])["ok"] is False
+
+
 class TestCheckShareWritable:
     def test_writable_share_returns_none(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -134,6 +134,20 @@ class TestSegDecode:
         assert s.mask.shape == (480, 640)
         assert s.mask.dtype == np.uint8
 
+    def test_two_instances_distinct_masks(self):
+        d = _blank_seg_detector(threshold=0.5)
+        run = _seg_run(nc=80)
+        # two hot cells at the coarsest grid, different classes
+        cls0 = run["cls0"]
+        cls0[10, 10, 0] = 0.9
+        cls0[60, 60, 15] = 0.8
+        res = d._decode(run, (480, 640, 3))
+        assert len(res) == 2
+        # sorted by score desc; masks are disjoint uint8 {0,1} full-frame
+        for s in res:
+            assert s.mask.shape == (480, 640)
+        assert not np.any((res[0].mask > 0) & (res[1].mask > 0))
+
     def test_proto_chw_layout_accepted(self):
         d = _blank_seg_detector(threshold=0.5)
         run = _seg_run(hot=(10, 10), proto_layout="chw")

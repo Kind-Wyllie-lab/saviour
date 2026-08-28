@@ -66,6 +66,13 @@ class HailoCameraModule(CameraBase):
         self._max_labels = 40
         self._infer_error_logged = False
         self._rebuilding = False
+        # Inference throttle: run the net every Nth streamed frame and redraw
+        # the cached result on the frames in between. The overlay is 1-2 frames
+        # stale, imperceptible for a demo, and it roughly doubles preview fps.
+        self._infer_every_n = 2
+        self._infer_counter = 0
+        self._last_results: list = []
+        self._last_summary = ""
         # CameraBase.__init__ runs _configure_camera(), not
         # configure_module_special(), so build the detector explicitly here —
         # same pattern as habitat_camera's _configure_habitat_motion() call.
@@ -94,6 +101,7 @@ class HailoCameraModule(CameraBase):
             model_key = self.config.get("hailo.model", DEFAULT_MODEL)
             threshold = float(self.config.get("hailo.threshold", 0.4))
             self._max_labels = int(self.config.get("hailo.max_labels", 40))
+            self._infer_every_n = max(1, int(self.config.get("hailo.infer_every_n", 2)))
 
             spec = CURATED_MODELS.get(model_key)
             if spec is None:
@@ -173,20 +181,26 @@ class HailoCameraModule(CameraBase):
         with self._det_lock:
             detector = self.detector
             if detector is None:
+                self._last_results = []
                 if self._rebuilding:
                     self._status_line(m, "AI: loading model…", (0, 191, 255))
                 else:
                     self._status_line(m, f"AI off: {self._detector_error or 'no model'}", (0, 0, 255))
                 return
             model_key, task, labels = self._model_key, self._task, self._labels
-            try:
-                results = detector.detect(m.array, labels)
-            except Exception as e:
-                if not self._infer_error_logged:
-                    self.logger.error(f"Hailo inference failed: {e}")
-                    self._infer_error_logged = True
-                self._status_line(m, "AI: inference error (see journal)", (0, 0, 255))
-                return
+            self._infer_counter += 1
+            run_now = (self._infer_counter % self._infer_every_n) == 0
+            if run_now:
+                try:
+                    self._last_results = detector.detect(m.array, labels)
+                except Exception as e:
+                    if not self._infer_error_logged:
+                        self.logger.error(f"Hailo inference failed: {e}")
+                        self._infer_error_logged = True
+                    self._last_results = []
+                    self._status_line(m, "AI: inference error (see journal)", (0, 0, 255))
+                    return
+            results = self._last_results
 
         if task == "pose":
             summary = self._draw_poses(m.array, results)

@@ -1,0 +1,44 @@
+{
+    "module": {
+        "group": "hailo_camera"
+    },
+    "camera": {
+        "monochrome": false,
+        "hflip": false,
+        "vflip": false,
+        "rotation": 0,
+        "crop_rect": null,
+        "sensor_mode_index": 2,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "overlay_timestamp": true,
+        "text_size": "medium",
+        "gain": 1,
+        "manual_exposure": false,
+        "exposure_time": 10000,
+        "ae_enable": true,
+        "brightness": 0,
+        "contrast": 1.0,
+        "sharpness": 1.0,
+        "noise_reduction_mode": "fast",
+        "overlay_framerate_on_preview": true,
+        "bitrate_mb": 2,
+        "autofocus_mode": "manual",
+        "lens_position": 0.0,
+        "sync_mode": "none",
+        "framesync_enabled": false,
+        "_codec": "h264",
+        "_profile": "high",
+        "_level": 4.2
+    },
+    "hailo": {
+        "model": "yolov8s",
+        "arch": "hailo8",
+        "threshold": 0.4,
+        "max_labels": 40
+    },
+    "recording": {
+        "_recording_filetype": "ts"
+    }
+}

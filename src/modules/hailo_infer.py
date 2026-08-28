@@ -182,18 +182,22 @@ class HailoPoseDetector:
     """
     Wraps picamera2's Hailo integration for yolov8*-pose (17 COCO keypoints).
 
-    The model-zoo pose HEFs bake NMS + pose decode in, so `Hailo.run()` returns
-    one row per person of [y1, x1, y2, x2, score, then 17*(kx, ky, kconf)] with
-    box + keypoint coords normalised 0–1. The exact nesting picamera2 hands back
-    varies a little by version, so _decode is defensive about wrapper lists and
-    a possible split (boxes, scores, keypoints) layout.
+    The Hailo model-zoo yolov8*_pose HEFs ship the raw multi-scale head
+    UNDECODED: `Hailo.run()` returns a dict of conv tensors, 3 scales x
+    {box HxWx64 (DFL), score HxWx1, kpt HxWx51 (17x3)}. `_decode_raw` does the
+    full YOLOv8-pose decode (DFL softmax boxes + sigmoid scores + kpt decode +
+    NMS). _decode also keeps fallbacks for a HEF that instead emits per-person
+    dicts or flat [y1,x1,y2,x2,score,17*(x,y,c)] rows.
 
-    NOT verified against a real run yet — if the shape differs, only _decode
-    changes.
+    Verified shape (yolov8s_pose, zoo v2.14.0 / hailo8l): conv43-45 (80x80),
+    conv57-59 (40x40), conv70-72 (20x20). Decode geometry not yet checked
+    against real footage.
     """
 
     _KP = 17
     _ROW = 5 + _KP * 3   # 56
+    _REG = 16            # DFL bins
+    _INPUT = 640         # yolov8*_pose model-zoo HEFs are 640x640
 
     def __init__(self, hef_path: str, threshold: float = 0.3):
         from picamera2.devices.hailo import Hailo
@@ -314,9 +318,108 @@ class HailoPoseDetector:
             return list(node)
         return []
 
+    # --- raw multi-scale YOLOv8-pose head (model-zoo HEFs ship undecoded) -----
+    def _raw_scales(self, raw):
+        """If `raw` is the dict of conv tensors a yolov8*_pose HEF emits, group
+        it into {grid_size: {'box':HxWx64, 'score':HxWx1, 'kpt':HxWx51}}."""
+        node = raw
+        while isinstance(node, (list, tuple)) and len(node) == 1:
+            node = node[0]
+        if not isinstance(node, dict):
+            return None
+        scales: dict = {}
+        for arr in node.values():
+            a = np.asarray(arr, dtype=np.float32)
+            if a.ndim != 3 or a.shape[0] != a.shape[1]:
+                return None
+            g, c = a.shape[0], a.shape[2]
+            d = scales.setdefault(g, {})
+            if c == 4 * self._REG:
+                d["box"] = a
+            elif c == 1:
+                d["score"] = a
+            elif c == self._KP * 3:
+                d["kpt"] = a
+        if not scales or any({"box", "score", "kpt"} - set(d) for d in scales.values()):
+            return None
+        return scales
+
+    @staticmethod
+    def _nms(boxes, scores, iou_thr=0.45):
+        x1, y1, x2, y2 = boxes.T
+        areas = (x2 - x1) * (y2 - y1)
+        order = scores.argsort()[::-1]
+        keep = []
+        while order.size:
+            i = order[0]
+            keep.append(int(i))
+            xx1 = np.maximum(x1[i], x1[order[1:]])
+            yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]])
+            yy2 = np.minimum(y2[i], y2[order[1:]])
+            w = np.clip(xx2 - xx1, 0, None)
+            h = np.clip(yy2 - yy1, 0, None)
+            inter = w * h
+            iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-9)
+            order = order[1:][iou <= iou_thr]
+        return keep
+
+    def _decode_raw(self, scales, orig_shape) -> list[PoseResult]:
+        oh, ow = orig_shape[:2]
+        bins = np.arange(self._REG, dtype=np.float32)
+        all_box, all_sc, all_kp = [], [], []
+        for g, d in scales.items():
+            stride = self._INPUT / g
+            gy, gx = np.mgrid[0:g, 0:g].astype(np.float32)
+            gx, gy = gx.ravel(), gy.ravel()
+            sc = 1.0 / (1.0 + np.exp(-d["score"].reshape(-1)))
+            keep = sc > self._threshold
+            if not keep.any():
+                continue
+            # box: DFL softmax over 16 bins per side -> l,t,r,b in grid units
+            box = d["box"].reshape(-1, 4, self._REG)[keep]
+            box = box - box.max(-1, keepdims=True)
+            box = np.exp(box)
+            box /= box.sum(-1, keepdims=True)
+            dist = (box * bins).sum(-1)               # (K, 4)
+            cx, cy = gx[keep] + 0.5, gy[keep] + 0.5    # anchor centres, grid units
+            x1 = (cx - dist[:, 0]) * stride
+            y1 = (cy - dist[:, 1]) * stride
+            x2 = (cx + dist[:, 2]) * stride
+            y2 = (cy + dist[:, 3]) * stride
+            # keypoints: (K,17,3) -> pixels in the 640 frame
+            kp = d["kpt"].reshape(-1, self._KP, 3)[keep]
+            kx = (kp[:, :, 0] * 2.0 + gx[keep][:, None]) * stride
+            ky = (kp[:, :, 1] * 2.0 + gy[keep][:, None]) * stride
+            kv = 1.0 / (1.0 + np.exp(-kp[:, :, 2]))
+            all_box.append(np.stack([x1, y1, x2, y2], 1))
+            all_sc.append(sc[keep])
+            all_kp.append(np.stack([kx, ky, kv], -1))
+
+        if not all_box:
+            return []
+        B = np.concatenate(all_box)
+        S = np.concatenate(all_sc)
+        Kp = np.concatenate(all_kp)
+        rx, ry = ow / self._INPUT, oh / self._INPUT
+        out: list[PoseResult] = []
+        for i in self._nms(B, S):
+            bx1, by1, bx2, by2 = B[i]
+            box = (int(bx1 * rx), int(by1 * ry),
+                   int((bx2 - bx1) * rx), int((by2 - by1) * ry))
+            kps = [(int(Kp[i, j, 0] * rx), int(Kp[i, j, 1] * ry), float(Kp[i, j, 2]))
+                   for j in range(self._KP)]
+            out.append(PoseResult(box, float(S[i]), kps))
+        out.sort(key=lambda p: p.score, reverse=True)
+        return out
+
     def _decode(self, raw, orig_shape: tuple) -> list[PoseResult]:
         oh, ow = orig_shape[:2]
         out: list[PoseResult] = []
+
+        scales = self._raw_scales(raw)
+        if scales is not None:
+            return self._decode_raw(scales, orig_shape)
 
         dicts = self._dicts(raw)
         if dicts:

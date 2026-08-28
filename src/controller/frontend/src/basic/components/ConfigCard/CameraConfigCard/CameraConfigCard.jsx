@@ -56,10 +56,12 @@ const EXPORT_TAB = { key: "export", label: "Export" };
 // dropdown. (A live list_hailo_models fetch would be nicer, but the demo just
 // needs the picker.)
 const HAILO_MODELS = [
-  { key: "yolov8s",  label: "YOLOv8s — balanced (default)", category: "Object detection" },
-  { key: "yolov6n",  label: "YOLOv6n — fastest",            category: "Object detection" },
-  { key: "yolov8m",  label: "YOLOv8m — most accurate",      category: "Object detection" },
-  { key: "yolov11n", label: "YOLOv11n — newest, fast",      category: "Object detection" },
+  { key: "yolov8s",      label: "YOLOv8s — balanced (default)",         category: "Object detection" },
+  { key: "yolov6n",      label: "YOLOv6n — fastest",                    category: "Object detection" },
+  { key: "yolov8m",      label: "YOLOv8m — most accurate",              category: "Object detection" },
+  { key: "yolov11n",     label: "YOLOv11n — newest, fast",              category: "Object detection" },
+  { key: "yolov8s_pose", label: "YOLOv8s-pose — body keypoints",        category: "Pose estimation" },
+  { key: "yolov8m_pose", label: "YOLOv8m-pose — keypoints, accurate",   category: "Pose estimation" },
 ];
 
 // Every tab key any camera-card variant can show — passed to useHashTab so a

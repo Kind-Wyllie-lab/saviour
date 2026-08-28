@@ -73,41 +73,41 @@ COCO_SKELETON = [
 # decoder + overlay in hailo_camera_module.py.
 CURATED_MODELS = {
     "yolov8s": {
-        "label": "YOLOv8s — balanced (default)",
+        "label": "YOLOv8s - balanced (default)",
         "category": "Object detection",
         "hef": "yolov8s.hef",
         "task": "detection",
         "labels": "coco",
     },
     "yolov6n": {
-        "label": "YOLOv6n — fastest",
+        "label": "YOLOv6n - fastest",
         "category": "Object detection",
         "hef": "yolov6n.hef",
         "task": "detection",
         "labels": "coco",
     },
     "yolov8m": {
-        "label": "YOLOv8m — most accurate",
+        "label": "YOLOv8m - most accurate",
         "category": "Object detection",
         "hef": "yolov8m.hef",
         "task": "detection",
         "labels": "coco",
     },
     "yolov11n": {
-        "label": "YOLOv11n — newest, fast",
+        "label": "YOLOv11n - newest, fast",
         "category": "Object detection",
         "hef": "yolov11n.hef",
         "task": "detection",
         "labels": "coco",
     },
     "yolov8s_pose": {
-        "label": "YOLOv8s-pose — body keypoints",
+        "label": "YOLOv8s-pose - body keypoints",
         "category": "Pose estimation",
         "hef": "yolov8s_pose.hef",
         "task": "pose",
     },
     "yolov8m_pose": {
-        "label": "YOLOv8m-pose — keypoints, more accurate",
+        "label": "YOLOv8m-pose - keypoints, more accurate",
         "category": "Pose estimation",
         "hef": "yolov8m_pose.hef",
         "task": "pose",

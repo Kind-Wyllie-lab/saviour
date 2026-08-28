@@ -18,10 +18,5 @@
             "camera": 0,
             "microphone": 0
         }
-    },
-    "habitat": {
-        "name": "Habitat1",
-        "audio_start": "20:00",
-        "audio_end": "02:00"
     }
 }

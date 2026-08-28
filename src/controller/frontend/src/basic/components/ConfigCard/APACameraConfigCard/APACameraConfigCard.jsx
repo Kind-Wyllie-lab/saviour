@@ -94,7 +94,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
   const [sensorModel, setSensorModel]   = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
-  const [activeTab, setActiveTab]       = useHashTab("basic");
+  const [activeTab, setActiveTab]       = useHashTab("basic", TABS.map(t => t.key));
   const [maskOpen, setMaskOpen]         = useState(true);
   const [shockZoneOpen, setShockZoneOpen] = useState(true);
   const [detectionOpen, setDetectionOpen] = useState(false);

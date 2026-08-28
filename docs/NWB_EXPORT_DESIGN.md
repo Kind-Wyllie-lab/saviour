@@ -1,10 +1,9 @@
 # NWB Export — Design Scoping
 
-**Status: proposal, not implemented.** Nothing described here exists yet. `src/controller/database.py`
-has a dead `import pynwb` (optional, `NWB_AVAILABLE` flag, never actually used anywhere — see
-CLAUDE.md's dead-code TODO) that predates this document and should be treated as unrelated leftover,
-not partial progress. This doc exists so that when someone picks this up, the mapping work below
-doesn't have to be re-derived from scratch.
+**Status: proposal, not implemented.** Nothing described here exists yet. (`src/controller/database.py`
+— which carried a dead `import pynwb` predating this document — was deleted 2026-08-28 as dead code;
+it was never any part of this proposal.) This doc exists so that when someone picks this up, the
+mapping work below doesn't have to be re-derived from scratch.
 
 ## Why NWB fits SAVIOUR
 

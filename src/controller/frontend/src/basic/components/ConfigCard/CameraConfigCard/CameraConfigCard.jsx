@@ -47,6 +47,13 @@ const HABITAT_TABS = [
 
 const EXPORT_TAB = { key: "export", label: "Export" };
 
+// Every tab key any camera-card variant can show — passed to useHashTab so a
+// tab carried over from switching device (Settings.jsx) that isn't one of
+// this card's falls back to the default instead of rendering blank.
+const ALL_TAB_KEYS = [
+  ...BASE_TABS, ...LOOM_TABS, ...HABITAT_TABS, EXPORT_TAB,
+].map(t => t.key);
+
 const TAB_COPY_SECTION = {
   basic:    { key: "module",         label: "Basic"    },
   image:    { key: "camera",         label: "Image"    },
@@ -80,7 +87,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
   const [sensorModel, setSensorModel] = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
   const [activePreset, setActivePreset] = useState("custom");
-  const [activeTab, setActiveTab] = useHashTab("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic", ALL_TAB_KEYS);
   const [showLoomRoiEditor, setShowLoomRoiEditor] = useState(false);
   const [roiInfo, setRoiInfo] = useState(null);
   const [showCropEditor, setShowCropEditor] = useState(false);

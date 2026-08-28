@@ -30,7 +30,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const loggedIn = useIsLoggedIn();
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useHashTab("basic");
+  const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [newPin, setNewPin] = useState("");
   const [newMode, setNewMode] = useState("");
   const [hasSaved, setHasSaved] = useState(false);

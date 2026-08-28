@@ -31,10 +31,12 @@ from picamera2 import MappedArray
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
 from modules.hailo_infer import (
+    COCO_SKELETON,
     CURATED_MODELS,
     DEFAULT_MODEL,
     MODEL_DIR,
     HailoDetector,
+    HailoPoseDetector,
     labels_for,
 )
 from modules.module import check, command
@@ -44,6 +46,8 @@ _PALETTE = [
     (0, 255, 0), (0, 165, 255), (255, 128, 0), (0, 0, 255), (255, 0, 255),
     (255, 255, 0), (128, 0, 255), (0, 255, 255), (200, 200, 200), (0, 128, 255),
 ]
+_KP_COLOUR = (0, 255, 255)      # keypoints
+_BONE_COLOUR = (0, 255, 0)      # skeleton edges
 
 
 class HailoCameraModule(CameraBase):
@@ -53,9 +57,10 @@ class HailoCameraModule(CameraBase):
         super().__init__(module_type)
         self._det_lock = threading.Lock()
         self._rebuild_lock = threading.Lock()   # serialises rebuilds; not held per-frame
-        self.detector: HailoDetector | None = None
+        self.detector = None                 # HailoDetector | HailoPoseDetector | None
         self._detector_error: str | None = None
         self._model_key = DEFAULT_MODEL
+        self._task = "detection"             # "detection" | "pose"
         self._labels: list[str] = labels_for(DEFAULT_MODEL)
         self._max_labels = 40
         self._infer_error_logged = False
@@ -109,6 +114,7 @@ class HailoCameraModule(CameraBase):
                     except Exception:
                         pass
 
+            task = spec.get("task", "detection")
             hef_path = self._hef_path(spec)
             new_detector = None
             error = None
@@ -116,7 +122,10 @@ class HailoCameraModule(CameraBase):
                 error = f"HEF not found: {hef_path} — run download_hefs.sh (wrong Hailo-8/8L arch is the usual cause)"
             else:
                 try:
-                    new_detector = HailoDetector(hef_path, threshold=threshold)
+                    if task == "pose":
+                        new_detector = HailoPoseDetector(hef_path, threshold=threshold)
+                    else:
+                        new_detector = HailoDetector(hef_path, threshold=threshold)
                 except Exception as e:  # no Hailo device, driver missing, arch mismatch …
                     error = f"{type(e).__name__}: {e}"
 
@@ -125,6 +134,7 @@ class HailoCameraModule(CameraBase):
                 self.detector = new_detector
                 self._detector_error = error
                 self._model_key = model_key
+                self._task = task
                 self._labels = labels_for(model_key)
                 self._infer_error_logged = False
                 self._rebuilding = False
@@ -135,9 +145,9 @@ class HailoCameraModule(CameraBase):
                     pass
 
         if new_detector is not None:
-            self.logger.info(f"Hailo detector ready: {model_key} ({spec['hef']}), threshold {threshold}")
+            self.logger.info(f"Hailo {task} model ready: {model_key} ({spec['hef']}), threshold {threshold}")
         else:
-            self.logger.warning(f"Hailo detector unavailable ({error}) — running as a plain camera")
+            self.logger.warning(f"Hailo model unavailable ({error}) — running as a plain camera")
 
     # ── per-frame overlay (MJPEG/preview stream only) ─────────────────────────
 
@@ -153,6 +163,7 @@ class HailoCameraModule(CameraBase):
             labels = self._labels
             err = self._detector_error
             model_key = self._model_key
+            task = self._task
             rebuilding = self._rebuilding
 
         if detector is None:
@@ -163,7 +174,7 @@ class HailoCameraModule(CameraBase):
             return
 
         try:
-            dets = detector.detect(m.array, labels)
+            results = detector.detect(m.array, labels)
         except Exception as e:
             if not self._infer_error_logged:
                 self.logger.error(f"Hailo inference failed: {e}")
@@ -171,20 +182,38 @@ class HailoCameraModule(CameraBase):
             self._status_line(m, "AI: inference error (see journal)", (0, 0, 255))
             return
 
+        if task == "pose":
+            summary = self._draw_poses(m.array, results)
+        else:
+            summary = self._draw_detections(m.array, results, labels)
+        self._status_line(m, f"[{model_key}] {summary}", (255, 255, 255))
+
+    def _draw_detections(self, frame, dets, labels) -> str:
         counts: dict[str, int] = {}
         for d in dets[: self._max_labels]:
             name = labels[d.category] if d.category < len(labels) else str(d.category)
             counts[name] = counts.get(name, 0) + 1
             x, y, w, h = d.box
             colour = _PALETTE[d.category % len(_PALETTE)]
-            cv2.rectangle(m.array, (x, y), (x + w, y + h), colour, 2, cv2.LINE_AA)
-            tag = f"{name} {int(d.conf * 100)}%"
-            cv2.putText(m.array, tag, (x, max(12, y - 5)),
+            cv2.rectangle(frame, (x, y), (x + w, y + h), colour, 2, cv2.LINE_AA)
+            cv2.putText(frame, f"{name} {int(d.conf * 100)}%", (x, max(12, y - 5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+        return "  ".join(f"{n}x {k}" for k, n in
+                         sorted(counts.items(), key=lambda kv: -kv[1])) or "nothing"
 
-        summary = "  ".join(f"{n}x {k}" for k, n in
-                            sorted(counts.items(), key=lambda kv: -kv[1])) or "nothing"
-        self._status_line(m, f"[{model_key}] {summary}", (255, 255, 255))
+    def _draw_poses(self, frame, poses) -> str:
+        for p in poses[: self._max_labels]:
+            kp = p.keypoints
+            for a, b in COCO_SKELETON:
+                xa, ya, ca = kp[a]
+                xb, yb, cb = kp[b]
+                if ca > 0.3 and cb > 0.3:
+                    cv2.line(frame, (xa, ya), (xb, yb), _BONE_COLOUR, 2, cv2.LINE_AA)
+            for x, y, c in kp:
+                if c > 0.3:
+                    cv2.circle(frame, (x, y), 3, _KP_COLOUR, -1, cv2.LINE_AA)
+        n = len(poses)
+        return f"{n} {'person' if n == 1 else 'people'}"
 
     # ── commands / checks ────────────────────────────────────────────────────
 

@@ -175,6 +175,25 @@ class TestSendTest:
         assert success is True
         assert "200" in detail
 
+    def test_webhook_url_override_is_used_over_saved_config(self):
+        # saved config has no webhook; the operator is testing a typed-but-unsaved URL
+        notifier = _make_notifier(**{"teams.webhook_url": ""})
+        resp = MagicMock()
+        resp.getcode.return_value = 200
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        with patch.object(notifier, "check_internet", return_value=True), \
+             patch("src.controller.notify.urlopen", return_value=resp) as urlopen:
+            success, _ = notifier.send_test(webhook_url="  https://typed.invalid/hook  ")
+        assert success is True
+        assert urlopen.call_args[0][0].full_url == "https://typed.invalid/hook"
+
+    def test_blank_webhook_url_override_falls_back_to_saved_config(self):
+        notifier = _make_notifier(**{"teams.webhook_url": ""})
+        success, detail = notifier.send_test(webhook_url="   ")
+        assert success is False
+        assert "webhook" in detail.lower()
+
     def test_non_2xx_status_is_a_failure(self):
         notifier = _make_notifier(**{"teams.webhook_url": "https://example.invalid/hook"})
         resp = MagicMock()

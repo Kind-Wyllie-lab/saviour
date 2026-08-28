@@ -1516,3 +1516,44 @@ class TestSetControllerTime:
             assert received[0]["name"] == "set_time_result"
             assert received[0]["args"][0]["success"] is False
             assert "Failed to set time" in received[0]["args"][0]["error"]
+
+
+class TestTeamsWebhookTest:
+    """test_teams_webhook: auth-gated, runs notifier.send_test in a thread,
+    and forwards the operator's typed (possibly unsaved) webhook_url."""
+
+    def test_blocked_without_login(self):
+        web, facade = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("test_teams_webhook", {"webhook_url": "https://x.invalid/h"})
+        facade.controller.notifier.send_test.assert_not_called()
+
+    def test_forwards_typed_webhook_url_to_send_test(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.controller.notifier.send_test.return_value = (True, "Message delivered (HTTP 200)")
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch("src.controller.web.threading.Thread") as mock_thread:
+                client.emit("test_teams_webhook", {"webhook_url": "https://typed.invalid/h"})
+                target = mock_thread.call_args.kwargs["target"]
+                target()
+
+            facade.controller.notifier.send_test.assert_called_once_with(
+                webhook_url="https://typed.invalid/h"
+            )
+            assert client.get_received()[-1]["name"] == "teams_test_result"
+
+    def test_no_payload_passes_none_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.controller.notifier.send_test.return_value = (False, "no webhook")
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+
+            with patch("src.controller.web.threading.Thread") as mock_thread:
+                client.emit("test_teams_webhook")
+                mock_thread.call_args.kwargs["target"]()
+
+            facade.controller.notifier.send_test.assert_called_once_with(webhook_url=None)

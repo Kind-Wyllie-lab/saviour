@@ -177,7 +177,16 @@ class Recording:
           {"ok": False, "error": str, "failures": [{"module_id": str, "reason": str, ...}]}
         """
         config = self.facade.get_config()
-        threshold_us: float = config.get("recording", {}).get("ptp_threshold_us", 50.0)
+        # Recording-START gate: its own key, deliberately tighter than
+        # ptp_threshold_us (the mid-recording "degraded" warning, ~1 ms).
+        # Starting only when every module is well under this means a stable,
+        # converged offset a viewer can align to a frame; a looser gate lets a
+        # still-settling node in and its offset then drifts *during* recording.
+        # 50 us is ~10x the worst case seen on a well-connected node and still
+        # sub-frame at every supported fps -- raise it (Thresholds tab) on a
+        # multi-hop network where transient export-burst jitter makes 50 us
+        # cause start retries.
+        threshold_us: float = config.get("recording", {}).get("ptp_start_gate_us", 50.0)
         max_age_secs: float = 90.0
         now = time.time()
         failures = []
@@ -214,8 +223,8 @@ class Recording:
                     "module_id": module_id,
                     "offset_us": round(offset_us, 1),
                     "reason": (
-                        f"ptp4l offset {offset_us:.1f}µs exceeds "
-                        f"{threshold_us:.0f}µs threshold"
+                        f"ptp4l offset {offset_us:.1f}µs exceeds the "
+                        f"{threshold_us:.0f}µs start gate"
                     ),
                 })
                 continue
@@ -230,8 +239,8 @@ class Recording:
                     "module_id": module_id,
                     "offset_us": round(phc2sys_ns / 1000, 1),
                     "reason": (
-                        f"phc2sys offset {phc2sys_ns/1000:.1f}µs exceeds "
-                        f"{threshold_us:.0f}µs threshold — system clock still settling"
+                        f"phc2sys offset {phc2sys_ns/1000:.1f}µs exceeds the "
+                        f"{threshold_us:.0f}µs start gate — system clock still settling"
                     ),
                 })
                 continue

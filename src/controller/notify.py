@@ -74,12 +74,16 @@ class Notifier:
             name=f"teams-alert-{key}",
         ).start()
 
-    def send_test(self, title: str = "SAVIOUR Test Alert", message: str = "This is a test message from the SAVIOUR controller.") -> tuple:
+    def send_test(self, title: str = "SAVIOUR Test Alert", message: str = "This is a test message from the SAVIOUR controller.", webhook_url: str | None = None) -> tuple:
         """Send a one-off test alert synchronously, bypassing cooldown.
+
+        webhook_url — test this URL instead of the saved teams.webhook_url, so
+        an operator can verify a webhook they've typed into the Alerts tab
+        before saving it. Falls back to the saved config value when None/empty.
 
         Returns (success: bool, detail: str).
         """
-        webhook_url = self.config.get("teams.webhook_url", "")
+        webhook_url = (webhook_url or "").strip() or self.config.get("teams.webhook_url", "")
         if not webhook_url:
             return False, "No webhook URL configured (teams.webhook_url is empty)"
         if not self.check_internet():

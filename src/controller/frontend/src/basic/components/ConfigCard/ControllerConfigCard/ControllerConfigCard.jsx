@@ -19,14 +19,18 @@ const TABS = [
 const DEFAULT_ACCENT_COLOR = "#6495ed"; // matches index.css's static fallback (cornflowerblue)
 
 // recording.* keys surfaced on the Thresholds tab. Every one is wired:
+//  - ptp_start_gate_us   -> recording-START gate: _check_ptp_sync (recording.py) blocks
+//                           a session start until every target module is under this
 //  - ptp_threshold_us    -> mid-recording "PTP sync degraded" warning (recording.py)
 //  - nas_min_free_pct     -> scheduled-session pre-flight block + mid-recording NAS check
 //  - nas_warn_free_pct    -> "NAS space low" warning
 //  - local_min_free_pct   -> scheduled-session pre-flight per-module low-disk warning
 //  - export_stale_mins    -> "export stalled" alert for a session still exporting
 const THRESHOLD_FIELDS = [
+  { key: "ptp_start_gate_us",  label: "PTP start gate (µs)", step: 1,
+    hint: "A session won't start until every target module's clock offset (both servos) is under this. Kept tight so recording only begins on a converged, stable offset — 50 µs is sub-frame at every fps. Raise it on a multi-hop network if transient jitter causes start retries." },
   { key: "ptp_threshold_us",   label: "PTP degraded warning (µs)", step: 1,
-    hint: "Warn mid-recording if a module's clock offset exceeds this. Separate from the 50 µs recording-start gate." },
+    hint: "Warn (not block) mid-recording if a module's offset exceeds this. Deliberately looser than the start gate so routine sub-ms jitter doesn't alert." },
   { key: "nas_min_free_pct",   label: "NAS minimum free (%)", step: 1,
     hint: "A scheduled session will not start, and a running one alerts, below this much free space on the export share." },
   { key: "nas_warn_free_pct",  label: "NAS warning free (%)", step: 1,
@@ -218,26 +222,30 @@ function ControllerConfigCard() {
                       ))}
                     </div>
                   </div>
-                  {formData?.teams?.webhook_url && (
-                    <div className="teams-test-row">
-                      <button
-                        type="button"
-                        className="teams-test-btn"
-                        disabled={teamsTestStatus === "testing"}
-                        onClick={() => {
-                          setTeamsTestStatus("testing");
-                          socket.emit("test_teams_webhook");
-                        }}
-                      >
-                        {teamsTestStatus === "testing" ? "Sending…" : "Send test message"}
-                      </button>
-                      {teamsTestStatus && teamsTestStatus !== "testing" && (
-                        <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
-                          {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  <div className="teams-test-row">
+                    <button
+                      type="button"
+                      className="teams-test-btn"
+                      disabled={teamsTestStatus === "testing" || !formData?.teams?.webhook_url?.trim()}
+                      title={formData?.teams?.webhook_url?.trim()
+                        ? "Sends a real alert to the webhook URL above (the typed value, saved or not)"
+                        : "Enter a webhook URL above first"}
+                      onClick={() => {
+                        setTeamsTestStatus("testing");
+                        socket.emit("test_teams_webhook", { webhook_url: formData?.teams?.webhook_url });
+                      }}
+                    >
+                      {teamsTestStatus === "testing" ? "Sending…" : "Send test alert"}
+                    </button>
+                    {teamsTestStatus && teamsTestStatus !== "testing" && (
+                      <span className={`teams-test-result ${teamsTestStatus.success ? "teams-test-result--ok" : "teams-test-result--fail"}`}>
+                        {teamsTestStatus.success ? "✓" : "✗"} {teamsTestStatus.detail}
+                      </span>
+                    )}
+                  </div>
+                  <span className="field-hint">
+                    Posts a real alert card to the webhook (tests the URL you've typed, even before Save) — bypasses the cooldown and the "Notify on" filters.
+                  </span>
                 </div>
               </fieldset>
             )}

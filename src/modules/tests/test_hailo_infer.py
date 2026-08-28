@@ -93,9 +93,10 @@ class TestDecodeRaw:
         assert 0 <= y <= 240
 
 
-def _blank_seg_detector(threshold=0.5):
+def _blank_seg_detector(threshold=0.5, max_det=12):
     d = HailoSegDetector.__new__(HailoSegDetector)
     d._threshold = threshold
+    d._max_det = max_det
     return d
 
 
@@ -166,6 +167,16 @@ class TestSegDecode:
         run = _seg_run(hot=(10, 10))
         del run["proto"]
         assert d._decode(run, (480, 640, 3)) == []
+
+    def test_max_det_caps_instances(self):
+        d = _blank_seg_detector(threshold=0.5, max_det=1)
+        run = _seg_run(nc=80)
+        cls0 = run["cls0"]
+        cls0[10, 10, 0] = 0.9
+        cls0[60, 60, 1] = 0.8
+        assert len(d._decode(run, (480, 640, 3))) == 1
+        d.set_max_det(5)
+        assert len(d._decode(run, (480, 640, 3))) == 2
 
 
 if __name__ == "__main__":

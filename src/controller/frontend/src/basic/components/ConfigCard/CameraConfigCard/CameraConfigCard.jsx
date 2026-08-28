@@ -1000,6 +1000,12 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.hailo?.infer_every_n ?? 2}
                 onChange={e => handleChange(["hailo", "infer_every_n"], e)} />
             </div>
+            <div className="form-field">
+              <label>Max instances (segmentation):</label>
+              <input type="number" min="1" max="50" step="1"
+                value={formData?.hailo?.max_detections ?? 12}
+                onChange={e => handleChange(["hailo", "max_detections"], e)} />
+            </div>
             <div className="sensor-mode-info sensor-mode-info--muted">
               Live inference overlay on the preview stream only — the recorded
               video is unaffected. HEFs (Hailo-8 vs 8L auto-detected) are fetched

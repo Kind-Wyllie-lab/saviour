@@ -101,18 +101,23 @@ class HailoCameraModule(CameraBase):
                 spec = CURATED_MODELS[DEFAULT_MODEL]
 
             # Release the current device handle BEFORE opening a new one — the
-            # Hailo-8L can't hold two VDevices, so building-new-while-old-open
-            # contends and stalls.
+            # Hailo-8L can't hold two VDevices. The close() MUST happen under
+            # _det_lock: _process_lores_frame holds that lock for the whole
+            # inference call, so taking it here guarantees no frame is mid-run()
+            # on `old` when we tear it down (closing a device out from under an
+            # in-flight run() aborts the HailoRT pipeline and the teardown
+            # self-joins a thread -> std::system_error "Resource deadlock
+            # avoided" -> SIGABRT).
             if swap:
                 with self._det_lock:
                     old, self.detector = self.detector, None
                     self._detector_error = "loading model…"
                     self._rebuilding = True
-                if old is not None:
-                    try:
-                        old.close()
-                    except Exception:
-                        pass
+                    if old is not None:
+                        try:
+                            old.close()
+                        except Exception:
+                            pass
 
             task = spec.get("task", "detection")
             hef_path = self._hef_path(spec)
@@ -158,29 +163,27 @@ class HailoCameraModule(CameraBase):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
+        # Hold _det_lock for the WHOLE inference call, not just the read —
+        # _build_detector()'s swap path closes the old device under this same
+        # lock, and closing it mid-run() aborts HailoRT hard (see that method).
+        # The rebuild thread waits one frame (~30-50 ms) for this to release.
         with self._det_lock:
             detector = self.detector
-            labels = self._labels
-            err = self._detector_error
-            model_key = self._model_key
-            task = self._task
-            rebuilding = self._rebuilding
-
-        if detector is None:
-            if rebuilding:
-                self._status_line(m, "AI: loading model…", (0, 191, 255))
-            else:
-                self._status_line(m, f"AI off: {err or 'no model'}", (0, 0, 255))
-            return
-
-        try:
-            results = detector.detect(m.array, labels)
-        except Exception as e:
-            if not self._infer_error_logged:
-                self.logger.error(f"Hailo inference failed: {e}")
-                self._infer_error_logged = True
-            self._status_line(m, "AI: inference error (see journal)", (0, 0, 255))
-            return
+            if detector is None:
+                if self._rebuilding:
+                    self._status_line(m, "AI: loading model…", (0, 191, 255))
+                else:
+                    self._status_line(m, f"AI off: {self._detector_error or 'no model'}", (0, 0, 255))
+                return
+            model_key, task, labels = self._model_key, self._task, self._labels
+            try:
+                results = detector.detect(m.array, labels)
+            except Exception as e:
+                if not self._infer_error_logged:
+                    self.logger.error(f"Hailo inference failed: {e}")
+                    self._infer_error_logged = True
+                self._status_line(m, "AI: inference error (see journal)", (0, 0, 255))
+                return
 
         if task == "pose":
             summary = self._draw_poses(m.array, results)

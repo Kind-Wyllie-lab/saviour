@@ -213,6 +213,52 @@ class HailoPoseDetector:
         rgb = cv2.cvtColor(cv2.resize(frame, (w, h)), cv2.COLOR_BGR2RGB)
         return self._decode(self._hailo.run(rgb), frame.shape)
 
+    # --- dict-shaped output (picamera2's Hailo pose wrapper returns per-person
+    #     dicts, not flat rows) -------------------------------------------------
+    _BOX_KEYS = ("bbox", "box", "boxes", "bboxes")
+    _SCORE_KEYS = ("score", "confidence", "conf", "objectness", "detection_score")
+    _KP_KEYS = ("keypoints", "kpts", "joints", "landmarks", "points")
+    _KPSCORE_KEYS = ("joint_scores", "keypoint_scores", "kpt_scores", "scores")
+
+    @staticmethod
+    def _first(d: dict, keys):
+        for k in keys:
+            if k in d:
+                return d[k]
+        return None
+
+    def _person_from_dict(self, d: dict, oh: int, ow: int):
+        box_raw = self._first(d, self._BOX_KEYS)
+        score = self._first(d, self._SCORE_KEYS)
+        kps_raw = self._first(d, self._KP_KEYS)
+        if box_raw is None or kps_raw is None:
+            return None
+        b = np.asarray(box_raw, dtype=np.float32).ravel()
+        y1, x1, y2, x2 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+        # normalised (<=~1) vs already-pixel coords
+        norm = max(abs(y1), abs(x1), abs(y2), abs(x2)) <= 2.0
+        sy, sx = (oh, ow) if norm else (1.0, 1.0)
+        box = (int(x1 * sx), int(y1 * sy), int((x2 - x1) * sx), int((y2 - y1) * sy))
+
+        kp = np.asarray(kps_raw, dtype=np.float32)
+        if kp.size in (self._KP * 2, self._KP * 3):
+            kp = kp.reshape(self._KP, -1)
+        elif kp.ndim == 1:
+            kp = kp.reshape(-1, 2)
+        kp_scores = self._first(d, self._KPSCORE_KEYS)
+        kp_scores = np.asarray(kp_scores, dtype=np.float32).ravel() if kp_scores is not None else None
+
+        kps = []
+        for i in range(min(self._KP, len(kp))):
+            row = kp[i].ravel()
+            kx, ky = float(row[0]), float(row[1])
+            kc = float(row[2]) if row.size >= 3 else (
+                float(kp_scores[i]) if kp_scores is not None and i < len(kp_scores) else 1.0)
+            kps.append((int(kx * sx), int(ky * sy), kc))
+        while len(kps) < self._KP:
+            kps.append((0, 0, 0.0))
+        return PoseResult(box, float(score if score is not None else 1.0), kps)
+
     def _rows(self, raw):
         """Best-effort reduction of picamera2's pose output to a 2-D array of
         [y1,x1,y2,x2,score, 17*(x,y,c)] rows."""
@@ -238,9 +284,49 @@ class HailoPoseDetector:
                 pass
         return np.empty((0, self._ROW), dtype=np.float32)
 
+    def _dicts(self, raw):
+        """Return a flat list of per-person dicts if that's the shape, else []."""
+        node = raw
+        for _ in range(3):
+            if isinstance(node, (list, tuple)) and len(node) == 1:
+                node = node[0]
+            else:
+                break
+        if isinstance(node, dict):
+            # A single dict of parallel arrays: {'bbox':[N..], 'keypoints':[N..], ...}
+            box = self._first(node, self._BOX_KEYS)
+            kps = self._first(node, self._KP_KEYS)
+            if box is not None and kps is not None:
+                boxes = np.asarray(box, dtype=np.float32).reshape(-1, 4)
+                kparr = np.asarray(kps, dtype=np.float32)
+                kparr = kparr.reshape(len(boxes), -1)
+                sc = self._first(node, self._SCORE_KEYS)
+                sc = np.asarray(sc, dtype=np.float32).ravel() if sc is not None else np.ones(len(boxes))
+                ksc = self._first(node, self._KPSCORE_KEYS)
+                ksc = np.asarray(ksc, dtype=np.float32).reshape(len(boxes), -1) if ksc is not None else None
+                return [
+                    {"bbox": boxes[i], "score": float(sc[i]) if i < len(sc) else 1.0,
+                     "keypoints": kparr[i], **({"joint_scores": ksc[i]} if ksc is not None else {})}
+                    for i in range(len(boxes))
+                ]
+            return []
+        if isinstance(node, (list, tuple)) and node and isinstance(node[0], dict):
+            return list(node)
+        return []
+
     def _decode(self, raw, orig_shape: tuple) -> list[PoseResult]:
         oh, ow = orig_shape[:2]
         out: list[PoseResult] = []
+
+        dicts = self._dicts(raw)
+        if dicts:
+            for d in dicts:
+                p = self._person_from_dict(d, oh, ow)
+                if p is not None and p.score >= self._threshold:
+                    out.append(p)
+            out.sort(key=lambda p: p.score, reverse=True)
+            return out
+
         for row in self._rows(raw):
             score = float(row[4])
             if score < self._threshold:

@@ -8,7 +8,8 @@ flow in send_test/_send with socket/urlopen mocked -- nothing here ever
 makes a real network call.
 """
 
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import MagicMock, mock_open, patch
 from urllib.error import URLError
 
 from src.controller.notify import Notifier
@@ -22,6 +23,14 @@ def _make_config(**overrides) -> MagicMock:
 
 def _make_notifier(**config_overrides) -> Notifier:
     return Notifier(_make_config(**config_overrides))
+
+
+def _card_body(mock_urlopen) -> list:
+    """The Adaptive Card body (list of TextBlock/FactSet dicts) from the
+    JSON that was POSTed via a mocked urlopen."""
+    request = mock_urlopen.call_args[0][0]
+    payload = json.loads(request.data.decode())
+    return payload["attachments"][0]["content"]["body"]
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +155,35 @@ class TestControllerName:
 
 
 # ---------------------------------------------------------------------------
+# _variant / _saviour_version / _footer -- card context helpers
+# ---------------------------------------------------------------------------
+
+class TestContextHelpers:
+    def test_variant_reads_TYPE_from_saviour_config(self):
+        notifier = _make_notifier()
+        with patch("builtins.open", mock_open(read_data='ROLE=controller\nTYPE="habitat"\n')):
+            assert notifier._variant() == "habitat"
+
+    def test_variant_strips_unquoted_value(self):
+        notifier = _make_notifier()
+        with patch("builtins.open", mock_open(read_data="ROLE=controller\nTYPE=apa\n")):
+            assert notifier._variant() == "apa"
+
+    def test_variant_unknown_when_config_missing(self):
+        notifier = _make_notifier()
+        with patch("builtins.open", side_effect=FileNotFoundError):
+            assert notifier._variant() == "unknown"
+
+    def test_footer_joins_name_variant_version_timestamp(self):
+        notifier = _make_notifier(**{"controller.name": "Habitat1"})
+        with patch.object(notifier, "_variant", return_value="habitat"), \
+             patch.object(notifier, "_saviour_version", return_value="v0.9-1-gabc"):
+            assert notifier._footer("2026-08-28 14:30 UTC") == (
+                "Habitat1 · habitat · v0.9-1-gabc · 2026-08-28 14:30 UTC"
+            )
+
+
+# ---------------------------------------------------------------------------
 # send_test -- synchronous, bypasses cooldown
 # ---------------------------------------------------------------------------
 
@@ -174,6 +212,26 @@ class TestSendTest:
             success, detail = notifier.send_test(title="T", message="M")
         assert success is True
         assert "200" in detail
+
+    def test_card_carries_controller_variant_version_factset(self):
+        notifier = _make_notifier(**{
+            "teams.webhook_url": "https://example.invalid/hook",
+            "controller.name": "Habitat1",
+        })
+        resp = MagicMock()
+        resp.getcode.return_value = 200
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        with patch.object(notifier, "check_internet", return_value=True), \
+             patch.object(notifier, "_variant", return_value="habitat"), \
+             patch.object(notifier, "_saviour_version", return_value="v0.9-1-gabc"), \
+             patch("src.controller.notify.urlopen", return_value=resp) as urlopen:
+            notifier.send_test()
+
+        facts = next(b for b in _card_body(urlopen) if b["type"] == "FactSet")["facts"]
+        assert {f["title"]: f["value"] for f in facts} == {
+            "Controller": "Habitat1", "Variant": "habitat", "Version": "v0.9-1-gabc",
+        }
 
     def test_webhook_url_override_is_used_over_saved_config(self):
         # saved config has no webhook; the operator is testing a typed-but-unsaved URL
@@ -248,6 +306,21 @@ class TestSendInternal:
         request = mock_urlopen.call_args[0][0]
         assert request.full_url == "https://example.invalid/hook"
         assert request.get_header("Content-type") == "application/json"
+
+    def test_footer_carries_variant_and_version(self):
+        notifier = _make_notifier(**{"controller.name": "Habitat1"})
+        resp = MagicMock()
+        resp.getcode.return_value = 200
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        with patch.object(notifier, "check_internet", return_value=True), \
+             patch.object(notifier, "_variant", return_value="habitat"), \
+             patch.object(notifier, "_saviour_version", return_value="v0.9-1-gabc"), \
+             patch("src.controller.notify.urlopen", return_value=resp) as mock_urlopen:
+            notifier._send("https://example.invalid/hook", "Title", "Body", "warning")
+
+        footer = _card_body(mock_urlopen)[-1]["text"]
+        assert footer.startswith("Habitat1 · habitat · v0.9-1-gabc · ")
 
     def test_logs_warning_on_non_2xx(self):
         notifier = _make_notifier()

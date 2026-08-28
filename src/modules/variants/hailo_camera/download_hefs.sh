@@ -58,7 +58,7 @@ if [ "$FORCE" -eq 0 ] && [ "$(cat "$ARCH_MARKER" 2>/dev/null || echo none)" != "
 fi
 
 # Keep in sync with CURATED_MODELS in src/modules/hailo_infer.py
-HEFS=(yolov8s yolov6n yolov8m yolov11n yolov8s_pose yolov8m_pose)
+HEFS=(yolov8s yolov6n yolov8m yolov11n yolov8s_pose yolov8m_pose yolov8s_seg yolov8m_seg)
 BASE="https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/${ZOO_VERSION}/${ARCH}"
 
 echo "Downloading ${#HEFS[@]} HEF(s) for ${ARCH} (zoo ${ZOO_VERSION}) into ${MODEL_DIR}"

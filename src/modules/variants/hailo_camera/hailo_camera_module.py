@@ -37,6 +37,7 @@ from modules.hailo_infer import (
     MODEL_DIR,
     HailoDetector,
     HailoPoseDetector,
+    HailoSegDetector,
     labels_for,
 )
 from modules.module import check, command
@@ -129,6 +130,8 @@ class HailoCameraModule(CameraBase):
                 try:
                     if task == "pose":
                         new_detector = HailoPoseDetector(hef_path, threshold=threshold)
+                    elif task == "segmentation":
+                        new_detector = HailoSegDetector(hef_path, threshold=threshold)
                     else:
                         new_detector = HailoDetector(hef_path, threshold=threshold)
                 except Exception as e:  # no Hailo device, driver missing, arch mismatch …
@@ -187,6 +190,8 @@ class HailoCameraModule(CameraBase):
 
         if task == "pose":
             summary = self._draw_poses(m.array, results)
+        elif task == "segmentation":
+            summary = self._draw_masks(m.array, results, labels)
         else:
             summary = self._draw_detections(m.array, results, labels)
         self._status_line(m, f"[{model_key}] {summary}", (255, 255, 255))
@@ -217,6 +222,27 @@ class HailoCameraModule(CameraBase):
                     cv2.circle(frame, (x, y), 3, _KP_COLOUR, -1, cv2.LINE_AA)
         n = len(poses)
         return f"{n} {'person' if n == 1 else 'people'}"
+
+    def _draw_masks(self, frame, segs, labels) -> str:
+        counts: dict[str, int] = {}
+        overlay = frame.copy()
+        drawn = segs[: self._max_labels]
+        for s in drawn:
+            name = labels[s.category] if s.category < len(labels) else str(s.category)
+            counts[name] = counts.get(name, 0) + 1
+            colour = _PALETTE[s.category % len(_PALETTE)]
+            overlay[s.mask.astype(bool)] = colour
+        # blend the fills, then draw crisp boxes + labels on top
+        cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
+        for s in drawn:
+            name = labels[s.category] if s.category < len(labels) else str(s.category)
+            colour = _PALETTE[s.category % len(_PALETTE)]
+            x, y, w, h = s.box
+            cv2.rectangle(frame, (x, y), (x + w, y + h), colour, 1, cv2.LINE_AA)
+            cv2.putText(frame, f"{name} {int(s.score * 100)}%", (x, max(12, y - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+        return "  ".join(f"{n}x {k}" for k, n in
+                         sorted(counts.items(), key=lambda kv: -kv[1])) or "nothing"
 
     # ── commands / checks ────────────────────────────────────────────────────
 

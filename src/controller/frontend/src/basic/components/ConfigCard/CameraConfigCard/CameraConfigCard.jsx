@@ -62,6 +62,8 @@ const HAILO_MODELS = [
   { key: "yolov11n",     label: "YOLOv11n — newest, fast",              category: "Object detection" },
   { key: "yolov8s_pose", label: "YOLOv8s-pose — body keypoints",        category: "Pose estimation" },
   { key: "yolov8m_pose", label: "YOLOv8m-pose — keypoints, accurate",   category: "Pose estimation" },
+  { key: "yolov8s_seg",  label: "YOLOv8s-seg - instance masks",         category: "Instance segmentation" },
+  { key: "yolov8m_seg",  label: "YOLOv8m-seg - masks, accurate",        category: "Instance segmentation" },
 ];
 
 // Every tab key any camera-card variant can show — passed to useHashTab so a

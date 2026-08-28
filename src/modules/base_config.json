@@ -28,7 +28,6 @@
     "_health_check_camera_silence_secs": 5
   },
   "export": {
-    "export_target": "controller",
     "auto_export": true,
     "delete_on_export": true,
     "_manifest_enabled": false,

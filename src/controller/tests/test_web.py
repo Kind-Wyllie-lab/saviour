@@ -539,9 +539,9 @@ class TestAuthGatedHandlers:
             facade.set_config.assert_called_once_with({"name": "hab1"})
 
     def test_save_controller_config_auto_syncs_export_when_share_changed(self):
-        """export.sync_all_modules defaults True -- a changed share config
-        should push out to every connected module without a separate manual
-        'Sync to All Modules' click."""
+        """The controller is the sole authority for the export destination, so
+        a changed share config always pushes out to every connected module
+        without a separate manual 'Sync to All Modules' click."""
         with tempfile.TemporaryDirectory() as tmpdir:
             web, facade = _make_web_with_facade()
             facade.get_config.side_effect = [
@@ -581,32 +581,11 @@ class TestAuthGatedHandlers:
 
             facade.sync_export_with_creds.assert_not_called()
 
-    def test_save_controller_config_no_auto_sync_when_disabled(self):
-        """export.sync_all_modules: false opts out of the auto-push -- the
-        manual 'Sync to All Modules' button still works either way, it just
-        isn't exercised by this handler."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            web, facade = _make_web_with_facade(**{"export.sync_all_modules": False})
-            facade.get_config.side_effect = [
-                {"export": {"share_ip": "10.0.0.1"}},
-                {"export": {"share_ip": "10.0.0.2"}},
-            ]
-            client = _connected_client(web)
-            _login(web, client, tmpdir)
-
-            client.emit("save_controller_config", {
-                "config": {"export": {"share_ip": "10.0.0.2"}}
-            })
-
-            facade.sync_export_with_creds.assert_not_called()
-
-    def test_save_controller_config_mounts_locally_even_when_module_sync_disabled(self):
+    def test_save_controller_config_mounts_locally_on_export_change(self):
         """The controller's own file-browser mount (ensure_export_share_mounted)
-        is independent of export.sync_all_modules -- that flag only controls
-        whether *other modules* get auto-pushed the new credentials, not
-        whether the controller itself can browse/download from the share."""
+        fires on any export-credential change, independent of the module push."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            web, facade = _make_web_with_facade(**{"export.sync_all_modules": False})
+            web, facade = _make_web_with_facade()
             web.ensure_export_share_mounted = MagicMock(return_value=True)
             facade.get_config.side_effect = [
                 {"export": {"share_ip": "10.0.0.1"}},

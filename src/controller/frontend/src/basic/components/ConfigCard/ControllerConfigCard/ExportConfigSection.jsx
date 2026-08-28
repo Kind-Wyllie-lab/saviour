@@ -125,25 +125,11 @@ function ExportConfigSection({ exportConfig, handleChange }) {
           </>
         )}
 
-        <div className="form-field">
-          <label>Auto-sync to all modules on change:</label>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={exp.sync_all_modules ?? true}
-              onChange={(e) => handleChange(["export", "sync_all_modules"], e)}
-            />
-            <span className="toggle-switch-track">
-              <span className="toggle-switch-thumb" />
-            </span>
-          </label>
-          <span className="frontend-accent-hint">
-            On by default — most deployments point every module at the same share, so saving a
-            changed IP/path/credentials here immediately pushes it to every connected module.
-            Turn off if modules need different export destinations; the button below still
-            syncs everyone to the current values on demand either way.
-          </span>
-        </div>
+        <span className="frontend-accent-hint">
+          This is the single export destination for the whole system — saving a changed
+          IP/path/credentials here pushes it to every connected module automatically.
+          Use the button below to re-push to everyone on demand.
+        </span>
 
         <div className="export-sync-row">
           <button

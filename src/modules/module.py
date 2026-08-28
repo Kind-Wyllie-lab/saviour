@@ -1015,15 +1015,13 @@ class Module(ABC):
     @command()
     def set_export_config(self, share_ip: str, share_username: str, share_password: str, share_path: str = "") -> dict:
         """
-        Update the export (Samba) credentials sent by the controller on discovery.
-        Persists to active_config.json via config.set(). Credentials are always
-        re-sent by the controller on reconnect so they do not need to survive a
-        config reset.
-        Skipped if export.export_target is not 'controller'.
+        Update the export (Samba) credentials sent by the controller.
+
+        The controller is the single authority for the export destination
+        (the per-module "manual" override was removed 2026-08-28) — it re-sends
+        these on discovery/reconnect and on any change, so they don't need to
+        survive a config reset.
         """
-        if self.config.get("export.export_target", "controller") != "controller":
-            self.logger.info("set_export_config skipped — export_target is not controller")
-            return {"result": "skipped"}
         self.logger.info(f"set_export_config called — updating share_ip to {share_ip}, share_path to {share_path!r}")
 
         self.config.set("export.share_ip", share_ip)
@@ -1154,9 +1152,6 @@ class Module(ABC):
 
     @check()
     def _check_export(self) -> tuple[bool, str]:
-        if self.config.get("export.export_target", "controller") != "controller":
-            return True, "Export target is not controller — skipping share check"
-
         # share_ip, not password, is the real "has anything been configured
         # at all" signal -- a blank password is a legitimate configuration
         # for a guest-access share (see export.py's _mount_share() and
@@ -1169,8 +1164,8 @@ class Module(ABC):
         share_ip = self.config.get("export.share_ip", "")
         if not share_ip:
             return False, (
-                "Export credentials not set — use 'Sync Export' in Controller Settings "
-                "(Settings page → Controller)"
+                "No export destination — set the share on the Controller "
+                "(Settings → Controller → Export); it pushes to every module"
             )
 
         password   = self.config.get("export.share_password", "")

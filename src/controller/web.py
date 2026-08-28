@@ -1390,23 +1390,18 @@ class Web(ABC):
             export_changed = any(
                 old_export.get(k) != new_export.get(k) for k in share_keys
             )
-            # export.sync_all_modules (default True): most deployments point
-            # every module at the same share, so the default assumes that and
-            # pushes a changed share config out immediately rather than
-            # leaving already-connected modules on stale credentials until
-            # they reconnect or an operator remembers to click "Sync to all
-            # modules" by hand. Turn it off for a deployment that genuinely
-            # needs modules to diverge (the manual button still works either way).
+            # The controller is the single authority for the export destination
+            # (the per-module "manual" override was removed 2026-08-28), so a
+            # changed share config is always pushed to every connected module
+            # here rather than leaving them on stale credentials until they
+            # reconnect. The "Sync to All Modules" button remains as a manual
+            # re-push. ensure_export_share_mounted() is for the controller's own
+            # file browser and is independent of the module push.
             if export_changed:
-                # Independent of sync_all_modules above -- the controller's
-                # own ability to browse/download exported files (session
-                # detail page) shouldn't depend on whether modules are also
-                # being auto-pushed the same credentials.
                 self.ensure_export_share_mounted()
-                if self.config.get("export.sync_all_modules", True):
-                    creds = self.facade.get_export_credentials()
-                    if creds:
-                        _sync_export_to_all_modules(creds)
+                creds = self.facade.get_export_credentials()
+                if creds:
+                    _sync_export_to_all_modules(creds)
 
 
         @self.socketio.on("get_controller_info")

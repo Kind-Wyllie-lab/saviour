@@ -9,7 +9,12 @@ the confidence threshold.
 import numpy as np
 import pytest
 
-from modules.hailo_infer import HailoPoseDetector, HailoSegDetector, _as_prob
+from modules.hailo_infer import (
+    HailoDepthEstimator,
+    HailoPoseDetector,
+    HailoSegDetector,
+    _as_prob,
+)
 
 
 def _blank_pose_detector(threshold=0.5):
@@ -177,6 +182,48 @@ class TestSegDecode:
         assert len(d._decode(run, (480, 640, 3))) == 1
         d.set_max_det(5)
         assert len(d._decode(run, (480, 640, 3))) == 2
+
+
+def _blank_depth_estimator(invert=True):
+    d = HailoDepthEstimator.__new__(HailoDepthEstimator)
+    d._threshold = 0.4
+    d._invert = invert
+    return d
+
+
+class TestDepthDecode:
+    def test_hxw_plane_to_colored_frame(self):
+        d = _blank_depth_estimator()
+        plane = np.tile(np.linspace(0, 1, 128, dtype=np.float32), (96, 1))  # ramp
+        res = d._decode(plane, (480, 640, 3))
+        assert len(res) == 1
+        assert res[0].colored.shape == (480, 640, 3)
+        assert res[0].colored.dtype == np.uint8
+
+    def test_accepts_hxwx1_and_1xhxw_and_dict(self):
+        d = _blank_depth_estimator()
+        base = np.random.rand(64, 80).astype(np.float32)
+        for raw in (base[..., None], base[None, ...], {"out": base},
+                    [base], (base,)):
+            res = d._decode(raw, (240, 320, 3))
+            assert len(res) == 1
+            assert res[0].colored.shape == (240, 320, 3)
+
+    def test_flat_input_returns_empty(self):
+        d = _blank_depth_estimator()
+        assert d._decode(np.zeros(100, np.float32), (240, 320, 3)) == []
+
+    def test_constant_depth_does_not_divide_by_zero(self):
+        d = _blank_depth_estimator()
+        res = d._decode(np.full((32, 32), 3.0, np.float32), (120, 160, 3))
+        assert len(res) == 1
+        assert np.isfinite(res[0].colored).all()
+
+    def test_invert_flips_near_far(self):
+        ramp = np.tile(np.linspace(0, 1, 64, dtype=np.float32), (48, 1))
+        a = _blank_depth_estimator(invert=False)._decode(ramp, (48, 64, 3))[0].colored
+        b = _blank_depth_estimator(invert=True)._decode(ramp, (48, 64, 3))[0].colored
+        assert not np.array_equal(a, b)
 
 
 if __name__ == "__main__":

@@ -126,6 +126,18 @@ CURATED_MODELS = {
         "task": "segmentation",
         "labels": "coco",
     },
+    "scdepthv3": {
+        "label": "SC-Depth v3 - monocular depth",
+        "category": "Depth estimation",
+        "hef": "scdepthv3.hef",
+        "task": "depth",
+    },
+    "fast_depth": {
+        "label": "FastDepth - monocular depth, fastest",
+        "category": "Depth estimation",
+        "hef": "fast_depth.hef",
+        "task": "depth",
+    },
 }
 
 DEFAULT_MODEL = "yolov8s"
@@ -653,6 +665,94 @@ class HailoSegDetector:
 
     def set_max_det(self, max_det: int) -> None:
         self._max_det = max(1, int(max_det))
+
+    def close(self):
+        self._hailo.close()
+
+
+class DepthResult:
+    """A single monocular-depth frame, ready to blend over the preview."""
+    def __init__(self, colored: np.ndarray):
+        self.colored = colored   # BGR uint8, original-frame resolution
+
+
+class HailoDepthEstimator:
+    """
+    Wraps picamera2's Hailo integration for monocular depth (scdepthv3 /
+    fast_depth). These HEFs emit a single-channel relative-depth map;
+    `_decode` percentile-normalises it, applies a colour map and upsamples to
+    the frame. No anchors / NMS / DFL -- the raw-YOLO decode pitfalls don't
+    apply here.
+    """
+
+    _CMAP = cv2.COLORMAP_INFERNO
+    _PCT = (2.0, 98.0)   # robust normalisation percentiles
+
+    def __init__(self, hef_path: str, threshold: float = 0.4, invert: bool = True):
+        from picamera2.devices.hailo import Hailo
+        self._hailo = Hailo(hef_path)
+        self._input_shape = self._hailo.get_input_shape()
+        self._threshold = threshold      # unused; kept for a uniform interface
+        # Colour-map direction. Most of these nets output depth (near = small);
+        # invert so near reads bright/warm. Flip if it looks inside-out.
+        self._invert = invert
+
+    @property
+    def input_size(self) -> tuple:
+        shape = self._input_shape
+        if len(shape) == 4:
+            return shape[1], shape[2]
+        return shape[0], shape[1]
+
+    def detect(self, frame: np.ndarray, labels=None) -> list[DepthResult]:
+        h, w = self.input_size
+        rgb = cv2.cvtColor(cv2.resize(frame, (w, h)), cv2.COLOR_BGR2RGB)
+        return self._decode(self._hailo.run(rgb), frame.shape)
+
+    @staticmethod
+    def _to_2d(raw):
+        """Reduce whatever `Hailo.run()` returned to a single 2-D depth plane."""
+        node = raw
+        for _ in range(4):
+            if isinstance(node, dict):
+                node = (next(iter(node.values())) if len(node) == 1
+                        else max(node.values(), key=lambda a: np.asarray(a).size))
+                continue
+            if isinstance(node, (list, tuple)):
+                if len(node) == 1:
+                    node = node[0]
+                    continue
+                node = max(node, key=lambda a: np.asarray(a).size)
+                continue
+            break
+        a = np.squeeze(np.asarray(node, dtype=np.float32))
+        if a.ndim == 3:
+            if a.shape[0] == 1:
+                a = a[0]
+            elif a.shape[2] == 1:
+                a = a[..., 0]
+            else:
+                a = a.mean(axis=0 if a.shape[0] < a.shape[2] else 2)
+        return a if a.ndim == 2 else None
+
+    def _decode(self, raw, orig_shape: tuple) -> list[DepthResult]:
+        a = self._to_2d(raw)
+        if a is None:
+            return []
+        lo, hi = np.percentile(a, self._PCT)
+        if hi - lo < 1e-6:
+            hi = lo + 1e-6
+        d = np.clip((a - lo) / (hi - lo), 0.0, 1.0)
+        if self._invert:
+            d = 1.0 - d
+        colored = cv2.applyColorMap((d * 255.0).astype(np.uint8), self._CMAP)
+        oh, ow = orig_shape[:2]
+        if colored.shape[:2] != (oh, ow):
+            colored = cv2.resize(colored, (ow, oh), interpolation=cv2.INTER_LINEAR)
+        return [DepthResult(colored)]
+
+    def set_threshold(self, threshold: float) -> None:
+        self._threshold = threshold
 
     def close(self):
         self._hailo.close()

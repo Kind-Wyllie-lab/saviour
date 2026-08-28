@@ -420,6 +420,28 @@ class TestCreateScheduledSession:
         assert session.state == SessionState.SCHEDULED
         assert session.scheduled_days == [0, 1]
 
+    def test_logs_a_creation_event_with_schedule_provenance(self):
+        rec, _facade = _make_recording()
+        with patch.object(rec, "_log_session_event") as mock_log:
+            rec.create_scheduled_session(
+                "exp1", "camera", "18:00", "20:00", days=[0, 4],
+                researcher="Andrew",
+            )
+        mock_log.assert_called_once()
+        _name, level, message = mock_log.call_args[0]
+        assert level == "INFO"
+        assert "Scheduled session created" in message
+        assert "18:00–20:00" in message
+        assert "Mon, Fri" in message
+        assert "researcher: Andrew" in message
+
+    def test_creation_event_says_every_day_when_no_days_given(self):
+        rec, _facade = _make_recording()
+        with patch.object(rec, "_log_session_event") as mock_log:
+            rec.create_scheduled_session("exp2", "camera", "09:00", "17:00")
+        _name, _level, message = mock_log.call_args[0]
+        assert "every day" in message
+
 
 class TestDeleteSession:
     def test_unknown_session_returns_error(self):

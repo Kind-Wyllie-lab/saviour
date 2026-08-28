@@ -568,6 +568,22 @@ class Recording:
             f"Scheduled session '{session_name}' created for {target} "
             f"between {start_time}–{end_time}"
         )
+        # Record the schedule provenance now, at creation. Without this a
+        # scheduled session has no session_events.log at all until its first
+        # run window opens (_start_scheduled_session), so the detail page shows
+        # an empty event log for a session that may not run for hours/days.
+        _weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        days_desc = (
+            "every day" if not (days or [])
+            else ", ".join(_weekdays[d] for d in days if 0 <= d < 7)
+        )
+        modules_desc = ", ".join(modules) if modules else "(resolved at run time)"
+        self._log_session_event(
+            session_name, "INFO",
+            f"Scheduled session created — target {target}, "
+            f"{start_time}–{end_time}, {days_desc}, modules: {modules_desc}"
+            + (f", researcher: {researcher}" if researcher else "")
+        )
         return {"success": True, "session_name": session_name}
 
 

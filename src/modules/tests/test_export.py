@@ -52,6 +52,7 @@ def _make_export(tmpdir: str) -> Export:
     export.session_name = None
     export.recording_name = None
     export.export_path = None
+    export.tc_last_error = None
 
     import threading as _t
     export._export_lock = _t.Lock()
@@ -412,3 +413,56 @@ class TestSummarizeRecordingState:
             os.rmdir(exp.pending_folder)
             result = exp.summarize_recording_state("sessionA")
             assert result["pending"]["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Traffic shaping (tc) — failures must be visible, not swallowed
+# ---------------------------------------------------------------------------
+
+class TestTrafficControl:
+    def test_run_shell_command_returns_true_on_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            with patch("subprocess.run") as run:
+                run.return_value = MagicMock(stdout="", stderr="")
+                assert exp._run_shell_command(["tc", "qdisc", "show"]) is True
+
+    def test_run_shell_command_returns_false_on_nonzero_exit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            with patch("subprocess.run",
+                       side_effect=subprocess.CalledProcessError(1, "tc", stderr="boom")):
+                assert exp._run_shell_command(["tc", "bad"]) is False
+
+    def test_run_shell_command_returns_false_when_binary_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            with patch("subprocess.run", side_effect=FileNotFoundError("no tc")):
+                assert exp._run_shell_command(["tc", "qdisc", "show"]) is False
+
+    def test_apply_filter_clears_error_when_all_commands_succeed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            exp.tc_last_error = "stale"
+            with patch.object(exp, "_run_shell_command", return_value=True):
+                assert exp._apply_traffic_control_filter() is True
+            assert exp.tc_last_error is None
+
+    def test_apply_filter_sets_error_when_rate_class_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            # qdisc add "succeeds", class add fails, filter add "succeeds"
+            with patch.object(exp, "_run_shell_command", side_effect=[True, False, True]):
+                assert exp._apply_traffic_control_filter() is False
+            assert exp.tc_last_error is not None
+            assert "NOT rate-limited" in exp.tc_last_error
+            exp.logger.error.assert_called()
+
+    def test_apply_filter_refuses_without_share_ip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exp = _make_export(tmpdir)
+            exp.samba_share_ip = None
+            with patch.object(exp, "_run_shell_command") as run:
+                assert exp._apply_traffic_control_filter() is False
+                run.assert_not_called()
+            assert exp.tc_last_error is not None

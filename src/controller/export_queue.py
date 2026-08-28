@@ -16,7 +16,16 @@ survive a controller restart.  On startup, any entries that were mid-flight
 entries keep their attempt count.
 
 Configurable via controller config key:
-    export.max_concurrent_exports  (default: 2)
+    export.max_concurrent_exports  (default: 1)
+
+    Default lowered from 2 to 1 (2026-08-28): on a multi-switch habitat where
+    modules sit several hops from the PTP grandmaster, two concurrent
+    ~250 MB CIFS transfers over a shared, non-PTP-aware trunk at each hourly
+    segment rotation delayed PTP event packets enough to push far-side
+    modules over threshold. One in-flight transfer at a time (paired with the
+    lower per-module export.max_bitrate_mb) keeps the burst off the PTP path.
+    Raise it back to 2+ on a flat/transparent-clock network where the trunk
+    isn't the bottleneck.
 
 Author: Andrew SG
 """
@@ -49,7 +58,7 @@ class ExportQueue:
 
     @property
     def _max_concurrent(self) -> int:
-        return self.config.get("export.max_concurrent_exports", 2)
+        return self.config.get("export.max_concurrent_exports", 1)
 
     # -----------------------------------------------------------------------
     # Lifecycle

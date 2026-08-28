@@ -35,7 +35,8 @@
     "hailo": {
         "model": "yolov8s",
         "threshold": 0.4,
-        "max_labels": 40
+        "max_labels": 40,
+        "infer_every_n": 2
     },
     "recording": {
         "_recording_filetype": "ts"

@@ -514,7 +514,7 @@ class HailoSegDetector:
     _NM = 32             # mask prototypes
     _INPUT = 640         # yolov8*_seg model-zoo HEFs are 640x640
     _MAX_PER_SCALE = 200
-    _MAX_DET = 30        # post-NMS cap (mask assembly is the per-frame cost)
+    _MAX_DET = 12        # post-NMS cap (mask assembly is the per-frame cost)
     _MASK_THR = 0.5
 
     def __init__(self, hef_path: str, threshold: float = 0.4):
@@ -614,22 +614,31 @@ class HailoSegDetector:
         cids = np.concatenate(all_cls)
         coeffs = np.concatenate(all_mc)
         rx, ry = ow / self._INPUT, oh / self._INPUT
+        idx = HailoPoseDetector._nms(boxes, scores)[: self._MAX_DET]
+        if not idx:
+            return []
+        # One BLAS call for every kept mask instead of a per-detection matmul.
+        masks = _sigmoid(proto_flat @ coeffs[idx].T)          # (mh*mw, N)
+        masks = (masks >= self._MASK_THR).reshape(mh, mw, len(idx))
+        # Composite into a single proto-res instance-id map (lower score first,
+        # so a higher-scoring instance wins an overlap), then upsample ONCE.
+        inst = np.zeros((mh, mw), np.uint8)
+        rank = np.argsort([scores[i] for i in idx])           # low -> high score
+        for j in rank:
+            px1 = int(np.clip(boxes[idx[j], 0] * mw / self._INPUT, 0, mw))
+            px2 = int(np.clip(np.ceil(boxes[idx[j], 2] * mw / self._INPUT), 0, mw))
+            py1 = int(np.clip(boxes[idx[j], 1] * mh / self._INPUT, 0, mh))
+            py2 = int(np.clip(np.ceil(boxes[idx[j], 3] * mh / self._INPUT), 0, mh))
+            sub = inst[py1:py2, px1:px2]
+            sub[masks[py1:py2, px1:px2, j]] = j + 1
+        inst_full = cv2.resize(inst, (ow, oh), interpolation=cv2.INTER_NEAREST)
         out: list[SegResult] = []
-        for i in HailoPoseDetector._nms(boxes, scores)[: self._MAX_DET]:
-            m = _sigmoid(proto_flat @ coeffs[i]).reshape(mh, mw)
-            # zero everything outside the box (in proto coords)
-            px1 = int(np.clip(boxes[i, 0] * mw / self._INPUT, 0, mw))
-            px2 = int(np.clip(np.ceil(boxes[i, 2] * mw / self._INPUT), 0, mw))
-            py1 = int(np.clip(boxes[i, 1] * mh / self._INPUT, 0, mh))
-            py2 = int(np.clip(np.ceil(boxes[i, 3] * mh / self._INPUT), 0, mh))
-            cropped = np.zeros_like(m)
-            cropped[py1:py2, px1:px2] = m[py1:py2, px1:px2]
-            mask_bin = (cropped >= self._MASK_THR).astype(np.uint8)
-            mask_full = cv2.resize(mask_bin, (ow, oh), interpolation=cv2.INTER_NEAREST)
+        for j, i in enumerate(idx):
             bx1, by1, bx2, by2 = boxes[i]
             box = (int(bx1 * rx), int(by1 * ry),
                    int((bx2 - bx1) * rx), int((by2 - by1) * ry))
-            out.append(SegResult(box, float(scores[i]), int(cids[i]), mask_full))
+            out.append(SegResult(box, float(scores[i]), int(cids[i]),
+                                 (inst_full == j + 1).astype(np.uint8)))
         out.sort(key=lambda s: s.score, reverse=True)
         return out
 

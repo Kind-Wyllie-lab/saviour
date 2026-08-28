@@ -514,14 +514,14 @@ class HailoSegDetector:
     _NM = 32             # mask prototypes
     _INPUT = 640         # yolov8*_seg model-zoo HEFs are 640x640
     _MAX_PER_SCALE = 200
-    _MAX_DET = 12        # post-NMS cap (mask assembly is the per-frame cost)
     _MASK_THR = 0.5
 
-    def __init__(self, hef_path: str, threshold: float = 0.4):
+    def __init__(self, hef_path: str, threshold: float = 0.4, max_det: int = 12):
         from picamera2.devices.hailo import Hailo
         self._hailo = Hailo(hef_path)
         self._input_shape = self._hailo.get_input_shape()
         self._threshold = threshold
+        self._max_det = max_det   # post-NMS cap (mask assembly is the per-frame cost)
 
     @property
     def input_size(self) -> tuple:
@@ -614,7 +614,7 @@ class HailoSegDetector:
         cids = np.concatenate(all_cls)
         coeffs = np.concatenate(all_mc)
         rx, ry = ow / self._INPUT, oh / self._INPUT
-        idx = HailoPoseDetector._nms(boxes, scores)[: self._MAX_DET]
+        idx = HailoPoseDetector._nms(boxes, scores)[: self._max_det]
         if not idx:
             return []
         # One BLAS call for every kept mask instead of a per-detection matmul.
@@ -650,6 +650,9 @@ class HailoSegDetector:
 
     def set_threshold(self, threshold: float) -> None:
         self._threshold = threshold
+
+    def set_max_det(self, max_det: int) -> None:
+        self._max_det = max(1, int(max_det))
 
     def close(self):
         self._hailo.close()

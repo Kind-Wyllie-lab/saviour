@@ -83,11 +83,30 @@ class HailoCameraModule(CameraBase):
     # ── config ───────────────────────────────────────────────────────────────
 
     def _configure_module_extra(self, updated_keys) -> None:
-        if updated_keys is None or any(k.startswith("hailo.") for k in updated_keys):
+        hailo_keys = (None if updated_keys is None
+                      else {k for k in updated_keys if k.startswith("hailo.")})
+        if hailo_keys is not None and not hailo_keys:
+            return
+        if hailo_keys is None or "hailo.model" in hailo_keys:
             # Loading a HEF onto the Hailo device takes a few seconds and the
             # 8L won't hold two VDevices at once, so do it off the config-set
             # handler thread and drop to a plain-camera preview while it swaps.
             self._rebuild_detector_async()
+        else:
+            # threshold / infer_every_n / max_labels / max_detections don't
+            # need a HEF reload — apply them in place.
+            self._apply_light_config()
+
+    def _apply_light_config(self) -> None:
+        self._infer_every_n = max(1, int(self.config.get("hailo.infer_every_n", 2)))
+        self._max_labels = int(self.config.get("hailo.max_labels", 40))
+        threshold = float(self.config.get("hailo.threshold", 0.4))
+        max_det = max(1, int(self.config.get("hailo.max_detections", 12)))
+        with self._det_lock:
+            if self.detector is not None:
+                self.detector.set_threshold(threshold)
+                if hasattr(self.detector, "set_max_det"):
+                    self.detector.set_max_det(max_det)
 
     def _rebuild_detector_async(self) -> None:
         threading.Thread(target=self._build_detector, args=(True,),
@@ -102,6 +121,7 @@ class HailoCameraModule(CameraBase):
             threshold = float(self.config.get("hailo.threshold", 0.4))
             self._max_labels = int(self.config.get("hailo.max_labels", 40))
             self._infer_every_n = max(1, int(self.config.get("hailo.infer_every_n", 2)))
+            max_det = max(1, int(self.config.get("hailo.max_detections", 12)))
 
             spec = CURATED_MODELS.get(model_key)
             if spec is None:
@@ -139,7 +159,8 @@ class HailoCameraModule(CameraBase):
                     if task == "pose":
                         new_detector = HailoPoseDetector(hef_path, threshold=threshold)
                     elif task == "segmentation":
-                        new_detector = HailoSegDetector(hef_path, threshold=threshold)
+                        new_detector = HailoSegDetector(hef_path, threshold=threshold,
+                                                       max_det=max_det)
                     else:
                         new_detector = HailoDetector(hef_path, threshold=threshold)
                 except Exception as e:  # no Hailo device, driver missing, arch mismatch …

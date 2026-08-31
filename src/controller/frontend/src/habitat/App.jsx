@@ -5,6 +5,7 @@ import { Routes, Route } from "react-router";
 import Sidebar from '../basic/components/Sidebar/Sidebar';
 import Settings from "../basic/pages/Settings/Settings";
 import System from "../basic/pages/System/System";
+import Storage from "../basic/pages/Storage/Storage";
 import Recording from '../basic/pages/Recording/Recording';
 import Guide from '../basic/pages/Guide/Guide';
 
@@ -25,6 +26,7 @@ const pages = [
   { label: "Monitor", path: "/monitor" },
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
+  { label: "Storage", path: "/storage" },
   { label: "Guide", path: "/guide" },
 ];
 
@@ -62,6 +64,7 @@ function App() {
           <Route path="/monitor" element={<Monitor />} />
           <Route path="/recording/*" element={<Recording />} />
           <Route path="/system" element={<System />} />
+          <Route path="/storage" element={<Storage />} />
           <Route path="/guide" element={<Guide />} />
         </Routes>
       </div>

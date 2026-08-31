@@ -7,6 +7,7 @@ import Dashboard from "/src/loom/pages/LoomDashboard/LoomDashboard";
 import Settings from "/src/basic/pages/Settings/Settings";
 import LoomRecording from "/src/loom/pages/LoomRecording/LoomRecording";
 import System from "/src/basic/pages/System/System";
+import Storage from "/src/basic/pages/Storage/Storage";
 import Guide from "/src/basic/pages/Guide/Guide";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
@@ -21,6 +22,7 @@ const pages = [
   { label: "Settings",  path: "/settings" },
   { label: "Recording", path: "/recording" },
   { label: "System",    path: "/system" },
+  { label: "Storage",    path: "/storage" },
   { label: "Guide",     path: "/guide" },
 ];
 
@@ -67,6 +69,7 @@ function App() {
             <Route path="/settings"  element={<Settings />} />
             <Route path="/recording" element={<LoomRecording />} />
             <Route path="/system"    element={<System />} />
+            <Route path="/storage"    element={<Storage />} />
             <Route path="/guide"     element={<Guide />} />
           </Routes>
         </div>

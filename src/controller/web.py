@@ -12,6 +12,7 @@ Created: ?
 """
 
 
+import csv
 import hmac
 import io
 import json
@@ -23,6 +24,7 @@ import threading
 import time
 import zipfile
 from abc import ABC
+from collections import deque
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,6 +61,14 @@ class _QueueStream(io.RawIOBase):
     def writable(self) -> bool: return True
     def seekable(self) -> bool: return False
     def readable(self) -> bool: return False
+
+
+class _CsvSink:
+    """No-op file that csv.writer writes one formatted row to; write() hands
+    the row straight back so a generator can yield it. Same trick as
+    Health._CsvEcho — kept separate to avoid a cross-module import."""
+    def write(self, row: str) -> str:
+        return row
 
 def _sanitise_config_dict(cfg: dict) -> dict:
     """Recursively redact values whose key contains a sensitive word."""
@@ -108,6 +118,11 @@ class Web(ABC):
     # sitting somewhere "get_controller_config" could ever echo back.
     _ADMIN_CREDENTIALS_FILE = "/etc/saviour/admin_credentials"
 
+    # How long NAS free-space history is kept for the Storage page trend.
+    _NAS_HISTORY_RETENTION_S = 30 * 24 * 3600
+    # Max points returned to the chart / a single CSV export.
+    _NAS_HISTORY_MAX_POINTS = 1440
+
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -154,8 +169,11 @@ class Web(ABC):
         if self.rest_facade:
             self._register_rest_facade_routes()
 
-        # NAS health state
+        # NAS health state + a rolling free-space history for the Storage page's
+        # trend chart. One sample per _nas_monitor_loop pass (default 5 min);
+        # pruned by age, so retention is stable if the interval is retuned.
         self._nas_health = {"status": "unknown", "error": None, "checked_at": None}
+        self._nas_history: deque = deque()
         self._nas_monitor_stop = threading.Event()
 
         # Running flag
@@ -342,22 +360,37 @@ class Web(ABC):
         return expires is not None and expires >= time.time()
 
 
-    def _check_nas_free_space(self) -> "str | None":
-        """Mount the NAS and check free space against nas_min_free_pct.
+    def _probe_nas(self) -> dict:
+        """Mount the export share, measure free space, and test writability.
 
-        Returns None if the share is reachable with sufficient space, or an
-        error string for surfacing to the user.  Returns None immediately if no
-        NAS IP is configured.
+        Returns a structured dict (never raises) so both _check_nas_free_space()
+        (the scheduled-session preflight gate) and _run_nas_health_check() (the
+        Storage page's periodic sampler) can share one implementation:
+
+            {
+              "configured": bool,          # a share_ip is set
+              "reachable":  bool,          # the mount succeeded
+              "writable":   bool | None,   # a probe file could be written
+              "free_bytes":  int | None,
+              "total_bytes": int | None,
+              "error": str | None,         # low-level reason, user-facing
+            }
         """
         import shutil as _shutil
         import subprocess
+        import uuid as _uuid
+
+        out = {"configured": False, "reachable": False, "writable": None,
+               "free_bytes": None, "total_bytes": None, "error": None}
+
         nas_ip = self.config.get("export.share_ip", "")
         if not nas_ip:
-            return None
-        share_path  = self.config.get("export.share_path", "controller_share")
-        username    = self.config.get("export.share_username", "")
-        password    = self.config.get("export.share_password", "")
-        min_free_pct = self.config.get("recording.nas_min_free_pct", 5)
+            return out
+        out["configured"] = True
+
+        share_path = self.config.get("export.share_path", "controller_share")
+        username   = self.config.get("export.share_username", "")
+        password   = self.config.get("export.share_password", "")
         mount_point = Path("/mnt/nas_probe")
         try:
             mount_point.mkdir(parents=True, exist_ok=True)
@@ -373,30 +406,65 @@ class Web(ABC):
             if result.returncode != 0:
                 stderr = result.stderr.strip()
                 if "Permission denied" in stderr or "error(13)" in stderr:
-                    return f"NAS at {nas_ip} rejected the credentials — check share username/password in Settings"
-                return f"Cannot reach NAS at {nas_ip}: {stderr or 'mount failed'}"
+                    out["error"] = (f"NAS at {nas_ip} rejected the credentials — "
+                                    "check share username/password in Settings")
+                else:
+                    out["error"] = (f"Cannot reach NAS at {nas_ip}: "
+                                    f"{stderr or 'mount failed'}")
+                return out
+
+            out["reachable"] = True
             usage = _shutil.disk_usage(str(mount_point))
-            free_pct = usage.free / usage.total * 100 if usage.total else 100
-            free_gb  = usage.free / 1_073_741_824
-            if free_pct < min_free_pct:
-                return (
-                    f"NAS has only {free_pct:.1f}% free ({free_gb:.1f} GB) — "
-                    f"need at least {min_free_pct}% before starting a new session"
-                )
-            import uuid as _uuid
+            out["free_bytes"] = usage.free
+            out["total_bytes"] = usage.total
+
             probe = mount_point / f".saviour_probe_{_uuid.uuid4().hex}"
             try:
                 probe.write_text("probe")
                 probe.unlink()
+                out["writable"] = True
             except Exception as e:
-                return f"NAS at {nas_ip} is mounted but not writable: {e}"
-            return None
+                out["writable"] = False
+                out["error"] = f"NAS at {nas_ip} is mounted but not writable: {e}"
+            return out
         except subprocess.TimeoutExpired:
-            return f"Timed out connecting to NAS at {nas_ip}"
+            out["error"] = f"Timed out connecting to NAS at {nas_ip}"
+            return out
         except Exception as e:
-            return f"NAS check failed: {e}"
+            out["error"] = f"NAS check failed: {e}"
+            return out
         finally:
             subprocess.run(["sudo", "umount", str(mount_point)], check=False, timeout=10)
+
+
+    def _check_nas_free_space(self, probe: "dict | None" = None) -> "str | None":
+        """Mount the NAS and check free space against nas_min_free_pct.
+
+        Returns None if the share is reachable with sufficient space, or an
+        error string for surfacing to the user.  Returns None immediately if no
+        NAS IP is configured. Pass `probe` to reuse an existing _probe_nas()
+        result instead of mounting again.
+        """
+        if probe is None:
+            probe = self._probe_nas()
+        if not probe["configured"]:
+            return None
+        if probe["error"] and not probe["reachable"]:
+            return probe["error"]
+
+        total = probe["total_bytes"] or 0
+        free = probe["free_bytes"] or 0
+        free_pct = free / total * 100 if total else 100
+        free_gb = free / 1_073_741_824
+        min_free_pct = self.config.get("recording.nas_min_free_pct", 5)
+        if free_pct < min_free_pct:
+            return (
+                f"NAS has only {free_pct:.1f}% free ({free_gb:.1f} GB) — "
+                f"need at least {min_free_pct}% before starting a new session"
+            )
+        if probe["writable"] is False:
+            return probe["error"] or "NAS is mounted but not writable"
+        return None
 
 
     def _try_write_metadata(self, session_name: str, metadata: dict) -> bool:
@@ -879,6 +947,30 @@ class Web(ABC):
                 headers={
                     "Content-Disposition":
                         f"attachment; filename=ptp_history_{filename_part}.csv"
+                },
+            )
+
+        @self.app.route("/api/nas_history.csv")
+        def download_nas_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            hours_param = request.args.get("hours")
+            if hours_param is None or hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
+            return Response(
+                self._nas_history_csv(hours),
+                mimetype="text/csv",
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=nas_history_{filename_part}.csv"
                 },
             )
 
@@ -1516,6 +1608,31 @@ class Web(ABC):
         @self.socketio.on("get_nas_health")
         def handle_get_nas_health(data=None):
             self.socketio.emit("nas_health_update", self._nas_health)
+
+        @self.socketio.on("get_storage_overview")
+        def handle_get_storage_overview(data=None):
+            self.socketio.emit("storage_overview", self._storage_overview())
+
+        @self.socketio.on("get_nas_history")
+        def handle_get_nas_history(data=None):
+            hours = (data or {}).get("hours")
+            try:
+                hours = float(hours) if hours is not None else None
+            except (TypeError, ValueError):
+                hours = None
+            cutoff = time.time() - hours * 3600 if hours else None
+            samples = [
+                [t, free, total] for (t, free, total) in list(self._nas_history)
+                if cutoff is None or t >= cutoff
+            ]
+            # Down-sample so a month of 5-min points can't flood the socket.
+            if len(samples) > self._NAS_HISTORY_MAX_POINTS:
+                step = len(samples) // self._NAS_HISTORY_MAX_POINTS + 1
+                samples = samples[::step]
+            self.socketio.emit("nas_history", {
+                "samples": samples,
+                "retention_days": self._NAS_HISTORY_RETENTION_S // 86400,
+            })
 
 
         # ── Update package store ──────────────────────────────────────────────
@@ -2386,22 +2503,142 @@ class Web(ABC):
             self._nas_monitor_stop.wait(NAS_CHECK_INTERVAL_S)
 
     def _run_nas_health_check(self):
-        nas_ip = self.config.get("export.share_ip", "")
-        if not nas_ip:
-            new = {"status": "unconfigured", "error": None, "checked_at": time.time()}
+        now = time.time()
+        probe = self._probe_nas()
+        error = self._check_nas_free_space(probe)  # applies the min-free threshold
+
+        if not probe["configured"]:
+            status = "unconfigured"
+        elif not probe["reachable"]:
+            status = "error"
+        elif error is not None:
+            status = "error"
         else:
-            error = self._check_nas_free_space()
-            new = {
-                "status": "ok" if error is None else "error",
-                "error": error,
-                "checked_at": time.time(),
-            }
+            status = "ok"
+
+        total = probe["total_bytes"]
+        free = probe["free_bytes"]
+        free_pct = (free / total * 100) if (total and free is not None) else None
+        warn_pct = self.config.get("recording.nas_warn_free_pct", 15)
+
+        new = {
+            "status": status,
+            "error": error or probe["error"],
+            "checked_at": now,
+            "destination": self._export_destination_label(),
+            "reachable": probe["reachable"],
+            "writable": probe["writable"],
+            "free_bytes": free,
+            "total_bytes": total,
+            "free_gb": round(free / 1_073_741_824, 1) if free is not None else None,
+            "total_gb": round(total / 1_073_741_824, 1) if total else None,
+            "used_gb": round((total - free) / 1_073_741_824, 1)
+                       if (total and free is not None) else None,
+            "free_pct": round(free_pct, 2) if free_pct is not None else None,
+            "min_free_pct": self.config.get("recording.nas_min_free_pct", 5),
+            "warn_free_pct": warn_pct,
+        }
+        if new["status"] == "ok" and free_pct is not None and free_pct < warn_pct:
+            new["status"] = "warn"
+
         prev_status = self._nas_health.get("status")
         self._nas_health = new
         if new["status"] != prev_status:
             self.logger.warning(f"NAS health: {prev_status} → {new['status']}"
                                 + (f" ({new['error']})" if new.get("error") else ""))
+
+        if free is not None and total:
+            self._nas_history.append((now, int(free), int(total)))
+            self._prune_nas_history()
+
         self.socketio.emit("nas_health_update", new)
+        self.socketio.emit("storage_overview", self._storage_overview())
+
+    def _prune_nas_history(self):
+        cutoff = time.time() - self._NAS_HISTORY_RETENTION_S
+        h = self._nas_history
+        while h and h[0][0] < cutoff:
+            h.popleft()
+
+    def _export_destination_label(self) -> str:
+        """Human-readable '//ip/share' for the current export target, or a
+        fallback when none is configured."""
+        ip = self.config.get("export.share_ip", "")
+        share = self.config.get("export.share_path", "controller_share")
+        return f"//{ip}/{share}" if ip else "controller local share"
+
+    def _storage_overview(self) -> dict:
+        """Snapshot for the Storage page: destination/NAS state, aggregate
+        export backlog across all sessions, and per-module local disk."""
+        # Export backlog
+        pending = failed = 0
+        exporting_sessions = []
+        try:
+            sessions = self.facade.get_recording_sessions() if self.facade else {}
+        except Exception:
+            sessions = {}
+        for name, s in sessions.items():
+            s_pending = getattr(s, "pending_exports", 0) or 0
+            s_failed = getattr(s, "total_exports_failed", 0) or 0
+            pending += s_pending
+            failed += s_failed
+            if s_pending or s_failed:
+                exporting_sessions.append({
+                    "session_name": name,
+                    "state": str(getattr(s, "state", "")),
+                    "pending": s_pending,
+                    "failed": s_failed,
+                    "complete": getattr(s, "total_exports_complete", 0) or 0,
+                    "stopped_epoch": getattr(s, "stopped_epoch", None),
+                })
+
+        # Per-module local disk
+        disks = []
+        try:
+            health = self.facade.get_module_health() if self.facade else {}
+            modules = self.facade.get_modules() if self.facade else {}
+        except Exception:
+            health, modules = {}, {}
+        for mid, h in (health or {}).items():
+            used_gb = h.get("disk_used_gb")
+            total_gb = h.get("disk_total_gb")
+            free_gb = (round(total_gb - used_gb, 1)
+                       if (used_gb is not None and total_gb is not None) else None)
+            disks.append({
+                "module_id": mid,
+                "name": (modules.get(mid) or {}).get("name") or mid,
+                "type": (modules.get(mid) or {}).get("type"),
+                "used_pct": h.get("disk_space"),
+                "free_gb": free_gb,
+                "total_gb": total_gb,
+            })
+        disks.sort(key=lambda d: (d["used_pct"] is None, -(d["used_pct"] or 0)))
+
+        return {
+            "nas": self._nas_health,
+            "exports": {
+                "pending": pending,
+                "failed": failed,
+                "sessions": exporting_sessions,
+            },
+            "disks": disks,
+        }
+
+    def _nas_history_csv(self, hours: "float | None" = None):
+        """Yield NAS free-space history as CSV text, one row per yield. Mirrors
+        Health.export_ptp_history_csv so an operator can plot fill rate over a
+        long unattended run."""
+        cutoff = time.time() - hours * 3600 if hours is not None else None
+        writer = csv.writer(_CsvSink())
+        yield writer.writerow(
+            ["timestamp_utc", "timestamp_epoch", "free_bytes", "total_bytes", "free_pct"]
+        )
+        for t, free, total in list(self._nas_history):
+            if cutoff is not None and t < cutoff:
+                continue
+            pct = round(free / total * 100, 3) if total else ""
+            ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
+            yield writer.writerow([ts_utc, t, free, total, pct])
 
     def start(self):
         """Start the web interface in a separate thread"""

@@ -14,6 +14,7 @@ import os
 import queue
 import re
 import tempfile
+import time
 import zipfile
 from unittest.mock import MagicMock, call, patch
 
@@ -1536,3 +1537,163 @@ class TestTeamsWebhookTest:
                 mock_thread.call_args.kwargs["target"]()
 
             facade.controller.notifier.send_test.assert_called_once_with(webhook_url=None)
+
+
+# ---------------------------------------------------------------------------
+# Storage page: NAS probe / history / overview
+# ---------------------------------------------------------------------------
+
+class TestProbeNas:
+    def test_unconfigured_when_no_share_ip(self):
+        web = _make_web(**{"export.share_ip": ""})
+        probe = web._probe_nas()
+        assert probe["configured"] is False
+        assert probe["reachable"] is False
+        assert probe["free_bytes"] is None
+
+    def test_check_free_space_reuses_passed_probe(self):
+        web = _make_web(**{"recording.nas_min_free_pct": 5})
+        # 4% free -> below the 5% gate -> the familiar preflight string
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 4, "total_bytes": 100, "error": None}
+        msg = web._check_nas_free_space(probe)
+        assert msg is not None and "4.0% free" in msg and "at least 5%" in msg
+
+    def test_check_free_space_ok_returns_none(self):
+        web = _make_web(**{"recording.nas_min_free_pct": 5})
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 50, "total_bytes": 100, "error": None}
+        assert web._check_nas_free_space(probe) is None
+
+    def test_check_free_space_unreachable_returns_probe_error(self):
+        web = _make_web()
+        probe = {"configured": True, "reachable": False, "writable": None,
+                 "free_bytes": None, "total_bytes": None, "error": "Cannot reach NAS"}
+        assert web._check_nas_free_space(probe) == "Cannot reach NAS"
+
+
+class TestNasHealthCheck:
+    def _web(self, **cfg):
+        web, facade = _make_web_with_facade(**cfg)
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {}
+        facade.get_modules.return_value = {}
+        return web
+
+    def test_records_history_and_enriches_health(self):
+        web = self._web(**{"export.share_ip": "10.0.0.1",
+                           "recording.nas_min_free_pct": 5,
+                           "recording.nas_warn_free_pct": 15})
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 30 * 1_073_741_824, "total_bytes": 100 * 1_073_741_824,
+                 "error": None}
+        with patch.object(web, "_probe_nas", return_value=probe):
+            web._run_nas_health_check()
+        assert web._nas_health["status"] == "ok"
+        assert web._nas_health["free_gb"] == 30.0
+        assert web._nas_health["free_pct"] == 30.0
+        assert len(web._nas_history) == 1
+        assert web._nas_history[0][1] == 30 * 1_073_741_824
+
+    def test_warn_status_between_warn_and_min(self):
+        web = self._web(**{"export.share_ip": "10.0.0.1",
+                           "recording.nas_min_free_pct": 5,
+                           "recording.nas_warn_free_pct": 15})
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 10, "total_bytes": 100, "error": None}
+        with patch.object(web, "_probe_nas", return_value=probe):
+            web._run_nas_health_check()
+        assert web._nas_health["status"] == "warn"
+
+    def test_error_status_below_min(self):
+        web = self._web(**{"export.share_ip": "10.0.0.1",
+                           "recording.nas_min_free_pct": 5})
+        probe = {"configured": True, "reachable": True, "writable": True,
+                 "free_bytes": 2, "total_bytes": 100, "error": None}
+        with patch.object(web, "_probe_nas", return_value=probe):
+            web._run_nas_health_check()
+        assert web._nas_health["status"] == "error"
+
+    def test_prune_drops_samples_past_retention(self):
+        web = self._web()
+        now = 1_000_000_000.0
+        old = now - web._NAS_HISTORY_RETENTION_S - 10
+        web._nas_history.extend([(old, 1, 2), (now, 3, 4)])
+        with patch("src.controller.web.time.time", return_value=now):
+            web._prune_nas_history()
+        assert list(web._nas_history) == [(now, 3, 4)]
+
+
+class TestStorageOverview:
+    def test_aggregates_backlog_and_disks(self):
+        web, facade = _make_web_with_facade()
+        s1 = RecordingSession(session_name="s1", target="camera")
+        s1.pending_exports = 2
+        s1.total_exports_failed = 1
+        s1.total_exports_complete = 10
+        s2 = RecordingSession(session_name="s2", target="camera")  # nothing pending
+        facade.get_recording_sessions.return_value = {"s1": s1, "s2": s2}
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_space": 90.0, "disk_used_gb": 90.0, "disk_total_gb": 100.0},
+            "cam_b": {"disk_space": 10.0, "disk_used_gb": 10.0, "disk_total_gb": 100.0},
+        }
+        facade.get_modules.return_value = {"cam_a": {"name": "A", "type": "camera"}}
+
+        ov = web._storage_overview()
+        assert ov["exports"]["pending"] == 2
+        assert ov["exports"]["failed"] == 1
+        assert [s["session_name"] for s in ov["exports"]["sessions"]] == ["s1"]
+        # disks sorted fullest-first
+        assert [d["module_id"] for d in ov["disks"]] == ["cam_a", "cam_b"]
+        assert ov["disks"][0]["name"] == "A"
+        assert ov["disks"][0]["free_gb"] == 10.0
+        assert ov["disks"][1]["name"] == "cam_b"  # falls back to id
+
+    def test_survives_facade_errors(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.side_effect = RuntimeError("boom")
+        facade.get_module_health.side_effect = RuntimeError("boom")
+        ov = web._storage_overview()
+        assert ov["exports"]["pending"] == 0
+        assert ov["disks"] == []
+
+
+class TestNasHistoryCsv:
+    def test_is_a_generator_with_header_and_rows(self):
+        web = _make_web()
+        web._nas_history.extend([(100.0, 10, 100), (200.0, 5, 100)])
+        rows = list(web._nas_history_csv())
+        assert rows[0].startswith("timestamp_utc,timestamp_epoch,free_bytes")
+        assert len(rows) == 3
+        assert ",10,100,10.0" in rows[1]
+
+    def test_hours_filter(self):
+        web = _make_web()
+        now = time.time()
+        web._nas_history.extend([(now - 7200, 1, 10), (now - 60, 2, 10)])
+        rows = list(web._nas_history_csv(hours=1))
+        assert len(rows) == 2  # header + the one recent sample
+
+
+class TestStorageSocketHandlers:
+    def test_get_storage_overview_emits(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {}
+        facade.get_modules.return_value = {}
+        client = _connected_client(web)
+        client.emit("get_storage_overview")
+        names = [m["name"] for m in client.get_received()]
+        assert "storage_overview" in names
+
+    def test_get_nas_history_downsamples_and_filters(self):
+        web, _facade = _make_web_with_facade()
+        now = time.time()
+        web._NAS_HISTORY_MAX_POINTS = 5
+        web._nas_history.extend((now - i * 60, i, 1000) for i in range(50, 0, -1))
+        client = _connected_client(web)
+        client.emit("get_nas_history", {"hours": 1})
+        payload = next(m["args"][0] for m in client.get_received()
+                       if m["name"] == "nas_history")
+        assert len(payload["samples"]) <= 5
+        assert payload["retention_days"] >= 1

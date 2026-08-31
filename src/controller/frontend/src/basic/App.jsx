@@ -4,12 +4,13 @@ import React,  { useEffect, useRef, useState } from "react";
 
 // SAVIOUR Imports
 import Sidebar from "./components/Sidebar/Sidebar";
-import { Routes, Route, useLocation } from "react-router";
+import { Routes, Route, useLocation, Link } from "react-router";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import Settings from "./pages/Settings/Settings";
 import Recording from "./pages/Recording/Recording";
 import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
+import Storage from "./pages/Storage/Storage";
 import Guide from "./pages/Guide/Guide";
 import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
@@ -28,6 +29,7 @@ const pages = [
   { label: "Settings", path: "/settings" },
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
+  { label: "Storage", path: "/storage" },
   { label: "Guide", path: "/guide" },
 ];
 
@@ -92,10 +94,16 @@ function App() {
       <Sidebar navItems={pages} />
       <div className="content">
         <RecordingStatusWidget />
-        {nasHealth?.status === "error" && (
+        {(nasHealth?.status === "error" || nasHealth?.status === "warn") && (
           <div className="nas-warning-banner">
-            NAS unreachable - exports will queue locally until the share is restored.
+            {nasHealth.reachable === false
+              ? "Export share unreachable - exports will queue locally until it is restored."
+              : nasHealth.status === "warn"
+                ? "Export share space is running low."
+                : "Export share problem - new sessions may be blocked."}
             {nasHealth.error && <span className="nas-warning-detail"> ({nasHealth.error})</span>}
+            {" "}
+            <Link to="/storage" className="nas-warning-link">Storage →</Link>
           </div>
         )}
         <Routes>
@@ -103,6 +111,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/recording/*" element={<Recording />} />
           <Route path="/system" element={<System />} />
+          <Route path="/storage" element={<Storage />} />
           <Route path="/guide" element={<Guide />} />
         </Routes>
       </div>

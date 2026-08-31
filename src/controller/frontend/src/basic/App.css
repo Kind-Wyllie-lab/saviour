@@ -34,3 +34,10 @@
   opacity: 0.75;
   font-weight: 400;
 }
+
+.nas-warning-link {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  white-space: nowrap;
+}

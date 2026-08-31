@@ -43,7 +43,8 @@
         "peak_hold_s": 2.0,
         "plot_mode": "spectrogram",
         "freq_range": "band",
-        "layout": "stacked"
+        "layout": "stacked",
+        "colormap": "inferno"
     },
     "recording": {
         "_recording_filetype": "flac"

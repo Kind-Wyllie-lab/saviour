@@ -135,12 +135,6 @@
   min-width: 0;
 }
 
-/* Give the audio/TTL stream cards a fixed height so they don't collapse */
-.dashboard-panel .mjpeg-stream-card {
-  flex: none;
-  height: 220px;
-}
-
 /* ── Compact layout (≤ 1280px) ──────────────────────────────────────────── */
 
 .dashboard-compact {

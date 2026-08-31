@@ -1,0 +1,84 @@
+.mini-area-chart {
+  position: relative;
+  width: 100%;
+}
+
+.mini-area-chart svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.mini-area-chart__empty {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--secondary-text-color);
+  font-size: 0.85em;
+}
+
+.mac-grid {
+  stroke: var(--border-color);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.mac-ylabel,
+.mac-threshold-label {
+  fill: var(--secondary-text-color);
+  font-size: 10px;
+}
+
+.mac-area {
+  fill: var(--accent-color);
+  opacity: 0.14;
+}
+
+.mac-line {
+  fill: none;
+  stroke: var(--accent-color);
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.mac-threshold {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.mac-threshold--warn   { stroke: #d1971a; }
+.mac-threshold--danger { stroke: #d14b4b; }
+.mac-threshold-label--warn   { fill: #d1971a; }
+.mac-threshold-label--danger { fill: #d14b4b; }
+
+.mac-cursor {
+  stroke: var(--secondary-text-color);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.mac-dot {
+  fill: var(--accent-color);
+  stroke: var(--card-bg-color);
+  stroke-width: 1.5;
+}
+
+.mini-area-chart__tip {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 4px 8px;
+  background: var(--card-bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.78em;
+  color: var(--text-color);
+  pointer-events: none;
+}
+.mini-area-chart__tip span {
+  color: var(--secondary-text-color);
+}

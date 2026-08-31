@@ -510,6 +510,48 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </div>
             )}
 
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info">
+              Auto-exposure tuning — applies while "Auto gain/exposure" is on.
+            </div>
+            <div className="form-field">
+              <label>Exposure bias (EV): {Number(cam.exposure_value ?? 0).toFixed(1)}</label>
+              <input type="range" min="-8" max="8" step="0.5"
+                disabled={!aeEnabled}
+                value={cam.exposure_value ?? 0} className="brightness-slider"
+                onChange={e => handleChange(["camera", "exposure_value"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Metering:</label>
+              <select value={cam.ae_metering_mode ?? "centre_weighted"}
+                disabled={!aeEnabled}
+                onChange={e => handleChange(["camera", "ae_metering_mode"], e)}>
+                <option value="centre_weighted">Centre-weighted (default)</option>
+                <option value="spot">Spot (centre only — ignores bright surroundings)</option>
+                <option value="matrix">Matrix (whole frame)</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Constraint:</label>
+              <select value={cam.ae_constraint_mode ?? "normal"}
+                disabled={!aeEnabled}
+                onChange={e => handleChange(["camera", "ae_constraint_mode"], e)}>
+                <option value="normal">Normal (default)</option>
+                <option value="highlight">Highlight (protect bright areas from clipping)</option>
+                <option value="shadows">Shadows (expose for the darker subject)</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Exposure mode:</label>
+              <select value={cam.ae_exposure_mode ?? "normal"}
+                disabled={!aeEnabled}
+                onChange={e => handleChange(["camera", "ae_exposure_mode"], e)}>
+                <option value="normal">Normal (default)</option>
+                <option value="short">Short (prefer shorter shutter)</option>
+                <option value="long">Long (prefer longer shutter — less gain, less noise)</option>
+              </select>
+            </div>
+
             {hasAutofocus && (
               <>
                 <div className="config-section-divider" />

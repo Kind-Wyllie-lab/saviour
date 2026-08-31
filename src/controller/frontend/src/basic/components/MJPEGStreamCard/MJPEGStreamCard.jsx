@@ -12,11 +12,22 @@ const RECONNECT_DELAY_MS = 2500;
 // host than the browser allows, leaving the newest one stuck pending forever
 // with neither onLoad nor onError ever firing to recover it.
 const MIN_RECONNECT_MS = 3000;
+// After this many reconnects with no good frame in between, stop retrying and
+// show an idle state. A genuinely-dead stream (module offline, wrong port)
+// otherwise reconnects forever, and every attempt leaks a socket Chrome is
+// slow to reap — a whole dashboard of those is what wedges the tab until it's
+// closed. The header ⟳ and re-focusing/scrolling the card back into view all
+// reset this.
+const MAX_RECONNECTS = 10;
 
 /**
  * Generic MJPEG stream card.
  * Handles stall detection and reconnection for any module that serves
  * an MJPEG stream at http://{ip}:{port}/video_feed.
+ *
+ * The stream only runs while the card is BOTH on a visible tab and scrolled
+ * into view — a backgrounded or off-screen card tears its connection down
+ * instead of decoding frames and leaking sockets forever.
  */
 function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspectRatio, syncStatus }) {
   const [fullscreen, setFullscreen] = useState(false);
@@ -28,12 +39,30 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   // (e.g. livestream_quality, resolution) altered it.
   const [aspectRatio, setAspectRatio] = useState(null);
   const [restarting, setRestarting] = useState(false);
+
+  // Stream runs only when active === (tab visible) && (card on screen) &&
+  // (reconnects not exhausted).
+  const [pageVisible, setPageVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState === "visible"
+  );
+  const [onScreen, setOnScreen] = useState(true);
+  const [gaveUp, setGaveUp] = useState(false);
+  const active = pageVisible && onScreen && !gaveUp;
+
   const stallTimer = useRef(null);
   const reconnectTimer = useRef(null);
   const prevStatus       = useRef(syncStatus);
   const lastBumpAt       = useRef(0);
   const pendingBumpTimer = useRef(null);
+  const reconnectCount   = useRef(0);
   const imgRef           = useRef(null);
+  const cardRef          = useRef(null);
+
+  const clearTimers = () => {
+    clearTimeout(stallTimer.current);
+    clearTimeout(reconnectTimer.current);
+    clearTimeout(pendingBumpTimer.current);
+  };
 
   // Changing `key` unmounts the old <img>, but Chrome doesn't reliably abort
   // the underlying multipart/x-mixed-replace connection just because the
@@ -51,6 +80,12 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   };
 
   const bump = () => {
+    if (!active) return;
+    if (reconnectCount.current >= MAX_RECONNECTS) {
+      setGaveUp(true);
+      return;
+    }
+    reconnectCount.current += 1;
     const now = Date.now();
     const elapsed = now - lastBumpAt.current;
     if (elapsed >= MIN_RECONNECT_MS) {
@@ -60,6 +95,54 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
       pendingBumpTimer.current = setTimeout(doBump, MIN_RECONNECT_MS - elapsed);
     }
   };
+
+  // Manual retry (header ⟳): always allowed, clears the give-up state.
+  const manualRetry = () => {
+    reconnectCount.current = 0;
+    if (gaveUp) {
+      setGaveUp(false);   // re-activates -> the `active` effect remounts it
+    } else {
+      bump();
+    }
+  };
+
+  // Tab visibility -> just track it; the `active` effect does the work.
+  // `online` (network came back) forces a reconnect if we're currently active.
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVis = () => setPageVisible(document.visibilityState === "visible");
+    const onOnline = () => bump();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", onOnline);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Only stream while the card is actually on screen.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    const obs = new IntersectionObserver(
+      ([entry]) => setOnScreen(entry.isIntersecting),
+      { rootMargin: "200px" }  // warm up just before it scrolls in
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  // Start / tear down the stream as `active` flips.
+  useEffect(() => {
+    if (!active) {
+      if (imgRef.current) imgRef.current.src = "";
+      clearTimers();
+      return;
+    }
+    reconnectCount.current = 0;
+    doBump();  // abort any stale connection + fresh cache-busted URL
+  }, [active]);
 
   // A config save (e.g. resolution/fps change) restarts the camera's stream
   // server-side. Without watching this, the <img> connection just keeps
@@ -78,33 +161,12 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   }, [syncStatus]);
 
   useEffect(() => {
+    if (!active) return undefined;
     setAspectRatio(null);
     stallTimer.current = setTimeout(bump, STALL_TIMEOUT_MS);
-    return () => {
-      clearTimeout(stallTimer.current);
-      clearTimeout(reconnectTimer.current);
-      clearTimeout(pendingBumpTimer.current);
-    };
+    return () => clearTimers();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streamKey]);
-
-  // A live MJPEG connection that dies after its first frame (e.g. the OS
-  // suspends/changes the network under it — Chrome surfaces this as
-  // ERR_NETWORK_IO_SUSPENDED / ERR_NETWORK_CHANGED on laptop sleep/wake or
-  // wifi roam) fires neither onLoad nor onError again, so the stream sits
-  // frozen until something remounts it (opening fullscreen, or a manual
-  // refresh). Force a reconnect on the two OS-level signals that correlate
-  // with those errors.
-  useEffect(() => {
-    const handleVisibility = () => { if (document.visibilityState === "visible") bump(); };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("online", bump);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("online", bump);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [streamKey, active]);
 
   // Clear only, don't re-arm — Chrome fires onLoad once for a
   // multipart/x-mixed-replace (MJPEG) stream, on the first frame only, and
@@ -114,6 +176,7 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
   // stream. Recovery from a stream that actually dies is handled by onError.
   const handleLoad = (e) => {
     clearTimeout(stallTimer.current);
+    reconnectCount.current = 0;  // a good frame == healthy, reset the budget
     setRestarting(false);
     const { naturalWidth, naturalHeight } = e.target;
     if (naturalWidth && naturalHeight) {
@@ -129,15 +192,21 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
     reconnectTimer.current = setTimeout(bump, RECONNECT_DELAY_MS);
   };
 
+  const idleText = gaveUp
+    ? "Stream unavailable"
+    : !pageVisible
+      ? "Stream paused"
+      : "Stream paused (off screen)";
+
   return (
     <>
-      <div className="mjpeg-stream-card card">
+      <div className="mjpeg-stream-card card" ref={cardRef}>
         <div className="mjpeg-stream-header">
           {label && <span className="mjpeg-stream-label">{label}</span>}
           <button
             type="button"
             className="mjpeg-restart-button"
-            onClick={(e) => { e.stopPropagation(); bump(); }}
+            onClick={(e) => { e.stopPropagation(); manualRetry(); }}
             title="Restart stream"
             aria-label="Restart stream"
           >
@@ -154,19 +223,26 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
               for the identical bare URL instead of opening a genuinely new
               multipart connection, leaving the frame frozen even after a
               "successful" reconnect. */}
-          <img
-            key={streamKey}
-            ref={imgRef}
-            src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
-            alt={label || "stream"}
-            onLoad={handleLoad}
-            onError={handleError}
-            onClick={() => setFullscreen(true)}
-          />
-          {isRecording && <span className="mjpeg-rec-dot" title="Recording" />}
-          {restarting && (
+          {active && (
+            <img
+              key={streamKey}
+              ref={imgRef}
+              src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
+              alt={label || "stream"}
+              onLoad={handleLoad}
+              onError={handleError}
+              onClick={() => setFullscreen(true)}
+            />
+          )}
+          {isRecording && active && <span className="mjpeg-rec-dot" title="Recording" />}
+          {restarting && active && (
             <div className="mjpeg-stream-restarting-overlay">
               <span>Stream restarting…</span>
+            </div>
+          )}
+          {!active && (
+            <div className="mjpeg-stream-restarting-overlay">
+              <span>{idleText}</span>
             </div>
           )}
         </div>

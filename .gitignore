@@ -85,3 +85,9 @@ site/
 # Generated run output — never meant to be committed
 framesync_summary.csv
 saviour_uninstall_summary.txt
+
+# Hailo HEFs: the model-zoo nets are fetched by
+# src/modules/variants/hailo_camera/download_hefs.sh, so don't track them.
+# Custom, non-reproducible nets (e.g. the top-down rat detector) ARE tracked.
+hailo_models/*.hef
+!hailo_models/topdown_rats_yolov8_640_nms.hef

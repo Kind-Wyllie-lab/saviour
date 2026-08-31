@@ -100,6 +100,17 @@ CURATED_MODELS = {
         "task": "detection",
         "labels": "coco",
     },
+    "topdown_rats_yolov8": {
+        # Custom single-class rat detector (YOLOv8n fine-tune, on-chip NMS),
+        # trained on top-down arena footage. NOT a model-zoo net -
+        # download_hefs.sh does not fetch this; the HEF is tracked in-tree
+        # under hailo_models/ and ships with the deploy.
+        "label": "Rat detector (top-down, 1 class)",
+        "category": "Object detection",
+        "hef": "topdown_rats_yolov8_640_nms.hef",
+        "task": "detection",
+        "labels": ["rat"],
+    },
     "yolov8s_pose": {
         "label": "YOLOv8s-pose - body keypoints",
         "category": "Pose estimation",
@@ -145,7 +156,10 @@ DEFAULT_MODEL = "yolov8s"
 
 def labels_for(model_key: str) -> list[str]:
     spec = CURATED_MODELS.get(model_key, {})
-    return COCO_LABELS if spec.get("labels") == "coco" else COCO_LABELS
+    labels = spec.get("labels")
+    if isinstance(labels, list):
+        return labels
+    return COCO_LABELS
 
 
 class Detection:

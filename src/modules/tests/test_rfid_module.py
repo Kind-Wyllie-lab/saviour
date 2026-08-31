@@ -13,7 +13,7 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from src.modules.variants.rfid.rfid_module import Ping, RFIDModule
+from src.modules.variants.rfid.rfid_module import Ping, PresenceTracker, RFIDModule
 
 
 def _make_rfid(**attrs) -> RFIDModule:
@@ -26,6 +26,11 @@ def _make_rfid(**attrs) -> RFIDModule:
     m.is_recording = False
     m._csv_handle = None
     m.current_rfid_filename = None
+    m._visit_csv_handle = None
+    m.current_visit_filename = None
+    m._presence = None
+    m._presence_lock = threading.Lock()
+    m._sweep_timer = None
     m.is_streaming = False
     m.bus = MagicMock()
     m.bus.is_connected = False
@@ -39,6 +44,11 @@ def _make_rfid(**attrs) -> RFIDModule:
     for k, v in attrs.items():
         setattr(m, k, v)
     return m
+
+
+def _cfg(mapping: dict):
+    """MagicMock config.get side_effect from a plain {key: value} mapping."""
+    return lambda k, d=None: mapping.get(k, d)
 
 
 class TestRecordPing:
@@ -176,3 +186,135 @@ class TestConfigureSpecial:
         m._bring_up_bus = MagicMock()
         m.configure_module_special(["monitoring.history_secs"])
         m._teardown_bus.assert_not_called()
+
+    def test_presence_key_change_does_not_recycle_bus(self):
+        m = _make_rfid()
+        m._teardown_bus = MagicMock()
+        m._bring_up_bus = MagicMock()
+        m.configure_module_special(["rfid.presence.gap_timeout_s"])
+        m._teardown_bus.assert_not_called()
+        m._bring_up_bus.assert_not_called()
+
+    def test_presence_enable_builds_tracker(self):
+        m = _make_rfid()
+        m.config.get.side_effect = _cfg({"rfid.presence.enabled": True})
+        m._teardown_bus = MagicMock()
+        m._bring_up_bus = MagicMock()
+        m.configure_module_special(["rfid.presence.enabled"])
+        assert isinstance(m._presence, PresenceTracker)
+
+
+class TestPresenceTracker:
+    def _tracker(self, **kw):
+        kw.setdefault("gap_timeout_s", 2.0)
+        kw.setdefault("min_pings", 2)
+        kw.setdefault("min_dwell_s", 0.0)
+        return PresenceTracker(**kw)
+
+    def _ping(self, ts, unit=1, tag="AAAA", type_name="t"):
+        return Ping(ts=ts, unit=unit, tag=tag, type_name=type_name)
+
+    def test_enter_after_min_pings(self):
+        pt = self._tracker(min_pings=3)
+        assert pt.observe(self._ping(0.0)) == (None, None)
+        assert pt.observe(self._ping(0.3)) == (None, None)
+        exited, entered = pt.observe(self._ping(0.6))
+        assert exited is None
+        assert entered is not None and entered.count == 3
+
+    def test_single_blip_never_enters(self):
+        pt = self._tracker(min_pings=2)
+        assert pt.observe(self._ping(0.0)) == (None, None)
+        # 3s later, same tag -> old (unannounced) visit gone, fresh one starts
+        exited, entered = pt.observe(self._ping(3.0))
+        assert exited is None and entered is None
+        assert pt.sweep(6.0) == []  # nothing announced, nothing to close
+
+    def test_min_dwell_gate(self):
+        pt = self._tracker(min_pings=1, min_dwell_s=1.0)
+        assert pt.observe(self._ping(0.0)) == (None, None)      # dwell 0
+        _, entered = pt.observe(self._ping(1.2))                # dwell 1.2 -> in
+        assert entered is not None
+
+    def test_sweep_closes_idle_visit(self):
+        pt = self._tracker(min_pings=1)
+        _, entered = pt.observe(self._ping(10.0))
+        assert entered is not None
+        assert pt.sweep(11.0) == []                # within gap
+        closed = pt.sweep(13.0)                    # 3s idle > 2s gap
+        assert len(closed) == 1 and closed[0].count == 1
+
+    def test_mid_observe_timeout_emits_exit(self):
+        pt = self._tracker(min_pings=1)
+        pt.observe(self._ping(0.0))                # announced immediately
+        exited, entered = pt.observe(self._ping(5.0))  # long gap, same tag
+        assert exited is not None and exited.enter_ts == 0.0
+        assert entered is not None and entered.enter_ts == 5.0
+
+    def test_separate_units_are_separate_visits(self):
+        pt = self._tracker(min_pings=1)
+        _, e1 = pt.observe(self._ping(0.0, unit=1))
+        _, e2 = pt.observe(self._ping(0.1, unit=2))
+        assert e1 is not None and e2 is not None
+        assert len(pt.sweep(5.0)) == 2
+
+    def test_close_all_returns_only_announced(self):
+        pt = self._tracker(min_pings=2)
+        pt.observe(self._ping(0.0, tag="AAAA"))                 # unannounced
+        pt.observe(self._ping(0.1, tag="BBBB"))
+        pt.observe(self._ping(0.2, tag="BBBB"))                 # BBBB announced
+        closed = pt.close_all()
+        assert [v.tag for v in closed] == ["BBBB"]
+
+
+class TestVisitRecording:
+    def _recording_module(self, tmp_path, record="both"):
+        m = _make_rfid()
+        m.config.get.side_effect = _cfg({
+            "rfid.presence.enabled": True,
+            "rfid.presence.min_pings": 1,
+            "rfid.presence.gap_timeout_s": 2.0,
+            "rfid.presence.record": record,
+        })
+        m._rebuild_presence()
+        raw = iter(str(tmp_path / f"raw_{i}.csv") for i in range(9))
+        vis = iter(str(tmp_path / f"vis_{i}.csv") for i in range(9))
+        m._get_rfid_filename = lambda: next(raw)
+        m._get_visit_filename = lambda: next(vis)
+        m.facade.get_utc_time.return_value = "2026-01-01T00:00:00"
+        return m
+
+    def test_both_mode_opens_raw_and_visit_csv(self, tmp_path):
+        m = self._recording_module(tmp_path, record="both")
+        m._start_new_recording()
+        assert m._csv_handle is not None and m._visit_csv_handle is not None
+        assert m.facade.add_session_file.call_count == 2
+
+    def test_visits_mode_skips_raw_csv(self, tmp_path):
+        m = self._recording_module(tmp_path, record="visits")
+        m._start_new_recording()
+        assert m._csv_handle is None and m._visit_csv_handle is not None
+
+    def test_visit_row_written_on_close(self, tmp_path):
+        m = self._recording_module(tmp_path, record="visits")
+        m._start_new_recording()
+        vf = m.current_visit_filename
+        m._record_ping(Ping(ts=100.0, unit=1, tag="DEAD", type_name="Trovan"))
+        m._record_ping(Ping(ts=100.5, unit=1, tag="DEAD", type_name="Trovan"))
+        m._flush_open_visits("recording_stopped")
+        m._close_visit_csv()
+        rows = [r for r in open(vf).read().splitlines() if r]
+        assert rows[0].startswith("enter_ts_ns,exit_ts_ns")
+        assert rows[1].split(",")[5] == "DEAD"           # transponder_id
+        assert rows[1].split(",")[7] == "2"              # ping_count
+        assert rows[1].split(",")[-1] == "recording_stopped"
+
+    def test_segment_rotation_flushes_and_reopens(self, tmp_path):
+        m = self._recording_module(tmp_path, record="both")
+        m._start_new_recording()
+        first_visit = m.current_visit_filename
+        m._record_ping(Ping(ts=1.0, unit=1, tag="BEEF", type_name="t"))
+        m._start_next_recording_segment()
+        m.facade.stage_file_for_export.assert_any_call(first_visit)
+        assert m.current_visit_filename != first_visit
+        assert m._visit_csv_handle is not None

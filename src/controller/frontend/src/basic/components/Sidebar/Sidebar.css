@@ -327,6 +327,18 @@
     cursor: default;
 }
 
+.update-stage-btns {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.update-stage-btns .update-stage-btn {
+    margin-left: 0;
+}
+
 .update-dropzone {
     border: 1.5px dashed color-mix(in srgb, var(--text-color) 30%, transparent);
     border-radius: 8px;
@@ -446,7 +458,29 @@
 .update-git-pull-row {
     display: flex;
     justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
     margin: 4px 0 8px;
+}
+
+.update-git-modules-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12px;
+    opacity: 0.8;
+    margin: 6px 0;
+    cursor: pointer;
+}
+
+.save-button--secondary {
+    opacity: 0.7;
+    font-weight: normal;
+}
+
+.save-button--secondary:hover:not(:disabled) {
+    opacity: 1;
 }
 
 .update-git-info {

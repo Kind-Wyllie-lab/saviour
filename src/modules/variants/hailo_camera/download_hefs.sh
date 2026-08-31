@@ -57,7 +57,10 @@ if [ "$FORCE" -eq 0 ] && [ "$(cat "$ARCH_MARKER" 2>/dev/null || echo none)" != "
     FORCE=1
 fi
 
-# Keep in sync with CURATED_MODELS in src/modules/hailo_infer.py
+# Keep in sync with CURATED_MODELS in src/modules/hailo_infer.py - model-zoo
+# nets only. Custom HEFs in CURATED_MODELS (e.g. topdown_rats_yolov8) are not
+# in the zoo; they are tracked in-tree under hailo_models/ and ship with the
+# deploy, so they are left untouched here.
 HEFS=(yolov8s yolov6n yolov8m yolov11n yolov8s_pose yolov8m_pose yolov8s_seg yolov8m_seg
       scdepthv3 fast_depth)
 BASE="https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/${ZOO_VERSION}/${ARCH}"

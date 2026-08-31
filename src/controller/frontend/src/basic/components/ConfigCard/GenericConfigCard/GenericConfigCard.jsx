@@ -47,23 +47,6 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
     return rest;
   })();
 
-  // Modules that serve a monitoring MJPEG stream get a sidebar preview.
-  // Cameras use LivestreamCard (fixed port 8080); other stream-capable types
-  // (e.g. rfid's scrolling "pings" timeline) use the generic MJPEGStreamCard
-  // pointed at their configured monitoring._port.
-  let sidebar = null;
-  if (module.type?.includes("camera")) {
-    sidebar = <LivestreamCard module={module} />;
-  } else if (module.type?.includes("rfid")) {
-    sidebar = (
-      <MJPEGStreamCard
-        ip={module.ip}
-        port={module.config?.monitoring?._port ?? 8083}
-        label="RFID pings"
-      />
-    );
-  }
-
   return (
     <ConfigCardShell
       id={id}
@@ -77,7 +60,17 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       onTabChange={setActiveTab}
       tabSectionMap={TAB_COPY_SECTION}
       markSaved={markSaved}
-      sidebar={sidebar}
+      sidebar={
+        module.type?.includes("camera")
+          ? <LivestreamCard module={module} />
+          : module.type?.includes("rfid")
+            ? <MJPEGStreamCard
+                ip={module.ip}
+                port={module.config?.monitoring?._port ?? 8083}
+                label="RFID pings"
+              />
+            : null
+      }
     >
       {/* BASIC */}
       {activeTab === "basic" && (

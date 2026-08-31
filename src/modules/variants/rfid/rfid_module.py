@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SAVIOUR System - RFID Module (minimal / demo)
+SAVIOUR System - RFID Module
 
 A thin :class:`Module` wrapper around the Trovan LID650/665 RS485 bus driver
 (:class:`rfid_bus.RS485Bus`). It:
@@ -13,16 +13,11 @@ A thin :class:`Module` wrapper around the Trovan LID650/665 RS485 bus driver
   * serves an MJPEG "pings" monitoring stream (a scrolling per-tag timeline
     with a flash on each fresh read) on ``monitoring._port`` (default 8083).
 
-With no reader attached, or with ``rfid.simulate`` true (the default), it runs a
-synthetic ping generator so the stream and the recording path are demoable on
-any Pi without hardware.
-
 Author: Andrew SG
 """
 
 import collections
 import os
-import random
 import sys
 import threading
 import time
@@ -48,13 +43,6 @@ class Ping:
     type_name: str      # e.g. "Trovan Unique"
 
 
-# Fake transponder ids used in simulate mode - just need to look plausible.
-_SIM_TAG_IDS = [
-    "0000DEADBEEF", "0000CAFEF00D", "00001234ABCD", "0000A1B2C3D4",
-    "0000FEEDFACE", "00005A5A5A5A", "0000900DBEEF", "0000ABAD1DEA",
-]
-
-
 class RFIDModule(Module):
     def __init__(self, module_type: str = "rfid"):
         super().__init__(module_type)
@@ -77,10 +65,6 @@ class RFIDModule(Module):
         self.bus.on_transponder_read = self._on_transponder_read
         self.bus.on_bus_status = self._on_bus_status
 
-        # ── Simulation ─────────────────────────────────────────────────
-        self._sim_stop = threading.Event()
-        self._sim_thread: threading.Thread | None = None
-
         # ── Monitoring stream ──────────────────────────────────────────
         self.is_streaming = False
         self.monitor_stream = MJPEGStreamServer(
@@ -93,7 +77,6 @@ class RFIDModule(Module):
         # Extra remotely-callable commands
         self.command.set_commands({
             "rfid_scan": self.rfid_scan,
-            "rfid_inject_ping": self.rfid_inject_ping,
         })
 
         self.logger.info("Initialised RFID module")
@@ -237,8 +220,6 @@ class RFIDModule(Module):
         if self.bus.is_connected:
             return True, (f"RFID bus on {self.bus.port}, "
                           f"{len(self.bus.units)} unit(s) seen")
-        if self.config.get("rfid.simulate", True):
-            return True, "simulate mode (no physical reader)"
         return False, "no RFID reader found on any serial port"
 
     # ══════════════════════════════════════════════════════════════════════
@@ -253,18 +234,8 @@ class RFIDModule(Module):
         self.bus.scan_bus()
         return {"result": "success"}
 
-    @command()
-    def rfid_inject_ping(self, tag: str | None = None, unit: int = 1):
-        """Inject one synthetic ping - handy as a demo trigger."""
-        self._record_ping(Ping(
-            ts=time.time(), unit=int(unit),
-            tag=(tag or random.choice(_SIM_TAG_IDS)).upper(),
-            type_name="Injected",
-        ))
-        return {"result": "success"}
-
     # ══════════════════════════════════════════════════════════════════════
-    # Bus / simulation lifecycle
+    # Bus lifecycle
     # ══════════════════════════════════════════════════════════════════════
 
     def _bring_up_bus(self) -> None:
@@ -277,15 +248,12 @@ class RFIDModule(Module):
             self.logger.warning(f"RFID: bus connect failed: {e}")
 
         if connected:
-            self._stop_sim()
             if self.config.get("rfid.scan_on_start", True):
                 threading.Timer(1.5, self._safe_scan).start()
-        elif self.config.get("rfid.simulate", True):
-            self.logger.info("RFID: no reader - starting simulate mode")
-            self._start_sim()
+        else:
+            self.logger.warning("RFID: no reader found on any serial port")
 
     def _teardown_bus(self) -> None:
-        self._stop_sim()
         try:
             self.bus.disconnect()
         except Exception:
@@ -297,35 +265,6 @@ class RFIDModule(Module):
                 self.bus.scan_bus()
         except Exception as e:
             self.logger.debug(f"RFID: scan failed: {e}")
-
-    def _start_sim(self) -> None:
-        if self._sim_thread and self._sim_thread.is_alive():
-            return
-        self._sim_stop.clear()
-        self._sim_thread = threading.Thread(
-            target=self._sim_loop, daemon=True, name="rfid-sim")
-        self._sim_thread.start()
-
-    def _stop_sim(self) -> None:
-        self._sim_stop.set()
-        if self._sim_thread and self._sim_thread.is_alive():
-            self._sim_thread.join(timeout=2)
-        self._sim_thread = None
-
-    def _sim_loop(self) -> None:
-        pool = max(1, int(self.config.get("rfid.simulate_tag_pool", 4)))
-        tags = _SIM_TAG_IDS[:pool]
-        while not self._sim_stop.is_set():
-            base = float(self.config.get("rfid.simulate_interval_s", 3.0))
-            # jittered wait so the stream doesn't look metronomic
-            if self._sim_stop.wait(random.uniform(base * 0.4, base * 1.6)):
-                break
-            self._record_ping(Ping(
-                ts=time.time(),
-                unit=random.choice([1, 1, 1, 2]),
-                tag=random.choice(tags),
-                type_name="Trovan Unique (sim)",
-            ))
 
     # ══════════════════════════════════════════════════════════════════════
     # MJPEG "pings" view
@@ -342,8 +281,6 @@ class RFIDModule(Module):
     def _bus_status_label(self) -> str:
         if self.bus.is_connected:
             return f"bus {self.bus.port}"
-        if self._sim_thread and self._sim_thread.is_alive():
-            return "simulate mode"
         return "no reader"
 
     def _render_monitor_frame(self) -> bytes | None:

@@ -1,4 +1,4 @@
-# RFID module (minimal / demo)
+# RFID module
 
 A thin SAVIOUR `Module` around the Trovan **LID650 / LID665** RS485 bus.
 
@@ -16,16 +16,6 @@ A thin SAVIOUR `Module` around the Trovan **LID650 / LID665** RS485 bus.
   rate, and a recent-reads list. Visible in the frontend on the module's
   config card (Settings -> the RFID module).
 
-## Demo mode (no hardware needed)
-
-With `rfid.simulate` **true** (the default), or whenever no serial port is
-found, a synthetic ping generator drives the stream and the recording path,
-so the module is fully demoable on any Pi. Turn it off for a real reader by
-setting `rfid.simulate` to `false`.
-
-`rfid_inject_ping` is a remotely-callable command that drops a single fake
-ping in — handy as a manual demo trigger.
-
 ## Config (`rfid_config.json`)
 
 | key | meaning |
@@ -33,9 +23,6 @@ ping in — handy as a manual demo trigger.
 | `rfid.serial_port` | serial device, `""` = auto-detect |
 | `rfid.baud` | bus baud rate (19200 for LID650/665) |
 | `rfid.scan_on_start` | broadcast a bus logon 1.5 s after connect |
-| `rfid.simulate` | run the synthetic ping generator |
-| `rfid.simulate_interval_s` | mean gap between synthetic pings (jittered) |
-| `rfid.simulate_tag_pool` | how many distinct fake tags to cycle |
 | `monitoring._port` | MJPEG stream port |
 | `monitoring.history_secs` | timeline window shown in the stream |
 | `monitoring.ping_flash_secs` | how long a fresh read stays highlighted |

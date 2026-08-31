@@ -52,6 +52,14 @@ def load_csvs(session_dir: Path) -> dict[str, pd.DataFrame]:
             cameras[tag] = df
             print(f"  Loaded     {p.name}  →  {tag}  ({len(df)} frames)")
 
+    # rglob() sorts by path, so a segment that straddles midnight (filed under
+    # the next day's dir, and sorting after "(1..." because "(10" < "(9")
+    # lands out of chronological order — which silently breaks the sorted-array
+    # assumption in align_frames' searchsorted. Sort every camera by timestamp.
+    cameras = {
+        tag: df.sort_values("timestamp_ns", kind="stable").reset_index(drop=True)
+        for tag, df in cameras.items()
+    }
     return cameras
 
 

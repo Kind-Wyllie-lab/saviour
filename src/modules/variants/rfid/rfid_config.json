@@ -6,6 +6,13 @@
         "serial_port": "",
         "baud": 19200,
         "scan_on_start": true,
+        "presence": {
+            "enabled": false,
+            "gap_timeout_s": 2.0,
+            "min_pings": 2,
+            "min_dwell_s": 0.0,
+            "record": "both"
+        },
         "_reader": "Trovan LID650/665 RS485 bus"
     },
     "monitoring": {

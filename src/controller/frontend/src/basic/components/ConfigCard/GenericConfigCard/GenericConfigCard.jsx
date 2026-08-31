@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import socket from "/src/socket";
 import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard";
+import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
@@ -59,7 +60,17 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       onTabChange={setActiveTab}
       tabSectionMap={TAB_COPY_SECTION}
       markSaved={markSaved}
-      sidebar={module.type?.includes("camera") ? <LivestreamCard module={module} /> : null}
+      sidebar={
+        module.type?.includes("camera")
+          ? <LivestreamCard module={module} />
+          : module.type?.includes("rfid")
+            ? <MJPEGStreamCard
+                ip={module.ip}
+                port={module.config?.monitoring?._port ?? 8083}
+                label="RFID pings"
+              />
+            : null
+      }
     >
       {/* BASIC */}
       {activeTab === "basic" && (

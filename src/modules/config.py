@@ -21,6 +21,20 @@ _OLD_ACTIVE_CONFIG_PATH = "/usr/local/src/saviour/src/modules/config/active_conf
 
 class Config:
     """Manages configuration for habitat modules"""
+
+    # Config sections that hold persistent, operator-set *runtime state* rather
+    # than settings: values keyed by something the static schema can't know
+    # ahead of time (a hardware serial, a hand-drawn rectangle), that must
+    # survive both the stale-key prune (load_module_config / set_all) and
+    # reset_to_defaults(). For any of these that a module actually declares in
+    # its <module>_config.json, the live values live in a sidecar file
+    # (runtime_state.json) next to active_config.json and are overlaid
+    # transparently by get()/get_all()/set()/set_all(), so nothing outside
+    # Config has to know. Currently just AudioMoth serial->port labels;
+    # export.* credentials and camera.crop_rect are candidates to move here.
+    _SIDECAR_SECTIONS = ("audiomoth_labels",)
+    _SIDECAR_FILENAME = "runtime_state.json"
+
     # Configuration that should be loaded from environment variables
     ENV_CONFIG_MAPPING = {
         "MODULE_CMD_PORT": "_communication.command_socket_port",
@@ -49,6 +63,12 @@ class Config:
         self.base_config_path = os.path.abspath(base_config_path)
         self.active_config_path = os.path.abspath(active_config_path)
         self.config: dict[str, Any] = {}
+
+        # Runtime-state sidecar (see _SIDECAR_SECTIONS). Empty until
+        # load_module_config() learns which sections this module declares.
+        self._sidecar_sections: set[str] = set()
+        self._sidecar_path: str | None = None
+        self._sidecar: dict[str, dict[str, Any]] = {}
 
         # One-time migration: copy active config from old in-tree location if needed
         if (not os.path.exists(self.active_config_path)
@@ -121,6 +141,20 @@ class Config:
         self.module_config_keys = self._flatten_keys(module_config)
 
         self.logger.info(f"Loading module config keys: {self.module_config_keys}")
+
+        # Wire up the runtime-state sidecar for whichever _SIDECAR_SECTIONS this
+        # module type actually declares, load it, and pull any values that a
+        # pre-sidecar deployment left sitting in active_config.json into it (so
+        # the prune below never sees them and they stop getting wiped on every
+        # restart -- the original bug this fixes).
+        self._sidecar_sections = {
+            s for s in self._SIDECAR_SECTIONS if s in module_config
+        }
+        self._sidecar_path = os.path.join(
+            os.path.dirname(self.active_config_path), self._SIDECAR_FILENAME
+        )
+        self._load_sidecar()
+        self._migrate_sections_to_sidecar()
 
         if os.path.exists(self.active_config_path):
             # Active config exists: fill missing user-settable keys only, but always
@@ -222,13 +256,55 @@ class Config:
         export mounts to fail with a wrong (empty) password afterward.
         """
         for key in list(target.keys()):
-            if key.startswith("_") or key == "export":
+            if key.startswith("_") or key == "export" or key in self._sidecar_sections:
                 continue
             if key not in reference:
                 self.logger.info(f"Pruning stale config key: {key}")
                 del target[key]
             elif isinstance(target[key], dict) and isinstance(reference.get(key), dict):
                 self._prune_stale_keys(target[key], reference[key])
+
+    # ── Runtime-state sidecar ──────────────────────────────────────────────
+    def _load_sidecar(self) -> None:
+        data = (self._load_json(self._sidecar_path)
+                if self._sidecar_path and os.path.exists(self._sidecar_path) else {})
+        self._sidecar = {
+            s: dict(data.get(s) or {}) for s in self._sidecar_sections
+        }
+
+    def _save_sidecar(self) -> None:
+        if not self._sidecar_path:
+            return
+        os.makedirs(os.path.dirname(self._sidecar_path), exist_ok=True)
+        payload = {s: self._sidecar.get(s, {}) for s in self._sidecar_sections}
+        with open(self._sidecar_path, "w") as f:
+            json.dump(payload, f, indent=4)
+        self.logger.info(f"Saved runtime state to {self._sidecar_path}")
+
+    def _migrate_sections_to_sidecar(self) -> None:
+        """Move any sidecar-section values still living in self.config (from a
+        deployment that predates the sidecar) into the sidecar file, then strip
+        them from self.config so the prune / active_config.json never carry
+        them again. Existing sidecar values win over stale config ones."""
+        changed = False
+        for s in self._sidecar_sections:
+            stale = self.config.pop(s, None)
+            if isinstance(stale, dict) and stale:
+                merged = dict(stale)
+                merged.update(self._sidecar.get(s, {}))  # sidecar wins
+                if merged != self._sidecar.get(s, {}):
+                    self._sidecar[s] = merged
+                    changed = True
+        if changed:
+            self.logger.info("Migrated runtime-state sections out of active_config")
+            self._save_sidecar()
+
+    def _sidecar_route(self, key: str):
+        """(section, subkey|None) if *key* targets a live sidecar section, else None."""
+        head, _, tail = key.partition(".")
+        if head in self._sidecar_sections:
+            return head, (tail or None)
+        return None
 
     def _merge_dicts(self, base: dict[str, Any], override: dict[str, Any]) -> None:
         """Recursive merge - override values in base with override."""
@@ -258,12 +334,17 @@ class Config:
         except Exception as e:
             self.logger.error(f"Failed removing active config: {e}")
 
-        # Rebuild from base, then overlay module defaults
+        # Rebuild from base, then overlay module defaults. The runtime-state
+        # sidecar is deliberately left untouched: resetting *settings* to
+        # defaults must not wipe operator-set device state (e.g. AudioMoth
+        # serial->port labels).
         self.config = self._load_json(self.base_config_path)
         path = module_config_path or getattr(self, 'module_config_path', None)
         if path:
             module_config = self._load_json(path)
             self._merge_dicts(self.config, module_config)
+        for s in self._sidecar_sections:
+            self.config.pop(s, None)
         self.save_active()
 
 
@@ -303,6 +384,14 @@ class Config:
         Returns:
             Configuration value or default if not found
         """
+        route = self._sidecar_route(key)
+        if route is not None:
+            section, subkey = route
+            values = self._sidecar.get(section, {})
+            if subkey is None:
+                return dict(values)
+            return values.get(subkey, default)
+
         parts = key.split('.') # Split the . separated param into parts
         config = self.config
 
@@ -324,6 +413,20 @@ class Config:
 
     def set(self, key_path: str, value: Any, persist: bool = True) -> bool:
         """Set value unless key is private (starts with underscore)."""
+        route = self._sidecar_route(key_path)
+        if route is not None:
+            section, subkey = route
+            values = self._sidecar.setdefault(section, {})
+            if subkey is None:
+                self._sidecar[section] = dict(value) if isinstance(value, dict) else {}
+            elif values.get(subkey) == value:
+                return True
+            else:
+                values[subkey] = value
+            if persist:
+                self._save_sidecar()
+            return True
+
         parts = key_path.split('.')
         current = self.config
 
@@ -360,12 +463,14 @@ class Config:
 
     def get_all(self) -> dict[str, Any]:
         """
-        Get the entire configuration
-        
-        Returns:
-            Dictionary containing the entire configuration
+        Get the entire configuration, with runtime-state sidecar sections
+        overlaid so callers (get_config -> controller/frontend, get_diagnostics)
+        see the live values even though they no longer live in self.config.
         """
-        return self.config.copy()
+        out = self.config.copy()
+        for s in self._sidecar_sections:
+            out[s] = dict(self._sidecar.get(s, {}))
+        return out
 
 
     def set_all(self, updates: dict, persist: bool = False) -> None:
@@ -398,8 +503,25 @@ class Config:
         #   the base-config default (None), silently discarding a real crop rect.
         #   Also confirmed live 2026-08-20 (harmless that time only because this
         #   particular module had never had a crop rect set).
-        _NEVER_PRUNE_SECTIONS = {"export"}
+        _NEVER_PRUNE_SECTIONS = {"export"} | self._sidecar_sections
         _NEVER_PRUNE_KEYS = {"camera.crop_rect"}
+
+        # Runtime-state sections (e.g. audiomoth_labels) don't live in
+        # self.config at all — pull them out of the payload and apply them to
+        # the sidecar. The frontend save sends the complete map for these, so
+        # full-replace is correct (a cleared label drops the serial).
+        updates = dict(updates)
+        for s in list(self._sidecar_sections):
+            if s in updates and isinstance(updates[s], dict):
+                new_section = {k: v for k, v in updates.pop(s).items()
+                               if v not in (None, "")}
+                if new_section != self._sidecar.get(s, {}):
+                    self._sidecar[s] = new_section
+                    updated_keys.append(s)
+                    config_updated = True
+                    self._save_sidecar()
+            else:
+                updates.pop(s, None)
 
         def _recursive_update(target, source, parent_key=""):
             nonlocal config_updated

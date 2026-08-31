@@ -1728,6 +1728,79 @@ class Web(ABC):
                              download_name="saviour-update.zip",
                              mimetype="application/zip")
 
+        def _broadcast_update_to_modules() -> int:
+            """Tell every connected module to pull + apply the staged package.
+            Never touches the controller itself. Returns the module count."""
+            controller_ip = getattr(self.facade, 'get_controller_ip',
+                                    lambda: None)() or "localhost"
+            try:
+                controller_ip = self.facade.controller.network.ip
+            except Exception:
+                pass
+            controller_url = f"http://{controller_ip}:5000"
+            modules = list(self.facade.get_modules().keys())
+            for mid in modules:
+                try:
+                    self.facade.send_command(
+                        mid, "update_saviour",
+                        {"controller_url": controller_url})
+                except Exception as e:
+                    self.logger.error(f"Failed to send update to {mid}: {e}")
+            self.socketio.emit(
+                "deploy_update_status",
+                {"stage": "modules_notified", "count": len(modules)})
+            return len(modules)
+
+        def _controller_build_and_restart():
+            """Best-effort pip + frontend rebuild, then restart the service.
+            Shared by the ZIP 'update controller' path (after its rsync) and
+            the Git-pull 'apply to controller' path (git reset already put
+            the files in place). Runs on its own thread; ends by restarting
+            saviour.service. The npm build also doubles as a delay that lets
+            modules finish fetching /update/package before the controller
+            drops, when this runs as part of an 'update everything'."""
+            import shutil as _shutil
+            try:
+                pip_result = subprocess.run([
+                    "/usr/local/src/saviour/env/bin/pip", "install", "-q",
+                    "--no-index", "/usr/local/src/saviour/",
+                ])
+                if pip_result.returncode != 0:
+                    self.logger.warning(
+                        "pip install --no-index failed (new dependencies may "
+                        "need a manual `pip install .` with internet access)")
+                frontend_dir = "/usr/local/src/saviour/src/controller/frontend"
+                npm_bin = _shutil.which("npm")
+                if not npm_bin:
+                    import glob as _glob
+                    candidates = sorted(_glob.glob(
+                        "/home/pi/.nvm/versions/node/*/bin/npm"))
+                    npm_bin = candidates[-1] if candidates else None
+                if npm_bin and os.path.isdir(frontend_dir):
+                    self.socketio.emit("deploy_update_status",
+                                       {"stage": "building_frontend"})
+                    self.logger.info("Rebuilding frontend after update...")
+                    subprocess.run([npm_bin, "install", "--silent"],
+                                   cwd=frontend_dir, capture_output=True)
+                    build = subprocess.run([npm_bin, "run", "build"],
+                                           cwd=frontend_dir, capture_output=True)
+                    if build.returncode == 0:
+                        self.logger.info("Frontend rebuilt successfully")
+                    else:
+                        self.logger.warning(
+                            "Frontend build failed after update: "
+                            + build.stderr.decode(errors="replace"))
+                else:
+                    self.logger.warning(
+                        "npm not found — frontend not rebuilt after update")
+            except Exception as e:
+                self.logger.error(f"Controller build step failed: {e}")
+                self.socketio.emit("deploy_update_error", {"error": str(e)})
+                return
+            self.logger.info("Update applied — restarting controller service")
+            time.sleep(2)
+            subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
+
         @self.socketio.on("get_update_info")
         def handle_get_update_info(data=None):
             from flask_socketio import emit as _emit
@@ -1844,31 +1917,12 @@ class Web(ABC):
                 _emit("deploy_update_error",
                      {"error": "No update staged — upload a package first"})
                 return
-
-            controller_ip = getattr(self.facade, 'get_controller_ip',
-                                    lambda: None)() or "localhost"
-            try:
-                controller_ip = self.facade.controller.network.ip
-            except Exception:
-                pass
-            controller_url = f"http://{controller_ip}:5000"
-
             # Modules only -- the controller is never swept into this
             # broadcast. Updating the controller itself is a separate,
             # deliberate action (deploy_update_to_controller, below),
             # matching how reboot/shutdown already distinguish "all modules"
             # from the controller's own dedicated actions.
-            modules = list(self.facade.get_modules().keys())
-            for mid in modules:
-                try:
-                    self.facade.send_command(
-                        mid, "update_saviour",
-                        {"controller_url": controller_url}
-                    )
-                except Exception as e:
-                    self.logger.error(f"Failed to send update to {mid}: {e}")
-            self.socketio.emit("deploy_update_status",
-                               {"stage": "modules_notified", "count": len(modules)})
+            _broadcast_update_to_modules()
 
         @self.socketio.on("deploy_update_to_controller")
         def handle_deploy_update_to_controller(data=None):
@@ -1901,49 +1955,12 @@ class Web(ABC):
                         f"{source}/",
                         "/usr/local/src/saviour/",
                     ], check=True)
-                    # pip install is best-effort — devices may be offline.
-                    # The rsync above is the critical step; a failed dependency
-                    # install is logged but must not block the service restart.
-                    pip_result = subprocess.run([
-                        "/usr/local/src/saviour/env/bin/pip", "install", "-q",
-                        "--no-index",
-                        "/usr/local/src/saviour/",
-                    ])
-                    if pip_result.returncode != 0:
-                        self.logger.warning(
-                            "pip install --no-index failed (new dependencies may need "
-                            "a manual `pip install .` with internet access)"
-                        )
-                    # Rebuild frontend so JSX changes ship with the update.
-                    frontend_dir = "/usr/local/src/saviour/src/controller/frontend"
-                    npm_bin = shutil.which("npm")
-                    if not npm_bin:
-                        import glob as _glob
-                        candidates = sorted(_glob.glob("/home/pi/.nvm/versions/node/*/bin/npm"))
-                        npm_bin = candidates[-1] if candidates else None
-                    if npm_bin and os.path.isdir(frontend_dir):
-                        self.socketio.emit("deploy_update_status", {"stage": "building_frontend"})
-                        self.logger.info("Rebuilding frontend after update...")
-                        subprocess.run([npm_bin, "install", "--silent"],
-                                       cwd=frontend_dir, capture_output=True)
-                        build = subprocess.run([npm_bin, "run", "build"],
-                                               cwd=frontend_dir, capture_output=True)
-                        if build.returncode == 0:
-                            self.logger.info("Frontend rebuilt successfully")
-                        else:
-                            self.logger.warning(
-                                "Frontend build failed after update: "
-                                + build.stderr.decode(errors="replace")
-                            )
-                    else:
-                        self.logger.warning("npm not found — frontend not rebuilt after update")
                 except Exception as e:
                     self.logger.error(f"Controller update failed: {e}")
                     self.socketio.emit("deploy_update_error", {"error": str(e)})
                     return
-                self.logger.info("Update applied — restarting controller service")
-                time.sleep(2)
-                subprocess.Popen(["sudo", "systemctl", "restart", "saviour.service"])
+                # pip + frontend rebuild + restart (shared with the git path).
+                _controller_build_and_restart()
 
             threading.Thread(target=_apply_to_controller, daemon=True,
                              name="saviour-deploy-controller").start()
@@ -1964,6 +1981,26 @@ class Web(ABC):
             threading.Thread(target=_do_stage, daemon=True,
                              name="saviour-stage").start()
 
+        @self.socketio.on("stage_and_deploy_modules")
+        def handle_stage_and_deploy_modules(data=None):
+            """Pain-saver: stage the running code AND push it to every
+            module in one action, instead of 'Stage current' then 'Deploy to
+            all modules' as two clicks. Controller is untouched."""
+            if not self._require_auth("auth_required"):
+                return
+
+            def _do():
+                try:
+                    meta = _stage_current_version_zip()
+                    self.socketio.emit("upload_update_complete", meta)
+                    _broadcast_update_to_modules()
+                except Exception as e:
+                    self.logger.error(f"Stage & deploy failed: {e}")
+                    self.socketio.emit("upload_update_error", {"error": str(e)})
+
+            threading.Thread(target=_do, daemon=True,
+                             name="saviour-stage-deploy").start()
+
         @self.socketio.on("git_pull_update")
         def handle_git_pull_update(data=None):
             """Fetch + hard-reset the current branch from 'origin', then
@@ -1981,9 +2018,21 @@ class Web(ABC):
             git at all), so a merge could spuriously conflict against drift
             git never asked for. Hard reset always lands exactly on
             origin/<branch> regardless of that drift.
+
+            Optional `data`:
+              apply_controller: after staging, pip + rebuild frontend +
+                                restart this controller onto the new code
+                                (replaces the manual npm build / systemctl
+                                restart over SSH).
+              deploy_modules:   after staging, tell every module to pull the
+                                package too. Done before the controller
+                                restart so modules can still fetch it.
             """
             if not self._require_auth("auth_required"):
                 return
+            opts = data or {}
+            apply_controller = bool(opts.get("apply_controller"))
+            deploy_modules = bool(opts.get("deploy_modules"))
             info = _git_checkout_info()
             if not info.get("available"):
                 self.socketio.emit("upload_update_error", {
@@ -2018,6 +2067,14 @@ class Web(ABC):
                     })
                     meta = _stage_current_version_zip()
                     self.socketio.emit("upload_update_complete", meta)
+
+                    if deploy_modules:
+                        _broadcast_update_to_modules()
+                    if apply_controller:
+                        self.socketio.emit("git_pull_status", {
+                            "stage": "applying", "branch": branch, "commit": commit,
+                        })
+                        _controller_build_and_restart()  # ends by restarting
                 except subprocess.CalledProcessError as e:
                     err = (e.stderr or str(e)).strip()
                     self.logger.error(f"Git pull update failed: {err}")

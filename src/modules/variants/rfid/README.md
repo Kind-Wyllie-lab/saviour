@@ -53,6 +53,25 @@ gap longer than `gap_timeout_s`. A visit is only counted once it clears
 | `monitoring.history_secs` | timeline window shown in the stream |
 | `monitoring.ping_flash_secs` | how long a fresh read stays highlighted |
 
+## Planned / not built (2026-08-31, from a hardware-team note)
+
+Larger than the current demo scope, recorded so they aren't lost:
+
+- **Active bus polling when a block of expected tags goes quiet.** The
+  LID650/665 supports addressed *polled* reads, not just spontaneous ones.
+  Given a set of expected transponders, if none ping for a configured
+  period, poll each unit to tell "animals left / out of range" from
+  "reader or antenna fault". Pairs with the antenna self-test below.
+- **Local SQLite buffer, periodically synced to a long-term DB**
+  (controller / NAS) instead of - or alongside - the per-segment CSV +
+  Samba export used today. Gives queryability and resilience to export
+  gaps; costs a schema to maintain and a sync mechanism. The
+  (removed) `rfid_server.py` / `rfid_db.py` were an earlier take on this.
+- **Antenna self-test.** The reader exposes antenna current / tuning
+  diagnostics; surface "antenna connected / tuned / detuned" as a
+  `@check()` and/or a periodic health field, so an unattended rig flags a
+  disconnected or detuned antenna instead of just going silent.
+
 ## Files
 
 - `rfid_module.py` - the `RFIDModule` class (this is what the service runs)

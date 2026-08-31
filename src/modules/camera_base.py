@@ -89,6 +89,8 @@ class CameraBase(Module):
         "camera.manual_exposure", "camera.ae_enable",
         "camera.lens_position", "camera.autofocus_mode",
         "camera.crop_rect", "camera.sharpness", "camera.noise_reduction_mode",
+        "camera.exposure_value", "camera.ae_metering_mode",
+        "camera.ae_constraint_mode", "camera.ae_exposure_mode",
     }
     # libcamera's NoiseReductionMode enum (control_ids_draft.yaml) -- only the
     # three modes relevant to a continuous video pipeline are offered;
@@ -97,6 +99,16 @@ class CameraBase(Module):
     # video configuration, so a device with no explicit override behaves
     # identically to before this config key existed.
     _NR_MODE_MAP = {"off": 0, "fast": 1, "high_quality": 2}
+    # libcamera AGC tuning enums (control_ids.yaml). These bias how auto
+    # gain/exposure behaves and only take effect while AeEnable is true; they
+    # are harmless no-ops otherwise, so they are always included in the control
+    # set alongside Contrast/Sharpness. The default value of each maps to
+    # libcamera's own default (index 0 for metering/constraint, "normal" for
+    # exposure mode), so a device with no explicit override behaves exactly as
+    # before these keys existed.
+    _AE_METERING_MAP = {"centre_weighted": 0, "spot": 1, "matrix": 2}
+    _AE_CONSTRAINT_MAP = {"normal": 0, "highlight": 1, "shadows": 2}
+    _AE_EXPOSURE_MAP = {"normal": 0, "short": 1, "long": 2}
 
     def __init__(self, module_type: str):
         super().__init__(module_type)
@@ -321,6 +333,23 @@ class CameraBase(Module):
         return health
 
 
+    def _ae_tuning_controls(self) -> dict:
+        """AGC bias/metering controls shared by the live and full-configure
+        paths. Effective only while AeEnable is true; inert otherwise, so it is
+        safe to include unconditionally."""
+        return {
+            "ExposureValue": float(self.config.get("camera.exposure_value", 0.0)),
+            "AeMeteringMode": self._AE_METERING_MAP.get(
+                self.config.get("camera.ae_metering_mode", "centre_weighted"), 0
+            ),
+            "AeConstraintMode": self._AE_CONSTRAINT_MAP.get(
+                self.config.get("camera.ae_constraint_mode", "normal"), 0
+            ),
+            "AeExposureMode": self._AE_EXPOSURE_MAP.get(
+                self.config.get("camera.ae_exposure_mode", "normal"), 0
+            ),
+        }
+
     def _configure_module_extra(self, updated_keys) -> None:
         """Hook: subclass-specific config handling, called first in
         configure_module_special (before the shared camera restart-vs-live-controls
@@ -386,6 +415,7 @@ class CameraBase(Module):
                 "FrameRate": fps,
                 "AeEnable": ae_enabled,
             }
+            live_controls.update(self._ae_tuning_controls())
             if not ae_enabled:
                 live_controls["AnalogueGain"] = self.config.get("camera.gain", 1)
                 live_controls["ExposureTime"] = exposure_time
@@ -513,6 +543,7 @@ class CameraBase(Module):
                 ),
                 "AeEnable": ae_enabled,
             }
+            controls.update(self._ae_tuning_controls())
             if not ae_enabled:
                 controls["AnalogueGain"] = self.config.get("camera.gain")
                 controls["ExposureTime"] = exposure_time

@@ -409,3 +409,102 @@ class TestResetToDefaults:
 
         assert cfg.config["_codec"] == "h264"
         assert cfg.config["fps"] == 30
+
+
+# ---------------------------------------------------------------------------
+# AudioMoth label sidecar (runtime-state sections)
+# ---------------------------------------------------------------------------
+
+class TestAudiomothLabelSidecar:
+    """audiomoth_labels.<serial> is operator-set runtime state keyed by hardware
+    serial. It must not be eaten by the stale-key prune on every module restart
+    (the original bug), must survive reset_to_defaults, and lives in
+    runtime_state.json next to active_config.json, overlaid transparently."""
+
+    def _mic_cfg(self, active=None):
+        return _make_config_with_module(
+            base={"base_key": 1},
+            module={"audiomoth": {"sample_rate": 192000}, "audiomoth_labels": {}},
+            active=active,
+        )
+
+    def _sidecar_file(self, cfg):
+        return os.path.join(
+            os.path.dirname(cfg.active_config_path), "runtime_state.json")
+
+    def test_set_all_writes_labels_to_sidecar_not_active_config(self):
+        cfg = self._mic_cfg()
+        cfg.set_all({"audiomoth_labels": {"AABB": "C4", "CCDD": "D4"}}, persist=True)
+
+        active = json.load(open(cfg.active_config_path))
+        assert active.get("audiomoth_labels", {}) == {}          # not stored here
+        side = json.load(open(self._sidecar_file(cfg)))
+        assert side["audiomoth_labels"] == {"AABB": "C4", "CCDD": "D4"}
+
+    def test_get_reads_through_to_sidecar(self):
+        cfg = self._mic_cfg()
+        cfg.set("audiomoth_labels.AABB", "C4")
+        assert cfg.get("audiomoth_labels.AABB") == "C4"
+        assert cfg.get("audiomoth_labels") == {"AABB": "C4"}
+        assert cfg.get_all()["audiomoth_labels"] == {"AABB": "C4"}
+
+    def test_labels_survive_repeated_restarts(self):
+        cfg = self._mic_cfg()
+        cfg.set_all({"audiomoth_labels": {"AABB": "C4"}}, persist=True)
+        base_path, active_path = cfg.base_config_path, cfg.active_config_path
+        module_path = cfg.module_config_path
+
+        # Simulate three service restarts over the same files.
+        for _ in range(3):
+            cfg = Config(base_config_path=base_path, active_config_path=active_path)
+            cfg.module_config_keys = set()
+            cfg.configure_module = lambda *_: None
+            cfg.load_module_config(module_path)
+
+        assert cfg.get("audiomoth_labels.AABB") == "C4"
+        # active_config.json never re-accumulates the label
+        assert json.load(open(active_path)).get("audiomoth_labels", {}) == {}
+
+    def test_migrates_labels_out_of_a_pre_sidecar_active_config(self):
+        # A deployment from before this fix: labels sitting in active_config.json.
+        cfg = self._mic_cfg(active={
+            "base_key": 1,
+            "audiomoth": {"sample_rate": 192000},
+            "audiomoth_labels": {"AABB": "C4", "CCDD": "D4"},
+        })
+        # moved into the sidecar, stripped from live config + active_config
+        assert cfg.get("audiomoth_labels.CCDD") == "D4"
+        side = json.load(open(self._sidecar_file(cfg)))
+        assert side["audiomoth_labels"]["CCDD"] == "D4"
+        assert json.load(open(cfg.active_config_path)).get("audiomoth_labels", {}) == {}
+
+    def test_reset_to_defaults_keeps_labels(self):
+        cfg = self._mic_cfg()
+        cfg.set_all({"audiomoth_labels": {"AABB": "C4"}}, persist=True)
+        cfg.reset_to_defaults()
+        assert cfg.get("audiomoth_labels.AABB") == "C4"
+        assert os.path.exists(self._sidecar_file(cfg))
+
+    def test_set_all_without_labels_section_leaves_sidecar_untouched(self):
+        cfg = self._mic_cfg()
+        cfg.set_all({"audiomoth_labels": {"AABB": "C4"}}, persist=True)
+        cfg.set_all({"audiomoth": {"sample_rate": 96000}}, persist=True)
+        assert cfg.get("audiomoth_labels.AABB") == "C4"
+
+    def test_full_replace_drops_cleared_labels(self):
+        cfg = self._mic_cfg()
+        cfg.set_all({"audiomoth_labels": {"AABB": "C4", "CCDD": "D4"}}, persist=True)
+        # user clears CCDD's field (frontend sends "" for it) and relabels AABB
+        cfg.set_all({"audiomoth_labels": {"AABB": "B4", "CCDD": ""}}, persist=True)
+        assert cfg.get("audiomoth_labels") == {"AABB": "B4"}
+
+    def test_non_mic_module_has_no_sidecar(self):
+        cfg = _make_config_with_module(
+            base={"base_key": 1}, module={"camera": {"fps": 30}}, active=None,
+        )
+        assert cfg._sidecar_sections == set()
+        cfg.set("camera.fps", 60)
+        assert cfg.get("camera.fps") == 60  # normal path still works
+        assert not os.path.exists(
+            os.path.join(os.path.dirname(cfg.active_config_path), "runtime_state.json")
+        )

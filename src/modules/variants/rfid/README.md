@@ -1,4 +1,4 @@
-# RFID module (minimal / demo)
+# RFID module
 
 A thin SAVIOUR `Module` around the Trovan **LID650 / LID665** RS485 bus.
 
@@ -16,15 +16,26 @@ A thin SAVIOUR `Module` around the Trovan **LID650 / LID665** RS485 bus.
   rate, and a recent-reads list. Visible in the frontend on the module's
   config card (Settings -> the RFID module).
 
-## Demo mode (no hardware needed)
+## Presence tracking (enter / exit smoothing)
 
-With `rfid.simulate` **true** (the default), or whenever no serial port is
-found, a synthetic ping generator drives the stream and the recording path,
-so the module is fully demoable on any Pi. Turn it off for a real reader by
-setting `rfid.simulate` to `false`.
+A tag sitting in a reader's field pings several times a second, so the raw
+stream and the per-ping CSV are noisy. With `rfid.presence.enabled` on, the
+module also tracks **visits**: a run of pings for one `(unit, tag)` with no
+gap longer than `gap_timeout_s`. A visit is only counted once it clears
+`min_pings` **and** `min_dwell_s` (rejects a single edge-of-field blip).
 
-`rfid_inject_ping` is a remotely-callable command that drops a single fake
-ping in — handy as a manual demo trigger.
+- On a counted visit it emits `rfid_enter`, and on close `rfid_exit`
+  (`enter_ts`, `exit_ts`, `duration_s`, `ping_count`, `closed_reason` -
+  one of `gap` / `segment_boundary` / `recording_stopped`).
+- While recording it writes a **visits CSV** alongside (or instead of) the
+  raw one - one row per completed visit:
+  `enter_ts_ns,exit_ts_ns,enter_utc,exit_utc,unit_address,transponder_id,transponder_type,ping_count,duration_s,closed_reason`.
+- `rfid.presence.record` picks what lands on disk while recording:
+  `raw` (per-ping only), `visits` (visits only), `both` (default).
+- Changing `rfid.presence.*` re-arms the tracker live and does **not**
+  reconnect the bus. Enabling it mid-recording opens the visits CSV for the
+  rest of the current segment; switching `record` away from a file type
+  takes effect at the next segment.
 
 ## Config (`rfid_config.json`)
 
@@ -33,12 +44,33 @@ ping in — handy as a manual demo trigger.
 | `rfid.serial_port` | serial device, `""` = auto-detect |
 | `rfid.baud` | bus baud rate (19200 for LID650/665) |
 | `rfid.scan_on_start` | broadcast a bus logon 1.5 s after connect |
-| `rfid.simulate` | run the synthetic ping generator |
-| `rfid.simulate_interval_s` | mean gap between synthetic pings (jittered) |
-| `rfid.simulate_tag_pool` | how many distinct fake tags to cycle |
+| `rfid.presence.enabled` | track enter/exit visits, not just raw pings |
+| `rfid.presence.gap_timeout_s` | silence this long ends a visit (default 2.0) |
+| `rfid.presence.min_pings` | pings before a visit counts (default 2) |
+| `rfid.presence.min_dwell_s` | seconds present before a visit counts (default 0) |
+| `rfid.presence.record` | `raw` \| `visits` \| `both` (default `both`) |
 | `monitoring._port` | MJPEG stream port |
 | `monitoring.history_secs` | timeline window shown in the stream |
 | `monitoring.ping_flash_secs` | how long a fresh read stays highlighted |
+
+## Planned / not built (2026-08-31, from a hardware-team note)
+
+Larger than the current demo scope, recorded so they aren't lost:
+
+- **Active bus polling when a block of expected tags goes quiet.** The
+  LID650/665 supports addressed *polled* reads, not just spontaneous ones.
+  Given a set of expected transponders, if none ping for a configured
+  period, poll each unit to tell "animals left / out of range" from
+  "reader or antenna fault". Pairs with the antenna self-test below.
+- **Local SQLite buffer, periodically synced to a long-term DB**
+  (controller / NAS) instead of - or alongside - the per-segment CSV +
+  Samba export used today. Gives queryability and resilience to export
+  gaps; costs a schema to maintain and a sync mechanism. The
+  (removed) `rfid_server.py` / `rfid_db.py` were an earlier take on this.
+- **Antenna self-test.** The reader exposes antenna current / tuning
+  diagnostics; surface "antenna connected / tuned / detuned" as a
+  `@check()` and/or a periodic health field, so an unattended rig flags a
+  disconnected or detuned antenna instead of just going silent.
 
 ## Files
 

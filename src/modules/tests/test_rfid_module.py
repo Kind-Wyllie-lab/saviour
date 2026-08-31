@@ -31,8 +31,6 @@ def _make_rfid(**attrs) -> RFIDModule:
     m.bus.is_connected = False
     m.bus.units = {}
     m.bus.port = ""
-    m._sim_stop = threading.Event()
-    m._sim_thread = None
     m.communication = MagicMock()
     m.communication.controller_ip = None
     m.facade = MagicMock()
@@ -95,19 +93,11 @@ class TestCheckRfid:
         assert ok is True
         assert "/dev/ttyUSB0" in msg and "2 unit" in msg
 
-    def test_simulate_mode_is_ready(self):
+    def test_no_reader_not_ready(self):
         m = _make_rfid()
-        m.config.get.side_effect = lambda k, d=None: True if k == "rfid.simulate" else d
         ok, msg = m._check_rfid()
-        assert ok is True and "simulate" in msg
-
-    def test_no_reader_no_sim_not_ready(self):
-        m = _make_rfid()
-        m.config.get.side_effect = (
-            lambda k, d=None: False if k == "rfid.simulate" else d
-        )
-        ok, _msg = m._check_rfid()
         assert ok is False
+        assert "no RFID reader" in msg
 
 
 class TestRecordingHooks:
@@ -162,13 +152,6 @@ class TestRender:
 
 
 class TestCommands:
-    def test_inject_ping(self):
-        m = _make_rfid()
-        res = m.rfid_inject_ping(tag="feed", unit=7)
-        assert res == {"result": "success"}
-        assert m._pings[-1].tag == "FEED"
-        assert m._pings[-1].unit == 7
-
     def test_scan_requires_connection(self):
         m = _make_rfid()
         m.bus.is_connected = False
@@ -176,27 +159,6 @@ class TestCommands:
         m.bus.is_connected = True
         assert m.rfid_scan()["result"] == "success"
         m.bus.scan_bus.assert_called_once()
-
-
-class TestSimLoop:
-    def test_one_iteration_produces_a_ping(self, monkeypatch):
-        m = _make_rfid()
-        m.config.get.side_effect = lambda k, d=None: {
-            "rfid.simulate_tag_pool": 3,
-            "rfid.simulate_interval_s": 3.0,
-        }.get(k, d)
-
-        # First wait() returns False (proceed), second returns True (exit).
-        calls = {"n": 0}
-
-        def fake_wait(_timeout):
-            calls["n"] += 1
-            return calls["n"] >= 2
-
-        monkeypatch.setattr(m._sim_stop, "wait", fake_wait)
-        m._sim_loop()
-        assert len(m._pings) == 1
-        assert m._pings[0].type_name.endswith("(sim)")
 
 
 class TestConfigureSpecial:

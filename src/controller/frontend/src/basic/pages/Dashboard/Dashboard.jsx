@@ -11,6 +11,7 @@ const STREAM_PORTS = {
   camera:     8080,
   microphone: 8081,
   ttl:        8082,
+  rfid:       8083,
 };
 
 const COMPACT_BREAKPOINT = 1280;
@@ -121,6 +122,7 @@ function Dashboard() {
   const cameraModules = visibleModules.filter(m => m.type?.includes("camera"));
   const micModules    = visibleModules.filter(m => m.type === "microphone");
   const ttlModules    = visibleModules.filter(m => m.type === "ttl");
+  const rfidModules   = visibleModules.filter(m => m.type === "rfid");
 
   // Column count used before the grid's box has been measured yet (first
   // render) — a reasonable guess so nothing flashes unstyled.
@@ -149,7 +151,12 @@ function Dashboard() {
       label: `${m.name} - TTL`, isRecording: m.status === "RECORDING",
       syncStatus: m.config_sync_status,
     })),
-  ], [cameraModules, micModules, ttlModules]);
+    ...rfidModules.map(m => ({
+      id: m.id, ip: m.ip, port: m.config?.monitoring?._port ?? STREAM_PORTS.rfid,
+      label: `${m.name} - RFID`, isRecording: m.status === "RECORDING",
+      syncStatus: m.config_sync_status,
+    })),
+  ], [cameraModules, micModules, ttlModules, rfidModules]);
 
   const compactCols = (() => { const ns = allStreams.length; return ns <= 1 ? 1 : ns <= 4 ? 2 : ns <= 9 ? 3 : 4; })();
 
@@ -246,6 +253,16 @@ function Dashboard() {
                 ip={m.ip}
                 port={STREAM_PORTS.ttl}
                 label={`${m.name} - TTL`}
+                isRecording={m.status === "RECORDING"}
+                syncStatus={m.config_sync_status}
+              />
+            ))}
+            {rfidModules.map(m => (
+              <MJPEGStreamCard
+                key={m.id}
+                ip={m.ip}
+                port={m.config?.monitoring?._port ?? STREAM_PORTS.rfid}
+                label={`${m.name} - RFID`}
                 isRecording={m.status === "RECORDING"}
                 syncStatus={m.config_sync_status}
               />

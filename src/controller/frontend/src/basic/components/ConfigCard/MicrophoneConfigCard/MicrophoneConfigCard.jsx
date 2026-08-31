@@ -480,6 +480,22 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               value={mon.peak_hold_s ?? 2.0}
               onChange={e => handleChange(["monitoring", "peak_hold_s"], e)} />
           </div>
+          <div className="form-field">
+            <label>Spectrogram colour:</label>
+            <select value={mon.colormap ?? "inferno"}
+              onChange={e => handleChange(["monitoring", "colormap"], e)}>
+              <option value="inferno">Inferno</option>
+              <option value="magma">Magma</option>
+              <option value="plasma">Plasma</option>
+              <option value="viridis">Viridis</option>
+              <option value="turbo">Turbo</option>
+              <option value="jet">Jet</option>
+              <option value="hot">Hot</option>
+              <option value="bone">Bone</option>
+              <option value="ocean">Ocean</option>
+              <option value="grayscale">Grayscale</option>
+            </select>
+          </div>
           <div className="sensor-mode-info" style={{ marginTop: "8px" }}>
             Nyquist: {nyquistKhz.toFixed(1)} kHz @ {(sampleRate / 1000).toFixed(0)} kHz sample rate
           </div>

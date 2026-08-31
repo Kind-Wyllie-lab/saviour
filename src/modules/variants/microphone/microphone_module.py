@@ -29,6 +29,23 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, command
 
+# Colour palette for the monitoring spectrogram, selectable via
+# `monitoring.colormap`. Value None => plain grayscale (no colormap).
+_SPEC_COLORMAPS = {
+    "inferno":   cv2.COLORMAP_INFERNO,
+    "magma":     cv2.COLORMAP_MAGMA,
+    "plasma":    cv2.COLORMAP_PLASMA,
+    "viridis":   cv2.COLORMAP_VIRIDIS,
+    "jet":       cv2.COLORMAP_JET,
+    "hot":       cv2.COLORMAP_HOT,
+    "bone":      cv2.COLORMAP_BONE,
+    "ocean":     cv2.COLORMAP_OCEAN,
+    "grayscale": None,
+}
+if hasattr(cv2, "COLORMAP_TURBO"):  # OpenCV >= 4.1.2
+    _SPEC_COLORMAPS["turbo"] = cv2.COLORMAP_TURBO
+_SPEC_COLORMAP_DEFAULT = "inferno"
+
 
 class AudiomothModule(Module):
     def __init__(self, module_type="microphone"):
@@ -490,22 +507,22 @@ class AudiomothModule(Module):
         mode:       'spectrogram' | 'spectrogram_compact' | 'spectrum' | 'peaks'
         freq_range: 'band' (configured lo–hi) | 'full' (0–Nyquist)  (ignored for peaks)
         """
-        # 'spectrogram_compact' drops the level/gain meter strip entirely (see
-        # the meter block below) to leave more room for the spectrogram itself
-        # — meant for space-constrained dashboard tiles where only the
-        # vocalisation content matters, not the input gain.
-        if mode == 'spectrogram_compact':
-            PLOT_H = cell_h - 45  # header 30 + breathing room, no meter/labels strip
-        else:
-            # header 30 + gap 25 + meter 30 + labels 20 + breathing room
-            PLOT_H = cell_h - 115
+        # The level/gain meter now sits as a thin vertical bar to the RIGHT of
+        # the spectrogram/spectrum plot (see the meter block below), not as a
+        # wide strip beneath it — so the plot keeps almost the full cell height.
+        # 'spectrogram_compact' drops the meter entirely for space-constrained
+        # dashboard tiles where only the vocalisation content matters.
+        DRAW_SIDE_METER = mode in ('spectrogram', 'spectrum')
+        METER_W      = 12
+        METER_GUTTER = 40 if DRAW_SIDE_METER else 0  # bar + ticks + dB labels
+        PLOT_H = cell_h - 45   # header 30 + breathing room
         PADDING  = 12
         LABEL_W  = 28
         DB_MIN, DB_MAX = -80, 0
         PEAK_HOLD_DURATION = float(self.config.get("monitoring.peak_hold_s", 2.0))
 
         px0 = PADDING + LABEL_W
-        px1 = cell_w - PADDING
+        px1 = cell_w - PADDING - METER_GUTTER
         pw  = px1 - px0
         py0 = 30
         py1 = py0 + PLOT_H
@@ -751,7 +768,14 @@ class AudiomothModule(Module):
                 spec_img = np.flipud(spec_img)
                 spec_norm    = np.clip((spec_img - DB_MIN) / (DB_MAX - DB_MIN) * 255,
                                        0, 255).astype(np.uint8)
-                spec_colored = cv2.applyColorMap(spec_norm, cv2.COLORMAP_INFERNO)
+                cmap_name = str(self.config.get(
+                    "monitoring.colormap", _SPEC_COLORMAP_DEFAULT)).lower()
+                cmap = _SPEC_COLORMAPS.get(
+                    cmap_name, _SPEC_COLORMAPS[_SPEC_COLORMAP_DEFAULT])
+                if cmap is None:  # 'grayscale'
+                    spec_colored = cv2.cvtColor(spec_norm, cv2.COLOR_GRAY2BGR)
+                else:
+                    spec_colored = cv2.applyColorMap(spec_norm, cmap)
                 cell[py0:py1, px0:px1] = spec_colored
 
             cv2.rectangle(cell, (px0, py0), (px1, py1), (60, 60, 60), 1)
@@ -776,13 +800,14 @@ class AudiomothModule(Module):
                 cv2.putText(cell, txt, (2, fy + 4),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.28, (110, 110, 110), 1)
 
-        # ── Peak meter with peak hold ────────────────────────────────────────
-        # Skipped for 'spectrogram_compact' — that mode exists specifically to
-        # not spend vertical space on gain/level information.
-        if mode != 'spectrogram_compact':
-            bx0, bx1 = PADDING, cell_w - PADDING
-            by0, by1 = py1 + 25, py1 + 53
-            bw = bx1 - bx0
+        # ── Peak meter (thin vertical bar, right of the plot) with peak hold ──
+        # Skipped for 'spectrogram_compact', which exists specifically to not
+        # spend any space on gain/level information.
+        if DRAW_SIDE_METER:
+            mx0 = px1 + 8
+            mx1 = mx0 + METER_W
+            my0, my1 = py0, py1
+            mh = my1 - my0
 
             now  = time.time()
             hold = self.peak_hold_data.get(serial, {'value_db': DB_MIN, 'time': 0.0})
@@ -793,21 +818,20 @@ class AudiomothModule(Module):
                 hold_db = hold['value_db']
 
             level_norm = max(0.0, min(1.0, (level_db - DB_MIN) / (DB_MAX - DB_MIN)))
-            bar_w = int(level_norm * bw)
+            fill_h = int(level_norm * mh)
             bar_colour = (0, 50, 220) if level_norm > 0.85 else (0, 140, 230) if level_norm > 0.65 else (0, 200, 80)
-            cv2.rectangle(cell, (bx0, by0), (bx0 + bar_w, by1), bar_colour, -1)
-            cv2.rectangle(cell, (bx0, by0), (bx1, by1), (80, 80, 80), 1)
+            cv2.rectangle(cell, (mx0, my1 - fill_h), (mx1, my1), bar_colour, -1)
+            cv2.rectangle(cell, (mx0, my0), (mx1, my1), (80, 80, 80), 1)
 
-            hold_x = bx0 + int(max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN))) * bw)
-            cv2.line(cell, (hold_x, by0), (hold_x, by1), (255, 255, 255), 2)
+            hold_norm = max(0.0, min(1.0, (hold_db - DB_MIN) / (DB_MAX - DB_MIN)))
+            hold_y = my1 - int(hold_norm * mh)
+            cv2.line(cell, (mx0, hold_y), (mx1, hold_y), (255, 255, 255), 1)
 
-            cv2.putText(cell, "Level (dBFS)", (bx0, by0 - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.30, (100, 100, 100), 1)
             for db_tick in [DB_MIN, -60, -40, -20, -10, DB_MAX]:
-                tx = bx0 + int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * bw)
-                cv2.line(cell, (tx, by1), (tx, by1 + 4), (100, 100, 100), 1)
-                cv2.putText(cell, str(db_tick), (tx - 6, by1 + 13),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.26, (100, 100, 100), 1)
+                ty = my1 - int((db_tick - DB_MIN) / (DB_MAX - DB_MIN) * mh)
+                cv2.line(cell, (mx1, ty), (mx1 + 3, ty), (100, 100, 100), 1)
+                cv2.putText(cell, str(db_tick), (mx1 + 5, ty + 3),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.24, (100, 100, 100), 1)
 
         return cell
 

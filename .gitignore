@@ -91,3 +91,13 @@ saviour_uninstall_summary.txt
 # Custom, non-reproducible nets (e.g. the top-down rat detector) ARE tracked.
 hailo_models/*.hef
 !hailo_models/topdown_rats_yolov8_640_nms.hef
+
+# macOS AppleDouble sidecar files
+._*
+
+# RFID module: local-only working files (superseded standalone Flask monitor,
+# its SQLite artifact, and the vendor command PDF - see rfid/README.md).
+src/modules/variants/rfid/rfid_server.py
+src/modules/variants/rfid/rfid_db.py
+src/modules/variants/rfid/rfid_data.db
+src/modules/variants/rfid/docs/

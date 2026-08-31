@@ -61,10 +61,25 @@ class Communication:
         self.last_ack_time = None
         self.consecutive_missed_acks = 0
         self.has_received_ack = False
-        self._MISSED_ACK_THRESHOLD = 2
+        # Consecutive missed heartbeat acks before the command channel is
+        # treated as stalled. Each miss is one heartbeat interval (typically
+        # 30 s), so the default 4 is ~2 min of silence — long enough to ride
+        # out routine congestion on a busy multi-switch habitat LAN without
+        # declaring a channel dead that a sub-millisecond reconnect proves was
+        # alive. The ZMQ dealer monitor still catches a genuine controller
+        # restart immediately, independent of this counter.
+        self._MISSED_ACK_THRESHOLD = (
+            self.config.get("communication.missed_ack_threshold", 4) if config else 4
+        )
 
-        # Prevents concurrent _force_reconnect threads from racing on cleanup()
+        # Guards the socket teardown/rebuild in _reconnect_from_listener()
+        # against a concurrent external cleanup()/connect().
         self._reconnect_lock = threading.Lock()
+
+        # Set by the ack watchdog (any thread) and consumed by the command
+        # listener thread, which is the ONLY thread allowed to close/recreate
+        # command_socket — see _reconnect_from_listener() for why.
+        self._reconnect_requested = threading.Event()
 
         # Guards command_socket.send() — the initial hello (connect()) and
         # monitor-triggered re-hello (_watch_dealer_monitor()) run on different
@@ -264,6 +279,15 @@ class Communication:
         self.command_socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second timeout
 
         while self.command_listener_running:
+            # Honour a reconnect asked for by the ack watchdog (or the
+            # connection-error branch below). Rebuilding the socket has to
+            # happen on this thread, never on the watchdog's — see
+            # _reconnect_from_listener(). Picked up within one RCVTIMEO cycle.
+            if self._reconnect_requested.is_set():
+                self._reconnect_requested.clear()
+                self._reconnect_from_listener()
+                continue
+
             try:
                 command = self.command_socket.recv_string()
 
@@ -291,10 +315,11 @@ class Communication:
             except Exception as e:
                 if self.command_listener_running:  # Only log if we're still supposed to be running
                     self.logger.error(f"Error receiving command: {e}")
-                    # Check if this is a connection error and attempt reconnection
+                    # Connection-level error — rebuild the socket in-thread
+                    # (we are the listener, so this is the safe place to do it).
                     if "Connection refused" in str(e) or "No route to host" in str(e):
-                        self.logger.warning("Connection error detected, will attempt reconnection")
-                        self._schedule_reconnection()
+                        self.logger.warning("Connection error detected, rebuilding command socket")
+                        self._reconnect_from_listener()
                 time.sleep(0.1)  # Add small delay to prevent tight loop on error
 
 
@@ -347,8 +372,9 @@ class Communication:
 
     def notify_heartbeat_sent(self):
         """Called by health.py after each heartbeat is sent.
-        Increments the missed-ack counter; triggers a force-reconnect after
-        _MISSED_ACK_THRESHOLD consecutive misses (only once acks have been seen)."""
+        Increments the missed-ack counter; asks the command listener to rebuild
+        its socket after _MISSED_ACK_THRESHOLD consecutive misses (only once
+        acks have been seen)."""
         with self._ack_lock:
             if not self.has_received_ack:
                 return  # Don't count misses before the channel has ever worked
@@ -359,39 +385,108 @@ class Communication:
         if should_reconnect:
             self.logger.warning(
                 f"{missed} consecutive heartbeat acks missed — "
-                "command channel appears dead, forcing ZMQ reconnect"
+                "command channel may be stalled, requesting reconnect"
             )
-            threading.Thread(target=self._force_reconnect, daemon=True).start()
+            self._request_listener_reconnect()
 
 
-    def _force_reconnect(self):
-        """Tear down and recreate ZMQ sockets. Used by the ack watchdog.
-        Recording, heartbeats, PTP, and Flask are unaffected."""
+    def _request_listener_reconnect(self):
+        """Ask the command-listener thread to rebuild the command socket.
+
+        The ack watchdog runs on health.py's heartbeat thread. It must NOT
+        tear the socket down itself: closing / recreating a ZMQ socket while
+        listen_for_commands() is blocked in recv_string() on that same socket
+        corrupts libzmq's internal signaler and aborts the whole process
+        (`Assertion failed: pfd.revents & POLLIN (src/signaler.cpp:238)` →
+        SIGABRT). So we only raise a flag here; the listener picks it up
+        within one RCVTIMEO cycle and reconnects in-thread.
+
+        If the listener isn't running (nothing is blocked in recv), fall back
+        to the out-of-thread scheduler, which is safe in that case.
+        """
+        with self._ack_lock:
+            self.consecutive_missed_acks = 0
+        if self.command_listener_running:
+            self._reconnect_requested.set()
+        else:
+            self._schedule_reconnection()
+
+
+    def _reconnect_from_listener(self):
+        """Rebuild the DEALER command socket. MUST only be called from the
+        command-listener thread (listen_for_commands): because that thread is
+        the one running this code, it is provably not inside recv_string()
+        right now, so closing and recreating the socket here is safe — doing
+        it from any other thread is what triggers the libzmq signaler abort
+        (see _request_listener_reconnect).
+
+        Deliberately leaves the status PUB socket and the ZMQ context alone:
+        the PUB socket is written from several other threads with no lock (a
+        concurrent close would be the same class of bug), it reconnects at the
+        TCP layer on its own, and this watchdog only concerns the command
+        channel. Recording, heartbeats and PTP are unaffected.
+        """
         if not self._reconnect_lock.acquire(blocking=False):
-            self.logger.info("Force reconnect already in progress — skipping duplicate")
+            self.logger.info("Reconnect already in progress — skipping duplicate")
             return
-
         try:
-            with self._ack_lock:
-                self.consecutive_missed_acks = 0
-
             controller_ip = self.controller_ip
-            controller_port = self.controller_port
-
-            if not controller_ip:
-                self.logger.warning("Force reconnect requested but no controller IP stored — skipping")
+            if not controller_ip or not self.context:
+                self.logger.warning(
+                    "Listener reconnect requested but no controller/context — skipping"
+                )
                 return
 
-            self.logger.info(f"Forcing ZMQ reconnect to {controller_ip}:{controller_port}")
-            self.cleanup()
+            command_port = (
+                self.config.get("communication.command_socket_port", 5555)
+                if self.config else 5555
+            )
+            self.logger.info(
+                f"Rebuilding DEALER command socket to {controller_ip}:{command_port}"
+            )
 
-            if self.connect(controller_ip, controller_port):
-                if self.start_command_listener():
-                    self.logger.info("Force reconnect successful — command channel restored")
-                else:
-                    self.logger.error("Force reconnect: connected but failed to restart command listener")
-            else:
-                self.logger.error("Force reconnect: connect() failed")
+            # Tear down the dealer monitor first — its socket is derived from
+            # the command socket we're about to close.
+            self._monitor_running = False
+            if self._monitor_socket is not None:
+                try:
+                    self._monitor_socket.setsockopt(zmq.LINGER, 0)
+                    self._monitor_socket.close()
+                except Exception as e:
+                    self.logger.debug(f"monitor socket close during reconnect: {e}")
+                self._monitor_socket = None
+            old_monitor = self._monitor_thread
+            self._monitor_thread = None
+            if (old_monitor and old_monitor.is_alive()
+                    and threading.current_thread() is not old_monitor):
+                old_monitor.join(timeout=2.0)
+
+            if self.command_socket is not None:
+                try:
+                    self.command_socket.setsockopt(zmq.LINGER, 0)
+                    self.command_socket.close()
+                except Exception as e:
+                    self.logger.debug(f"command socket close during reconnect: {e}")
+
+            self.command_socket = self.context.socket(zmq.DEALER)
+            module_id = self.facade.get_module_id()
+            self.command_socket.setsockopt(zmq.IDENTITY, module_id.encode())
+            self.command_socket.setsockopt(zmq.RCVTIMEO, 5000)
+
+            # Re-arm the transport-level reconnect monitor, then connect and
+            # re-register — same ordering as connect().
+            self._start_dealer_monitor()
+            self.command_socket.connect(f"tcp://{controller_ip}:{command_port}")
+            self._send_hello()
+
+            self.connection_attempts = 0
+            self.last_connection_time = time.time()
+            with self._ack_lock:
+                self.consecutive_missed_acks = 0
+            self._reconnect_requested.clear()
+            self.logger.info("DEALER command socket rebuilt — hello re-sent")
+        except Exception as e:
+            self.logger.error(f"Listener reconnect failed: {e}")
         finally:
             self._reconnect_lock.release()
 
@@ -422,19 +517,41 @@ class Communication:
 
         except Exception as e:
             self.logger.error(f"Error sending status: {e}")
-            # Check if this is a connection error
+            # Check if this is a connection error. Route through the same
+            # listener-thread reconnect path as the ack watchdog rather than
+            # tearing sockets down from whatever thread called send_status.
             if "Connection refused" in str(e) or "No route to host" in str(e):
-                self.logger.warning("Connection error while sending status, will attempt reconnection")
-                self._schedule_reconnection()
+                self.logger.warning("Connection error while sending status, requesting reconnect")
+                self._request_listener_reconnect()
 
 
     def cleanup(self):
         """Clean up ZMQ connections"""
         self.logger.info(f"Cleaning up communication manager for module {self.facade.get_module_id()}")
 
-        # Signal the listener thread to stop
+        # Signal the listener thread to stop, and cancel any pending
+        # listener-thread reconnect so it can't race this teardown.
         self.command_listener_running = False
+        self._reconnect_requested.clear()
 
+        # Serialise against an in-flight _reconnect_from_listener() — it holds
+        # _reconnect_lock while rebuilding the command socket; wait it out
+        # rather than double-closing. (_reconnect_from_listener takes the lock
+        # non-blocking, so if we win the race it simply skips.) The 10 s cap
+        # means a wedged reconnect can never block shutdown indefinitely.
+        got_lock = self._reconnect_lock.acquire(timeout=10)
+        if not got_lock:
+            self.logger.warning(
+                "cleanup(): _reconnect_lock still held after 10 s — proceeding anyway"
+            )
+        try:
+            self._cleanup_locked()
+        finally:
+            if got_lock:
+                self._reconnect_lock.release()
+
+    def _cleanup_locked(self):
+        """Body of cleanup(); runs with _reconnect_lock held."""
         # Stop the dealer reconnect monitor before tearing down the command
         # socket it watches. Bounded by the monitor's 1 s RCVTIMEO poll.
         self._monitor_running = False

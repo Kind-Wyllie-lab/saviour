@@ -11,7 +11,8 @@
   },
   "communication": {
     "_command_socket_port": 5555,
-    "_status_socket_port": 5556
+    "_status_socket_port": 5556,
+    "missed_ack_threshold": 4
   },
   "logging": {
     "_level": "INFO",

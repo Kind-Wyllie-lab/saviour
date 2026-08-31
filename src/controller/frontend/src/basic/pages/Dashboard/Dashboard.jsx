@@ -81,13 +81,15 @@ function fitCellSize(containerW, containerH, cols, rows, ratio) {
 }
 
 // Picks the column count (1..n) that yields the largest per-card area for
-// `n` same-ratio cards in a containerW x containerH box. A fixed column
-// count picked from `n` alone (the old heuristic) can land on a layout
-// that's row-bound — e.g. 2 cameras stacked in 1 column, 2 rows — leaving
-// each card's width unused once fitCellSize shrinks it to fit the row
-// budget. Trying every column count and keeping the biggest result finds
-// the arrangement that actually uses the most of the available box.
-function bestCameraLayout(containerW, containerH, n, ratio) {
+// `n` cards in a containerW x containerH box. A fixed column count picked
+// from `n` alone (the old heuristic) can land on a layout that's row-bound
+// — e.g. 2 cards stacked in 1 column, 2 rows — leaving each card's width
+// unused once fitCellSize shrinks it to fit the row budget. Trying every
+// column count and keeping the biggest result finds the arrangement that
+// actually uses the most of the available box. `ratio` is the camera
+// ratio; non-camera streams (spectrogram, RFID timeline) just letterbox
+// within their cell via object-fit: contain.
+function bestGridLayout(containerW, containerH, n, ratio) {
   if (!containerW || !containerH || n === 0) return null;
   let best = null;
   for (let cols = 1; cols <= n; cols++) {
@@ -124,20 +126,12 @@ function Dashboard() {
   const ttlModules    = visibleModules.filter(m => m.type === "ttl");
   const rfidModules   = visibleModules.filter(m => m.type === "rfid");
 
-  // Column count used before the grid's box has been measured yet (first
-  // render) — a reasonable guess so nothing flashes unstyled.
-  const cameraColsFallback = (() => { const n = cameraModules.length; return n <= 2 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4; })();
-  const cameraLayout = useMemo(
-    () => bestCameraLayout(camerasGridSize.width, camerasGridSize.height, cameraModules.length, streamRatio),
-    [camerasGridSize.width, camerasGridSize.height, cameraModules.length, streamRatio]
-  );
-  const cameraCols = cameraLayout?.cols ?? cameraColsFallback;
-  const cameraCellSize = cameraLayout?.cellSize ?? null;
-
-  // Flat ordered list of all streams — used by the compact grid
+  // Flat ordered list of every module stream — cameras first, then the
+  // sensor streams. Both dashboard layouts render this one list so nothing
+  // gets stranded in a scrolling side panel.
   const allStreams = useMemo(() => [
     ...cameraModules.map(m => ({
-      id: m.id, ip: m.ip, port: STREAM_PORTS.camera,
+      id: m.id, ip: m.ip, port: STREAM_PORTS.camera, isCamera: true,
       label: m.name, isRecording: m.status === "RECORDING",
       syncStatus: m.config_sync_status,
     })),
@@ -158,7 +152,17 @@ function Dashboard() {
     })),
   ], [cameraModules, micModules, ttlModules, rfidModules]);
 
-  const compactCols = (() => { const ns = allStreams.length; return ns <= 1 ? 1 : ns <= 4 ? 2 : ns <= 9 ? 3 : 4; })();
+  // Column count used before the grid's box has been measured yet (first
+  // render) — a reasonable guess so nothing flashes unstyled.
+  const streamColsFallback = (() => { const n = allStreams.length; return n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4; })();
+  const streamLayout = useMemo(
+    () => bestGridLayout(camerasGridSize.width, camerasGridSize.height, allStreams.length, streamRatio),
+    [camerasGridSize.width, camerasGridSize.height, allStreams.length, streamRatio]
+  );
+  const streamCols = streamLayout?.cols ?? streamColsFallback;
+  const streamCellSize = streamLayout?.cellSize ?? null;
+
+  const compactCols = streamColsFallback;
 
   return (
     <div className="dashboard">
@@ -204,31 +208,31 @@ function Dashboard() {
           </div>
         </div>
       ) : (
-        /* ── Wide: cameras left, status panel right ── */
+        /* ── Wide: all streams in the fitted grid, status panel right ── */
         <div className="dashboard-main">
           <div
             className="dashboard-cameras"
             ref={camerasGridRef}
             style={{
-              gridTemplateColumns: `repeat(${cameraCols}, 1fr)`,
-              ...(cameraCellSize && {
-                "--cell-w": `${cameraCellSize.width}px`,
-                "--cell-h": `${cameraCellSize.height}px`,
+              gridTemplateColumns: `repeat(${streamCols}, 1fr)`,
+              ...(streamCellSize && {
+                "--cell-w": `${streamCellSize.width}px`,
+                "--cell-h": `${streamCellSize.height}px`,
               }),
             }}
           >
-            {cameraModules.length === 0 ? (
-              <div className="dashboard-no-cameras">No camera modules connected</div>
+            {allStreams.length === 0 ? (
+              <div className="dashboard-no-cameras">No streams connected</div>
             ) : (
-              cameraModules.map(m => (
+              allStreams.map(s => (
                 <MJPEGStreamCard
-                  key={m.id}
-                  ip={m.ip}
-                  port={STREAM_PORTS.camera}
-                  label={m.name}
-                  isRecording={m.status === "RECORDING"}
-                  onAspectRatio={setStreamRatio}
-                  syncStatus={m.config_sync_status}
+                  key={s.id}
+                  ip={s.ip}
+                  port={s.port}
+                  label={s.label}
+                  isRecording={s.isRecording}
+                  onAspectRatio={s.isCamera ? setStreamRatio : undefined}
+                  syncStatus={s.syncStatus}
                 />
               ))
             )}
@@ -237,36 +241,6 @@ function Dashboard() {
           <div className="dashboard-panel">
             <HealthSummaryWidget />
             <ModuleList modules={visibleModules} />
-            {micModules.map(m => (
-              <MJPEGStreamCard
-                key={m.id}
-                ip={m.ip}
-                port={STREAM_PORTS.microphone}
-                label={`${m.name} - Audio`}
-                isRecording={m.status === "RECORDING"}
-                syncStatus={m.config_sync_status}
-              />
-            ))}
-            {ttlModules.map(m => (
-              <MJPEGStreamCard
-                key={m.id}
-                ip={m.ip}
-                port={STREAM_PORTS.ttl}
-                label={`${m.name} - TTL`}
-                isRecording={m.status === "RECORDING"}
-                syncStatus={m.config_sync_status}
-              />
-            ))}
-            {rfidModules.map(m => (
-              <MJPEGStreamCard
-                key={m.id}
-                ip={m.ip}
-                port={m.config?.monitoring?._port ?? STREAM_PORTS.rfid}
-                label={`${m.name} - RFID`}
-                isRecording={m.status === "RECORDING"}
-                syncStatus={m.config_sync_status}
-              />
-            ))}
           </div>
         </div>
       )}

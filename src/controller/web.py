@@ -2842,9 +2842,20 @@ class Web(ABC):
                 configs = {}
         except Exception:
             configs = {}
+        try:
+            health = self.facade.get_module_health() if self.facade else {}
+            if not isinstance(health, dict):
+                health = {}
+        except Exception:
+            health = {}
 
         per_module = []
         total_mb_per_min = 0.0
+        # Shortest time any one target module's local disk lasts at its own
+        # rate if export fully stalls -- the first module to fill stops the
+        # session, so this caps the "supports this session for X" figure.
+        min_local_buffer_min = None
+        min_local_buffer_module = None
         for mid, m in (modules or {}).items():
             mtype = (m or {}).get("type")
             cfg = ((configs.get(mid) or {}).get("target_config")
@@ -2853,6 +2864,17 @@ class Web(ABC):
             mb_per_min = bytes_per_s_to_mb_per_min(bps)
             if mb_per_min:
                 total_mb_per_min += mb_per_min
+
+            h = health.get(mid) or {}
+            used_gb, total_gb = h.get("disk_used_gb"), h.get("disk_total_gb")
+            free_mb = ((total_gb - used_gb) * 1024
+                       if (used_gb is not None and total_gb is not None) else None)
+            buf = runway_minutes(free_mb, mb_per_min)
+            if buf is not None and (min_local_buffer_min is None
+                                    or buf < min_local_buffer_min):
+                min_local_buffer_min = buf
+                min_local_buffer_module = (m or {}).get("name") or mid
+
             per_module.append({
                 "module_id": mid,
                 "name": (m or {}).get("name") or mid,
@@ -2868,6 +2890,16 @@ class Web(ABC):
             round(share_free_gb * 1024 / total_mb_per_min / 60, 1)
             if share_free_gb and total_mb_per_min > 0 else None
         )
+        # "Storage supports this session for ~X": the share running out is the
+        # expected limit; a target module's local disk filling (export stalled)
+        # is the worst case. Report the smaller.
+        supported_minutes = None
+        if share_runway_hours is not None:
+            supported_minutes = share_runway_hours * 60
+        if min_local_buffer_min is not None:
+            supported_minutes = (min_local_buffer_min if supported_minutes is None
+                                 else min(supported_minutes, min_local_buffer_min))
+
         return {
             "target": target,
             "modules": per_module,
@@ -2875,6 +2907,11 @@ class Web(ABC):
             "total_gb_per_hour": round(total_mb_per_min * 60 / 1024, 2),
             "share_free_gb": share_free_gb,
             "share_runway_hours": share_runway_hours,
+            "min_local_buffer_min": (round(min_local_buffer_min)
+                                     if min_local_buffer_min is not None else None),
+            "min_local_buffer_module": min_local_buffer_module,
+            "supported_minutes": (round(supported_minutes)
+                                  if supported_minutes is not None else None),
         }
 
     def _nas_history_csv(self, hours: "float | None" = None):

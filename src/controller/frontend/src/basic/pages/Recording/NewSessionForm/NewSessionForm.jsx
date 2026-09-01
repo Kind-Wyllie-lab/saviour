@@ -14,6 +14,13 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
 
+function humanizeMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "0 min";
+  if (mins < 90) return `${Math.round(mins)} min`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours`;
+  return `${Math.round(mins / 60 / 24)} days`;
+}
+
 function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated, prefill }) {
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
@@ -384,16 +391,22 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
           </p>
         )}
         {dataRate?.total_mb_per_min > 0 && (
-          <p className="form-hint">
-            Est. data rate: ~{dataRate.total_mb_per_min} MB/min
-            {" "}({dataRate.total_gb_per_hour} GB/hour)
-            {dataRate.share_runway_hours != null && (
-              <> · share holds ~{
-                dataRate.share_runway_hours >= 48
-                  ? `${Math.round(dataRate.share_runway_hours / 24)} days`
-                  : `${Math.round(dataRate.share_runway_hours)} hours`
-              } at this rate</>
-            )}
+          <p className={`form-hint${
+            recordingMode === "timed" && dataRate.supported_minutes != null
+              && totalDurationMins > 0
+              && dataRate.supported_minutes < totalDurationMins ? " form-warning" : ""
+          }`}>
+            ~{dataRate.total_mb_per_min} MB/min ({dataRate.total_gb_per_hour} GB/hour).
+            {dataRate.supported_minutes != null ? (
+              <>
+                {" "}Storage supports this session for ~{humanizeMinutes(dataRate.supported_minutes)}
+                {dataRate.min_local_buffer_min === dataRate.supported_minutes
+                  && dataRate.min_local_buffer_module
+                  && ` (limited by ${dataRate.min_local_buffer_module}'s local disk if export stalls)`}
+                {recordingMode === "timed" && totalDurationMins > 0
+                  && ` — this run is set to ${humanizeMinutes(totalDurationMins)}`}.
+              </>
+            ) : " Storage headroom unknown — share free space not reported."}
           </p>
         )}
 

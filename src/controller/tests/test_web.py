@@ -1722,10 +1722,45 @@ class TestEstimateDataRate:
         facade.get_modules_by_target.return_value = {
             "cam_a": {"name": "A", "type": "camera"}}
         facade.get_module_configs.return_value = {}
+        facade.get_module_health.return_value = {}
         web._nas_health = {}
         est = web._estimate_data_rate("camera")
         assert est["share_runway_hours"] is None
+        assert est["supported_minutes"] is None
         assert est["total_mb_per_min"] > 0
+
+    def test_supported_minutes_is_min_of_share_and_local_buffer(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"},
+        }
+        facade.get_module_configs.return_value = {
+            "cam_a": {"target_config": {"camera": {"bitrate_mb": 2, "fps": 30}}},
+        }
+        # 2 GB free local; camera ~15.2 MB/min -> local buffer ~135 min.
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_used_gb": 98.0, "disk_total_gb": 100.0},
+        }
+        # huge share -> share runway is hours, local disk is the constraint
+        web._nas_health = {"free_gb": 5000.0}
+
+        est = web._estimate_data_rate("all")
+        assert 120 <= est["min_local_buffer_min"] <= 150
+        assert est["min_local_buffer_module"] == "A"
+        assert est["supported_minutes"] == est["min_local_buffer_min"]
+
+    def test_share_is_the_constraint_when_local_disks_are_roomy(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"}}
+        facade.get_module_configs.return_value = {
+            "cam_a": {"target_config": {"camera": {"bitrate_mb": 2, "fps": 30}}}}
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_used_gb": 1.0, "disk_total_gb": 1000.0}}
+        web._nas_health = {"free_gb": 10.0}  # small share
+        est = web._estimate_data_rate("all")
+        assert est["supported_minutes"] == round(est["share_runway_hours"] * 60)
+        assert est["min_local_buffer_min"] > est["supported_minutes"]
 
 
 class TestNasHistoryCsv:

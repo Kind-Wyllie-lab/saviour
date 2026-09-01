@@ -21,6 +21,13 @@ function safeName(str) {
   return (str || "").replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");
 }
 
+function humanizeMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "0 min";
+  if (mins < 90) return `${Math.round(mins)} min`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours`;
+  return `${Math.round(mins / 60 / 24)} days`;
+}
+
 const DEFAULT_DURATION_MINUTES = 12;
 const DEFAULT_DURATION_SECONDS = 15; // researcher-requested default: 12m15s
 
@@ -184,16 +191,22 @@ export default function LoomRecording() {
           )}
 
           {dataRate?.total_mb_per_min > 0 && (
-            <p className="loom-recording-hint">
-              Est. data rate ~{dataRate.total_mb_per_min} MB/min
-              {" "}({dataRate.total_gb_per_hour} GB/hour)
-              {dataRate.share_runway_hours != null && (
-                <> · share holds ~{
-                  dataRate.share_runway_hours >= 48
-                    ? `${Math.round(dataRate.share_runway_hours / 24)} days`
-                    : `${Math.round(dataRate.share_runway_hours)} hours`
-                } at this rate</>
-              )}
+            <p className={
+              timedEnabled && dataRate.supported_minutes != null && totalDurationMins > 0
+                && dataRate.supported_minutes < totalDurationMins
+                ? "loom-recording-warning" : "loom-recording-hint"
+            }>
+              ~{dataRate.total_mb_per_min} MB/min ({dataRate.total_gb_per_hour} GB/hour).
+              {dataRate.supported_minutes != null ? (
+                <>
+                  {" "}Storage supports this session for ~{humanizeMinutes(dataRate.supported_minutes)}
+                  {dataRate.min_local_buffer_min === dataRate.supported_minutes
+                    && dataRate.min_local_buffer_module
+                    && ` (limited by ${dataRate.min_local_buffer_module}'s local disk if export stalls)`}
+                  {timedEnabled && totalDurationMins > 0
+                    && ` — this run is set to ${humanizeMinutes(totalDurationMins)}`}.
+                </>
+              ) : " Storage headroom unknown — share free space not reported."}
             </p>
           )}
 

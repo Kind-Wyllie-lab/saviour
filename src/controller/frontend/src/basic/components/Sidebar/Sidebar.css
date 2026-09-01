@@ -6,10 +6,71 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    width: 80px;
-    min-width: 200px;
-    max-width: 320px;
+    position: relative;
+    /* Was effectively a fixed 200px (width:80px was always overridden by
+       min-width:200px). Now scales gently with the viewport so a small
+       laptop hands more width to the dashboard grid, clamped so it never
+       gets uselessly narrow or absurdly wide. */
+    width: clamp(148px, 13vw, 210px);
+    flex-shrink: 0;
     justify-content: space-between;
+}
+
+/* Full-hide collapse (toggled from .sidebar-collapse-btn; reopened from the
+   floating .sidebar-reopen button rendered as a sibling). */
+.sidebar--collapsed {
+    display: none;
+}
+
+.sidebar-collapse-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    opacity: 0.35;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 2px 7px;
+    border-radius: 6px;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.sidebar-collapse-btn:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--text-color) 10%, transparent);
+}
+
+.sidebar-reopen {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 50;
+    width: 34px;
+    height: 34px;
+    padding: 7px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg-color);
+    color: var(--text-color);
+    cursor: pointer;
+    opacity: 0.85;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s;
+}
+
+.sidebar-reopen:hover {
+    opacity: 1;
+}
+
+.sidebar-reopen svg {
+    width: 100%;
+    height: 100%;
 }
 
     .header-content {
@@ -30,7 +91,7 @@
     }
 
     .logo {
-        height: 40px;
+        height: clamp(28px, 3.4vw, 40px);
         width: auto;
     }
 
@@ -45,7 +106,7 @@
     }
 
     .sidebar-title {
-        font-size: 36px;
+        font-size: clamp(20px, 2.4vw, 30px);
         font-weight: bold;
         text-align: center;
         /* Explicit margins rather than the <h1> UA-stylesheet default
@@ -57,7 +118,7 @@
     }
 
     .sidebar-hostname {
-        font-size: 16px;
+        font-size: 13px;
         text-align: center;
         opacity: 0.65;
         /* Tight against the title above (subtitle-like) via the title's own
@@ -67,7 +128,7 @@
            with .main-nav's own margin-top, since flex-child margins don't
            collapse), so the nav reads as its own group rather than an
            extension of the title block. */
-        margin: 0 0 32px;
+        margin: 0 0 22px;
         word-break: break-all;
         padding: 0 8px;
     }
@@ -75,9 +136,9 @@
     .nav-link {
         text-decoration: none;
         color: var(--text-color);
-        font-size: 32px;
+        font-size: clamp(15px, 1.5vw, 18px);
         text-align: center;
-        min-height: 60px;
+        min-height: 46px;
         display: flex;
         flex-direction: column;
         justify-content: center;

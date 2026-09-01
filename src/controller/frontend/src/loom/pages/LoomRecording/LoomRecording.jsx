@@ -21,6 +21,13 @@ function safeName(str) {
   return (str || "").replace(/[^a-zA-Z0-9 \-_]/g, "").trim().replace(/ /g, "_");
 }
 
+function humanizeMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "0 min";
+  if (mins < 90) return `${Math.round(mins)} min`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours`;
+  return `${Math.round(mins / 60 / 24)} days`;
+}
+
 const DEFAULT_DURATION_MINUTES = 12;
 const DEFAULT_DURATION_SECONDS = 15; // researcher-requested default: 12m15s
 
@@ -67,6 +74,17 @@ export default function LoomRecording() {
 
   // Habituation uses the auto-assigned "cameras" group; loom uses all.
   const target = stage === "habituation" ? HABITUATION_GROUP : "all";
+
+  // Pre-flight data-rate estimate for the selected target.
+  const [dataRate, setDataRate] = useState(null);
+  useEffect(() => {
+    const onEstimate = (d) => setDataRate(d);
+    socket.on("data_rate_estimate", onEstimate);
+    return () => socket.off("data_rate_estimate", onEstimate);
+  }, []);
+  useEffect(() => {
+    socket.emit("estimate_data_rate", { target });
+  }, [target]);
 
   const sessionPreview = useMemo(() => {
     if (!experimentName) return "-";
@@ -170,6 +188,26 @@ export default function LoomRecording() {
           )}
           {targetModules.length === 0 && (
             <p className="loom-recording-warning">No target modules connected.</p>
+          )}
+
+          {dataRate?.total_mb_per_min > 0 && (
+            <p className={
+              timedEnabled && dataRate.share_runway_hours != null && totalDurationMins > 0
+                && dataRate.share_runway_hours * 60 < totalDurationMins
+                ? "loom-recording-warning" : "loom-recording-hint"
+            }>
+              ~{dataRate.total_mb_per_min} MB/min ({dataRate.total_gb_per_hour} GB/hour).
+              {dataRate.share_runway_hours != null
+                ? ` Share holds this session ~${humanizeMinutes(dataRate.share_runway_hours * 60)} at this rate`
+                : " Share free space not reported"}
+              {timedEnabled && totalDurationMins > 0
+                && ` (run is set to ${humanizeMinutes(totalDurationMins)})`}.
+              {dataRate.min_local_buffer_min != null && (
+                <> Modules buffer ~{humanizeMinutes(dataRate.min_local_buffer_min)} locally
+                  if export stalls{dataRate.min_local_buffer_module
+                    ? ` (shortest: ${dataRate.min_local_buffer_module})` : ""}.</>
+              )}
+            </p>
           )}
 
           <div className="loom-recording-actions">

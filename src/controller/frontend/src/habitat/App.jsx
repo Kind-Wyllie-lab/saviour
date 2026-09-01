@@ -13,6 +13,7 @@ import HabitatDashboard from "./pages/HabitatDashboard/HabitatDashboard";
 import Monitor from "./pages/Monitor/Monitor";
 import HabitatRecordingControl from "./components/HabitatRecordingControl/HabitatRecordingControl";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
+import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import useSessions from "/src/hooks/useSessions";
 
@@ -69,6 +70,7 @@ function App() {
         </Routes>
       </div>
 
+      <FirstRunModal />
       <ConnectionOverlay />
       {pendingFaults.length > 0 && (
         <FaultAlertModal

@@ -33,6 +33,11 @@ function humanDuration(seconds) {
   return "< 1 hour";
 }
 
+function humanMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "—";
+  return humanDuration(mins * 60) || "< 1 hour";
+}
+
 // Least-squares slope of free bytes vs time over the visible window.
 function projectFull(samples) {
   const pts = samples.filter((s) => s.length >= 3);
@@ -87,20 +92,25 @@ export default function Storage() {
   const loggedIn = useIsLoggedIn();
   const [overview, setOverview] = useState(null);
   const [history, setHistory] = useState([]);
+  const [rateHistory, setRateHistory] = useState([]);
   const [rangeIdx, setRangeIdx] = useState(1); // 7d
 
   const range = RANGES[rangeIdx];
 
-  const requestHistory = (hours) =>
+  const requestHistory = (hours) => {
     socket.emit("get_nas_history", { hours: hours ?? undefined });
+    socket.emit("get_data_rate_history", { hours: hours ?? undefined });
+  };
 
   useEffect(() => {
     const onOverview = (d) => setOverview(d);
     const onHistory = (d) => setHistory(d?.samples || []);
+    const onRateHistory = (d) => setRateHistory(d?.samples || []);
     const onNasHealth = () => socket.emit("get_storage_overview");
 
     socket.on("storage_overview", onOverview);
     socket.on("nas_history", onHistory);
+    socket.on("data_rate_history", onRateHistory);
     socket.on("nas_health_update", onNasHealth);
 
     socket.emit("get_storage_overview");
@@ -111,6 +121,7 @@ export default function Storage() {
       clearInterval(poll);
       socket.off("storage_overview", onOverview);
       socket.off("nas_history", onHistory);
+      socket.off("data_rate_history", onRateHistory);
       socket.off("nas_health_update", onNasHealth);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,6 +132,7 @@ export default function Storage() {
   const nas = overview?.nas || {};
   const exports = overview?.exports || { pending: 0, failed: 0, sessions: [] };
   const disks = overview?.disks || [];
+  const dataRate = overview?.data_rate || {};
 
   const pctSeries = useMemo(
     () => history
@@ -130,11 +142,23 @@ export default function Storage() {
   );
   const projection = useMemo(() => projectFull(history), [history]);
 
+  const rateSeries = useMemo(
+    () => rateHistory
+      .filter((s) => s.length >= 2)
+      .map(([t, v]) => ({ t, v })),
+    [rateHistory]
+  );
+
   const usedPct = nas.free_pct != null ? 100 - nas.free_pct : null;
 
   const downloadCsv = () => {
     const q = range.hours ? `?hours=${range.hours}` : "?hours=all";
     triggerDownload(`/api/nas_history.csv${q}`, `nas_history_${range.label}.csv`);
+  };
+
+  const downloadRateCsv = () => {
+    const q = range.hours ? `?hours=${range.hours}` : "?hours=all";
+    triggerDownload(`/api/data_rate_history.csv${q}`, `data_rate_history_${range.label}.csv`);
   };
 
   return (
@@ -223,6 +247,53 @@ export default function Storage() {
             <button className="refresh-btn" onClick={downloadCsv}>Download CSV</button>
           </section>
 
+          {/* ── Recording data rate ────────────────────────────────── */}
+          <section className="storage-card">
+            <div className="storage-card__head">
+              <h2>Recording data rate</h2>
+              <div className="storage-range">
+                {RANGES.map((r, i) => (
+                  <button
+                    key={r.label}
+                    className={`storage-range__btn ${i === rangeIdx ? "is-active" : ""}`}
+                    onClick={() => setRangeIdx(i)}
+                  >{r.label}</button>
+                ))}
+              </div>
+            </div>
+            {dataRate.recording_module_count > 0 ? (
+              <>
+                <div className="storage-bignum">
+                  {dataRate.recording_mb_per_min?.toLocaleString()} MB/min
+                  <span className="storage-bignum__sub">
+                    {dataRate.recording_module_count} module
+                    {dataRate.recording_module_count === 1 ? "" : "s"} recording ·
+                    {" "}{((dataRate.recording_mb_per_min || 0) * 60 / 1024).toFixed(1)} GB/hour
+                  </span>
+                </div>
+                <div className={`storage-projection storage-projection--${
+                  dataRate.share_runway_hours == null ? "flat"
+                    : dataRate.share_runway_hours < 72 ? "danger"
+                    : dataRate.share_runway_hours < 168 ? "warn" : "flat"}`}>
+                  {dataRate.share_runway_hours == null
+                    ? "share free space unknown"
+                    : `share holds ${humanDuration(dataRate.share_runway_hours * 3600)} at this rate`}
+                </div>
+              </>
+            ) : (
+              <p className="storage-muted">
+                No modules recording. Rate is measured while recording, else
+                estimated from each module's config (a worst-case ceiling).
+              </p>
+            )}
+            {rateSeries.length > 1 && (
+              <>
+                <MiniAreaChart data={rateSeries} unit=" MB/min" yMin={0} />
+                <button className="refresh-btn" onClick={downloadRateCsv}>Download CSV</button>
+              </>
+            )}
+          </section>
+
           {/* ── Export backlog ──────────────────────────────────────── */}
           <section className="storage-card">
             <div className="storage-card__head"><h2>Export backlog</h2></div>
@@ -274,15 +345,37 @@ export default function Storage() {
               <div className="storage-table-wrap">
                 <table className="storage-table">
                   <thead>
-                    <tr><th>Module</th><th>Type</th><th>Used</th><th>Free</th><th></th></tr>
+                    <tr>
+                      <th>Module</th><th>Type</th><th>Used</th><th>Free</th>
+                      <th title="Estimated recording output, from this module's config (worst-case ceiling)">Rate</th>
+                      <th title="How long local free space lasts at that rate if export fully stalls">Buffer</th>
+                      <th></th>
+                    </tr>
                   </thead>
                   <tbody>
                     {disks.map((d) => (
                       <tr key={d.module_id}>
-                        <td>{d.name}</td>
+                        <td>{d.name}{d.recording && <span className="storage-rec-dot" title="recording" />}</td>
                         <td className="storage-muted">{d.type || "—"}</td>
                         <td>{d.used_pct != null ? `${d.used_pct.toFixed(0)}%` : "—"}</td>
                         <td>{d.free_gb != null ? `${d.free_gb} GB` : "—"}</td>
+                        <td title={d.est_note || ""}>
+                          {d.measured_mb_per_min != null ? (
+                            <>
+                              {d.measured_mb_per_min} MB/min
+                              {d.est_mb_per_min != null && (
+                                <span className="storage-muted"> (est {d.est_mb_per_min})</span>
+                              )}
+                            </>
+                          ) : d.est_mb_per_min != null ? (
+                            <>~{d.est_mb_per_min} MB/min</>
+                          ) : "—"}
+                        </td>
+                        <td className={
+                          d.local_buffer_min != null && d.local_buffer_min < 60 ? "storage-bad" : undefined
+                        }>
+                          {d.local_buffer_min != null ? humanMinutes(d.local_buffer_min) : "—"}
+                        </td>
                         <td className="storage-table__bar">
                           <CapacityBar usedPct={d.used_pct} />
                         </td>

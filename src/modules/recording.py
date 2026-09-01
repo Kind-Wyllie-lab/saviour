@@ -75,6 +75,15 @@ class Recording:
         self.recording_health_thread = None
         self.recording_health_stop_flag = threading.Event()
 
+        # Measured recording data rate — a reality check against the
+        # config-derived estimate (src/shared/data_rate.py). Sampled from the
+        # recordings tree by _sample_recording_bytes() on the health-monitor
+        # tick; None while not recording / before the first two samples.
+        self._measured_rec_bytes_per_s: float | None = None
+        self._rec_byte_hwm: dict[str, int] = {}
+        self._rec_bytes_baseline = 0
+        self._rec_sample_start_ts: float | None = None
+
         # Tracking files for export
         self.current_filename_prefix = None
         # Set by _scheduled_start to avoid when_recording_starts() running twice
@@ -184,7 +193,7 @@ class Recording:
 
             self._begin_recording(session_name, duration)
         except Exception as e:
-            self.logger.error(f"Scheduled recording start failed: {e}")
+            self.logger.exception(f"Scheduled recording start failed: {e}")
             self.facade.send_status({"type": "recording_start_failed", "error": str(e)})
 
 
@@ -245,6 +254,7 @@ class Recording:
         os.makedirs(self.recording_folder, exist_ok=True)
 
         self.recording_start_time = time.time()
+        self._reset_byte_sampler()
 
         self.logger.info(f"Duration received as: {duration} with type {type(duration)}")
         if duration is not None:
@@ -317,6 +327,7 @@ class Recording:
             })
 
             self.is_recording = False
+            self._measured_rec_bytes_per_s = None
             self.logger.info("Made it past stop_recording call")
 
             self.logger.info(f"Config says {self.config.get('export.auto_export')}")
@@ -327,7 +338,7 @@ class Recording:
             return {"result": "Success"}
 
         except Exception as e:
-            self.logger.error(f"Error in stop_recording: {e}")
+            self.logger.exception(f"Error in stop_recording: {e}")
             return {"result": "failure", "message": f"Error in stop_recording: {e}"}
 
 
@@ -508,6 +519,11 @@ class Recording:
 
         while not self.recording_health_stop_flag.wait(timeout=interval):
             try:
+                self._sample_recording_bytes()
+            except Exception as e:
+                self.logger.debug(f"Recording byte sampler failed: {e}")
+
+            try:
                 alive, detail = self.facade.check_recording_alive()
             except Exception as e:
                 self.logger.warning(f"Recording health check raised an exception: {e}")
@@ -535,6 +551,52 @@ class Recording:
                 strikes = 0
                 was_unhealthy = False
 
+
+    # ----- Measured recording data rate --------------------------------------
+
+    def _reset_byte_sampler(self) -> None:
+        self._measured_rec_bytes_per_s = None
+        self._rec_byte_hwm = {}
+        self._rec_bytes_baseline = 0
+        self._rec_sample_start_ts = None
+
+    def _sample_recording_bytes(self) -> None:
+        """Walk the recordings tree (pending/ + to_export/) and keep a
+        per-file high-water-mark of size, so the cumulative total is
+        monotonic even after export removes a file. The average rate since
+        the first sample is a reality check against the config estimate.
+
+        First call establishes the baseline (returns None); the rate is
+        available from the second call on."""
+        if not self.is_recording:
+            return
+        root = os.path.dirname(self.recording_folder)  # .../recordings
+        seen_any = False
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                seen_any = True
+                try:
+                    sz = os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    continue
+                # A file mid-export is briefly renamed PENDING_<name>; strip
+                # it so the same file isn't tracked under two keys.
+                key = name[8:] if name.startswith("PENDING_") else name
+                if sz > self._rec_byte_hwm.get(key, 0):
+                    self._rec_byte_hwm[key] = sz
+        if not seen_any:
+            return
+
+        now = time.time()
+        cum = sum(self._rec_byte_hwm.values())
+        if self._rec_sample_start_ts is None:
+            self._rec_sample_start_ts = now
+            self._rec_bytes_baseline = cum
+            return
+        elapsed = now - self._rec_sample_start_ts
+        if elapsed >= 1:
+            self._measured_rec_bytes_per_s = max(
+                0.0, (cum - self._rec_bytes_baseline) / elapsed)
 
     def _start_recording_health_monitoring(self):
         self.recording_health_stop_flag.clear()

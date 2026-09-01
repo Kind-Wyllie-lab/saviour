@@ -388,6 +388,14 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
               </select>
             </div>
             <div className="form-field">
+              <label title="Rolling % of samples clipping that lights the CLIP indicator on the monitor and logs a warning per segment. Advisory only.">
+                Clipping warn threshold (%):
+              </label>
+              <input type="number" min="0" max="100" step="0.1"
+                value={am.clip_warn_pct ?? 0.5}
+                onChange={e => handleChange(["audiomoth", "clip_warn_pct"], e)} />
+            </div>
+            <div className="form-field">
               <label>Filter type:</label>
               <select value={amFilter} onChange={e => handleChange(["audiomoth", "filter_type"], e)}>
                 <option value="none">None</option>

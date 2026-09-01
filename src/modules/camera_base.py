@@ -37,6 +37,7 @@ from picamera2.outputs import PyavOutput, SplittableOutput
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
+from src.shared.ratelimit_log import RateLimitedLogger
 
 
 @dataclass
@@ -182,8 +183,34 @@ class CameraBase(Module):
         self._current_csv_path = None
         self._frame_id = 0
         self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
+        self._segment_dropped = 0  # frames estimated dropped in the current segment
+
+        # Periodic "still capturing" throughput line while recording — makes a
+        # silently-wedged pipeline visible after the fact in the journal
+        # (recording.camera_throughput_log_secs, 0 disables).
+        self._throughput_last_log_s = 0.0
+        self._throughput_last_frame_id = 0
+
+        # Coalesces per-frame failure spam (a camera throwing on every frame,
+        # missing timestamp metadata) into one line + periodic count + a
+        # recovery notice — see RateLimitedLogger.
+        self._rl_log = RateLimitedLogger(self.logger, interval_s=30.0)
 
         self._preview_timing: FrameTiming | None = None
+
+        # --- Exposure clipping indicator (data-quality warning, coarse) ---
+        # A blown-out (or crushed-black) frame has no detail and also breaks
+        # motion/AE logic downstream -- and it's easy to miss on a small
+        # preview. Sampled from the capture thread on a throttled interval
+        # (runs whenever the camera is capturing, not just while streaming);
+        # overlaid on the preview and reported in the health snapshot.
+        # Advisory only, never gates.
+        self._exposure_sample_history: collections.deque = collections.deque(maxlen=3)
+        self._exposure_over_pct = 0.0    # % of sampled pixels at/near white
+        self._exposure_under_pct = 0.0   # % at/near black
+        self._exposure_last_sample_s = 0.0
+        # so the WARNING log fires on the transition, not every frame
+        self._exposure_warned = False
 
 
     """Self Check"""
@@ -455,6 +482,7 @@ class CameraBase(Module):
         self._cb_flip_code = None
         self._cb_rotation = getattr(self, "_rotation", 0)
         self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
+        self._cb_throughput_log_secs = self.config.get("recording.camera_throughput_log_secs", 60.0)
         # Clear layout caches so _apply_timestamp recomputes font_scale for the new text width
         self._ts_layout_main  = None
         self._ts_layout_lores = None
@@ -655,6 +683,9 @@ class CameraBase(Module):
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
         self._timestamp_csv_writer.writerow(self.BASE_CSV_COLUMNS + self.CSV_EXTRA_COLUMNS)
         self._frame_id = 0
+        self._segment_dropped = 0
+        self._throughput_last_log_s = 0.0
+        self._throughput_last_frame_id = 0
         self._csv_prev_ns = None
         self._csv_row_buffer.clear()
         self._csv_flush_stop.clear()
@@ -747,6 +778,19 @@ class CameraBase(Module):
 
     def _start_new_video_segment(self):
         """Start recording a new splittable output video segment."""
+        # Capture the closing segment's stats before _open_timestamp_csv resets
+        # the counters — a per-segment forensic record (frames actually
+        # written, estimated drops, file size, wall clock) so a mid-session
+        # module reboot / stall shows up as a gap in a greppable series
+        # instead of having to be reconstructed from segment-id arithmetic.
+        closing = self.current_video_segment
+        closing_frames = self._frame_id
+        closing_dropped = self._segment_dropped
+        try:
+            closing_bytes = os.path.getsize(closing) if closing else 0
+        except OSError:
+            closing_bytes = -1
+
         self._close_timestamp_csv()
 
         self.last_video_segment = self.current_video_segment
@@ -758,7 +802,11 @@ class CameraBase(Module):
         self._open_timestamp_csv(filename)
 
         self.file_output.split_output(PyavOutput(filename, format="mpegts"))
-        self.logger.info(f"Switched to new segment {filename}")
+        self.logger.info(
+            f"Segment rotated: closed {os.path.basename(closing) if closing else '(none)'} "
+            f"({closing_frames} frames, ~{closing_dropped} dropped, "
+            f"{closing_bytes / 1e6:.1f} MB) → opened {os.path.basename(filename)}"
+        )
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
@@ -800,7 +848,7 @@ class CameraBase(Module):
             return True
 
         except Exception as e:
-            self.logger.error(f"Error stopping recording: {e}")
+            self.logger.exception(f"Error stopping recording: {e}")
             return False
 
 
@@ -849,7 +897,7 @@ class CameraBase(Module):
                 return frame_wall_clock
             return None
         except Exception as e:
-            self.logger.error(f"Error capturing frame metadata: {e}")
+            self._rl_log.error("frame_ts_meta", f"Error reading frame timestamp metadata: {e}")
             return None
 
 
@@ -876,6 +924,65 @@ class CameraBase(Module):
         pass
 
 
+    def _apply_exposure_overlay(self, frame) -> None:
+        """Draw a top-left 'OVEREXPOSED N%' / 'UNDEREXPOSED N%' warning when
+        _maybe_sample_exposure's rolling figure is over camera.exposure_warn_pct.
+        No-op otherwise."""
+        try:
+            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
+            over, under = self._exposure_over_pct, self._exposure_under_pct
+            if max(over, under) < warn_pct:
+                return
+            if over >= under:
+                text, col = f"OVEREXPOSED {over:.0f}%", (60, 60, 255)   # BGR red
+            else:
+                text, col = f"UNDEREXPOSED {under:.0f}%", (0, 200, 255)  # amber
+            cv2.putText(frame, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(frame, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, col, 1, cv2.LINE_AA)
+        except Exception:
+            pass
+
+    def _maybe_sample_exposure(self, arr) -> None:
+        """Once per camera.exposure_check_interval_s, measure what fraction of
+        a strided subsample of the frame is clipped to white / crushed to
+        black, and roll it into _exposure_over_pct / _exposure_under_pct
+        (mean of the last few samples, ~a few seconds). Logs a WARNING on the
+        transition into a sustained-bad state, cleared on recovery. Cheap: a
+        ~1/64 subsample once a second."""
+        now = time.monotonic()
+        interval = self.config.get("camera.exposure_check_interval_s", 1.0)
+        if not interval or now - self._exposure_last_sample_s < interval:
+            return
+        self._exposure_last_sample_s = now
+        try:
+            hi = int(self.config.get("camera.exposure_clip_high", 250))
+            lo = int(self.config.get("camera.exposure_clip_low", 5))
+            sub = arr[::8, ::8]
+            # any channel clipping counts as clipped
+            luma = sub.max(axis=2) if sub.ndim == 3 else sub
+            n = luma.size or 1
+            over = 100.0 * int(np.count_nonzero(luma >= hi)) / n
+            under = 100.0 * int(np.count_nonzero(luma <= lo)) / n
+            self._exposure_sample_history.append((over, under))
+            h = self._exposure_sample_history
+            self._exposure_over_pct = sum(o for o, _ in h) / len(h)
+            self._exposure_under_pct = sum(u for _, u in h) / len(h)
+
+            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
+            bad = max(self._exposure_over_pct, self._exposure_under_pct) >= warn_pct
+            if bad and not self._exposure_warned:
+                self.logger.warning(
+                    f"Exposure out of range: {self._exposure_over_pct:.1f}% of the "
+                    f"frame is clipped white, {self._exposure_under_pct:.1f}% crushed "
+                    f"black -- check exposure/gain")
+            elif not bad and self._exposure_warned:
+                self.logger.info("Exposure back within range")
+            self._exposure_warned = bad
+        except Exception as e:
+            self.logger.debug(f"Exposure sample failed: {e}")
+
     def _frame_precallback(self, req) -> None:
         try:
             self._last_frame_wall_time = time.time()
@@ -885,8 +992,10 @@ class CameraBase(Module):
 
             timestamp = self._get_frame_timestamp(meta)
             if timestamp is None:
-                self.logger.warning("No frame timestamp available from metadata")
+                self._rl_log.warning(
+                    "frame_ts_missing", "No frame timestamp available from metadata")
                 return
+            self._rl_log.ok("frame_ts_missing", "Frame timestamp metadata recovered")
 
             actual_fps = None
             if self.last_frame_timestamp:
@@ -900,6 +1009,7 @@ class CameraBase(Module):
                 delta_ms       = round((timestamp - self._csv_prev_ns) / 1e6, 3)
                 expected_ms    = 1000.0 / self.fps
                 dropped_before = max(0, round(delta_ms / expected_ms) - 1)
+                self._segment_dropped += dropped_before
             else:
                 delta_ms = dropped_before = ""
             self._csv_prev_ns = timestamp
@@ -934,6 +1044,7 @@ class CameraBase(Module):
                     m.array[:] = cv2.flip(m.array, self._cb_flip_code)
                 if monochrome:
                     self._apply_grayscale(m)
+                self._maybe_sample_exposure(m.array)
                 extra = self._process_main_frame(m, timing)
                 if overlay_timestamp:
                     # 90°/270° rotation on a non-square resolution can't be
@@ -986,10 +1097,42 @@ class CameraBase(Module):
                     self._preview_timing = timing
 
             self._after_frame_hook(timing)
+            self._rl_log.ok("frame_precallback", "Frame pre-callback recovered")
+            self._maybe_log_throughput()
 
         except Exception as e:
-            self.logger.error(f"Error capturing frame metadata: {e}")
+            # Fires on the capture thread, once per frame (30-120 fps). A
+            # persistent fault here would otherwise write an identical ERROR
+            # line every frame forever — coalesce it.
+            self._rl_log.error("frame_precallback", f"Error in frame pre-callback: {e}")
 
+
+    def _maybe_log_throughput(self) -> None:
+        """Emit one INFO line every camera_throughput_log_secs while recording:
+        measured fps, frames + estimated drops this segment. Cheap — a single
+        monotonic comparison per frame otherwise."""
+        if self._timestamp_csv_writer is None:
+            return
+        interval = self._cb_throughput_log_secs
+        if not interval or interval <= 0:
+            return
+        now = time.monotonic()
+        if self._throughput_last_log_s == 0.0:
+            self._throughput_last_log_s = now
+            self._throughput_last_frame_id = self._frame_id
+            return
+        elapsed = now - self._throughput_last_log_s
+        if elapsed < interval:
+            return
+        frames = self._frame_id - self._throughput_last_frame_id
+        measured_fps = frames / elapsed if elapsed else 0.0
+        self.logger.info(
+            f"Recording alive: {measured_fps:.1f} fps over last {elapsed:.0f}s "
+            f"(target {self.fps}); segment {self._frame_id} frames, "
+            f"~{self._segment_dropped} dropped"
+        )
+        self._throughput_last_log_s = now
+        self._throughput_last_frame_id = self._frame_id
 
     def _apply_grayscale(self, m: MappedArray) -> None:
         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)
@@ -1215,6 +1358,11 @@ class CameraBase(Module):
                     actual_fps = getattr(self, "_preview_actual_fps", None)
                     if actual_fps:
                         self._apply_framerate(frame, str(actual_fps), "lores")
+
+            # Exposure-clipping warning, top-left (timestamp is top-center, fps
+            # top-right, subclass overlays bottom-left). Shown on either stream.
+            if self.config.get("camera.exposure_overlay", True):
+                self._apply_exposure_overlay(frame)
 
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ret:

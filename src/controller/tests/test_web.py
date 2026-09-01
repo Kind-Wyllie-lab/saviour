@@ -10,6 +10,7 @@ subprocess mocked too and belongs in a separate test module.
 """
 
 import io
+import json
 import os
 import queue
 import re
@@ -22,6 +23,8 @@ from src.controller.recording import RecordingSession
 from src.controller.web import (
     Web,
     _filter_private_keys,
+    _list_dir_backups,
+    _prune_dir_backups,
     _QueueStream,
     _sanitise_config_dict,
 )
@@ -79,6 +82,72 @@ class TestFilterPrivateKeys:
             "name": "cam1",
         })
         assert result == {"camera": {"fps": 30}, "name": "cam1"}
+
+
+class TestControllerBackupHelpers:
+    """Pure fs helpers behind the controller self-update snapshot/revert
+    feature. The rsync/systemctl parts (_snapshot_controller, the
+    revert_controller_update handler) shell out and stay out of scope per
+    this module's docstring."""
+
+    def _make_backup(self, root, name, meta=None):
+        d = os.path.join(root, name)
+        os.makedirs(d)
+        if meta is not None:
+            with open(os.path.join(d, ".backup_meta.json"), "w") as f:
+                json.dump(meta, f)
+        return d
+
+    def test_missing_dir_returns_empty_list(self):
+        assert _list_dir_backups("/no/such/dir") == []
+
+    def test_lists_newest_first_by_name_and_reads_meta(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make_backup(root, "20260101T000000Z_v1",
+                              {"version": "v1", "created_at": "a",
+                               "reason": "pre-zip-update"})
+            self._make_backup(root, "20260201T000000Z_v2",
+                              {"version": "v2", "created_at": "b",
+                               "reason": "pre-git-update"})
+            got = _list_dir_backups(root)
+            assert [b["name"] for b in got] == [
+                "20260201T000000Z_v2", "20260101T000000Z_v1"]
+            assert got[0]["version"] == "v2"
+            assert got[0]["reason"] == "pre-git-update"
+
+    def test_backup_without_meta_yields_none_fields(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make_backup(root, "20260101T000000Z_v1", meta=None)
+            (entry,) = _list_dir_backups(root)
+            assert entry["name"] == "20260101T000000Z_v1"
+            assert entry["version"] is None
+            assert entry["reason"] is None
+
+    def test_corrupt_meta_json_is_tolerated(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self._make_backup(root, "20260101T000000Z_v1", meta=None)
+            with open(os.path.join(d, ".backup_meta.json"), "w") as f:
+                f.write("{not json")
+            (entry,) = _list_dir_backups(root)
+            assert entry["version"] is None
+
+    def test_prune_keeps_only_the_n_newest_and_returns_removed(self):
+        with tempfile.TemporaryDirectory() as root:
+            for i in range(1, 6):
+                self._make_backup(root, f"2026010{i}T000000Z_v{i}",
+                                  {"version": f"v{i}"})
+            removed = _prune_dir_backups(root, keep=2)
+            assert sorted(removed) == [
+                "20260101T000000Z_v1", "20260102T000000Z_v2",
+                "20260103T000000Z_v3"]
+            assert [b["name"] for b in _list_dir_backups(root)] == [
+                "20260105T000000Z_v5", "20260104T000000Z_v4"]
+
+    def test_prune_noop_when_within_limit(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make_backup(root, "20260101T000000Z_v1", {"version": "v1"})
+            assert _prune_dir_backups(root, keep=3) == []
+            assert len(_list_dir_backups(root)) == 1
 
 
 class TestGenerateExperimentName:
@@ -1653,9 +1722,114 @@ class TestStorageOverview:
         web, facade = _make_web_with_facade()
         facade.get_recording_sessions.side_effect = RuntimeError("boom")
         facade.get_module_health.side_effect = RuntimeError("boom")
+        facade.get_module_configs.side_effect = RuntimeError("boom")
         ov = web._storage_overview()
         assert ov["exports"]["pending"] == 0
         assert ov["disks"] == []
+        assert ov["data_rate"]["recording_mb_per_min"] == 0
+
+    def test_data_rate_estimate_and_local_buffer(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_space": 20.0, "disk_used_gb": 20.0,
+                      "disk_total_gb": 100.0, "recording": True},
+        }
+        facade.get_modules.return_value = {"cam_a": {"name": "A", "type": "loom_camera"}}
+        facade.get_module_configs.return_value = {
+            "cam_a": {"true_config": {"camera": {"bitrate_mb": 2, "fps": 30}}}
+        }
+        web._nas_health = {"free_gb": 500.0}
+
+        ov = web._storage_overview()
+        d = ov["disks"][0]
+        # 2 Mbit + 30fps CSV ~= 15.2 MB/min
+        assert 15.0 <= d["est_mb_per_min"] <= 15.5
+        # 80 GB free / 15.2 MB/min ~= 5390 min
+        assert d["local_buffer_min"] > 5000
+        assert d["recording"] is True
+        assert ov["data_rate"]["recording_module_count"] == 1
+        assert 15.0 <= ov["data_rate"]["recording_mb_per_min"] <= 15.5
+        assert ov["data_rate"]["share_runway_hours"] is not None
+
+    def test_data_rate_none_for_unknown_module_type(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {
+            "x": {"disk_space": 10.0, "disk_used_gb": 1.0, "disk_total_gb": 10.0},
+        }
+        facade.get_modules.return_value = {"x": {"name": "X", "type": "weather"}}
+        facade.get_module_configs.return_value = {}
+        ov = web._storage_overview()
+        assert ov["disks"][0]["est_mb_per_min"] is None
+        assert ov["disks"][0]["local_buffer_min"] is None
+
+
+class TestEstimateDataRate:
+    def test_sums_target_modules_using_target_config(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"},
+            "mic_a": {"name": "M", "type": "microphone"},
+        }
+        facade.get_module_configs.return_value = {
+            "cam_a": {"target_config": {"camera": {"bitrate_mb": 2, "fps": 30}}},
+            "mic_a": {"target_config": {"audiomoth": {"sample_rate": 192000},
+                                       "audiomoth_labels": {"a": 1, "b": 2}}},
+        }
+        web._nas_health = {"free_gb": 100.0}
+
+        est = web._estimate_data_rate("all")
+        # camera ~15.2 + mic 2x192k*2 = 46.08 -> ~61.3 MB/min
+        assert 60.0 <= est["total_mb_per_min"] <= 62.0
+        assert est["total_gb_per_hour"] > 3
+        assert est["share_runway_hours"] is not None
+        assert {m["module_id"] for m in est["modules"]} == {"cam_a", "mic_a"}
+
+    def test_no_share_free_gb_means_no_runway(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"}}
+        facade.get_module_configs.return_value = {}
+        facade.get_module_health.return_value = {}
+        web._nas_health = {}
+        est = web._estimate_data_rate("camera")
+        assert est["share_runway_hours"] is None
+        assert est["supported_minutes"] is None
+        assert est["total_mb_per_min"] > 0
+
+    def test_supported_minutes_is_min_of_share_and_local_buffer(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"},
+        }
+        facade.get_module_configs.return_value = {
+            "cam_a": {"target_config": {"camera": {"bitrate_mb": 2, "fps": 30}}},
+        }
+        # 2 GB free local; camera ~15.2 MB/min -> local buffer ~135 min.
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_used_gb": 98.0, "disk_total_gb": 100.0},
+        }
+        # huge share -> share runway is hours, local disk is the constraint
+        web._nas_health = {"free_gb": 5000.0}
+
+        est = web._estimate_data_rate("all")
+        assert 120 <= est["min_local_buffer_min"] <= 150
+        assert est["min_local_buffer_module"] == "A"
+        assert est["supported_minutes"] == est["min_local_buffer_min"]
+
+    def test_share_is_the_constraint_when_local_disks_are_roomy(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"}}
+        facade.get_module_configs.return_value = {
+            "cam_a": {"target_config": {"camera": {"bitrate_mb": 2, "fps": 30}}}}
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_used_gb": 1.0, "disk_total_gb": 1000.0}}
+        web._nas_health = {"free_gb": 10.0}  # small share
+        est = web._estimate_data_rate("all")
+        assert est["supported_minutes"] == round(est["share_runway_hours"] * 60)
+        assert est["min_local_buffer_min"] > est["supported_minutes"]
 
 
 class TestNasHistoryCsv:
@@ -1673,6 +1847,73 @@ class TestNasHistoryCsv:
         web._nas_history.extend([(now - 7200, 1, 10), (now - 60, 2, 10)])
         rows = list(web._nas_history_csv(hours=1))
         assert len(rows) == 2  # header + the one recent sample
+
+
+class TestDataRateHistory:
+    def test_sample_appends_fleet_and_per_recording_module(self):
+        web = _make_web()
+        overview = {
+            "data_rate": {"recording_mb_per_min": 61.3},
+            "disks": [
+                {"module_id": "cam_a", "recording": True,
+                 "est_mb_per_min": 15.2, "measured_mb_per_min": 14.8},
+                {"module_id": "mic_a", "recording": True,
+                 "est_mb_per_min": 46.1, "measured_mb_per_min": None},
+                {"module_id": "cam_b", "recording": False,
+                 "est_mb_per_min": 15.2, "measured_mb_per_min": None},
+            ],
+        }
+        web._sample_data_rate_history(1000.0, overview)
+        assert len(web._data_rate_history) == 1
+        ts, fleet, per = web._data_rate_history[0]
+        assert ts == 1000.0
+        assert fleet == 61.3
+        # measured preferred; non-recording module excluded
+        assert per == {"cam_a": 14.8, "mic_a": 46.1}
+
+    def test_sample_prunes_by_age(self):
+        web = _make_web()
+        old = 1000.0
+        recent = old + web._DATA_RATE_HISTORY_RETENTION_S + 10
+        web._data_rate_history.append((old, 5.0, {}))
+        web._sample_data_rate_history(recent, {"data_rate": {}, "disks": []})
+        assert [t for (t, _f, _p) in web._data_rate_history] == [recent]
+
+    def test_sample_survives_a_malformed_overview(self):
+        web = _make_web()
+        web._sample_data_rate_history(1.0, {})  # no data_rate / disks keys
+        assert list(web._data_rate_history) == [(1.0, 0.0, {})]
+
+    def test_csv_has_header_and_rows(self):
+        web = _make_web()
+        web._data_rate_history.extend([
+            (100.0, 15.0, {"cam_a": 15.0}),
+            (200.0, 0.0, {}),
+        ])
+        rows = list(web._data_rate_history_csv())
+        assert rows[0].startswith(
+            "timestamp_utc,timestamp_epoch,fleet_mb_per_min,recording_modules")
+        assert len(rows) == 3
+        assert ",15.0,1," in rows[1]
+        assert ',0.0,0,{}' in rows[2]
+
+    def test_csv_hours_filter(self):
+        web = _make_web()
+        now = time.time()
+        web._data_rate_history.extend([(now - 7200, 1.0, {}), (now - 60, 2.0, {})])
+        assert len(list(web._data_rate_history_csv(hours=1))) == 2  # header + 1
+
+    def test_socket_handler_emits_downsampled_fleet_series(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {}
+        facade.get_modules.return_value = {}
+        web._data_rate_history.extend([(float(i), float(i), {}) for i in range(5)])
+        client = _connected_client(web)
+        client.emit("get_data_rate_history")
+        msgs = {m["name"]: m["args"][0] for m in client.get_received()}
+        assert "data_rate_history" in msgs
+        assert msgs["data_rate_history"]["samples"] == [[float(i), float(i)] for i in range(5)]
 
 
 class TestStorageSocketHandlers:
@@ -1697,3 +1938,95 @@ class TestStorageSocketHandlers:
                        if m["name"] == "nas_history")
         assert len(payload["samples"]) <= 5
         assert payload["retention_days"] >= 1
+
+
+class TestFirstRunSetup:
+    """The first-run setup modal's backend: a sentinel written by
+    saviour-config on a role/type change, surfaced over Socket.IO and cleared
+    by `complete_first_run`."""
+
+    def _sentinel(self, tmpdir, body="reason=role\ntype=habitat\n"):
+        path = os.path.join(tmpdir, "first_run")
+        with open(path, "w") as f:
+            f.write(body)
+        return path
+
+    def test_no_sentinel_means_not_needed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _facade = _make_web_with_facade()
+            missing = os.path.join(tmpdir, "nope")
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", missing):
+                client = _connected_client(web)
+                client.emit("get_first_run_state")
+                payload = next(m["args"][0] for m in client.get_received()
+                               if m["name"] == "first_run_state")
+            assert payload == {"needed": False}
+
+    def test_connect_emits_first_run_state_when_sentinel_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {
+                "controller": {"name": "", "location": ""}}
+            with patch("src.controller.web._FIRST_RUN_SENTINEL",
+                       self._sentinel(tmpdir)):
+                client = web.socketio.test_client(web.app)
+                payload = next(m["args"][0] for m in client.get_received()
+                               if m["name"] == "first_run_state")
+            assert payload["needed"] is True
+            assert payload["reason"] == "role"
+            assert payload["provisioned_type"] == "habitat"
+
+    def test_get_first_run_state_prefills_current_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {
+                "controller": {"name": "Rig A", "location": "Room 5"}}
+            with patch("src.controller.web._FIRST_RUN_SENTINEL",
+                       self._sentinel(tmpdir)):
+                client = _connected_client(web)
+                client.emit("get_first_run_state")
+                payload = next(m["args"][0] for m in client.get_received()
+                               if m["name"] == "first_run_state")
+            assert payload["name"] == "Rig A"
+            assert payload["location"] == "Room 5"
+
+    def test_complete_first_run_requires_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            sentinel = self._sentinel(tmpdir)
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", sentinel):
+                client = _connected_client(web)
+                client.emit("complete_first_run", {"name": "X"})
+            facade.set_config.assert_not_called()
+            assert os.path.exists(sentinel)  # not cleared
+
+    def test_complete_first_run_rejects_empty_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {"controller": {}}
+            sentinel = self._sentinel(tmpdir)
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", sentinel):
+                client = _connected_client(web)
+                _login(web, client, tmpdir)
+                client.emit("complete_first_run", {"name": "   "})
+                names = [m["name"] for m in client.get_received()]
+            assert "first_run_error" in names
+            facade.set_config.assert_not_called()
+            assert os.path.exists(sentinel)
+
+    def test_complete_first_run_saves_and_clears_sentinel(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {"controller": {}}
+            sentinel = self._sentinel(tmpdir)
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", sentinel):
+                client = _connected_client(web)
+                _login(web, client, tmpdir)
+                client.emit("complete_first_run",
+                            {"name": "  Habitat A  ", "location": " Room 2 "})
+                payloads = {m["name"]: m["args"][0] if m["args"] else None
+                            for m in client.get_received()}
+            facade.set_config.assert_called_once_with(
+                {"controller": {"name": "Habitat A", "location": "Room 2"}})
+            assert not os.path.exists(sentinel)
+            assert payloads["first_run_state"] == {"needed": False}

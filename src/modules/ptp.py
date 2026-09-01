@@ -277,7 +277,7 @@ class PTP:
                         self._parse_phc2sys_line(line)
 
             except Exception as e:
-                self.logger.error(f"Error in monitor thread: {e}")
+                self.logger.exception(f"Error in PTP monitor thread: {e}")
 
             time.sleep(1)  # Check every second
 

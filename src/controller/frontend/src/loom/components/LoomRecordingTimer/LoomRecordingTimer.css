@@ -21,6 +21,28 @@
   border-color: color-mix(in srgb, #c0580a 50%, var(--border-color));
 }
 
+/* Mid-recording fault: the session is still recording on every healthy
+   module, so keep the clock/bar, but make the degraded state unmistakable. */
+.loom-timer--fault {
+  background-color: color-mix(in srgb, #c62828 16%, var(--card-bg-color));
+  border-color: color-mix(in srgb, #c62828 55%, var(--border-color));
+}
+
+.loom-timer--fault .loom-timer-dot,
+.loom-timer--fault .loom-timer-bar-fill {
+  background-color: #c62828;
+}
+
+.loom-timer-label--fault {
+  color: #e57373;
+  opacity: 1;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .loom-timer-top {
   display: flex;
   align-items: center;

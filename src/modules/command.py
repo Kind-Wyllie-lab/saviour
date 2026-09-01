@@ -42,7 +42,11 @@ class Command:
             commands: Dictionary of commands
         """
         self.commands.update(commands)
-        self.logger.info(f"Command handler callbacks: {self.commands}")
+        self.logger.info(
+            f"Registered {len(commands)} command handler(s); "
+            f"{len(self.commands)} total"
+        )
+        self.logger.debug(f"Command handlers: {sorted(self.commands)}")
 
     # Alias used by some module implementations
     set_callbacks = set_commands
@@ -64,25 +68,18 @@ class Command:
         try:
             # Check if the command contains a JSON object
             if '{' in command and '}' in command:
-                # self.logger.info(f"Found JSON in command")
                 # Find the first '{' and last '}' to extract the JSON part
                 start_idx = command.find('{')
                 end_idx = command.rfind('}') + 1
-
-                # self.logger.info(f"JSON start: {start_idx}, end: {end_idx}")
 
                 # Extract the command part (before the JSON)
                 cmd_part = command[:start_idx].strip()
                 json_part = command[start_idx:end_idx]
 
-                # self.logger.info(f"Command part: '{cmd_part}'")
-                # self.logger.info(f"JSON part: '{json_part}'")
-
                 # Parse the command part
                 cmd_parts = cmd_part.split()
                 cmd = cmd_parts[0] if cmd_parts else ""
 
-                # self.logger.info(f"Extracted command: '{cmd}', JSON param: '{json_part}'")
                 params = json.loads(json_part)
 
                 # Return the command and the JSON as a single parameter
@@ -121,14 +118,10 @@ class Command:
                 return self._unknown_command(cmd)
 
             # 3. Execute callback and get response
-            # self.logger.info(f"Executing command {cmd}")
             if not params:
-                # self.logger.info(f"Executing without arguments")
                 result = handler()
             else:
                 result = handler(**params) # Unpack params into arguments
-
-            # self.logger.info(f"Command handler returned {result}")
 
             if result == True:
                 result = {"result": "success"}
@@ -149,7 +142,7 @@ class Command:
 
     def _handle_error(self, error: Exception):
         """Standard error handling"""
-        self.logger.error(f"Error handling command: {error}")
+        self.logger.exception(f"Error handling command: {error}")
         self.facade.send_status({
             "type": "error",
             "timestamp": time.time(),
@@ -159,7 +152,7 @@ class Command:
 
     def _unknown_command(self, command: str):
         """Handle unrecognized command"""
-        self.logger.info(f"Command {command} not recognized")
+        self.logger.warning(f"Command {command!r} not recognized")
         self.facade.send_status({
             "type": "error",
             "error": f"Command {command} not recognized"

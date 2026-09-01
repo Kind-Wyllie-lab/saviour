@@ -299,13 +299,17 @@ class Communication:
 
                 # Store the command immediately after parsing
                 self.last_command = command
-                self.logger.info(f"Stored command: {self.last_command}")
+                # INFO carries the verb only — the full string can be long and
+                # can contain Samba credentials (set_export_config); full text
+                # at DEBUG.
+                self.logger.info(f"Command received: {cmd_type}")
+                self.logger.debug(f"Raw command: {command}")
 
                 # Call the command handler
                 try:
                     self.facade.handle_command(command)
                 except Exception as e:
-                    self.logger.error(f"Error handling command: {e}")
+                    self.logger.exception(f"Error handling command {cmd_type}: {e}")
 
             except zmq.Again:
                 # Timeout occurred, check if we should still be running
@@ -513,7 +517,6 @@ class Communication:
 
             # Send status
             self.status_socket.send_string(f"status/{self.facade.get_module_id()} {message}")
-            # self.logger.info(f"Status sent: {message}")
 
         except Exception as e:
             self.logger.error(f"Error sending status: {e}")

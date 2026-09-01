@@ -11,6 +11,7 @@ import Storage from "/src/basic/pages/Storage/Storage";
 import Guide from "/src/basic/pages/Guide/Guide";
 
 import Dashboard from "/src/acoustic_startle/pages/AcousticStartleDashboard/AcousticStartleDashboard";
+import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
@@ -42,6 +43,7 @@ function App() {
                 <Route path="/guide" element={<Guide />} />
             </Routes>
             </div>
+            <FirstRunModal />
             <ConnectionOverlay />
         </div>
     )

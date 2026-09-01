@@ -34,6 +34,20 @@ function Sidebar({ navItems }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Sidebar collapse — full-hide with a floating reopen button. Persisted so
+  // it survives reloads; every localStorage access is wrapped because a
+  // private window / disabled site data makes it throw.
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("saviour_sidebar_collapsed") === "1"; }
+    catch { return false; }
+  });
+  const toggleCollapsed = () => setCollapsed((v) => {
+    const next = !v;
+    try { localStorage.setItem("saviour_sidebar_collapsed", next ? "1" : "0"); }
+    catch { /* storage unavailable — collapse still works for this session */ }
+    return next;
+  });
+
   useEffect(() => onAuthChange(() => {
     setLoggedIn(isLoggedIn());
     setShowAccountMenu(false);
@@ -263,7 +277,32 @@ function Sidebar({ navItems }) {
   };
 
   return (
-    <header className="sidebar">
+    <>
+      {collapsed && (
+        <button
+          type="button"
+          className="sidebar-reopen"
+          title="Show sidebar"
+          aria-label="Show sidebar"
+          onClick={toggleCollapsed}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+      )}
+      <header className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
+        <button
+          type="button"
+          className="sidebar-collapse-btn"
+          title="Hide sidebar"
+          aria-label="Hide sidebar"
+          onClick={toggleCollapsed}
+        >
+          «
+        </button>
       <div className="header-content">
         <div className="logo-container">
           <img src={UoELogo} alt="UoE Logo" className="logo" />
@@ -364,6 +403,7 @@ function Sidebar({ navItems }) {
           </a>
         </div>
       </div>
+      </header>
 
       {showUpdateModal && (
         <div className="modal-overlay" onClick={() => setShowUpdateModal(false)}>
@@ -598,7 +638,7 @@ function Sidebar({ navItems }) {
           </div>
         </div>
       )}
-    </header>
+    </>
   );
 }
 

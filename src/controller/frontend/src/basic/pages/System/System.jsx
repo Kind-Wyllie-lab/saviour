@@ -24,10 +24,31 @@ function fmt(val, unit, decimals = 0) {
   return `${Number(val).toFixed(decimals)}${unit}`;
 }
 
-function tempCell(t) {
-  if (t == null) return <span className="cell--muted">-</span>;
-  const cls = t >= 75 ? "val--danger" : t >= 60 ? "val--warn" : "val--ok";
-  return <span className={cls}>{t.toFixed(1)}°C</span>;
+// Pi `vcgencmd get_throttled` bitmask -> short flag lists (mirror of
+// src/shared/health.py decode_throttled; kept inline to avoid a shared JS dep).
+function decodeThrottled(v) {
+  if (!v) return { now: [], sinceBoot: [] };
+  const bits = { 0: "under-voltage", 1: "freq-capped", 2: "throttled", 3: "soft-temp-limit" };
+  const now = [], sinceBoot = [];
+  for (const b of [0, 1, 2, 3]) {
+    if (v & (1 << b)) now.push(bits[b]);
+    if (v & (1 << (b + 16))) sinceBoot.push(bits[b]);
+  }
+  return { now, sinceBoot };
+}
+
+function tempCell(t, throttled) {
+  const { now, sinceBoot } = decodeThrottled(throttled);
+  const marker = now.length ? (
+    <span className="val--danger" title={`Throttling now: ${now.join(", ")}`}> ⚡</span>
+  ) : sinceBoot.length ? (
+    <span className="val--warn" title={`Occurred since boot: ${sinceBoot.join(", ")}`}> ⚡</span>
+  ) : null;
+  if (t == null) {
+    return marker ? <span>-{marker}</span> : <span className="cell--muted">-</span>;
+  }
+  const cls = now.length || t >= 75 ? "val--danger" : t >= 60 ? "val--warn" : "val--ok";
+  return <span className={cls}>{t.toFixed(1)}°C{marker}</span>;
 }
 
 function pctCell(pct, warnAt = 70, dangerAt = 85) {
@@ -196,6 +217,9 @@ export default function System() {
       socket.emit("reboot_controller");
     } else if (controllerActionTarget === "shutdown") {
       socket.emit("shutdown_controller");
+    } else if (controllerActionTarget === "revert") {
+      setDeviceStatuses(prev => ({ ...prev, controller: "updating" }));
+      socket.emit("revert_controller_update");
     }
     setControllerActionTarget(null);
   };
@@ -235,14 +259,22 @@ export default function System() {
   // ── Update all devices (ZIP-based deploy) ────────────────────────────────
   const [stagedMeta, setStagedMeta] = useState(null); // { version, size, filename } or null
   const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | "restarting" | { success, output }
+  // Pre-update controller snapshots available to revert to, newest first.
+  const [controllerBackups, setControllerBackups] = useState([]);
 
   useEffect(() => {
     socket.emit("get_update_info");
+    socket.emit("get_controller_backups");
     const onUpdateInfo = (data) => {
       setStagedMeta(data?.staged ?? null);
     };
+    const onBackups = (data) => setControllerBackups(data?.backups ?? []);
     socket.on("update_info", onUpdateInfo);
-    return () => socket.off("update_info", onUpdateInfo);
+    socket.on("controller_backups", onBackups);
+    return () => {
+      socket.off("update_info", onUpdateInfo);
+      socket.off("controller_backups", onBackups);
+    };
   }, []);
 
   useEffect(() => {
@@ -289,6 +321,7 @@ export default function System() {
         return prev;
       });
       socket.emit("get_update_info");
+      socket.emit("get_controller_backups");
     };
     socket.on("module_update_result", onModuleResult);
     socket.on("deploy_update_status", onDeployStatus);
@@ -400,7 +433,7 @@ export default function System() {
               <td className="cell--muted">{controllerHealth?.ip ?? "-"}</td>
               <td className="cell--muted">{controllerHealth?.version ?? "-"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
-              <td>{tempCell(controllerHealth?.cpu_temp)}</td>
+              <td>{tempCell(controllerHealth?.cpu_temp, controllerHealth?.throttled)}</td>
               <td>{memoryCell(controllerHealth?.memory_usage, controllerHealth?.memory_total_gb)}</td>
               <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_used_gb, controllerHealth?.disk_total_gb)}</td>
               <td className="system-time-cell">
@@ -455,6 +488,18 @@ export default function System() {
                   <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                     <td>
                       <span className="device-name">{row.name}</span>
+                      {isOnline && row.audio_clip_pct != null && row.audio_clip_pct >= 0.5 && (
+                        <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
+                          title="Audio is clipping on the loudest AudioMoth — lower the gain">
+                          CLIP {row.audio_clip_pct.toFixed(1)}%
+                        </span>
+                      )}
+                      {isOnline && row.frame_clip_pct != null && row.frame_clip_pct >= 5 && (
+                        <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
+                          title="Frame is over/under-exposed — check exposure and gain">
+                          EXPOSURE {row.frame_clip_pct.toFixed(0)}%
+                        </span>
+                      )}
                       <span className="device-id">{row.id}</span>
                     </td>
                     <td>{connectionCell(connStatus)}</td>
@@ -462,7 +507,7 @@ export default function System() {
                     <td className="cell--muted">{modules[row.id]?.ip ?? "-"}</td>
                     <td className="cell--muted">{modules[row.id]?.version ?? "-"}</td>
                     <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">-</span>}</td>
-                    <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">-</span>}</td>
+                    <td>{isOnline ? tempCell(row.cpu_temp, row.throttled) : <span className="cell--muted">-</span>}</td>
                     <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">-</span>}</td>
                     <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">-</span>}</td>
                     <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">-</span>}</td>
@@ -594,6 +639,19 @@ export default function System() {
                   <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to the controller only</span>
                 </button>
               )}
+              {controllerBackups.length > 0 && (
+                <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                  title={loggedIn ? undefined : "Login required for this action"}
+                  onClick={() => { setControllerActionTarget("revert"); setShowControllerActions(false); }}>
+                  <span>Revert last update</span>
+                  <span className="actions-modal__hint">
+                    Restore snapshot {controllerBackups[0].version ?? ""} taken{" "}
+                    {controllerBackups[0].created_at
+                      ? new Date(controllerBackups[0].created_at).toLocaleString()
+                      : "before the last update"} and restart
+                  </span>
+                </button>
+              )}
               <button type="button" className="actions-modal__item" disabled={!loggedIn}
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
@@ -636,9 +694,22 @@ export default function System() {
               <p>Shut down the controller?</p>
               <p className="modal-subtext modal-subtext--warn">The controller will power off. A manual power cycle is required to bring it back online. Any active recording sessions will be interrupted.</p>
             </>}
+            {controllerActionTarget === "revert" && <>
+              <p>Revert the controller to snapshot {controllerBackups[0]?.version ?? ""}?</p>
+              <p className="modal-subtext modal-subtext--warn">
+                Restores the controller code captured before the most recent update
+                ({controllerBackups[0]?.created_at
+                  ? new Date(controllerBackups[0].created_at).toLocaleString()
+                  : "last update"}), regenerates its service file, and restarts.
+                Any active recording sessions will be interrupted.
+              </p>
+            </>}
             <div className="modal-buttons">
               <button className="reset-button" type="button" onClick={handleControllerActionConfirm}>
-                {controllerActionTarget === "restart_service" ? "Restart" : controllerActionTarget === "reboot" ? "Reboot" : "Shutdown"}
+                {controllerActionTarget === "restart_service" ? "Restart"
+                  : controllerActionTarget === "reboot" ? "Reboot"
+                  : controllerActionTarget === "revert" ? "Revert"
+                  : "Shutdown"}
               </button>
               <button className="save-button" type="button" onClick={() => setControllerActionTarget(null)}>Cancel</button>
             </div>

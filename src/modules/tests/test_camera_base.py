@@ -15,17 +15,22 @@ deliberately out of scope -- they need a real or deeply-faked
 MappedArray/Picamera2 pipeline rather than distinct branching logic.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from src.modules.camera_base import CameraBase, _FrameShim
+from src.shared.ratelimit_log import RateLimitedLogger
 
 
 def _make_camera(**attrs) -> CameraBase:
     cam = CameraBase.__new__(CameraBase)
     cam.logger = MagicMock()
+    # Hot-path failure logs go through this coalescing wrapper (see
+    # RateLimitedLogger); it forwards to cam.logger.log(level, msg).
+    cam._rl_log = RateLimitedLogger(cam.logger)
     for key, value in attrs.items():
         setattr(cam, key, value)
     return cam
@@ -109,7 +114,9 @@ class TestGetFrameTimestamp:
         bad_metadata = MagicMock()
         bad_metadata.get.side_effect = RuntimeError("boom")
         assert cam._get_frame_timestamp(bad_metadata) is None
-        cam.logger.error.assert_called_once()
+        # Routed through the rate-limited wrapper -> logger.log(ERROR, ...)
+        cam.logger.log.assert_called_once()
+        assert cam.logger.log.call_args[0][0] == logging.ERROR
 
 
 class TestApplyGrayscale:
@@ -324,3 +331,77 @@ class TestGetHealthOverrideIsUnreachable:
         cam = _make_camera()
         with pytest.raises(AttributeError):
             cam.get_health()
+
+
+class TestExposureSampling:
+    """CameraBase._maybe_sample_exposure -- the coarse over/under-exposure
+    data-quality indicator (pure numpy on a frame array + a throttle)."""
+
+    def _cam(self, **cfg):
+        defaults = {
+            "camera.exposure_check_interval_s": 1.0,
+            "camera.exposure_clip_high": 250,
+            "camera.exposure_clip_low": 5,
+            "camera.exposure_warn_pct": 5.0,
+        }
+        defaults.update(cfg)
+        config = MagicMock()
+        config.get.side_effect = lambda k, d=None: defaults.get(k, d)
+        import collections
+        return _make_camera(
+            config=config,
+            _exposure_sample_history=collections.deque(maxlen=3),
+            _exposure_over_pct=0.0, _exposure_under_pct=0.0,
+            _exposure_last_sample_s=0.0, _exposure_warned=False,
+        )
+
+    def test_all_white_frame_reads_as_overexposed(self):
+        cam = self._cam()
+        white = np.full((80, 80, 3), 255, dtype=np.uint8)
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
+            cam._maybe_sample_exposure(white)
+        assert cam._exposure_over_pct == 100.0
+        assert cam._exposure_under_pct == 0.0
+        cam.logger.warning.assert_called_once()
+        assert cam._exposure_warned is True
+
+    def test_all_black_frame_reads_as_underexposed(self):
+        cam = self._cam()
+        black = np.zeros((80, 80, 3), dtype=np.uint8)
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
+            cam._maybe_sample_exposure(black)
+        assert cam._exposure_under_pct == 100.0
+        assert cam._exposure_over_pct == 0.0
+
+    def test_well_exposed_frame_does_not_warn(self):
+        cam = self._cam()
+        mid = np.full((80, 80, 3), 128, dtype=np.uint8)
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
+            cam._maybe_sample_exposure(mid)
+        assert cam._exposure_over_pct == 0.0
+        assert cam._exposure_under_pct == 0.0
+        cam.logger.warning.assert_not_called()
+
+    def test_throttled_to_the_interval(self):
+        cam = self._cam()
+        white = np.full((80, 80, 3), 255, dtype=np.uint8)
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.0):
+            cam._maybe_sample_exposure(white)
+        # 0.5s later -- inside the 1s interval, skipped
+        black = np.zeros((80, 80, 3), dtype=np.uint8)
+        with patch("src.modules.camera_base.time.monotonic", return_value=10.5):
+            cam._maybe_sample_exposure(black)
+        assert cam._exposure_over_pct == 100.0  # unchanged, second call skipped
+        with patch("src.modules.camera_base.time.monotonic", return_value=11.1):
+            cam._maybe_sample_exposure(black)
+        assert cam._exposure_over_pct < 100.0  # now rolled the black sample in
+
+    def test_recovery_logs_once(self):
+        cam = self._cam()
+        white = np.full((80, 80, 3), 255, dtype=np.uint8)
+        mid = np.full((80, 80, 3), 128, dtype=np.uint8)
+        for t, frame in [(10.0, white), (11.1, mid), (12.2, mid), (13.3, mid)]:
+            with patch("src.modules.camera_base.time.monotonic", return_value=t):
+                cam._maybe_sample_exposure(frame)
+        assert cam._exposure_warned is False
+        cam.logger.info.assert_called_with("Exposure back within range")

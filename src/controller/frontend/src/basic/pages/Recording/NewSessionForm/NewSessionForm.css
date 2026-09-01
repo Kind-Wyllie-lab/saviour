@@ -158,6 +158,15 @@
   margin: 0;
 }
 
+.form-hint {
+  font-size: 0.82rem;
+  color: var(--secondary-text-color, #666);
+  background: rgba(120, 120, 120, 0.07);
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin: 0;
+}
+
 .button-row {
   display: flex;
   gap: 10px;

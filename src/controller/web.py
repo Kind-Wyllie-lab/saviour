@@ -40,6 +40,11 @@ from flask import (
 from flask_socketio import SocketIO
 
 from src.controller.config import Config
+from src.shared.data_rate import (
+    bytes_per_s_to_mb_per_min,
+    estimate_recording_bytes_per_s,
+    runway_minutes,
+)
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -112,6 +117,85 @@ def _filter_private_keys(d: dict) -> dict:
     return result
 
 
+def _list_dir_backups(backup_dir: str) -> list[dict]:
+    """Newest-first list of snapshot subdirs under *backup_dir*, each as
+    {name, version, created_at, reason} read from its .backup_meta.json
+    (any missing/unreadable -> None). Dir names are `<UTC-ts>_<version>`
+    so a reverse lexical sort is chronological."""
+    try:
+        names = [d for d in os.listdir(backup_dir)
+                 if os.path.isdir(os.path.join(backup_dir, d))]
+    except FileNotFoundError:
+        return []
+    out = []
+    for name in names:
+        meta = {}
+        try:
+            with open(os.path.join(backup_dir, name, ".backup_meta.json")) as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            pass
+        out.append({"name": name, "version": meta.get("version"),
+                    "created_at": meta.get("created_at"),
+                    "reason": meta.get("reason")})
+    out.sort(key=lambda b: b["name"], reverse=True)
+    return out
+
+
+def _prune_dir_backups(backup_dir: str, keep: int) -> list[str]:
+    """Delete all but the *keep* newest snapshots in *backup_dir*.
+    Returns the names removed."""
+    import shutil as _shutil
+    removed = []
+    for stale in _list_dir_backups(backup_dir)[keep:]:
+        _shutil.rmtree(os.path.join(backup_dir, stale["name"]),
+                       ignore_errors=True)
+        removed.append(stale["name"])
+    return removed
+
+
+# Written by saviour-config's run_configuration() when a device becomes a
+# controller or its controller type changes; removed by the web UI once the
+# operator has completed first-run setup (name / location / variant confirm).
+_FIRST_RUN_SENTINEL = "/var/lib/saviour/first_run"
+_PROVISION_CONFIG = "/etc/saviour/config"
+
+
+def _read_first_run_sentinel() -> dict | None:
+    """Return the parsed first-run sentinel ({'reason', 'type', 'created'}),
+    or None if it doesn't exist (the normal steady state)."""
+    try:
+        with open(_FIRST_RUN_SENTINEL) as f:
+            out = {}
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    out[k.strip()] = v.strip()
+            return out
+    except FileNotFoundError:
+        return None
+    except OSError:
+        # Unreadable for some other reason -- treat as "no first run needed"
+        # rather than wedging the UI on a permissions quirk.
+        return None
+
+
+def _provisioned_device_type() -> str | None:
+    """The controller TYPE saviour-config last provisioned (from
+    /etc/saviour/config), for the modal to compare against the frontend's
+    own built VITE_VARIANT. None if the file isn't present (e.g. dev)."""
+    try:
+        with open(_PROVISION_CONFIG) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("TYPE="):
+                    return line[len("TYPE="):].strip().strip('"').strip("'") or None
+    except OSError:
+        return None
+    return None
+
+
 class Web(ABC):
     # Outside the JSON config files on purpose -- those are readable/mergeable
     # via the config-sync socket events, and a credential has no business
@@ -122,6 +206,13 @@ class Web(ABC):
     _NAS_HISTORY_RETENTION_S = 30 * 24 * 3600
     # Max points returned to the chart / a single CSV export.
     _NAS_HISTORY_MAX_POINTS = 1440
+
+    # Fleet recording-rate history (MB/min written across all recording
+    # modules), sampled once per _nas_monitor_loop pass. Same retention /
+    # down-sampling as the NAS trend; complements it by showing the rate
+    # directly (and before the share's free-space slope reflects it).
+    _DATA_RATE_HISTORY_RETENTION_S = 30 * 24 * 3600
+    _DATA_RATE_HISTORY_MAX_POINTS = 1440
 
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
@@ -174,6 +265,9 @@ class Web(ABC):
         # pruned by age, so retention is stable if the interval is retuned.
         self._nas_health = {"status": "unknown", "error": None, "checked_at": None}
         self._nas_history: deque = deque()
+        # (ts, fleet_mb_per_min, {module_id: mb_per_min}) — the per-module dict
+        # only holds modules recording at that sample, so it stays small.
+        self._data_rate_history: deque = deque()
         self._nas_monitor_stop = threading.Event()
 
         # Running flag
@@ -577,6 +671,26 @@ class Web(ABC):
         self.socketio.emit('modules_update', modules)
 
 
+    def _first_run_state(self) -> dict:
+        """Whether the web UI should open its first-run setup modal, plus the
+        context it needs (current name/location to pre-fill, and the
+        provisioned controller type to check the built frontend against)."""
+        sentinel = _read_first_run_sentinel()
+        if sentinel is None:
+            # The steady state -- return early without a config fetch (this
+            # runs on every websocket connect).
+            return {"needed": False}
+        cfg = self.facade.get_config() if self.facade else {}
+        controller_cfg = cfg.get("controller", {}) if isinstance(cfg, dict) else {}
+        return {
+            "needed": True,
+            "reason": sentinel.get("reason"),
+            "provisioned_type": sentinel.get("type") or _provisioned_device_type(),
+            "name": controller_cfg.get("name", ""),
+            "location": controller_cfg.get("location", ""),
+        }
+
+
     def _register_routes(self):
         # Serve React app. Must use the <path:path> converter (matches
         # slashes), not <path> (single segment only) -- otherwise a direct
@@ -648,6 +762,12 @@ class Web(ABC):
             if self.current_experiment_name:
                 self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
                 self.logger.info(f"Sent current experiment name to new client: {self.current_experiment_name}")
+
+            # First-run setup: a freshly (re)configured controller has a
+            # sentinel from saviour-config; tell this client so it can open
+            # the setup modal without having to poll for it.
+            self.socketio.emit("first_run_state", self._first_run_state(),
+                               room=request.sid)
 
 
         @self.socketio.on('disconnect')
@@ -974,6 +1094,30 @@ class Web(ABC):
                 },
             )
 
+        @self.app.route("/api/data_rate_history.csv")
+        def download_data_rate_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            hours_param = request.args.get("hours")
+            if hours_param is None or hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
+            return Response(
+                self._data_rate_history_csv(hours),
+                mimetype="text/csv",
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=data_rate_history_{filename_part}.csv"
+                },
+            )
+
         @self.socketio.on("create_session")
         def handle_create_session(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):
@@ -1154,7 +1298,7 @@ class Web(ABC):
 
                 # Handle recordings list response
                 if status.get('type') == 'recordings_list':
-                    self.logger.info(f"Broadcasting module recordings for module {module_id}")
+                    self.logger.debug(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
 
                     # Send individual module recordings response
@@ -1464,6 +1608,40 @@ class Web(ABC):
             })
 
 
+        """First-run setup"""
+        @self.socketio.on('get_first_run_state')
+        def handle_get_first_run_state(data=None):
+            self.socketio.emit("first_run_state", self._first_run_state(),
+                               room=request.sid)
+
+        @self.socketio.on('complete_first_run')
+        def handle_complete_first_run(data):
+            if not self._require_auth("first_run_error",
+                                      {"error": "Login required to complete setup"}):
+                return
+            data = data or {}
+            name = str(data.get("name", "")).strip()
+            location = str(data.get("location", "")).strip()
+            if not name:
+                self.socketio.emit("first_run_error",
+                                   {"error": "A controller name is required"},
+                                   room=request.sid)
+                return
+            self.facade.set_config({"controller": {"name": name, "location": location}})
+            try:
+                os.remove(_FIRST_RUN_SENTINEL)
+                self.logger.info("First-run setup completed; sentinel removed")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self.logger.warning(f"Could not remove first-run sentinel: {e}")
+            # Broadcast so any other open client dismisses its copy of the modal,
+            # and refresh the controller-config view for anyone on Settings.
+            self.socketio.emit("first_run_state", self._first_run_state())
+            self.socketio.emit("controller_config_response",
+                               {"config": self.facade.get_config()})
+
+
         @self.socketio.on('save_controller_config')
         def handle_save_controller_config(data):
             if not self._require_auth("auth_required"):
@@ -1535,6 +1713,19 @@ class Web(ABC):
                     health['cpu_temp'] = round(int(f.read().strip()) / 1000, 1)
             except Exception:
                 health['cpu_temp'] = None
+            # Throttle / under-voltage bitmask (Pi 5 PoE power + thermal). Raw
+            # int; decode with src.shared.health.decode_throttled on the UI side.
+            try:
+                out = subprocess.run(
+                    ["vcgencmd", "get_throttled"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                health['throttled'] = (
+                    int(out.stdout.strip().split("=", 1)[1], 16)
+                    if out.returncode == 0 else None
+                )
+            except Exception:
+                health['throttled'] = None
             # CPU usage — read /proc/stat twice with a short sleep for accuracy
             try:
                 def _read_cpu_stat():
@@ -1613,6 +1804,14 @@ class Web(ABC):
         def handle_get_storage_overview(data=None):
             self.socketio.emit("storage_overview", self._storage_overview())
 
+        @self.socketio.on("estimate_data_rate")
+        def handle_estimate_data_rate(data=None):
+            """Pre-flight: what MB/min will a session against `target` generate,
+            and how long does the share hold at that rate. Read-only, no auth
+            gate (same as get_storage_overview)."""
+            target = (data or {}).get("target")
+            self.socketio.emit("data_rate_estimate", self._estimate_data_rate(target))
+
         @self.socketio.on("get_nas_history")
         def handle_get_nas_history(data=None):
             hours = (data or {}).get("hours")
@@ -1634,6 +1833,26 @@ class Web(ABC):
                 "retention_days": self._NAS_HISTORY_RETENTION_S // 86400,
             })
 
+        @self.socketio.on("get_data_rate_history")
+        def handle_get_data_rate_history(data=None):
+            hours = (data or {}).get("hours")
+            try:
+                hours = float(hours) if hours is not None else None
+            except (TypeError, ValueError):
+                hours = None
+            cutoff = time.time() - hours * 3600 if hours else None
+            samples = [
+                [t, fleet] for (t, fleet, _per) in list(self._data_rate_history)
+                if cutoff is None or t >= cutoff
+            ]
+            if len(samples) > self._DATA_RATE_HISTORY_MAX_POINTS:
+                step = len(samples) // self._DATA_RATE_HISTORY_MAX_POINTS + 1
+                samples = samples[::step]
+            self.socketio.emit("data_rate_history", {
+                "samples": samples,
+                "retention_days": self._DATA_RATE_HISTORY_RETENTION_S // 86400,
+            })
+
 
         # ── Update package store ──────────────────────────────────────────────
         _UPDATE_STORE = "/var/lib/saviour/updates"
@@ -1642,6 +1861,59 @@ class Web(ABC):
         _SRC_ROOT     = "/usr/local/src/saviour"
         _STAGE_SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
                             '.pytest_cache', 'dist', '.eggs'}
+
+        # ── Controller self-update snapshots ──────────────────────────────────
+        # Taken automatically right before any code path that overwrites the
+        # controller's own _SRC_ROOT (ZIP "Update controller", Git pull), so a
+        # bad controller update can be rolled back from the UI instead of over
+        # SSH. Modules are not covered here by design — they're recovered by
+        # staging the (known-good) running controller code and re-pushing it.
+        _CTRL_BACKUP_DIR  = "/var/lib/saviour/controller_backups"
+        _CTRL_BACKUP_KEEP = 3
+        # Excluded from a snapshot: the venv (large; `pip install` re-runs on
+        # restart anyway) and git/cache dirs. dist/ is deliberately kept —
+        # restoring the built frontend alongside its source makes a revert
+        # instant and self-consistent, with no npm build in the loop.
+        _CTRL_BACKUP_EXCLUDES = ["env/", ".git/", "node_modules/",
+                                 "__pycache__/", ".pytest_cache/", ".eggs/"]
+
+        def _snapshot_controller(reason: str) -> dict:
+            """rsync _SRC_ROOT into a fresh timestamped dir under
+            _CTRL_BACKUP_DIR before an update overwrites it. Unchanged files
+            are hardlinked against the previous snapshot (--link-dest) so
+            keeping several costs little disk. Best-effort: on failure it
+            logs, cleans up the partial dir and returns {"ok": False,...}
+            rather than aborting the update the operator asked for."""
+            import shutil as _shutil
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            version = _read_running_version() or "unknown"
+            name = f"{ts}_{version}"
+            dest = os.path.join(_CTRL_BACKUP_DIR, name)
+            os.makedirs(_CTRL_BACKUP_DIR, exist_ok=True)
+            existing = _list_dir_backups(_CTRL_BACKUP_DIR)
+            cmd = ["rsync", "-a", "--delete"]
+            cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
+            if existing:
+                cmd.append("--link-dest="
+                           + os.path.join(_CTRL_BACKUP_DIR, existing[0]["name"]) + "/")
+            cmd += [f"{_SRC_ROOT}/", f"{dest}/"]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True,
+                               text=True, timeout=600)
+                meta = {"version": version,
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "reason": reason}
+                with open(os.path.join(dest, ".backup_meta.json"), "w") as f:
+                    json.dump(meta, f, indent=2)
+                pruned = _prune_dir_backups(_CTRL_BACKUP_DIR, _CTRL_BACKUP_KEEP)
+                self.logger.info(
+                    f"Controller snapshot saved: {name} ({reason})"
+                    + (f"; pruned {pruned}" if pruned else ""))
+                return {"ok": True, "name": name, **meta}
+            except Exception as e:
+                self.logger.error(f"Controller snapshot failed ({reason}): {e}")
+                _shutil.rmtree(dest, ignore_errors=True)
+                return {"ok": False, "error": str(e)}
 
         def _stage_current_version_zip() -> dict:
             """Zip up _SRC_ROOT's current working tree and write it as the
@@ -1751,11 +2023,13 @@ class Web(ABC):
                 {"stage": "modules_notified", "count": len(modules)})
             return len(modules)
 
-        def _controller_build_and_restart():
+        def _controller_build_and_restart(rebuild_frontend: bool = True):
             """Best-effort pip + frontend rebuild, then restart the service.
             Shared by the ZIP 'update controller' path (after its rsync) and
             the Git-pull 'apply to controller' path (git reset already put
-            the files in place). Runs on its own thread; ends by restarting
+            the files in place). `rebuild_frontend=False` for the revert
+            path — its snapshot restored a matching dist/, so npm is skipped.
+            Runs on its own thread; ends by restarting
             saviour.service. The npm build also doubles as a delay that lets
             modules finish fetching /update/package before the controller
             drops, when this runs as part of an 'update everything'."""
@@ -1776,7 +2050,10 @@ class Web(ABC):
                     candidates = sorted(_glob.glob(
                         "/home/pi/.nvm/versions/node/*/bin/npm"))
                     npm_bin = candidates[-1] if candidates else None
-                if npm_bin and os.path.isdir(frontend_dir):
+                if not rebuild_frontend:
+                    self.logger.info(
+                        "Skipping frontend rebuild (dist/ restored from snapshot)")
+                elif npm_bin and os.path.isdir(frontend_dir):
                     self.socketio.emit("deploy_update_status",
                                        {"stage": "building_frontend"})
                     self.logger.info("Rebuilding frontend after update...")
@@ -1938,6 +2215,10 @@ class Web(ABC):
 
             def _apply_to_controller():
                 try:
+                    snap = _snapshot_controller("pre-zip-update")
+                    self.socketio.emit("deploy_update_status",
+                                       {"stage": "backup", "ok": snap.get("ok", False),
+                                        "name": snap.get("name")})
                     extract_dir = "/tmp/saviour_update"
                     shutil.rmtree(extract_dir, ignore_errors=True)
                     os.makedirs(extract_dir)
@@ -1964,6 +2245,62 @@ class Web(ABC):
 
             threading.Thread(target=_apply_to_controller, daemon=True,
                              name="saviour-deploy-controller").start()
+
+        @self.socketio.on("get_controller_backups")
+        def handle_get_controller_backups(data=None):
+            """List the pre-update controller snapshots available to revert
+            to. Ungated, matching get_update_info — names/versions/timestamps
+            only, no payload."""
+            from flask_socketio import emit as _emit
+            _emit("controller_backups", {
+                "backups": _list_dir_backups(_CTRL_BACKUP_DIR),
+                "running_version": _read_running_version(),
+            })
+
+        @self.socketio.on("revert_controller_update")
+        def handle_revert_controller_update(data=None):
+            """Restore a controller snapshot (default: the most recent) over
+            _SRC_ROOT, regenerate the systemd unit in case the bad update
+            drifted it, then restart. dist/ is part of the snapshot so no
+            frontend rebuild is needed."""
+            from flask_socketio import emit as _emit
+            if not self._require_auth("auth_required"):
+                return
+            backups = _list_dir_backups(_CTRL_BACKUP_DIR)
+            if not backups:
+                _emit("deploy_update_error",
+                      {"error": "No controller backup available to revert to"})
+                return
+            name = (data or {}).get("name") or backups[0]["name"]
+            target = next((b for b in backups if b["name"] == name), None)
+            if target is None:
+                _emit("deploy_update_error", {"error": f"Backup '{name}' not found"})
+                return
+
+            def _do_revert():
+                try:
+                    src = os.path.join(_CTRL_BACKUP_DIR, name)
+                    self.socketio.emit("deploy_update_status",
+                                       {"stage": "reverting", "name": name,
+                                        "version": target.get("version")})
+                    cmd = ["rsync", "-a", "--delete"]
+                    cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
+                    cmd += [f"{src}/", f"{_SRC_ROOT}/"]
+                    subprocess.run(cmd, check=True, capture_output=True,
+                                   text=True, timeout=600)
+                    # A bad update may have left saviour.service pointing at
+                    # paths the reverted code doesn't use — put it back.
+                    subprocess.run(
+                        ["sudo", "saviour-config", "--regenerate-service"],
+                        capture_output=True, text=True, check=False, timeout=60)
+                except Exception as e:
+                    self.logger.error(f"Controller revert failed: {e}")
+                    self.socketio.emit("deploy_update_error", {"error": str(e)})
+                    return
+                _controller_build_and_restart(rebuild_frontend=False)
+
+            threading.Thread(target=_do_revert, daemon=True,
+                             name="saviour-revert-controller").start()
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
@@ -2050,6 +2387,9 @@ class Web(ABC):
                         ["git", "-C", _SRC_ROOT, "fetch", "--prune", "origin", branch],
                         check=True, capture_output=True, text=True, timeout=120,
                     )
+                    # git reset --hard rewrites the controller's live working
+                    # tree even for "stage only", so snapshot before it.
+                    _snapshot_controller("pre-git-update")
                     self.socketio.emit(
                         "git_pull_status", {"stage": "resetting", "branch": branch},
                     )
@@ -2608,8 +2948,31 @@ class Web(ABC):
             self._nas_history.append((now, int(free), int(total)))
             self._prune_nas_history()
 
+        overview = self._storage_overview()
+        self._sample_data_rate_history(now, overview)
+
         self.socketio.emit("nas_health_update", new)
-        self.socketio.emit("storage_overview", self._storage_overview())
+        self.socketio.emit("storage_overview", overview)
+
+    def _sample_data_rate_history(self, now: float, overview: dict) -> None:
+        """Append one fleet recording-rate point (and per-recording-module
+        breakdown) from a storage overview, then prune by age."""
+        try:
+            dr = overview.get("data_rate") or {}
+            fleet = round(dr.get("recording_mb_per_min", 0.0) or 0.0, 1)
+            per_module = {
+                d["module_id"]: d.get("measured_mb_per_min") or d.get("est_mb_per_min")
+                for d in overview.get("disks", [])
+                if d.get("recording") and (d.get("measured_mb_per_min")
+                                           or d.get("est_mb_per_min"))
+            }
+            self._data_rate_history.append((now, fleet, per_module))
+            cutoff = now - self._DATA_RATE_HISTORY_RETENTION_S
+            h = self._data_rate_history
+            while h and h[0][0] < cutoff:
+                h.popleft()
+        except Exception as e:
+            self.logger.debug(f"_sample_data_rate_history failed: {e}")
 
     def _prune_nas_history(self):
         cutoff = time.time() - self._NAS_HISTORY_RETENTION_S
@@ -2649,27 +3012,74 @@ class Web(ABC):
                     "stopped_epoch": getattr(s, "stopped_epoch", None),
                 })
 
-        # Per-module local disk
+        # Per-module local disk + estimated recording data rate
         disks = []
         try:
             health = self.facade.get_module_health() if self.facade else {}
             modules = self.facade.get_modules() if self.facade else {}
         except Exception:
             health, modules = {}, {}
+        try:
+            configs = self.facade.get_module_configs() if self.facade else {}
+            if not isinstance(configs, dict):
+                configs = {}
+        except Exception:
+            configs = {}
+
+        fleet_recording_mb_per_min = 0.0
+        recording_module_count = 0
         for mid, h in (health or {}).items():
             used_gb = h.get("disk_used_gb")
             total_gb = h.get("disk_total_gb")
             free_gb = (round(total_gb - used_gb, 1)
                        if (used_gb is not None and total_gb is not None) else None)
+            mtype = (modules.get(mid) or {}).get("type")
+
+            cfg = (configs.get(mid) or {}).get("true_config") or {}
+            bps, rate_note = estimate_recording_bytes_per_s(mtype, cfg)
+            mb_per_min = bytes_per_s_to_mb_per_min(bps)
+            # Measured rate (bytes actually hitting disk) when the module is
+            # recording -- reality-checks the config estimate.
+            measured_mb_per_min = bytes_per_s_to_mb_per_min(h.get("rec_bytes_per_s"))
+            # Runway prefers the measured rate when we have one.
+            buffer_min = runway_minutes(
+                (free_gb * 1024) if free_gb is not None else None,
+                measured_mb_per_min or mb_per_min)
+
+            if h.get("recording"):
+                rate_for_fleet = measured_mb_per_min or mb_per_min
+                if rate_for_fleet:
+                    fleet_recording_mb_per_min += rate_for_fleet
+                    recording_module_count += 1
+
             disks.append({
                 "module_id": mid,
                 "name": (modules.get(mid) or {}).get("name") or mid,
-                "type": (modules.get(mid) or {}).get("type"),
+                "type": mtype,
                 "used_pct": h.get("disk_space"),
                 "free_gb": free_gb,
                 "total_gb": total_gb,
+                "recording": bool(h.get("recording")),
+                "est_mb_per_min": (
+                    round(mb_per_min, 1) if mb_per_min is not None else None),
+                "measured_mb_per_min": (
+                    round(measured_mb_per_min, 1)
+                    if measured_mb_per_min is not None else None),
+                "est_note": rate_note,
+                "local_buffer_min": (
+                    round(buffer_min) if buffer_min is not None else None),
             })
         disks.sort(key=lambda d: (d["used_pct"] is None, -(d["used_pct"] or 0)))
+
+        # Share runway at the current combined recording rate (nothing is
+        # deleted from the share — it's the archive — so free / rate is the
+        # honest "days left" number, complementing the measured trend chart).
+        nas = self._nas_health or {}
+        share_free_gb = nas.get("free_gb")
+        share_runway_hours = None
+        if share_free_gb and fleet_recording_mb_per_min > 0:
+            share_runway_hours = round(
+                share_free_gb * 1024 / fleet_recording_mb_per_min / 60, 1)
 
         return {
             "nas": self._nas_health,
@@ -2679,6 +3089,104 @@ class Web(ABC):
                 "sessions": exporting_sessions,
             },
             "disks": disks,
+            "data_rate": {
+                "recording_mb_per_min": round(fleet_recording_mb_per_min, 1),
+                "recording_module_count": recording_module_count,
+                "share_runway_hours": share_runway_hours,
+            },
+        }
+
+    def _estimate_data_rate(self, target: "str | None") -> dict:
+        """Per-module + combined recording-rate estimate for `target` (a group
+        name, type, or 'all'), using each module's *target* config so it
+        answers before a session is created. Falls back to every module when
+        target is missing."""
+        try:
+            if target:
+                modules = (self.facade.get_modules_by_target(target)
+                           if self.facade else {})
+            else:
+                modules = self.facade.get_modules() if self.facade else {}
+        except Exception:
+            modules = {}
+        try:
+            configs = self.facade.get_module_configs() if self.facade else {}
+            if not isinstance(configs, dict):
+                configs = {}
+        except Exception:
+            configs = {}
+        try:
+            health = self.facade.get_module_health() if self.facade else {}
+            if not isinstance(health, dict):
+                health = {}
+        except Exception:
+            health = {}
+
+        per_module = []
+        total_mb_per_min = 0.0
+        # Shortest time any one target module's local disk lasts at its own
+        # rate if export fully stalls -- the first module to fill stops the
+        # session, so this caps the "supports this session for X" figure.
+        min_local_buffer_min = None
+        min_local_buffer_module = None
+        for mid, m in (modules or {}).items():
+            mtype = (m or {}).get("type")
+            cfg = ((configs.get(mid) or {}).get("target_config")
+                   or (configs.get(mid) or {}).get("true_config") or {})
+            bps, note = estimate_recording_bytes_per_s(mtype, cfg)
+            mb_per_min = bytes_per_s_to_mb_per_min(bps)
+            if mb_per_min:
+                total_mb_per_min += mb_per_min
+
+            h = health.get(mid) or {}
+            used_gb, total_gb = h.get("disk_used_gb"), h.get("disk_total_gb")
+            free_mb = ((total_gb - used_gb) * 1024
+                       if (used_gb is not None and total_gb is not None) else None)
+            buf = runway_minutes(free_mb, mb_per_min)
+            if buf is not None and (min_local_buffer_min is None
+                                    or buf < min_local_buffer_min):
+                min_local_buffer_min = buf
+                min_local_buffer_module = (m or {}).get("name") or mid
+
+            per_module.append({
+                "module_id": mid,
+                "name": (m or {}).get("name") or mid,
+                "type": mtype,
+                "est_mb_per_min": (
+                    round(mb_per_min, 1) if mb_per_min is not None else None),
+                "est_note": note,
+            })
+
+        nas = self._nas_health or {}
+        share_free_gb = nas.get("free_gb")
+        share_runway_hours = (
+            round(share_free_gb * 1024 / total_mb_per_min / 60, 1)
+            if share_free_gb and total_mb_per_min > 0 else None
+        )
+        # share_runway_hours (how long the archive lasts) and
+        # min_local_buffer_min (export-outage tolerance) are two different
+        # questions and the UI shows them separately. supported_minutes is the
+        # conservative "soonest anything could stop this session" combining
+        # both -- kept for a future headroom check, not the headline figure.
+        supported_minutes = None
+        if share_runway_hours is not None:
+            supported_minutes = share_runway_hours * 60
+        if min_local_buffer_min is not None:
+            supported_minutes = (min_local_buffer_min if supported_minutes is None
+                                 else min(supported_minutes, min_local_buffer_min))
+
+        return {
+            "target": target,
+            "modules": per_module,
+            "total_mb_per_min": round(total_mb_per_min, 1),
+            "total_gb_per_hour": round(total_mb_per_min * 60 / 1024, 2),
+            "share_free_gb": share_free_gb,
+            "share_runway_hours": share_runway_hours,
+            "min_local_buffer_min": (round(min_local_buffer_min)
+                                     if min_local_buffer_min is not None else None),
+            "min_local_buffer_module": min_local_buffer_module,
+            "supported_minutes": (round(supported_minutes)
+                                  if supported_minutes is not None else None),
         }
 
     def _nas_history_csv(self, hours: "float | None" = None):
@@ -2696,6 +3204,23 @@ class Web(ABC):
             pct = round(free / total * 100, 3) if total else ""
             ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
             yield writer.writerow([ts_utc, t, free, total, pct])
+
+    def _data_rate_history_csv(self, hours: "float | None" = None):
+        """Yield fleet recording-rate history as CSV. Columns: timestamp,
+        fleet MB/min, recording-module count, and a per-module JSON blob
+        (module set varies over a long run, so it can't be flat columns)."""
+        cutoff = time.time() - hours * 3600 if hours is not None else None
+        writer = csv.writer(_CsvSink())
+        yield writer.writerow(
+            ["timestamp_utc", "timestamp_epoch", "fleet_mb_per_min",
+             "recording_modules", "per_module_mb_per_min_json"]
+        )
+        for t, fleet, per in list(self._data_rate_history):
+            if cutoff is not None and t < cutoff:
+                continue
+            ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
+            yield writer.writerow(
+                [ts_utc, t, fleet, len(per or {}), json.dumps(per or {})])
 
     def start(self):
         """Start the web interface in a separate thread"""
@@ -2962,7 +3487,7 @@ class Web(ABC):
             match status_type:
                 # Handle recordings list response
                 case 'recordings_list':
-                    self.logger.info(f"Broadcasting module recordings for module {module_id}")
+                    self.logger.debug(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
 
                     # Send individual module recordings response
@@ -3121,9 +3646,8 @@ class Web(ABC):
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
                 }), 401
-            self.logger.info("/facade/list_modules endpoint called. Listing modules")
             modules = self.facade.get_modules()
-            self.logger.info(f"Found {len(modules)} modules")
+            self.logger.debug(f"/facade/list_modules → {len(modules)} modules")
             return jsonify({"modules": modules})
 
 
@@ -3211,9 +3735,8 @@ class Web(ABC):
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
                 }), 401
-            self.logger.info("/facade/module_health endpoint called. Getting module health")
             health = self.facade.get_module_health()
-            self.logger.info(f"Got module health for {len(health)} modules")
+            self.logger.debug(f"/facade/module_health → {len(health)} modules")
             return jsonify(health)
 
 
@@ -3225,6 +3748,6 @@ class Web(ABC):
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
                 }), 401
-            self.logger.info("/facade/exported_recordings endpoint called")
+            self.logger.debug("/facade/exported_recordings endpoint called")
             exported_recordings = self.get_exported_recordings()
             return jsonify({"exported_recordings": exported_recordings})

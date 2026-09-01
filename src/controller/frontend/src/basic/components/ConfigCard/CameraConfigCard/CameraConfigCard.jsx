@@ -466,6 +466,20 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </select>
             </div>
             <div className="form-field">
+              <label title="Rolling % of the frame clipped white or crushed black that shows the OVER/UNDEREXPOSED preview badge and logs a warning. Advisory only.">
+                Exposure warning threshold (%):
+              </label>
+              <input type="number" min="0" max="100" step="0.5"
+                value={cam.exposure_warn_pct ?? 5.0}
+                onChange={e => handleChange(["camera", "exposure_warn_pct"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Exposure warning overlay:</label>
+              <input type="checkbox"
+                checked={cam.exposure_overlay ?? true}
+                onChange={e => handleChange(["camera", "exposure_overlay"], e)} />
+            </div>
+            <div className="form-field">
               <label>Auto gain/exposure:</label>
               <input type="checkbox"
                 checked={cam.ae_enable ?? false}
@@ -996,6 +1010,54 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
                 value={formData?.habitat_motion?.process_width ?? 256}
                 onChange={e => handleChange(["habitat_motion", "process_width"], e)} />
             </div>
+
+            <div className="config-section-divider" />
+            <div className="sensor-mode-info sensor-mode-info--muted">
+              Occupancy trigger — a slow CPU rat-detector run every few
+              seconds, OR-fused with the motion trigger above: recording
+              keeps going while a rat is in frame even when it stops moving.
+              Watch the "[subject NN]" / "RAT NN" readout on the preview to
+              pick a threshold. Needs onnxruntime installed on the module.
+            </div>
+            <div className="form-field">
+              <label>Enable occupancy trigger:</label>
+              <input type="checkbox"
+                checked={formData?.occupancy?.enabled ?? false}
+                onChange={e => handleChange(["occupancy", "enabled"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Detection confidence threshold (0–1):</label>
+              <input type="number" min="0" max="1" step="0.05"
+                value={formData?.occupancy?.threshold ?? 0.35}
+                onChange={e => handleChange(["occupancy", "threshold"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Check interval (s):</label>
+              <input type="number" min="0.2" step="0.5"
+                value={formData?.occupancy?.interval_s ?? 2.0}
+                onChange={e => handleChange(["occupancy", "interval_s"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Consecutive detections to trigger:</label>
+              <input type="number" min="1" step="1"
+                value={formData?.occupancy?.confirm_samples ?? 2}
+                onChange={e => handleChange(["occupancy", "confirm_samples"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Clear after this long with no detection (s):</label>
+              <input type="number" min="0" step="5"
+                value={formData?.occupancy?.clear_secs ?? 30.0}
+                onChange={e => handleChange(["occupancy", "clear_secs"], e)} />
+            </div>
+            <div className="form-field">
+              <label title="ONNX model file, relative to the habitat_camera variant folder unless absolute.">
+                Model path:
+              </label>
+              <input type="text"
+                value={formData?.occupancy?.model_path ?? "models/rats_yolov8n_416.onnx"}
+                onChange={e => handleChange(["occupancy", "model_path"], e)} />
+            </div>
+
             <div className="config-action-buttons">
               <button type="button" className="save-button"
                 onClick={() => socket.emit("send_command", { module_id: id, type: "reset_motion_trigger", params: {} })}>

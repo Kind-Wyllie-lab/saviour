@@ -22,20 +22,34 @@
     display: none;
 }
 
+/* Both collapse (sidebar open) and reopen (sidebar hidden) are the same
+   "edge tab" shape, vertically centered on the shared sidebar/content
+   boundary rather than pinned to the top — a top-pinned reopen button used
+   to land directly on top of .recording-status-widget, the full-width bar
+   .content renders flush against its own top edge (see git history). Each
+   button stays within its own chrome's box (sidebar's own right edge /
+   the bare viewport edge) rather than protruding into .content, so neither
+   can ever sit over page content. */
 .sidebar-collapse-btn {
     position: absolute;
-    top: 6px;
-    right: 6px;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
     z-index: 1;
     border: none;
     background: transparent;
     color: var(--text-color);
     opacity: 0.35;
     cursor: pointer;
-    font-size: 18px;
+    font-size: 15px;
     line-height: 1;
-    padding: 2px 7px;
+    width: 18px;
+    height: 46px;
+    padding: 0;
     border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     transition: opacity 0.15s, background 0.15s;
 }
 
@@ -46,31 +60,31 @@
 
 .sidebar-reopen {
     position: fixed;
-    top: 8px;
-    left: 8px;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
     z-index: 50;
-    width: 34px;
-    height: 34px;
-    padding: 7px;
-    border-radius: 8px;
+    width: 18px;
+    height: 46px;
+    padding: 0;
+    border-radius: 0 8px 8px 0;
     border: 1px solid var(--border-color);
+    border-left: none;
     background: var(--card-bg-color);
     color: var(--text-color);
+    font-size: 15px;
+    line-height: 1;
     cursor: pointer;
-    opacity: 0.85;
+    opacity: 0.7;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, background 0.15s;
 }
 
 .sidebar-reopen:hover {
     opacity: 1;
-}
-
-.sidebar-reopen svg {
-    width: 100%;
-    height: 100%;
+    background: color-mix(in srgb, var(--text-color) 10%, var(--card-bg-color));
 }
 
     .header-content {

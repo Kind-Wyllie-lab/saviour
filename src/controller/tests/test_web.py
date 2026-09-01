@@ -1869,3 +1869,95 @@ class TestStorageSocketHandlers:
                        if m["name"] == "nas_history")
         assert len(payload["samples"]) <= 5
         assert payload["retention_days"] >= 1
+
+
+class TestFirstRunSetup:
+    """The first-run setup modal's backend: a sentinel written by
+    saviour-config on a role/type change, surfaced over Socket.IO and cleared
+    by `complete_first_run`."""
+
+    def _sentinel(self, tmpdir, body="reason=role\ntype=habitat\n"):
+        path = os.path.join(tmpdir, "first_run")
+        with open(path, "w") as f:
+            f.write(body)
+        return path
+
+    def test_no_sentinel_means_not_needed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _facade = _make_web_with_facade()
+            missing = os.path.join(tmpdir, "nope")
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", missing):
+                client = _connected_client(web)
+                client.emit("get_first_run_state")
+                payload = next(m["args"][0] for m in client.get_received()
+                               if m["name"] == "first_run_state")
+            assert payload == {"needed": False}
+
+    def test_connect_emits_first_run_state_when_sentinel_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {
+                "controller": {"name": "", "location": ""}}
+            with patch("src.controller.web._FIRST_RUN_SENTINEL",
+                       self._sentinel(tmpdir)):
+                client = web.socketio.test_client(web.app)
+                payload = next(m["args"][0] for m in client.get_received()
+                               if m["name"] == "first_run_state")
+            assert payload["needed"] is True
+            assert payload["reason"] == "role"
+            assert payload["provisioned_type"] == "habitat"
+
+    def test_get_first_run_state_prefills_current_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {
+                "controller": {"name": "Rig A", "location": "Room 5"}}
+            with patch("src.controller.web._FIRST_RUN_SENTINEL",
+                       self._sentinel(tmpdir)):
+                client = _connected_client(web)
+                client.emit("get_first_run_state")
+                payload = next(m["args"][0] for m in client.get_received()
+                               if m["name"] == "first_run_state")
+            assert payload["name"] == "Rig A"
+            assert payload["location"] == "Room 5"
+
+    def test_complete_first_run_requires_login(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            sentinel = self._sentinel(tmpdir)
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", sentinel):
+                client = _connected_client(web)
+                client.emit("complete_first_run", {"name": "X"})
+            facade.set_config.assert_not_called()
+            assert os.path.exists(sentinel)  # not cleared
+
+    def test_complete_first_run_rejects_empty_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {"controller": {}}
+            sentinel = self._sentinel(tmpdir)
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", sentinel):
+                client = _connected_client(web)
+                _login(web, client, tmpdir)
+                client.emit("complete_first_run", {"name": "   "})
+                names = [m["name"] for m in client.get_received()]
+            assert "first_run_error" in names
+            facade.set_config.assert_not_called()
+            assert os.path.exists(sentinel)
+
+    def test_complete_first_run_saves_and_clears_sentinel(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_config.return_value = {"controller": {}}
+            sentinel = self._sentinel(tmpdir)
+            with patch("src.controller.web._FIRST_RUN_SENTINEL", sentinel):
+                client = _connected_client(web)
+                _login(web, client, tmpdir)
+                client.emit("complete_first_run",
+                            {"name": "  Habitat A  ", "location": " Room 2 "})
+                payloads = {m["name"]: m["args"][0] if m["args"] else None
+                            for m in client.get_received()}
+            facade.set_config.assert_called_once_with(
+                {"controller": {"name": "Habitat A", "location": "Room 2"}})
+            assert not os.path.exists(sentinel)
+            assert payloads["first_run_state"] == {"needed": False}

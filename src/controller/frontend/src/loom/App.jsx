@@ -10,6 +10,7 @@ import System from "/src/basic/pages/System/System";
 import Storage from "/src/basic/pages/Storage/Storage";
 import Guide from "/src/basic/pages/Guide/Guide";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
+import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "/src/basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "/src/basic/components/RecordingStatusWidget/RecordingStatusWidget";
 import useSessions from "/src/hooks/useSessions";
@@ -80,6 +81,7 @@ function App() {
             onAcknowledge={handleAcknowledge}
           />
         )}
+        <FirstRunModal />
         <ConnectionOverlay />
       </div>
     </LoomStageProvider>

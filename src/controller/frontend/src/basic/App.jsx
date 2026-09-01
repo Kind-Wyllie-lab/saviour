@@ -14,6 +14,7 @@ import Storage from "./pages/Storage/Storage";
 import Guide from "./pages/Guide/Guide";
 import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
+import FirstRunModal from "./components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "./components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "./components/RecordingStatusWidget/RecordingStatusWidget";
 import useClockOnce from "/src/hooks/useClockOnce";
@@ -129,6 +130,7 @@ function App() {
           onAcknowledge={handleAcknowledge}
         />
       )}
+      <FirstRunModal />
       <ConnectionOverlay />
     </div>
   );

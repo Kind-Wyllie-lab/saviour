@@ -217,6 +217,9 @@ export default function System() {
       socket.emit("reboot_controller");
     } else if (controllerActionTarget === "shutdown") {
       socket.emit("shutdown_controller");
+    } else if (controllerActionTarget === "revert") {
+      setDeviceStatuses(prev => ({ ...prev, controller: "updating" }));
+      socket.emit("revert_controller_update");
     }
     setControllerActionTarget(null);
   };
@@ -256,14 +259,22 @@ export default function System() {
   // ── Update all devices (ZIP-based deploy) ────────────────────────────────
   const [stagedMeta, setStagedMeta] = useState(null); // { version, size, filename } or null
   const [deviceStatuses, setDeviceStatuses] = useState({}); // id → "updating" | "restarting" | { success, output }
+  // Pre-update controller snapshots available to revert to, newest first.
+  const [controllerBackups, setControllerBackups] = useState([]);
 
   useEffect(() => {
     socket.emit("get_update_info");
+    socket.emit("get_controller_backups");
     const onUpdateInfo = (data) => {
       setStagedMeta(data?.staged ?? null);
     };
+    const onBackups = (data) => setControllerBackups(data?.backups ?? []);
     socket.on("update_info", onUpdateInfo);
-    return () => socket.off("update_info", onUpdateInfo);
+    socket.on("controller_backups", onBackups);
+    return () => {
+      socket.off("update_info", onUpdateInfo);
+      socket.off("controller_backups", onBackups);
+    };
   }, []);
 
   useEffect(() => {
@@ -310,6 +321,7 @@ export default function System() {
         return prev;
       });
       socket.emit("get_update_info");
+      socket.emit("get_controller_backups");
     };
     socket.on("module_update_result", onModuleResult);
     socket.on("deploy_update_status", onDeployStatus);
@@ -627,6 +639,19 @@ export default function System() {
                   <span className="actions-modal__hint">Deploy staged package {stagedMeta.version ?? ""} to the controller only</span>
                 </button>
               )}
+              {controllerBackups.length > 0 && (
+                <button type="button" className="actions-modal__item" disabled={!loggedIn}
+                  title={loggedIn ? undefined : "Login required for this action"}
+                  onClick={() => { setControllerActionTarget("revert"); setShowControllerActions(false); }}>
+                  <span>Revert last update</span>
+                  <span className="actions-modal__hint">
+                    Restore snapshot {controllerBackups[0].version ?? ""} taken{" "}
+                    {controllerBackups[0].created_at
+                      ? new Date(controllerBackups[0].created_at).toLocaleString()
+                      : "before the last update"} and restart
+                  </span>
+                </button>
+              )}
               <button type="button" className="actions-modal__item" disabled={!loggedIn}
                 title={loggedIn ? undefined : "Login required for this action"}
                 onClick={() => { setControllerActionTarget("restart_service"); setShowControllerActions(false); }}>
@@ -669,9 +694,22 @@ export default function System() {
               <p>Shut down the controller?</p>
               <p className="modal-subtext modal-subtext--warn">The controller will power off. A manual power cycle is required to bring it back online. Any active recording sessions will be interrupted.</p>
             </>}
+            {controllerActionTarget === "revert" && <>
+              <p>Revert the controller to snapshot {controllerBackups[0]?.version ?? ""}?</p>
+              <p className="modal-subtext modal-subtext--warn">
+                Restores the controller code captured before the most recent update
+                ({controllerBackups[0]?.created_at
+                  ? new Date(controllerBackups[0].created_at).toLocaleString()
+                  : "last update"}), regenerates its service file, and restarts.
+                Any active recording sessions will be interrupted.
+              </p>
+            </>}
             <div className="modal-buttons">
               <button className="reset-button" type="button" onClick={handleControllerActionConfirm}>
-                {controllerActionTarget === "restart_service" ? "Restart" : controllerActionTarget === "reboot" ? "Reboot" : "Shutdown"}
+                {controllerActionTarget === "restart_service" ? "Restart"
+                  : controllerActionTarget === "reboot" ? "Reboot"
+                  : controllerActionTarget === "revert" ? "Revert"
+                  : "Shutdown"}
               </button>
               <button className="save-button" type="button" onClick={() => setControllerActionTarget(null)}>Cancel</button>
             </div>

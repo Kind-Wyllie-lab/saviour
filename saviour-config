@@ -1312,6 +1312,14 @@ Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+# Tag every line so 'journalctl -t saviour' works and the diagnostic/
+# per-session journal grabs can narrow by identifier, not just unit.
+SyslogIdentifier=saviour
+# Don't let journald's default per-service rate limit (1000 msgs / 30 s)
+# silently drop lines during an incident burst (PTP re-lock storm, export
+# retry loop). The hot-path floods are coalesced in code (RateLimitedLogger);
+# this is the backstop for everything else.
+LogRateLimitIntervalSec=0
 Environment=PYTHONPATH=${DIR}/src${env_extras}
 
 [Install]

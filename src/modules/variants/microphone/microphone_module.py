@@ -296,6 +296,13 @@ class AudiomothModule(Module):
         self.facade.add_session_file(timestamps_filename)
 
         self.logger.info(f"Recording thread started for audiomoth {serial}: {filename}")
+        # Periodic "still capturing" line — one silently-dead recorder thread
+        # is otherwise invisible until stop (recording.mic_throughput_log_secs,
+        # 0 disables). Per-thread rather than aggregated: the serial in the
+        # message disambiguates, and a rig has at most a handful of AudioMoths.
+        throughput_interval = self.config.get("recording.mic_throughput_log_secs", 60)
+        last_throughput_log = time.monotonic()
+        blocks_since_log = 0
         try:
             microphone = soundcard.get_microphone(mic_id)
             with open(timestamps_filename, 'w') as timestamps_writer:
@@ -320,6 +327,20 @@ class AudiomothModule(Module):
                             data = recorder.record(numframes=frame_num)
                             timestamps_writer.write(f"{block_start}\n")
                             f.write(data)
+                            blocks_since_log += 1
+                            if throughput_interval and throughput_interval > 0:
+                                now_m = time.monotonic()
+                                elapsed = now_m - last_throughput_log
+                                if elapsed >= throughput_interval:
+                                    mb = blocks_since_log * frame_num * 2 / 1_000_000
+                                    self.logger.info(
+                                        f"Recording alive [audiomoth {serial}]: "
+                                        f"{blocks_since_log} blocks "
+                                        f"(~{blocks_since_log / elapsed:.1f}/s), "
+                                        f"{mb:.1f} MB in last {elapsed:.0f}s"
+                                    )
+                                    last_throughput_log = now_m
+                                    blocks_since_log = 0
         except Exception as e:
             self.logger.error(f"Recording thread error for audiomoth {serial}: {e}", exc_info=True)
 

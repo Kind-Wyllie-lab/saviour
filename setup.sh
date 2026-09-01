@@ -139,11 +139,14 @@ create_python_environment() {
 
 
 configure_logging() {
-    # Make logging persistent
-    echo "Setting journald.conf to have persistent logging"
+    # Make logging persistent, with a disk-use cap so a chatty run can't fill
+    # the filesystem (disk-full is itself a data-loss trigger).
+    echo "Setting journald.conf to have persistent logging (capped at 500M)"
     sudo tee /etc/systemd/journald.conf > /dev/null <<EOF
 [Journal]
 Storage=persistent
+SystemMaxUse=500M
+SystemKeepFree=1G
 EOF
 }
 

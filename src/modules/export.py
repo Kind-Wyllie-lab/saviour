@@ -297,7 +297,7 @@ class Export:
                         exported_count += 1
                         exported.append(filename)
                     except Exception as e:
-                        self.logger.error(f"Failed to export {filename}: {e}")
+                        self.logger.exception(f"Failed to export {filename}: {e}")
                         # Roll back PENDING_ rename so the source file is recoverable
                         try:
                             if os.path.exists(temp_source_path):
@@ -333,7 +333,7 @@ class Export:
             return session_results
 
         except Exception as e:
-            self.logger.error(f"Export error: {e}")
+            self.logger.exception(f"Export error: {e}")
             return {triggered_session: False} if triggered_session else {}
 
         finally:
@@ -378,7 +378,7 @@ class Export:
             shutil.move(current_path, destination_path)
             return True
         except Exception as e:
-            self.logger.error(f"Error moving {filename} to {destination_path}: {e}")
+            self.logger.exception(f"Error moving {filename} to {destination_path}: {e}")
 
 
     def add_session_file(self, filename: str) -> bool:
@@ -388,10 +388,14 @@ class Export:
         encoder on the first frame, so they are not on disk at registration time.
         Existence is checked at export time by stage_file_for_export.
         """
-        self.logger.info(f"Adding {filename} to session files")
         abspath = os.path.abspath(filename)
         self.session_files.append(abspath)
-        self.logger.info(f"Session files: {self.session_files}")
+        # Was two INFO lines per call, the second re-dumping the whole (growing)
+        # list — O(n^2) journal text over a long session. One line, count only.
+        self.logger.info(
+            f"Registered session file {os.path.basename(abspath)} "
+            f"({len(self.session_files)} total)"
+        )
         return True
 
 

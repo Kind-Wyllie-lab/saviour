@@ -457,7 +457,7 @@ class Controller(ABC):
             self.stop()
             return False
         except Exception as e:
-            self.logger.error(f"Error in main thread: {e}")
+            self.logger.exception(f"Error in main thread: {e}")
             self.stop()
             return False
 

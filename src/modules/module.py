@@ -40,10 +40,12 @@ else:
     # When running directly, include timestamps
     format_string = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 
-# Setup logging ONCE for all additional classes that log
+# Setup logging ONCE for all additional classes that log.
+# Use the systemd-aware format_string computed above: bare (systemd adds its
+# own timestamp) under the service, timestamped when run directly.
 logging.basicConfig(
     level=logging.INFO,
-    format='%(levelname)s - %(name)s - %(message)s'
+    format=format_string
 )
 
 # Import managers
@@ -919,7 +921,7 @@ class Module(ABC):
             else:
                 self.logger.error("Failed to stop module, not shutting down system")
         except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")
+            self.logger.exception(f"Error during shutdown: {e}")
 
 
     """Config Methods"""
@@ -928,7 +930,7 @@ class Module(ABC):
         response = {
             "config": self.config.get_all()
         }
-        self.logger.info(f"Get config called, returning config with {len(response['config'])} keys")
+        self.logger.debug(f"Returning config with {len(response['config'])} keys")
         return response
 
     @staticmethod
@@ -982,7 +984,12 @@ class Module(ABC):
         Returns:
             True if successful, False otherwise
         """
-        self.logger.info(f"Set config called with config {config} and persist {persist}")
+        # Redact before logging — this path carries share_password on the
+        # set_export_config route.
+        if isinstance(config, dict):
+            self.logger.info(
+                f"set_config: {len(config)} key(s), persist={persist}")
+            self.logger.debug(f"set_config values: {_sanitise_config(config)}")
         try:
             # Validate that config is a dictionary
             if not isinstance(config, dict):
@@ -1391,7 +1398,7 @@ class Module(ABC):
                     "export_path": export_path
                 })
         except Exception as e:
-            self.logger.error(f"Error in export thread: {e}")
+            self.logger.exception(f"Error in export thread: {e}")
             self.facade.send_status({
                 "type": "export_failed",
                 "export_path": export_path,

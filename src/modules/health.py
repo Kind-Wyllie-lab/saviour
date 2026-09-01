@@ -77,7 +77,6 @@ class Health:
                         self.heartbeats_active = False
                         break
 
-                    # self.logger.info("Sending heartbeat")
                     status = self.get_health()
                     status['type'] = 'heartbeat' # Add type field to identify heartbeat status
                     self.facade.send_status(status)

@@ -15,6 +15,7 @@ Created: ?
 
 import csv
 import logging
+import os
 import socket as _socket
 import subprocess
 import threading
@@ -426,10 +427,12 @@ class Health:
             current_time = time.time()
             cycle_count += 1
 
-            # Log every 5 cycles (~2.5 min with 30s interval) to confirm thread is alive
-            if cycle_count % 5 == 0:
-                # self.logger.info(f"Monitor cycle {cycle_count}: monitoring {len(self.module_health)} modules")
-                pass
+            # Periodic controller-side heartbeat (~5 min at a 30s interval):
+            # one line confirming the monitor thread is alive plus a cheap
+            # resource snapshot, so slow degradation over a weeks-long
+            # unattended run leaves a trend in the journal.
+            if cycle_count % 10 == 0:
+                self._log_controller_status()
 
             for module_id in list(self.module_health.keys()):
                 last_heartbeat = self.module_health[module_id]['last_heartbeat']
@@ -459,6 +462,40 @@ class Health:
                 self._check_ptp_health()
 
             time.sleep(self.monitor_interval)
+
+
+    def _log_controller_status(self) -> None:
+        """One INFO line: module status tally + controller load/disk.
+
+        Best-effort — never raises out into the monitor loop.
+        """
+        try:
+            tally: dict = {}
+            for h in self.module_health.values():
+                tally[h.get("status", "unknown")] = tally.get(h.get("status", "unknown"), 0) + 1
+            tally_str = ", ".join(f"{k}={v}" for k, v in sorted(tally.items())) or "none"
+
+            try:
+                load1, load5, load15 = os.getloadavg()
+                load_str = f"{load1:.2f}/{load5:.2f}/{load15:.2f}"
+            except (OSError, ValueError):
+                load_str = "n/a"
+
+            try:
+                st = os.statvfs("/")
+                disk_str = (
+                    f"{100.0 * (1 - st.f_bavail / st.f_blocks):.0f}%"
+                    if st.f_blocks else "n/a"
+                )
+            except OSError:
+                disk_str = "n/a"
+
+            self.logger.info(
+                f"Controller status: modules [{tally_str}]; "
+                f"load {load_str}; root disk {disk_str}"
+            )
+        except Exception as e:
+            self.logger.debug(f"_log_controller_status failed: {e}")
 
 
     def _enter_suspicion(self, module_id: str, time_diff: float):
@@ -738,7 +775,13 @@ class Health:
 
             # Don't re-judge a module that was just restarted — it is expected
             # to be out of spec while the servo re-locks.
-            if now - h.get("last_ptp_restart", 0) < grace_secs:
+            since_restart = now - h.get("last_ptp_restart", 0)
+            if since_restart < grace_secs:
+                if over:
+                    self.logger.info(
+                        f"{module} PTP still over {restart_limit}ns "
+                        f"({worst}ns) but within the {grace_secs}s post-restart "
+                        f"grace window ({since_restart:.0f}s in) — not acting")
                 continue
 
             if not over:
@@ -768,11 +811,18 @@ class Health:
             if now - h.get("last_ptp_restart", 0) > backoff:
                 self.logger.info(
                     f"Telling {module} to restart_ptp "
-                    f"(offset over threshold for {breach_limit} consecutive checks)")
+                    f"(offset {worst}ns over {restart_limit}ns for {breach_limit} "
+                    f"consecutive checks; restart #{h.get('ptp_restarts', 1)})")
                 h["last_ptp_restart"] = now
                 h["ptp_restarts"] = min(5, h.get("ptp_restarts", 1) + 1)
                 h["ptp_breach_count"] = 0
                 self.facade.send_command(module, "restart_ptp", {})
+            else:
+                self.logger.info(
+                    f"{module} PTP over threshold ({worst}ns) and breach limit "
+                    f"reached, but {backoff}s restart backoff not elapsed "
+                    f"({now - h.get('last_ptp_restart', 0):.0f}s since last) — "
+                    f"holding off")
 
 
     def start_monitoring(self):

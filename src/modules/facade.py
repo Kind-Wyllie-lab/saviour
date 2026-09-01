@@ -66,6 +66,15 @@ class ModuleFacade:
         return self.module.recording.is_recording
 
 
+    def get_audio_clip_pct(self) -> float | None:
+        """Microphone only: rolling % of samples clipping on the loudest
+        AudioMoth (from the monitoring stream). None for other module types
+        or when no monitor data is live."""
+        if not getattr(self.module, "monitor_data", None):
+            return None
+        return getattr(self.module, "_monitor_clip_pct", None)
+
+
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id
 

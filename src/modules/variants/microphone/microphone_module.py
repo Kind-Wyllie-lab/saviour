@@ -10,6 +10,8 @@ Created: 18/08/2025
 Parts of code based on https://github.com/Kind-Wyllie-lab/audiomoth_multimicrophone_setup by Domagoj Anticic
 """
 
+import collections
+import math
 import os
 import re
 import subprocess
@@ -81,6 +83,20 @@ class AudiomothModule(Module):
         self.monitor_data = {}
         self.monitor_data_lock = threading.Lock()
         self.peak_hold_data = {}  # {serial: {'value_db': float, 'time': float}}
+
+        # --- Clipping indicator (data-quality warning, coarse, setup-time) ---
+        # A too-high AudioMoth gain saturates loud USVs -- exactly the events
+        # you're recording for -- and it's invisible until you open the files.
+        # The monitor thread tracks a rolling clipped-sample fraction per
+        # AudioMoth; _record_microphone_segment counts clipped samples into
+        # each segment's timestamp sidecar. Warning only, never gates.
+        # serial -> deque of per-block clipped fractions
+        self._clip_frac_history: dict = {}
+        # max rolling % across AudioMoths, for the health snapshot
+        self._monitor_clip_pct = 0.0
+        # accumulated across the current recording
+        self._session_clipped_samples = 0
+        self._session_total_samples = 0
 
         # Update config
         self.config.load_module_config("microphone_config.json")
@@ -226,6 +242,8 @@ class AudiomothModule(Module):
         self.audiomoth_threads = []
         self.current_recording_files = {}
         self.recording_start_time = time.time()
+        self._session_clipped_samples = 0
+        self._session_total_samples = 0
 
         # Re-scan PulseAudio for fresh device IDs. The AudioMoth encodes its
         # sample rate in its USB device name, so configure_audiomoth() causes a
@@ -291,11 +309,15 @@ class AudiomothModule(Module):
         sample_rate = self.config.get("audiomoth.sample_rate", 192000)
         frame_num = self.config.get("microphone.frame_num", 1024 * 128)
         block_size = self.config.get("microphone.block_size", 1024 * 128)
+        clip_level = float(self.config.get("audiomoth.clip_sample_level", 0.999))
+        clip_warn_pct = float(self.config.get("audiomoth.clip_warn_pct", 0.5))
 
         timestamps_filename = f"{os.path.splitext(filename)[0]}_timestamps.txt"
         self.facade.add_session_file(timestamps_filename)
 
         self.logger.info(f"Recording thread started for audiomoth {serial}: {filename}")
+        seg_clipped = seg_total = 0
+        seg_peak = 0.0
         try:
             microphone = soundcard.get_microphone(mic_id)
             with open(timestamps_filename, 'w') as timestamps_writer:
@@ -320,6 +342,28 @@ class AudiomothModule(Module):
                             data = recorder.record(numframes=frame_num)
                             timestamps_writer.write(f"{block_start}\n")
                             f.write(data)
+
+                            mono = data[:, 0] if data.ndim > 1 else data
+                            seg_clipped += int(np.count_nonzero(
+                                np.abs(mono) >= clip_level))
+                            seg_total += mono.size
+                            seg_peak = max(seg_peak, float(np.max(np.abs(mono))))
+
+                    # Permanent per-segment data-quality record in the sidecar.
+                    seg_pct = 100.0 * seg_clipped / seg_total if seg_total else 0.0
+                    peak_dbfs = 20 * math.log10(max(seg_peak, 1e-10))
+                    timestamps_writer.write(
+                        f"SEGMENT_CLIPPED_SAMPLES {seg_clipped}\n"
+                        f"SEGMENT_TOTAL_SAMPLES {seg_total}\n"
+                        f"SEGMENT_CLIPPED_PCT {seg_pct:.4f}\n"
+                        f"SEGMENT_PEAK_DBFS {peak_dbfs:.2f}\n")
+                    self._session_clipped_samples += seg_clipped
+                    self._session_total_samples += seg_total
+                    if seg_pct >= clip_warn_pct:
+                        self.logger.warning(
+                            f"AudioMoth {serial}: {seg_pct:.2f}% of this segment "
+                            f"clipped ({seg_clipped}/{seg_total} samples, peak "
+                            f"{peak_dbfs:.1f} dBFS) -- gain likely too high")
         except Exception as e:
             self.logger.error(f"Recording thread error for audiomoth {serial}: {e}", exc_info=True)
 
@@ -350,6 +394,18 @@ class AudiomothModule(Module):
             for thread in self.audiomoth_threads:
                 thread.join(timeout=10)
             self.audiomoth_threads = []
+
+            # Session-level clipping summary (per-segment detail is in each
+            # sidecar). A non-zero figure means some USVs were saturated --
+            # drop audiomoth.gain and re-run if it matters.
+            if self._session_total_samples:
+                sess_pct = (100.0 * self._session_clipped_samples
+                            / self._session_total_samples)
+                warn = sess_pct >= float(
+                    self.config.get("audiomoth.clip_warn_pct", 0.5))
+                (self.logger.warning if warn else self.logger.info)(
+                    f"Audio clipping this session: {sess_pct:.3f}% "
+                    f"({self._session_clipped_samples} samples)")
 
             # Stage audio files and their timestamp sidecars for export
             for filename in self.current_recording_files.values():
@@ -431,6 +487,13 @@ class AudiomothModule(Module):
         """
         sample_rate = self.config.get("audiomoth.sample_rate", 192000)
         fft_size = self.config.get("monitoring._fft_size", 4096)  # ~21ms at 192kHz
+        clip_level = float(self.config.get("audiomoth.clip_sample_level", 0.999))
+        clip_warn_pct = float(self.config.get("audiomoth.clip_warn_pct", 0.5))
+        # Rolling window ~= the spectrogram's time window, so "CLIPPING" tracks
+        # what's visible on screen; a one-block transient can't trip it.
+        clip_window_blocks = max(1, round(3.0 * sample_rate / fft_size))
+        self._clip_frac_history[serial] = collections.deque(
+            maxlen=clip_window_blocks)
 
         self.logger.info(f"Monitor thread started for audiomoth {serial}")
         try:
@@ -458,6 +521,15 @@ class AudiomothModule(Module):
                     peak = np.max(np.abs(mono))
                     peak_db = float(20 * np.log10(max(peak, 1e-10)))
 
+                    # Rolling clipped-sample fraction over ~3 s
+                    hist = self._clip_frac_history.get(serial)
+                    if hist is not None:
+                        hist.append(float(np.mean(np.abs(mono) >= clip_level)))
+                        clip_pct = float(np.mean(hist)) * 100.0 if hist else 0.0
+                    else:
+                        clip_pct = 0.0
+                    clipping = clip_pct >= clip_warn_pct
+
                     # Windowed FFT magnitude spectrum in dBFS
                     fft_vals = np.abs(np.fft.rfft(mono * window))
                     spectrum_db = 20 * np.log10(fft_vals / window_sum + 1e-10)
@@ -482,8 +554,13 @@ class AudiomothModule(Module):
                             'freqs':       freqs,
                             'waveform':    waveform_ds,
                             'rms_history': new_rms,
+                            'clip_pct':    clip_pct,
+                            'clipping':    clipping,
                             'timestamp':   time.time(),
                         }
+                        self._monitor_clip_pct = max(
+                            (d.get('clip_pct', 0.0)
+                             for d in self.monitor_data.values()), default=0.0)
         except Exception as e:
             self.logger.error(f"Monitor thread error for audiomoth {serial}: {e}")
         finally:
@@ -491,7 +568,11 @@ class AudiomothModule(Module):
             # showing NO SIG indefinitely after disconnection or thread failure.
             with self.monitor_data_lock:
                 self.monitor_data.pop(serial, None)
+                self._monitor_clip_pct = max(
+                    (d.get('clip_pct', 0.0)
+                     for d in self.monitor_data.values()), default=0.0)
             self.peak_hold_data.pop(serial, None)
+            self._clip_frac_history.pop(serial, None)
 
         self.logger.info(f"Monitor thread finished for audiomoth {serial}")
 
@@ -543,6 +624,12 @@ class AudiomothModule(Module):
         hdr = f"{display_name}  RMS {level_db:.1f} dBFS  Peak {peak_db:.1f} dBFS"
         cv2.putText(cell, hdr, (PADDING, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, header_colour, 1)
+        # Clipping indicator -- a coarse "your gain is too high" flag for setup.
+        if data.get('clipping') and not is_stale:
+            (tw, _), _ = cv2.getTextSize(hdr, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.putText(cell, f"  CLIP {data.get('clip_pct', 0.0):.1f}%",
+                        (PADDING + tw, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (60, 60, 255), 2)
 
         # ── Peaks-only view — large level meter, no spectrum ─────────────────
         if mode == 'peaks':

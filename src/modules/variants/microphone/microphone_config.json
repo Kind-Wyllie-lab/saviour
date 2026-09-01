@@ -11,7 +11,10 @@
         "low_gain_range": false,
         "energy_saver_mode": false,
         "disable_48hz_filter": false,
-        "led_enabled": true
+        "led_enabled": true,
+        "clip_warn_pct": 0.5,
+        "clip_sample_level": 0.999,
+        "_clip_note": "Rolling % of samples at/above clip_sample_level (0-1 full scale) that lights the CLIP indicator on the monitor and logs a warning per segment. Advisory only."
     },
     "microphone": {
         "_sample_rate": 192000,

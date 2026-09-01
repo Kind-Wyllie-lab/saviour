@@ -35,6 +35,10 @@ class ModuleHealthSnapshot:
     ptp4l_offset_ns_max:   float | None = None
     phc2sys_offset_ns_min: float | None = None
     phc2sys_offset_ns_max: float | None = None
+    # Microphone only: rolling % of audio samples clipping (at/near full
+    # scale) on the loudest AudioMoth, from the monitoring stream. A coarse
+    # "gain too high" data-quality indicator; None for non-mic modules.
+    audio_clip_pct:  float | None = None
     recording:       bool            = False
     version:         str | None   = None
 

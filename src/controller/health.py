@@ -465,29 +465,37 @@ class Health:
 
 
     def _log_controller_status(self) -> None:
-        """One INFO line: module status tally + controller load/disk."""
-        tally: dict = {}
-        for h in self.module_health.values():
-            tally[h["status"]] = tally.get(h["status"], 0) + 1
-        tally_str = ", ".join(f"{k}={v}" for k, v in sorted(tally.items())) or "none"
+        """One INFO line: module status tally + controller load/disk.
 
+        Best-effort — never raises out into the monitor loop.
+        """
         try:
-            load1, load5, load15 = os.getloadavg()
-            load_str = f"{load1:.2f}/{load5:.2f}/{load15:.2f}"
-        except OSError:
-            load_str = "n/a"
+            tally: dict = {}
+            for h in self.module_health.values():
+                tally[h.get("status", "unknown")] = tally.get(h.get("status", "unknown"), 0) + 1
+            tally_str = ", ".join(f"{k}={v}" for k, v in sorted(tally.items())) or "none"
 
-        try:
-            st = os.statvfs("/")
-            disk_pct = 100.0 * (1 - st.f_bavail / st.f_blocks)
-            disk_str = f"{disk_pct:.0f}%"
-        except OSError:
-            disk_str = "n/a"
+            try:
+                load1, load5, load15 = os.getloadavg()
+                load_str = f"{load1:.2f}/{load5:.2f}/{load15:.2f}"
+            except (OSError, ValueError):
+                load_str = "n/a"
 
-        self.logger.info(
-            f"Controller status: modules [{tally_str}]; "
-            f"load {load_str}; root disk {disk_str}"
-        )
+            try:
+                st = os.statvfs("/")
+                disk_str = (
+                    f"{100.0 * (1 - st.f_bavail / st.f_blocks):.0f}%"
+                    if st.f_blocks else "n/a"
+                )
+            except OSError:
+                disk_str = "n/a"
+
+            self.logger.info(
+                f"Controller status: modules [{tally_str}]; "
+                f"load {load_str}; root disk {disk_str}"
+            )
+        except Exception as e:
+            self.logger.debug(f"_log_controller_status failed: {e}")
 
 
     def _enter_suspicion(self, module_id: str, time_diff: float):

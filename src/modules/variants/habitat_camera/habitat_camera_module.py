@@ -80,7 +80,9 @@ class HabitatCameraModule(CameraBase):
         self._motion_detector: HabitatMotionDetector | None = None
         self._motion_state = "idle"                # idle | waiting | active
         self._motion_since_ns: int | None = None   # start of current above/below streak
-        self._motion_last_above: bool | None = None
+        self._motion_last_above: bool | None = None   # fused (motion OR occupancy)
+        self._motion_last_motion_above: bool | None = None  # motion component only, for the overlay
+        self._motion_last_occupied = False                  # occupancy component only, for the overlay
         self._motion_last_score = 0.0
         self._motion_last_exposure_time_us = None  # previous frame's AE metadata, for
         self._motion_last_analogue_gain = None      # detecting an active AE adjustment
@@ -282,6 +284,10 @@ class HabitatCameraModule(CameraBase):
         # Hand a downscaled frame to the occupancy side-thread (throttled).
         self._maybe_cache_occ_frame(m.array, timing)
         occupied = bool(self._occupancy_detector and self._occupancy_detector.present)
+        # Stashed for the livestream overlay (which runs on the lores stream
+        # and doesn't recompute these) so it can attribute the trigger.
+        self._motion_last_motion_above = motion_above
+        self._motion_last_occupied = occupied
         # OR fusion: the two triggers are independent and a missed detection
         # on either loses footage, so record while EITHER says so. Note the
         # occupancy side is already debounced (confirm_samples / clear_secs)
@@ -368,15 +374,22 @@ class HabitatCameraModule(CameraBase):
         elif self._motion_state == "waiting":
             label = "ABOVE THRESHOLD"
         else:  # active
-            # Triggered by the same math a real recording would use -- label
-            # distinguishes an actual clip from a not-armed test trigger, but
-            # the countdown below applies either way, same as the state
-            # machine itself (see _process_main_frame's docstring).
-            label = "RECORDING (motion)" if self._clip_open else "TRIGGERED (not armed)"
+            # Attribute the trigger: which of the two OR'd signals is
+            # currently holding the state active (see _process_main_frame's
+            # OR fusion). Only meaningful when the occupancy detector is on;
+            # with it off it's always motion.
+            if self._occupancy_detector is not None:
+                m_on, o_on = self._motion_last_motion_above, self._motion_last_occupied
+                reason = ("motion+rat" if (m_on and o_on)
+                          else "rat" if o_on else "motion")
+            else:
+                reason = "motion"
+            label = (f"RECORDING ({reason})" if self._clip_open
+                     else f"TRIGGERED ({reason}, not armed)")
             # self._motion_last_above is False exactly while the
             # inactivity-duration countdown toward closing is running --
-            # True (or None, before any frame's been scored) means motion is
-            # still ongoing right now, so there's nothing counting down.
+            # True (or None, before any frame's been scored) means the fused
+            # trigger is still up right now, so there's nothing counting down.
             if self._motion_last_above is False and self._motion_since_ns is not None:
                 elapsed_s = (timing.timestamp_ns - self._motion_since_ns) / 1e9
                 remaining_s = max(0.0, self._motion_inactivity_min_duration_s - elapsed_s)
@@ -389,13 +402,13 @@ class HabitatCameraModule(CameraBase):
         # into the timestamp if left at the top. Smaller and thinner than
         # before too, matching the FPS overlay's existing precedent for a
         # secondary diagnostic overlay.
-        # Occupancy contribution to the fused trigger -- so an operator can
-        # see the clip is being held open by "subject in frame" rather than
-        # motion (or tell the occupancy classifier is what triggered it).
+        # Standalone occupancy verdict, shown in every state -- so an operator
+        # tuning `threshold` can watch the confidence directly, and can see at
+        # a glance whether the classifier thinks the enclosure is empty.
         if self._occupancy_detector is not None:
             occ = self._occupancy_detector
-            label = (f"{label}  [subject {occ.last_score:.2f}"
-                     f"{' PRESENT' if occ.present else ''}]")
+            label = (f"{label}   RAT {occ.last_score:.2f}" if occ.present
+                     else f"{label}   empty {occ.last_score:.2f}")
 
         height = m.array.shape[0]
         circle_y = height - 20

@@ -396,7 +396,7 @@ class PTP:
             'ntp_status': self.get_ntp_status()
         }
 
-        self.logger.info(f"Get status called - returning PTP status: {controller_ptp_status}")
+        self.logger.debug(f"Returning PTP status: {controller_ptp_status}")
 
         return controller_ptp_status
 
@@ -511,7 +511,6 @@ class PTP:
                 'ptp4l': ptp4l_logs,
                 'phc2sys': phc2sys_logs
             }
-            self.logger.info("ptp logs {ptp_logs}")
             return ptp_logs
         else:
             return self._get_service_logs(service_name, lines)

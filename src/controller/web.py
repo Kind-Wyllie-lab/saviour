@@ -1154,7 +1154,7 @@ class Web(ABC):
 
                 # Handle recordings list response
                 if status.get('type') == 'recordings_list':
-                    self.logger.info(f"Broadcasting module recordings for module {module_id}")
+                    self.logger.debug(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
 
                     # Send individual module recordings response
@@ -2962,7 +2962,7 @@ class Web(ABC):
             match status_type:
                 # Handle recordings list response
                 case 'recordings_list':
-                    self.logger.info(f"Broadcasting module recordings for module {module_id}")
+                    self.logger.debug(f"Broadcasting module recordings for module {module_id}")
                     module_recordings = status.get('recordings', [])
 
                     # Send individual module recordings response
@@ -3121,9 +3121,8 @@ class Web(ABC):
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
                 }), 401
-            self.logger.info("/facade/list_modules endpoint called. Listing modules")
             modules = self.facade.get_modules()
-            self.logger.info(f"Found {len(modules)} modules")
+            self.logger.debug(f"/facade/list_modules → {len(modules)} modules")
             return jsonify({"modules": modules})
 
 
@@ -3211,9 +3210,8 @@ class Web(ABC):
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
                 }), 401
-            self.logger.info("/facade/module_health endpoint called. Getting module health")
             health = self.facade.get_module_health()
-            self.logger.info(f"Got module health for {len(health)} modules")
+            self.logger.debug(f"/facade/module_health → {len(health)} modules")
             return jsonify(health)
 
 
@@ -3225,6 +3223,6 @@ class Web(ABC):
                     "error": "Unauthorized -- provide the admin password via "
                              "an 'Authorization: Bearer <password>' header"
                 }), 401
-            self.logger.info("/facade/exported_recordings endpoint called")
+            self.logger.debug("/facade/exported_recordings endpoint called")
             exported_recordings = self.get_exported_recordings()
             return jsonify({"exported_recordings": exported_recordings})

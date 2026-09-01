@@ -388,10 +388,14 @@ class Export:
         encoder on the first frame, so they are not on disk at registration time.
         Existence is checked at export time by stage_file_for_export.
         """
-        self.logger.info(f"Adding {filename} to session files")
         abspath = os.path.abspath(filename)
         self.session_files.append(abspath)
-        self.logger.info(f"Session files: {self.session_files}")
+        # Was two INFO lines per call, the second re-dumping the whole (growing)
+        # list — O(n^2) journal text over a long session. One line, count only.
+        self.logger.info(
+            f"Registered session file {os.path.basename(abspath)} "
+            f"({len(self.session_files)} total)"
+        )
         return True
 
 

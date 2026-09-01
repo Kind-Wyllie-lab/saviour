@@ -420,13 +420,17 @@ class TTLModule(Module):
     def _handle_input_pin_low(self, pin):
         """Handle input pin going low (pressed)"""
         self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.LOW)
-        self.logger.info(f"Input pin {pin.pin} went low (pressed)")
+        # DEBUG, not INFO: fires on every edge. An experiment-clock or pulse
+        # train at even 10-50 Hz would flood the journal (and trip journald's
+        # per-service rate limit, dropping unrelated lines). The authoritative
+        # record is the TTL events CSV written above.
+        self.logger.debug(f"Input pin {pin.pin} went low (pressed)")
 
 
     def _handle_input_pin_high(self, pin):
         """Handle input pin going high (released)"""
         self._write_ttl_event(time.time_ns(), pin.pin.number, TTLValue.HIGH)
-        self.logger.info(f"Input pin {pin.pin} went high (released)")
+        self.logger.debug(f"Input pin {pin.pin} went high (released)")
 
 
     def _open_ttl_file(self, filename: str):

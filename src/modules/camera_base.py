@@ -37,6 +37,7 @@ from picamera2.outputs import PyavOutput, SplittableOutput
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
 from modules.module import Module, check, command
+from src.shared.ratelimit_log import RateLimitedLogger
 
 
 @dataclass
@@ -182,6 +183,18 @@ class CameraBase(Module):
         self._current_csv_path = None
         self._frame_id = 0
         self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
+        self._segment_dropped = 0  # frames estimated dropped in the current segment
+
+        # Periodic "still capturing" throughput line while recording — makes a
+        # silently-wedged pipeline visible after the fact in the journal
+        # (recording.camera_throughput_log_secs, 0 disables).
+        self._throughput_last_log_s = 0.0
+        self._throughput_last_frame_id = 0
+
+        # Coalesces per-frame failure spam (a camera throwing on every frame,
+        # missing timestamp metadata) into one line + periodic count + a
+        # recovery notice — see RateLimitedLogger.
+        self._rl_log = RateLimitedLogger(self.logger, interval_s=30.0)
 
         self._preview_timing: FrameTiming | None = None
 
@@ -655,6 +668,9 @@ class CameraBase(Module):
         self._timestamp_csv_writer = csv.writer(self._timestamp_csv_file)
         self._timestamp_csv_writer.writerow(self.BASE_CSV_COLUMNS + self.CSV_EXTRA_COLUMNS)
         self._frame_id = 0
+        self._segment_dropped = 0
+        self._throughput_last_log_s = 0.0
+        self._throughput_last_frame_id = 0
         self._csv_prev_ns = None
         self._csv_row_buffer.clear()
         self._csv_flush_stop.clear()
@@ -747,6 +763,19 @@ class CameraBase(Module):
 
     def _start_new_video_segment(self):
         """Start recording a new splittable output video segment."""
+        # Capture the closing segment's stats before _open_timestamp_csv resets
+        # the counters — a per-segment forensic record (frames actually
+        # written, estimated drops, file size, wall clock) so a mid-session
+        # module reboot / stall shows up as a gap in a greppable series
+        # instead of having to be reconstructed from segment-id arithmetic.
+        closing = self.current_video_segment
+        closing_frames = self._frame_id
+        closing_dropped = self._segment_dropped
+        try:
+            closing_bytes = os.path.getsize(closing) if closing else 0
+        except OSError:
+            closing_bytes = -1
+
         self._close_timestamp_csv()
 
         self.last_video_segment = self.current_video_segment
@@ -758,7 +787,11 @@ class CameraBase(Module):
         self._open_timestamp_csv(filename)
 
         self.file_output.split_output(PyavOutput(filename, format="mpegts"))
-        self.logger.info(f"Switched to new segment {filename}")
+        self.logger.info(
+            f"Segment rotated: closed {os.path.basename(closing) if closing else '(none)'} "
+            f"({closing_frames} frames, ~{closing_dropped} dropped, "
+            f"{closing_bytes / 1e6:.1f} MB) → opened {os.path.basename(filename)}"
+        )
         if not self._check_file_exists(filename):
             self.logger.warning(f"{filename} does not exist in recording folder!")
 
@@ -849,7 +882,7 @@ class CameraBase(Module):
                 return frame_wall_clock
             return None
         except Exception as e:
-            self.logger.error(f"Error capturing frame metadata: {e}")
+            self._rl_log.error("frame_ts_meta", f"Error reading frame timestamp metadata: {e}")
             return None
 
 
@@ -885,8 +918,10 @@ class CameraBase(Module):
 
             timestamp = self._get_frame_timestamp(meta)
             if timestamp is None:
-                self.logger.warning("No frame timestamp available from metadata")
+                self._rl_log.warning(
+                    "frame_ts_missing", "No frame timestamp available from metadata")
                 return
+            self._rl_log.ok("frame_ts_missing", "Frame timestamp metadata recovered")
 
             actual_fps = None
             if self.last_frame_timestamp:
@@ -900,6 +935,7 @@ class CameraBase(Module):
                 delta_ms       = round((timestamp - self._csv_prev_ns) / 1e6, 3)
                 expected_ms    = 1000.0 / self.fps
                 dropped_before = max(0, round(delta_ms / expected_ms) - 1)
+                self._segment_dropped += dropped_before
             else:
                 delta_ms = dropped_before = ""
             self._csv_prev_ns = timestamp
@@ -986,10 +1022,42 @@ class CameraBase(Module):
                     self._preview_timing = timing
 
             self._after_frame_hook(timing)
+            self._rl_log.ok("frame_precallback", "Frame pre-callback recovered")
+            self._maybe_log_throughput()
 
         except Exception as e:
-            self.logger.error(f"Error capturing frame metadata: {e}")
+            # Fires on the capture thread, once per frame (30-120 fps). A
+            # persistent fault here would otherwise write an identical ERROR
+            # line every frame forever — coalesce it.
+            self._rl_log.error("frame_precallback", f"Error in frame pre-callback: {e}")
 
+
+    def _maybe_log_throughput(self) -> None:
+        """Emit one INFO line every camera_throughput_log_secs while recording:
+        measured fps, frames + estimated drops this segment. Cheap — a single
+        monotonic comparison per frame otherwise."""
+        if self._timestamp_csv_writer is None:
+            return
+        interval = self.config.get("recording.camera_throughput_log_secs", 60.0)
+        if not interval or interval <= 0:
+            return
+        now = time.monotonic()
+        if self._throughput_last_log_s == 0.0:
+            self._throughput_last_log_s = now
+            self._throughput_last_frame_id = self._frame_id
+            return
+        elapsed = now - self._throughput_last_log_s
+        if elapsed < interval:
+            return
+        frames = self._frame_id - self._throughput_last_frame_id
+        measured_fps = frames / elapsed if elapsed else 0.0
+        self.logger.info(
+            f"Recording alive: {measured_fps:.1f} fps over last {elapsed:.0f}s "
+            f"(target {self.fps}); segment {self._frame_id} frames, "
+            f"~{self._segment_dropped} dropped"
+        )
+        self._throughput_last_log_s = now
+        self._throughput_last_frame_id = self._frame_id
 
     def _apply_grayscale(self, m: MappedArray) -> None:
         gray = cv2.cvtColor(m.array, cv2.COLOR_BGR2GRAY)

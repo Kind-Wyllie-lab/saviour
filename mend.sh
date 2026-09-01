@@ -268,14 +268,17 @@ fi
 
 section "6/8  Logging + NTP"
 
-# Persistent journald logging
-if grep -q "Storage=persistent" /etc/systemd/journald.conf 2>/dev/null; then
+# Persistent journald logging, with a disk-use cap so a chatty run can't
+# fill the filesystem (disk-full is itself a data-loss trigger).
+if grep -q "^SystemMaxUse=" /etc/systemd/journald.conf 2>/dev/null; then
     ok "Persistent logging already configured"
 else
-    fix "Enabling persistent journald logging"
+    fix "Enabling persistent journald logging (capped at 500M)"
     tee /etc/systemd/journald.conf > /dev/null <<EOF
 [Journal]
 Storage=persistent
+SystemMaxUse=500M
+SystemKeepFree=1G
 EOF
     systemctl restart systemd-journald
 fi

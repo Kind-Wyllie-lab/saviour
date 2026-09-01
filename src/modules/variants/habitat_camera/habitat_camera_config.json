@@ -55,13 +55,12 @@
     },
     "occupancy": {
         "enabled": false,
-        "model_path": "",
+        "model_path": "models/rats_yolov8n_416.onnx",
         "interval_s": 2.0,
-        "threshold": 0.5,
+        "threshold": 0.35,
         "confirm_samples": 2,
         "clear_secs": 30.0,
-        "input_size": 128,
-        "grayscale": true,
-        "_note": "OR-fused with habitat_motion: records while a subject is in frame even when still. Disabled until model_path points at an ONNX binary classifier (needs onnxruntime); otherwise motion-only."
+        "target_class": null,
+        "_note": "OR-fused with habitat_motion: keeps recording while a rat is in frame even when still. YOLOv8n rat detector; occupancy score = highest detection confidence in the frame. Needs onnxruntime (env/bin/pip install onnxruntime). model_path is relative to the variant folder. Set enabled:true after checking threshold against the livestream '[subject NN]' readout."
     }
 }

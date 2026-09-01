@@ -168,9 +168,14 @@ class HabitatCameraModule(CameraBase):
         self._motion_ae_stable = True
 
     def _configure_occupancy(self) -> None:
-        occ_cfg = self.config.get("occupancy", {}) or {}
+        occ_cfg = dict(self.config.get("occupancy", {}) or {})
         self._occupancy_interval_s = max(
             0.2, float(occ_cfg.get("interval_s", 2.0)))
+        # Resolve a relative model_path against this variant folder (matches
+        # hailo_camera's MODEL_DIR/<hef> convention).
+        mp = occ_cfg.get("model_path", "")
+        if mp and not os.path.isabs(mp):
+            occ_cfg["model_path"] = os.path.join(os.path.dirname(__file__), mp)
         new = OccupancyDetector.from_config(occ_cfg)
         # Carry the current `present` state across a live reconfigure so a
         # threshold/interval tweak doesn't drop a subject mid-clip.

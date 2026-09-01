@@ -1,15 +1,23 @@
 """Tests for src/modules/variants/habitat_camera/occupancy_detector.py.
 
 Covers the debounce state machine (confirm_samples to turn on, clear_secs
-hangover to turn off) with an injected score_fn -- the ONNX backend and the
-live camera thread are out of scope here, same split as motion_detector.py.
+hangover to turn off) with an injected score_fn, plus build_score_fn against
+the committed YOLOv8n rat detector when onnxruntime is available.
 """
 
+import os
+
 import numpy as np
+import pytest
 
 from src.modules.variants.habitat_camera.occupancy_detector import (
     OccupancyDetector,
     build_score_fn,
+)
+
+_MODEL = os.path.join(
+    os.path.dirname(__file__),
+    "..", "variants", "habitat_camera", "models", "rats_yolov8n_416.onnx",
 )
 
 S = 1_000_000_000  # ns per second
@@ -119,3 +127,34 @@ class TestBuildScoreFn:
 
     def test_missing_file_returns_none(self):
         assert build_score_fn("/nope/model.onnx") is None
+
+
+# End-to-end against the real committed YOLOv8n rat detector. Skipped where
+# onnxruntime isn't installed (it's an optional dep) but exercises the actual
+# pre/post-processing in build_score_fn.
+onnxruntime = pytest.importorskip("onnxruntime")
+
+
+@pytest.mark.skipif(not os.path.isfile(_MODEL), reason="model file not present")
+class TestYolov8Backend:
+    def test_score_fn_builds_and_returns_probability(self):
+        fn = build_score_fn(_MODEL)
+        assert fn is not None
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)  # empty -> no rat
+        s = fn(frame)
+        assert 0.0 <= s <= 1.0
+        assert s < 0.1  # blank frame: detector should not be confident
+
+    def test_handles_arbitrary_frame_size_and_channels_last_path(self):
+        fn = build_score_fn(_MODEL)
+        # odd size, non-square: letterbox must cope
+        s = fn(np.full((373, 611, 3), 114, dtype=np.uint8))
+        assert 0.0 <= s <= 1.0
+
+    def test_from_config_wires_it_up(self):
+        det = OccupancyDetector.from_config(
+            {"enabled": True, "model_path": _MODEL, "threshold": 0.9,
+             "confirm_samples": 1})
+        assert det is not None
+        assert det.observe(np.zeros((720, 1280, 3), np.uint8), 1_000_000_000) is False
+        assert det.last_score < 0.9

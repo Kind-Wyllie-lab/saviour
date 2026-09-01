@@ -4,20 +4,23 @@ runs alongside habitat_camera's fast motion trigger.
 Motion detection (frame_diff / MOG2, see motion_detector.py) fires on *change*,
 so a rat that walks in and then sits still scores ~0 within a second or two and
 the clip closes out from under it. The occupancy check is the other half of an
-OR-fused trigger: a binary classifier run on a downscaled frame every couple of
-seconds, cheap enough for the Pi 5 CPU without a Hailo HAT, that re-confirms
-"there is still a subject in frame" independent of whether it's moving. Recording
+OR-fused trigger: a detector run on a downscaled frame every couple of seconds,
+cheap enough for the Pi 5 CPU without a Hailo HAT, that re-confirms "there is
+still a subject in frame" independent of whether it's moving. Recording
 continues while EITHER trigger says so.
 
 This module deliberately has no picamera2 dependency (same reason as
 motion_detector.py) so the debounce logic here is unit-testable and the
 `analysis/` eval tooling can reuse it.
 
-The classifier itself is pluggable via `score_fn` (frame_bgr -> float in [0,1]).
-`build_score_fn()` builds an ONNX-Runtime-backed one from a model path; with no
-model configured (the default), the occupancy trigger is simply disabled and
-habitat_camera behaves exactly as it does today (motion-only). Training that
-model is follow-up work -- see analysis/.
+The scorer is pluggable via `score_fn` (frame_bgr -> float in [0,1]).
+`build_score_fn()` builds an ONNX-Runtime one from a model path: it recognises
+an Ultralytics YOLOv8/11 *detection* export (output `[1, 4+nc, N]` of already-
+sigmoided class scores) and reduces it to occupancy = the single highest class
+confidence anywhere in the frame -- no NMS needed. A rank-2 output is treated as
+a plain binary classifier instead. With no model configured (the default), the
+occupancy trigger is simply disabled and habitat_camera behaves exactly as it
+does today (motion-only).
 
 Author: Andrew SG
 """
@@ -95,10 +98,10 @@ class OccupancyDetector:
         "meant to be on but the model/runtime is missing"."""
         if not cfg or not cfg.get("enabled"):
             return None
+        tc = cfg.get("target_class")
         score_fn = build_score_fn(
             cfg.get("model_path", ""),
-            input_size=int(cfg.get("input_size", 128)),
-            grayscale=bool(cfg.get("grayscale", True)),
+            target_class=int(tc) if tc is not None else None,
         )
         if score_fn is None:
             log.warning("occupancy.enabled is set but no usable model -- "
@@ -112,15 +115,33 @@ class OccupancyDetector:
         )
 
 
-def build_score_fn(model_path: str, *, input_size: int = 128,
-                   grayscale: bool = True):
-    """Return a `frame_bgr -> float[0,1]` scorer backed by an ONNX binary
-    classifier, or None if the model file / onnxruntime isn't available.
+def _letterbox(img_rgb, dst_h: int, dst_w: int):
+    """Resize keeping aspect ratio, pad to (dst_h, dst_w) with grey (114) --
+    Ultralytics' own inference preprocessing, so the detector sees the frame
+    the way it was trained rather than horizontally squished (habitat frames
+    are 16:9, the model input is square)."""
+    h, w = img_rgb.shape[:2]
+    r = min(dst_h / h, dst_w / w)
+    nh, nw = max(1, round(h * r)), max(1, round(w * r))
+    resized = cv2.resize(img_rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+    out = np.full((dst_h, dst_w, 3), 114, dtype=np.uint8)
+    top, left = (dst_h - nh) // 2, (dst_w - nw) // 2
+    out[top:top + nh, left:left + nw] = resized
+    return out
 
-    Pre-processing here (resize -> optional grayscale -> /255 -> NCHW) is a
-    reasonable default but MUST match whatever model is eventually trained
-    (analysis/); treat it as unverified until checked against a real export,
-    same caveat as hailo_camera's decoders.
+
+def build_score_fn(model_path: str, *, target_class: "int | None" = None):
+    """Return a `frame_bgr -> float[0,1]` occupancy scorer backed by an ONNX
+    model, or None if the model file / onnxruntime isn't available.
+
+    Recognises:
+      * an Ultralytics YOLOv8/11 detection export -- output `[1, 4+nc, N]`
+        (or `[1, N, 4+nc]`) of box coords + already-sigmoided class scores.
+        Occupancy = the highest class confidence over every anchor (optionally
+        restricted to `target_class`); NMS is irrelevant to "is anything
+        there". Input size and layout are read from the model.
+      * a rank-2 output -> plain binary classifier (single logit -> sigmoid,
+        or 2-logit -> softmax P(class 1)).
     """
     if not model_path:
         return None
@@ -134,18 +155,40 @@ def build_score_fn(model_path: str, *, input_size: int = 128,
         return None
 
     sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-    in_name = sess.get_inputs()[0].name
+    inp = sess.get_inputs()[0]
+    in_name = inp.name
+    # Input is [N, C, H, W]; use 416 for any dynamic/unknown dim.
+    shp = list(inp.shape) + [416, 416, 416, 416]
+    in_h = shp[2] if isinstance(shp[2], int) and shp[2] > 0 else 416
+    in_w = shp[3] if isinstance(shp[3], int) and shp[3] > 0 else 416
+    out_shape = sess.get_outputs()[0].shape
+    is_detector = len(out_shape) == 3
+    log.info("occupancy model %s: input %dx%d, output %s (%s)", model_path,
+             in_w, in_h, out_shape, "detector" if is_detector else "classifier")
 
     def score(frame_bgr) -> float:
-        img = cv2.resize(frame_bgr, (input_size, input_size),
-                         interpolation=cv2.INTER_AREA)
-        if grayscale:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[..., None]
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        img = _letterbox(rgb, in_h, in_w) if is_detector else cv2.resize(
+            rgb, (in_w, in_h), interpolation=cv2.INTER_AREA)
         x = np.transpose(img.astype(np.float32) / 255.0, (2, 0, 1))[None, ...]
-        out = np.asarray(sess.run(None, {in_name: x})[0]).ravel()
-        if out.size == 1:  # single logit
-            return float(1.0 / (1.0 + np.exp(-out[0])))
-        e = np.exp(out - out.max())  # 2-class softmax -> P(occupied)
-        return float((e / e.sum())[-1])
+        out = np.asarray(sess.run(None, {in_name: x})[0])
+
+        if not is_detector:
+            v = out.ravel()
+            if v.size == 1:
+                return float(1.0 / (1.0 + np.exp(-v[0])))
+            e = np.exp(v - v.max())
+            return float((e / e.sum())[-1])
+
+        # out is [1, C, N] or [1, N, C]; the small axis is 4+nc, the large one
+        # is the anchor count. Class scores are index 4: along the small axis.
+        a = out[0]
+        if a.shape[0] <= a.shape[1]:          # [C, N]
+            cls = a[4:, :]
+        else:                                 # [N, C]
+            cls = a[:, 4:].T
+        if target_class is not None and 0 <= target_class < cls.shape[0]:
+            cls = cls[target_class:target_class + 1, :]
+        return float(cls.max()) if cls.size else 0.0
 
     return score

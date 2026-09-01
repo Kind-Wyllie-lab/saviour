@@ -35,6 +35,10 @@ class ModuleHealthSnapshot:
     ptp4l_offset_ns_max:   float | None = None
     phc2sys_offset_ns_min: float | None = None
     phc2sys_offset_ns_max: float | None = None
+    # Camera only: rolling % of the frame clipped to white or crushed to
+    # black (whichever is worse), from the capture thread. A coarse
+    # "exposure/gain is wrong" data-quality indicator; None for non-camera.
+    frame_clip_pct:  float | None = None
     recording:       bool            = False
     version:         str | None   = None
 

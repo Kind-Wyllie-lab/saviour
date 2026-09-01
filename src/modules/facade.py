@@ -66,6 +66,16 @@ class ModuleFacade:
         return self.module.recording.is_recording
 
 
+    def get_frame_clip_pct(self) -> float | None:
+        """Camera only: rolling % of the frame clipped white / crushed black
+        (whichever is worse). None for non-camera modules or before the
+        exposure sampler has run (see CameraBase._maybe_sample_exposure)."""
+        if not getattr(self.module, "_exposure_sample_history", None):
+            return None
+        return max(getattr(self.module, "_exposure_over_pct", 0.0),
+                   getattr(self.module, "_exposure_under_pct", 0.0))
+
+
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id
 

@@ -185,6 +185,20 @@ class CameraBase(Module):
 
         self._preview_timing: FrameTiming | None = None
 
+        # --- Exposure clipping indicator (data-quality warning, coarse) ---
+        # A blown-out (or crushed-black) frame has no detail and also breaks
+        # motion/AE logic downstream -- and it's easy to miss on a small
+        # preview. Sampled from the capture thread on a throttled interval
+        # (runs whenever the camera is capturing, not just while streaming);
+        # overlaid on the preview and reported in the health snapshot.
+        # Advisory only, never gates.
+        self._exposure_sample_history: collections.deque = collections.deque(maxlen=3)
+        self._exposure_over_pct = 0.0    # % of sampled pixels at/near white
+        self._exposure_under_pct = 0.0   # % at/near black
+        self._exposure_last_sample_s = 0.0
+        # so the WARNING log fires on the transition, not every frame
+        self._exposure_warned = False
+
 
     """Self Check"""
     @check()
@@ -876,6 +890,65 @@ class CameraBase(Module):
         pass
 
 
+    def _apply_exposure_overlay(self, frame) -> None:
+        """Draw a top-left 'OVEREXPOSED N%' / 'UNDEREXPOSED N%' warning when
+        _maybe_sample_exposure's rolling figure is over camera.exposure_warn_pct.
+        No-op otherwise."""
+        try:
+            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
+            over, under = self._exposure_over_pct, self._exposure_under_pct
+            if max(over, under) < warn_pct:
+                return
+            if over >= under:
+                text, col = f"OVEREXPOSED {over:.0f}%", (60, 60, 255)   # BGR red
+            else:
+                text, col = f"UNDEREXPOSED {under:.0f}%", (0, 200, 255)  # amber
+            cv2.putText(frame, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(frame, text, (10, 22), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, col, 1, cv2.LINE_AA)
+        except Exception:
+            pass
+
+    def _maybe_sample_exposure(self, arr) -> None:
+        """Once per camera.exposure_check_interval_s, measure what fraction of
+        a strided subsample of the frame is clipped to white / crushed to
+        black, and roll it into _exposure_over_pct / _exposure_under_pct
+        (mean of the last few samples, ~a few seconds). Logs a WARNING on the
+        transition into a sustained-bad state, cleared on recovery. Cheap: a
+        ~1/64 subsample once a second."""
+        now = time.monotonic()
+        interval = self.config.get("camera.exposure_check_interval_s", 1.0)
+        if not interval or now - self._exposure_last_sample_s < interval:
+            return
+        self._exposure_last_sample_s = now
+        try:
+            hi = int(self.config.get("camera.exposure_clip_high", 250))
+            lo = int(self.config.get("camera.exposure_clip_low", 5))
+            sub = arr[::8, ::8]
+            # any channel clipping counts as clipped
+            luma = sub.max(axis=2) if sub.ndim == 3 else sub
+            n = luma.size or 1
+            over = 100.0 * int(np.count_nonzero(luma >= hi)) / n
+            under = 100.0 * int(np.count_nonzero(luma <= lo)) / n
+            self._exposure_sample_history.append((over, under))
+            h = self._exposure_sample_history
+            self._exposure_over_pct = sum(o for o, _ in h) / len(h)
+            self._exposure_under_pct = sum(u for _, u in h) / len(h)
+
+            warn_pct = float(self.config.get("camera.exposure_warn_pct", 5.0))
+            bad = max(self._exposure_over_pct, self._exposure_under_pct) >= warn_pct
+            if bad and not self._exposure_warned:
+                self.logger.warning(
+                    f"Exposure out of range: {self._exposure_over_pct:.1f}% of the "
+                    f"frame is clipped white, {self._exposure_under_pct:.1f}% crushed "
+                    f"black -- check exposure/gain")
+            elif not bad and self._exposure_warned:
+                self.logger.info("Exposure back within range")
+            self._exposure_warned = bad
+        except Exception as e:
+            self.logger.debug(f"Exposure sample failed: {e}")
+
     def _frame_precallback(self, req) -> None:
         try:
             self._last_frame_wall_time = time.time()
@@ -934,6 +1007,7 @@ class CameraBase(Module):
                     m.array[:] = cv2.flip(m.array, self._cb_flip_code)
                 if monochrome:
                     self._apply_grayscale(m)
+                self._maybe_sample_exposure(m.array)
                 extra = self._process_main_frame(m, timing)
                 if overlay_timestamp:
                     # 90°/270° rotation on a non-square resolution can't be
@@ -1215,6 +1289,11 @@ class CameraBase(Module):
                     actual_fps = getattr(self, "_preview_actual_fps", None)
                     if actual_fps:
                         self._apply_framerate(frame, str(actual_fps), "lores")
+
+            # Exposure-clipping warning, top-left (timestamp is top-center, fps
+            # top-right, subclass overlays bottom-left). Shown on either stream.
+            if self.config.get("camera.exposure_overlay", True):
+                self._apply_exposure_overlay(frame)
 
             ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if not ret:

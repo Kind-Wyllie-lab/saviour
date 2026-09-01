@@ -482,6 +482,12 @@ export default function System() {
                           CLIP {row.audio_clip_pct.toFixed(1)}%
                         </span>
                       )}
+                      {isOnline && row.frame_clip_pct != null && row.frame_clip_pct >= 5 && (
+                        <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
+                          title="Frame is over/under-exposed — check exposure and gain">
+                          EXPOSURE {row.frame_clip_pct.toFixed(0)}%
+                        </span>
+                      )}
                       <span className="device-id">{row.id}</span>
                     </td>
                     <td>{connectionCell(connStatus)}</td>

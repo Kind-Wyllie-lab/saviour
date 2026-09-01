@@ -466,6 +466,20 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
               </select>
             </div>
             <div className="form-field">
+              <label title="Rolling % of the frame clipped white or crushed black that shows the OVER/UNDEREXPOSED preview badge and logs a warning. Advisory only.">
+                Exposure warning threshold (%):
+              </label>
+              <input type="number" min="0" max="100" step="0.5"
+                value={cam.exposure_warn_pct ?? 5.0}
+                onChange={e => handleChange(["camera", "exposure_warn_pct"], e)} />
+            </div>
+            <div className="form-field">
+              <label>Exposure warning overlay:</label>
+              <input type="checkbox"
+                checked={cam.exposure_overlay ?? true}
+                onChange={e => handleChange(["camera", "exposure_overlay"], e)} />
+            </div>
+            <div className="form-field">
               <label>Auto gain/exposure:</label>
               <input type="checkbox"
                 checked={cam.ae_enable ?? false}

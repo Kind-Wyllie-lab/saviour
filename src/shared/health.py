@@ -68,6 +68,10 @@ class ModuleHealthSnapshot:
     # scale) on the loudest AudioMoth, from the monitoring stream. A coarse
     # "gain too high" data-quality indicator; None for non-mic modules.
     audio_clip_pct:  float | None = None
+    # Camera only: rolling % of the frame clipped to white or crushed to
+    # black (whichever is worse), from the capture thread. A coarse
+    # "exposure/gain is wrong" data-quality indicator; None for non-camera.
+    frame_clip_pct:  float | None = None
     recording:       bool            = False
     # Measured recording output in bytes/second (None unless recording). A
     # reality check against the config-derived estimate in

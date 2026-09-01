@@ -921,7 +921,7 @@ class Module(ABC):
             else:
                 self.logger.error("Failed to stop module, not shutting down system")
         except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")
+            self.logger.exception(f"Error during shutdown: {e}")
 
 
     """Config Methods"""
@@ -1398,7 +1398,7 @@ class Module(ABC):
                     "export_path": export_path
                 })
         except Exception as e:
-            self.logger.error(f"Error in export thread: {e}")
+            self.logger.exception(f"Error in export thread: {e}")
             self.facade.send_status({
                 "type": "export_failed",
                 "export_path": export_path,

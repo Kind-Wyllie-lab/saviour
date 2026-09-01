@@ -260,6 +260,10 @@ class Recording:
 
         if not failures:
             max_offset = max((abs(m["offset_us"]) for m in synced), default=0.0)
+            self.logger.info(
+                f"PTP start gate PASSED for {len(synced)} module(s): "
+                f"worst offset {max_offset:.1f}µs vs {threshold_us:.0f}µs gate"
+            )
             return {
                 "ok": True,
                 "synced": synced,
@@ -268,6 +272,10 @@ class Recording:
             }
 
         detail = "; ".join(f"{f['module_id']}: {f['reason']}" for f in failures)
+        self.logger.warning(
+            f"PTP start gate FAILED ({threshold_us:.0f}µs) on {len(failures)} "
+            f"module(s), {len(synced)} passed — {detail}"
+        )
         return {
             "ok": False,
             "failures": failures,
@@ -1935,7 +1943,7 @@ class Recording:
                             self._check_ptp_mid_recording(session_name, session)
 
                 except Exception as e:
-                    self.logger.error(f"Error monitoring session '{session_name}': {e}")
+                    self.logger.exception(f"Error monitoring session '{session_name}': {e}")
 
 
     # Consecutive monitor cycles a module can be seen "not recording" before it
@@ -2039,7 +2047,7 @@ class Recording:
             with open(SESSIONS_FILE, "w") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            self.logger.error(f"Failed to save sessions: {e}")
+            self.logger.exception(f"Failed to save sessions: {e}")
 
 
     def _load_sessions(self) -> None:
@@ -2073,7 +2081,7 @@ class Recording:
                 self.sessions[name] = session
             self.logger.info(f"Loaded {len(self.sessions)} session(s) from disk")
         except Exception as e:
-            self.logger.error(f"Failed to load sessions: {e}")
+            self.logger.exception(f"Failed to load sessions: {e}")
 
 
     def _get_share_root(self) -> str:

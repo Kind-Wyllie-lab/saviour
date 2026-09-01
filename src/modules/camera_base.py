@@ -468,6 +468,7 @@ class CameraBase(Module):
         self._cb_flip_code = None
         self._cb_rotation = getattr(self, "_rotation", 0)
         self._cb_module_name = self.facade.get_module_name() if hasattr(self, 'facade') else None
+        self._cb_throughput_log_secs = self.config.get("recording.camera_throughput_log_secs", 60.0)
         # Clear layout caches so _apply_timestamp recomputes font_scale for the new text width
         self._ts_layout_main  = None
         self._ts_layout_lores = None
@@ -833,7 +834,7 @@ class CameraBase(Module):
             return True
 
         except Exception as e:
-            self.logger.error(f"Error stopping recording: {e}")
+            self.logger.exception(f"Error stopping recording: {e}")
             return False
 
 
@@ -1038,7 +1039,7 @@ class CameraBase(Module):
         monotonic comparison per frame otherwise."""
         if self._timestamp_csv_writer is None:
             return
-        interval = self.config.get("recording.camera_throughput_log_secs", 60.0)
+        interval = self._cb_throughput_log_secs
         if not interval or interval <= 0:
             return
         now = time.monotonic()

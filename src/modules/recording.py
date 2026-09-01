@@ -184,7 +184,7 @@ class Recording:
 
             self._begin_recording(session_name, duration)
         except Exception as e:
-            self.logger.error(f"Scheduled recording start failed: {e}")
+            self.logger.exception(f"Scheduled recording start failed: {e}")
             self.facade.send_status({"type": "recording_start_failed", "error": str(e)})
 
 
@@ -327,7 +327,7 @@ class Recording:
             return {"result": "Success"}
 
         except Exception as e:
-            self.logger.error(f"Error in stop_recording: {e}")
+            self.logger.exception(f"Error in stop_recording: {e}")
             return {"result": "failure", "message": f"Error in stop_recording: {e}"}
 
 

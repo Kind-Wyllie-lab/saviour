@@ -297,7 +297,7 @@ class Export:
                         exported_count += 1
                         exported.append(filename)
                     except Exception as e:
-                        self.logger.error(f"Failed to export {filename}: {e}")
+                        self.logger.exception(f"Failed to export {filename}: {e}")
                         # Roll back PENDING_ rename so the source file is recoverable
                         try:
                             if os.path.exists(temp_source_path):
@@ -333,7 +333,7 @@ class Export:
             return session_results
 
         except Exception as e:
-            self.logger.error(f"Export error: {e}")
+            self.logger.exception(f"Export error: {e}")
             return {triggered_session: False} if triggered_session else {}
 
         finally:
@@ -378,7 +378,7 @@ class Export:
             shutil.move(current_path, destination_path)
             return True
         except Exception as e:
-            self.logger.error(f"Error moving {filename} to {destination_path}: {e}")
+            self.logger.exception(f"Error moving {filename} to {destination_path}: {e}")
 
 
     def add_session_file(self, filename: str) -> bool:

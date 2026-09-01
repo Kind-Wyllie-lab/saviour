@@ -138,9 +138,15 @@ class ExportQueue:
         """Call when a module reports export_complete."""
         with self._lock:
             self._active.discard(module_id)
-            self._active_meta.pop(module_id, None)
+            meta = self._active_meta.pop(module_id, None)
+            # Wall-clock the dispatch took — the concrete number needed to
+            # confirm/deny export-burst contention on the shared trunk after
+            # a segment rotation (see the PTP network-topology notes).
+            took = ""
+            if meta and len(meta) >= 3:
+                took = f" in {time.time() - meta[2]:.0f}s"
             self.logger.info(
-                f"Export complete for {module_id}. "
+                f"Export complete for {module_id}{took}. "
                 f"Queue depth: {len(self._queue)}, active: {len(self._active)}"
             )
             self._dispatch_next()
@@ -162,17 +168,18 @@ class ExportQueue:
             meta = self._active_meta.pop(module_id, None)
             is_final = True
             if meta:
-                export_path, attempt, *_ = meta
+                export_path, attempt, *rest = meta
+                took = f" after {time.time() - rest[0]:.0f}s" if rest else ""
                 if attempt < self.MAX_RETRIES:
                     self.logger.warning(
-                        f"Export failed for {module_id} (attempt {attempt}/{self.MAX_RETRIES}) "
+                        f"Export failed for {module_id}{took} (attempt {attempt}/{self.MAX_RETRIES}) "
                         f"— re-queuing. Queue depth: {len(self._queue)}"
                     )
                     self._queue.append((module_id, export_path, attempt + 1))
                     is_final = False
                 else:
                     self.logger.error(
-                        f"Export failed for {module_id} after {self.MAX_RETRIES} attempts "
+                        f"Export failed for {module_id}{took} after {self.MAX_RETRIES} attempts "
                         f"— giving up on {export_path}"
                     )
             else:

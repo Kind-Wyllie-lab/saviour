@@ -239,7 +239,7 @@ class PTP:
                 self._check_ptp_offsets()
 
             except Exception as e:
-                self.logger.error(f"Error in PTP monitoring thread: {e}")
+                self.logger.exception(f"Error in PTP monitoring thread: {e}")
 
             time.sleep(self.config.get("ptp.ptp_monitor_interval"))  # Check every second
 

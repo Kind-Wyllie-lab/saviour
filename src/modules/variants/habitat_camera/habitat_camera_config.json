@@ -52,5 +52,16 @@
         "process_width": 256,
         "_mog2_history": 500,
         "_mog2_var_threshold": 16
+    },
+    "occupancy": {
+        "enabled": false,
+        "model_path": "",
+        "interval_s": 2.0,
+        "threshold": 0.5,
+        "confirm_samples": 2,
+        "clear_secs": 30.0,
+        "input_size": 128,
+        "grayscale": true,
+        "_note": "OR-fused with habitat_motion: records while a subject is in frame even when still. Disabled until model_path points at an ONNX binary classifier (needs onnxruntime); otherwise motion-only."
     }
 }

@@ -24,7 +24,7 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.health import ModuleHealthSnapshot
+from src.shared.health import ModuleHealthSnapshot, decode_throttled
 
 
 class _CsvEcho:
@@ -522,11 +522,20 @@ class Health:
         disk_str = f"{disk}%"  if disk is not None else "N/A"
         ptp_str  = f"{ptp}µs"  if ptp  is not None else "N/A"
 
+        # Surface throttle/brown-out state on the way down: a Pi that vanishes
+        # right after under_voltage/soft_temp_limit went active almost
+        # certainly lost power / overheated rather than crashed in software.
+        tflags = decode_throttled(health.get('throttled'))
+        thr = tflags["now"] or tflags["since_boot"]
+        thr_str = (f"  THROTTLE {'now:' if tflags['now'] else 'since boot:'} "
+                   f"{', '.join(thr)}\n") if thr else ""
+
         self.logger.warning(
             f"Module {module_id} has not sent a heartbeat for {time_diff:.0f}s "
             f"(suspicion threshold: {self.suspicion_timeout}s, hard timeout: {self.heartbeat_timeout}s)\n"
             f"  Last heartbeat: {last_hb_str}\n"
             f"  Last known metrics: CPU {cpu_str}  {temp_str}  MEM {mem_str}  DISK {disk_str}  PTP {ptp_str}\n"
+            f"{thr_str}"
             f"  Initiating probe sequence..."
         )
         self._probe_module(module_id)

@@ -24,10 +24,31 @@ function fmt(val, unit, decimals = 0) {
   return `${Number(val).toFixed(decimals)}${unit}`;
 }
 
-function tempCell(t) {
-  if (t == null) return <span className="cell--muted">-</span>;
-  const cls = t >= 75 ? "val--danger" : t >= 60 ? "val--warn" : "val--ok";
-  return <span className={cls}>{t.toFixed(1)}°C</span>;
+// Pi `vcgencmd get_throttled` bitmask -> short flag lists (mirror of
+// src/shared/health.py decode_throttled; kept inline to avoid a shared JS dep).
+function decodeThrottled(v) {
+  if (!v) return { now: [], sinceBoot: [] };
+  const bits = { 0: "under-voltage", 1: "freq-capped", 2: "throttled", 3: "soft-temp-limit" };
+  const now = [], sinceBoot = [];
+  for (const b of [0, 1, 2, 3]) {
+    if (v & (1 << b)) now.push(bits[b]);
+    if (v & (1 << (b + 16))) sinceBoot.push(bits[b]);
+  }
+  return { now, sinceBoot };
+}
+
+function tempCell(t, throttled) {
+  const { now, sinceBoot } = decodeThrottled(throttled);
+  const marker = now.length ? (
+    <span className="val--danger" title={`Throttling now: ${now.join(", ")}`}> ⚡</span>
+  ) : sinceBoot.length ? (
+    <span className="val--warn" title={`Occurred since boot: ${sinceBoot.join(", ")}`}> ⚡</span>
+  ) : null;
+  if (t == null) {
+    return marker ? <span>-{marker}</span> : <span className="cell--muted">-</span>;
+  }
+  const cls = now.length || t >= 75 ? "val--danger" : t >= 60 ? "val--warn" : "val--ok";
+  return <span className={cls}>{t.toFixed(1)}°C{marker}</span>;
 }
 
 function pctCell(pct, warnAt = 70, dangerAt = 85) {
@@ -400,7 +421,7 @@ export default function System() {
               <td className="cell--muted">{controllerHealth?.ip ?? "-"}</td>
               <td className="cell--muted">{controllerHealth?.version ?? "-"}</td>
               <td>{cpuCell(controllerHealth?.cpu_usage)}</td>
-              <td>{tempCell(controllerHealth?.cpu_temp)}</td>
+              <td>{tempCell(controllerHealth?.cpu_temp, controllerHealth?.throttled)}</td>
               <td>{memoryCell(controllerHealth?.memory_usage, controllerHealth?.memory_total_gb)}</td>
               <td>{diskCell(controllerHealth?.disk_used_pct, controllerHealth?.disk_used_gb, controllerHealth?.disk_total_gb)}</td>
               <td className="system-time-cell">
@@ -462,7 +483,7 @@ export default function System() {
                     <td className="cell--muted">{modules[row.id]?.ip ?? "-"}</td>
                     <td className="cell--muted">{modules[row.id]?.version ?? "-"}</td>
                     <td>{isOnline ? cpuCell(row.cpu_usage)    : <span className="cell--muted">-</span>}</td>
-                    <td>{isOnline ? tempCell(row.cpu_temp)    : <span className="cell--muted">-</span>}</td>
+                    <td>{isOnline ? tempCell(row.cpu_temp, row.throttled) : <span className="cell--muted">-</span>}</td>
                     <td>{isOnline ? memoryCell(row.memory_usage, row.memory_total_gb) : <span className="cell--muted">-</span>}</td>
                     <td>{isOnline ? diskCell(row.disk_space, row.disk_used_gb, row.disk_total_gb) : <span className="cell--muted">-</span>}</td>
                     <td>{isOnline ? ptpPairCell(row.ptp4l_offset_ns, row.phc2sys_offset_ns) : <span className="cell--muted">-</span>}</td>

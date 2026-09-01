@@ -9,6 +9,30 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
 
+# Raspberry Pi `vcgencmd get_throttled` bitmask. Low nibble = happening right
+# now; bits 16-19 = has happened at some point since boot (sticky).
+_THROTTLE_BITS = {
+    0: "under_voltage",
+    1: "arm_freq_capped",
+    2: "throttled",
+    3: "soft_temp_limit",
+}
+
+
+def decode_throttled(value: int | None) -> dict:
+    """Split a `get_throttled` bitmask into current vs since-boot flag lists.
+
+    Returns {"now": [...], "since_boot": [...]}. `now` is what matters for an
+    alert; `since_boot` is the forensic "did this device ever brown out / get
+    hot" record that survives after the condition clears. An empty/zero value
+    (or None) yields two empty lists.
+    """
+    if not value:
+        return {"now": [], "since_boot": []}
+    now = [name for bit, name in _THROTTLE_BITS.items() if value & (1 << bit)]
+    since = [name for bit, name in _THROTTLE_BITS.items() if value & (1 << (bit + 16))]
+    return {"now": now, "since_boot": since}
+
 
 @dataclass
 class ModuleHealthSnapshot:
@@ -23,6 +47,11 @@ class ModuleHealthSnapshot:
     disk_space:      float | None = None
     disk_used_gb:    float | None = None
     disk_total_gb:   float | None = None
+    # Raw `vcgencmd get_throttled` bitmask (int), or None if unreadable.
+    # Decode with decode_throttled(). Lets the controller/UI flag a module
+    # that is browning out or thermally throttling -- the usual root cause of
+    # "it went weird then recovered" on a PoE-powered Pi 5.
+    throttled:       int | None = None
     ptp4l_offset_ns: float | None = None
     ptp4l_freq:      float | None = None
     phc2sys_offset_ns:  float | None = None

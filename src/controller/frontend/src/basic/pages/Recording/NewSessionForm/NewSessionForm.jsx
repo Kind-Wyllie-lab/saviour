@@ -392,21 +392,21 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         )}
         {dataRate?.total_mb_per_min > 0 && (
           <p className={`form-hint${
-            recordingMode === "timed" && dataRate.supported_minutes != null
+            recordingMode === "timed" && dataRate.share_runway_hours != null
               && totalDurationMins > 0
-              && dataRate.supported_minutes < totalDurationMins ? " form-warning" : ""
+              && dataRate.share_runway_hours * 60 < totalDurationMins ? " form-warning" : ""
           }`}>
             ~{dataRate.total_mb_per_min} MB/min ({dataRate.total_gb_per_hour} GB/hour).
-            {dataRate.supported_minutes != null ? (
-              <>
-                {" "}Storage supports this session for ~{humanizeMinutes(dataRate.supported_minutes)}
-                {dataRate.min_local_buffer_min === dataRate.supported_minutes
-                  && dataRate.min_local_buffer_module
-                  && ` (limited by ${dataRate.min_local_buffer_module}'s local disk if export stalls)`}
-                {recordingMode === "timed" && totalDurationMins > 0
-                  && ` — this run is set to ${humanizeMinutes(totalDurationMins)}`}.
-              </>
-            ) : " Storage headroom unknown — share free space not reported."}
+            {dataRate.share_runway_hours != null
+              ? ` Share holds this session ~${humanizeMinutes(dataRate.share_runway_hours * 60)} at this rate`
+              : " Share free space not reported"}
+            {recordingMode === "timed" && totalDurationMins > 0
+              && ` (run is set to ${humanizeMinutes(totalDurationMins)})`}.
+            {dataRate.min_local_buffer_min != null && (
+              <> Modules buffer ~{humanizeMinutes(dataRate.min_local_buffer_min)} locally
+                if export stalls{dataRate.min_local_buffer_module
+                  ? ` (shortest: ${dataRate.min_local_buffer_module})` : ""}.</>
+            )}
           </p>
         )}
 

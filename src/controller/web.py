@@ -2890,9 +2890,11 @@ class Web(ABC):
             round(share_free_gb * 1024 / total_mb_per_min / 60, 1)
             if share_free_gb and total_mb_per_min > 0 else None
         )
-        # "Storage supports this session for ~X": the share running out is the
-        # expected limit; a target module's local disk filling (export stalled)
-        # is the worst case. Report the smaller.
+        # share_runway_hours (how long the archive lasts) and
+        # min_local_buffer_min (export-outage tolerance) are two different
+        # questions and the UI shows them separately. supported_minutes is the
+        # conservative "soonest anything could stop this session" combining
+        # both -- kept for a future headroom check, not the headline figure.
         supported_minutes = None
         if share_runway_hours is not None:
             supported_minutes = share_runway_hours * 60

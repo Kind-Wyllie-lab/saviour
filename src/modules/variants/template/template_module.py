@@ -2,13 +2,17 @@
 """
 SAVIOUR System - Template Module
 
+Boilerplate for a new module type. Copy this folder to
+src/modules/variants/<your_type>/, rename the files, and also copy
+variant.conf.example -> variant.conf so saviour-config's module-type menu
+picks it up.
+
 Author: Andrew SG
 Created: 05/02/2026
 """
 # Base Imports
 import os
 import random
-import subprocess
 import sys
 import time
 
@@ -22,6 +26,9 @@ class TemplateModule(Module):
         super().__init__(module_type)
 
         self.config.load_module_config("template_config.json")
+
+        # Human-readable description, surfaced in health/status payloads.
+        self.description = "Template module (boilerplate — not a real device type)"
 
         # @command()/@check()-decorated methods below are discovered automatically
         # by Module.__init__ — no manual dict/list registration needed.
@@ -46,8 +53,11 @@ class TemplateModule(Module):
 
 
     @command()
-    def do_that(self):
-        subprocess.run(["touch", "that.txt"])
+    def do_that(self, message: str = "hello"):
+        # Commands may take parameters — the controller sends them as JSON
+        # and they arrive as kwargs. Always return a JSON-serialisable dict.
+        self.logger.info(f"do_that called with message={message!r}")
+        return {"result": "success", "echo": message}
 
 
     """Config"""
@@ -88,7 +98,7 @@ def main():
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\nShuttind down...")
+        print("\nShutting down...")
         template.stop()
 
 if __name__ == "__main__":

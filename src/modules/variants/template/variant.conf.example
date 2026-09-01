@@ -1,0 +1,23 @@
+# Copy this file to `variant.conf` (same folder, drop the `.example`) when
+# you turn this template into a real module type.
+#
+# saviour-config builds its module-type menu by globbing
+# src/modules/variants/*/variant.conf, so a folder without one is invisible
+# to the deploy TUI — which is exactly why the template ships this as
+# `.example` rather than the real thing (you don't deploy the template to a
+# rig). See list_variants() / configure_module_dependencies() in
+# saviour-config for how these keys are consumed.
+#
+# Format: plain KEY=value, one per line. The file is never sourced, so no
+# shell escaping is needed; wrap values containing spaces in double quotes.
+
+NAME="My Module"
+DESCRIPTION="One-line description shown in the saviour-config module-type menu"
+
+# Optional: space-separated apt packages installed by
+# configure_module_dependencies() when this module type is selected.
+# APT_PACKAGES="some-package another-package"
+
+# Optional: a script (path relative to this variant folder) run once after
+# APT_PACKAGES are installed — e.g. to fetch model files or firmware.
+# POST_INSTALL="fetch_assets.sh"

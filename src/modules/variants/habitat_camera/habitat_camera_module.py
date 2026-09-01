@@ -44,6 +44,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
 from modules.module import command
 from modules.variants.habitat_camera.motion_detector import HabitatMotionDetector
+from modules.variants.habitat_camera.occupancy_detector import OccupancyDetector
+
+# Downscale width the occupancy side-thread works from -- small enough that
+# the per-interval copy off the capture thread is a couple of ms, large
+# enough for a classifier to still see the subject. The classifier resizes
+# further to occupancy.input_size.
+_OCC_CACHE_WIDTH = 320
 
 _STATE_COLOR_BGR = {
     "idle":    (128, 128, 128),
@@ -64,14 +71,18 @@ _STATE_COLOR_BGR = {
 
 class HabitatCameraModule(CameraBase):
     CONFIG_FILENAME = "habitat_camera_config.json"
-    CSV_EXTRA_COLUMNS = ["motion_score", "motion_state"]
+    CSV_EXTRA_COLUMNS = [
+        "motion_score", "motion_state", "occupancy_score", "occupancy_present",
+    ]
 
     def __init__(self, module_type="habitat_camera"):
         super().__init__(module_type)
         self._motion_detector: HabitatMotionDetector | None = None
         self._motion_state = "idle"                # idle | waiting | active
         self._motion_since_ns: int | None = None   # start of current above/below streak
-        self._motion_last_above: bool | None = None
+        self._motion_last_above: bool | None = None   # fused (motion OR occupancy)
+        self._motion_last_motion_above: bool | None = None  # motion component only, for the overlay
+        self._motion_last_occupied = False                  # occupancy component only, for the overlay
         self._motion_last_score = 0.0
         self._motion_last_exposure_time_us = None  # previous frame's AE metadata, for
         self._motion_last_analogue_gain = None      # detecting an active AE adjustment
@@ -90,6 +101,24 @@ class HabitatCameraModule(CameraBase):
         # config push from the controller. Same pattern as loom_camera_module's
         # explicit _configure_loom_tracking() call in its own __init__.
         self._configure_habitat_motion()
+
+        # --- Occupancy trigger (slow CPU "is a subject in frame?" check) ---
+        # OR-fused with the motion trigger: a rat that stops moving stops
+        # scoring motion within ~1s, but stays "occupied" here, so the clip
+        # keeps recording. Disabled unless occupancy.enabled + a usable model
+        # -- otherwise habitat_camera is motion-only exactly as before.
+        self._occupancy_detector: OccupancyDetector | None = None
+        self._occupancy_interval_s = 2.0
+        self._occ_frame_lock = threading.Lock()
+        self._latest_occ_frame = None       # downscaled BGR copy, refreshed on the capture thread
+        self._occ_last_cache_ns = 0
+        self._occupancy_stop = threading.Event()
+        self._occupancy_thread: threading.Thread | None = None
+        self._configure_occupancy()
+        self._occupancy_thread = threading.Thread(
+            target=self._occupancy_loop, daemon=True, name="habitat-occupancy")
+        self._occupancy_thread.start()
+
         self._recover_orphaned_clips()
 
     def _configure_module_extra(self, updated_keys) -> None:
@@ -105,6 +134,8 @@ class HabitatCameraModule(CameraBase):
         # above-threshold score.
         if updated_keys is None or any(k.startswith("habitat_motion.") for k in updated_keys):
             self._configure_habitat_motion()
+        if updated_keys is None or any(k.startswith("occupancy.") for k in updated_keys):
+            self._configure_occupancy()
 
     def _configure_habitat_motion(self) -> None:
         # Config.get()'s dotted form falls back to the `_`-prefixed internal
@@ -137,6 +168,62 @@ class HabitatCameraModule(CameraBase):
         self._motion_last_analogue_gain = None
         self._motion_ae_unstable_until_ns = None
         self._motion_ae_stable = True
+
+    def _configure_occupancy(self) -> None:
+        occ_cfg = dict(self.config.get("occupancy", {}) or {})
+        self._occupancy_interval_s = max(
+            0.2, float(occ_cfg.get("interval_s", 2.0)))
+        # Resolve a relative model_path against this variant folder (matches
+        # hailo_camera's MODEL_DIR/<hef> convention).
+        mp = occ_cfg.get("model_path", "")
+        if mp and not os.path.isabs(mp):
+            occ_cfg["model_path"] = os.path.join(os.path.dirname(__file__), mp)
+        new = OccupancyDetector.from_config(occ_cfg)
+        # Carry the current `present` state across a live reconfigure so a
+        # threshold/interval tweak doesn't drop a subject mid-clip.
+        if new is not None and self._occupancy_detector is not None:
+            new.present = self._occupancy_detector.present
+        self._occupancy_detector = new
+        self.logger.info(
+            "Occupancy trigger %s",
+            "enabled" if self._occupancy_detector else "disabled (motion-only)")
+
+    def _occupancy_loop(self) -> None:
+        """Score the latest cached frame every occupancy.interval_s. Runs for
+        the module's lifetime; does nothing until frames are flowing and a
+        detector is configured."""
+        while not self._occupancy_stop.wait(self._occupancy_interval_s):
+            detector = self._occupancy_detector
+            if detector is None:
+                continue
+            with self._occ_frame_lock:
+                frame = self._latest_occ_frame
+            if frame is None:
+                continue
+            try:
+                detector.observe(frame, time.time_ns())
+            except Exception as e:
+                self.logger.warning(f"Occupancy loop error: {e}")
+
+    def _maybe_cache_occ_frame(self, arr, timing) -> None:
+        """Stash a small downscaled BGR copy of the current frame for the
+        occupancy thread, at most once per interval so the capture thread
+        isn't doing a resize every frame."""
+        if self._occupancy_detector is None:
+            return
+        if (timing.timestamp_ns - self._occ_last_cache_ns
+                < self._occupancy_interval_s * 1e9):
+            return
+        self._occ_last_cache_ns = timing.timestamp_ns
+        try:
+            h, w = arr.shape[:2]
+            nh = max(1, round(_OCC_CACHE_WIDTH * h / w))
+            small = cv2.resize(arr, (_OCC_CACHE_WIDTH, nh),
+                               interpolation=cv2.INTER_AREA)
+            with self._occ_frame_lock:
+                self._latest_occ_frame = small
+        except Exception as e:
+            self.logger.debug(f"Occupancy frame cache failed: {e}")
 
     def _update_ae_stability(self, timing) -> bool:
         """Return whether auto-exposure/gain has been steady for at least
@@ -192,7 +279,24 @@ class HabitatCameraModule(CameraBase):
         # computed/logged above/below so the diagnostic CSV keeps showing
         # exactly what the algorithm saw, not a suppressed value.
         ae_stable = self._update_ae_stability(timing)
-        above = score >= self._motion_activity_threshold and ae_stable
+        motion_above = score >= self._motion_activity_threshold and ae_stable
+
+        # Hand a downscaled frame to the occupancy side-thread (throttled).
+        self._maybe_cache_occ_frame(m.array, timing)
+        occupied = bool(self._occupancy_detector and self._occupancy_detector.present)
+        # Stashed for the livestream overlay (which runs on the lores stream
+        # and doesn't recompute these) so it can attribute the trigger.
+        self._motion_last_motion_above = motion_above
+        self._motion_last_occupied = occupied
+        # OR fusion: the two triggers are independent and a missed detection
+        # on either loses footage, so record while EITHER says so. Note the
+        # occupancy side is already debounced (confirm_samples / clear_secs)
+        # in OccupancyDetector, so the motion trigger's own sustained-duration
+        # / inactivity-hangover timing below applies to the fused signal
+        # without double-counting -- once a subject stops moving, `occupied`
+        # holds the streak True past inactivity_min_duration_s until the
+        # classifier stops seeing it.
+        above = motion_above or occupied
 
         # Runs identically regardless of arm status -- the livestream preview
         # must be fully representative of the real recording trigger, not a
@@ -212,7 +316,12 @@ class HabitatCameraModule(CameraBase):
         )
 
         if self._motion_state != "active":
-            triggered = above and elapsed_s >= self._motion_activity_min_duration_s
+            # An occupancy trigger is a deliberate, already-debounced
+            # classification -- it doesn't also need to clear the motion
+            # trigger's noise-debounce (activity_min_duration_s), so it fires
+            # as soon as the fused signal is up.
+            triggered = above and (
+                occupied or elapsed_s >= self._motion_activity_min_duration_s)
             if triggered:
                 self._motion_state = "active"
                 if self.facade.get_recording_status():
@@ -230,15 +339,20 @@ class HabitatCameraModule(CameraBase):
         # it impossible to tell after the fact whether a session that never
         # triggered saw no real motion, or saw motion that just never crossed
         # threshold/lasted long enough. See _open_diagnostic_csv().
+        occ_score = (self._occupancy_detector.last_score
+                     if self._occupancy_detector else 0.0)
         if self._diag_csv_writer is not None:
             self._diag_csv_writer.writerow(
                 [timing.timestamp_utc, f"{score:.4f}", self._motion_state,
-                 self._clip_open, self._motion_ae_stable]
+                 self._clip_open, self._motion_ae_stable,
+                 f"{occ_score:.4f}", occupied]
             )
 
         return {
             "motion_score": f"{score:.4f}",
             "motion_state": self._motion_state,
+            "occupancy_score": f"{occ_score:.4f}",
+            "occupancy_present": "1" if occupied else "0",
         }
 
     def _process_lores_frame(self, m: MappedArray, timing) -> None:
@@ -259,16 +373,23 @@ class HabitatCameraModule(CameraBase):
                 label = "IDLE"
         elif self._motion_state == "waiting":
             label = "ABOVE THRESHOLD"
-        else:
-            # Triggered by the same math a real recording would use -- label
-            # distinguishes an actual clip from a not-armed test trigger, but
-            # the countdown below applies either way, same as the state
-            # machine itself (see _process_main_frame's docstring).
-            label = "RECORDING (motion)" if self._clip_open else "TRIGGERED (not armed)"
+        else:  # active
+            # Attribute the trigger: which of the two OR'd signals is
+            # currently holding the state active (see _process_main_frame's
+            # OR fusion). Only meaningful when the occupancy detector is on;
+            # with it off it's always motion.
+            if self._occupancy_detector is not None:
+                m_on, o_on = self._motion_last_motion_above, self._motion_last_occupied
+                reason = ("motion+rat" if (m_on and o_on)
+                          else "rat" if o_on else "motion")
+            else:
+                reason = "motion"
+            label = (f"RECORDING ({reason})" if self._clip_open
+                     else f"TRIGGERED ({reason}, not armed)")
             # self._motion_last_above is False exactly while the
             # inactivity-duration countdown toward closing is running --
-            # True (or None, before any frame's been scored) means motion is
-            # still ongoing right now, so there's nothing counting down.
+            # True (or None, before any frame's been scored) means the fused
+            # trigger is still up right now, so there's nothing counting down.
             if self._motion_last_above is False and self._motion_since_ns is not None:
                 elapsed_s = (timing.timestamp_ns - self._motion_since_ns) / 1e9
                 remaining_s = max(0.0, self._motion_inactivity_min_duration_s - elapsed_s)
@@ -281,6 +402,14 @@ class HabitatCameraModule(CameraBase):
         # into the timestamp if left at the top. Smaller and thinner than
         # before too, matching the FPS overlay's existing precedent for a
         # secondary diagnostic overlay.
+        # Standalone occupancy verdict, shown in every state -- so an operator
+        # tuning `threshold` can watch the confidence directly, and can see at
+        # a glance whether the classifier thinks the enclosure is empty.
+        if self._occupancy_detector is not None:
+            occ = self._occupancy_detector
+            label = (f"{label}   RAT {occ.last_score:.2f}" if occ.present
+                     else f"{label}   empty {occ.last_score:.2f}")
+
         height = m.array.shape[0]
         circle_y = height - 20
         text_y = height - 12
@@ -305,7 +434,9 @@ class HabitatCameraModule(CameraBase):
         self._motion_state = "idle"
         self._motion_since_ns = None
         self._motion_last_above = None
-        self.logger.info("Motion trigger manually reset to idle")
+        if self._occupancy_detector is not None:
+            self._occupancy_detector.reset()
+        self.logger.info("Motion/occupancy trigger manually reset to idle")
         return {"result": "success"}
 
     """Motion-gated recording.
@@ -394,7 +525,8 @@ class HabitatCameraModule(CameraBase):
         self._diag_csv_file = open(path, "w", newline="", buffering=1 << 16)
         self._diag_csv_writer = csv.writer(self._diag_csv_file)
         self._diag_csv_writer.writerow(
-            ["timestamp_utc", "motion_score", "motion_state", "clip_open", "ae_stable"]
+            ["timestamp_utc", "motion_score", "motion_state", "clip_open",
+             "ae_stable", "occupancy_score", "occupancy_present"]
         )
         self._diag_csv_path = path
         self.facade.add_session_file(path)
@@ -523,6 +655,14 @@ class HabitatCameraModule(CameraBase):
             csv_path = h264_path[:-len(".h264")] + "_timestamps.csv"
             if os.path.exists(csv_path):
                 self.facade.stage_file_for_export(csv_path)
+
+    def stop(self) -> bool:
+        """Stop the occupancy side-thread before CameraBase tears the camera
+        down."""
+        self._occupancy_stop.set()
+        if self._occupancy_thread is not None:
+            self._occupancy_thread.join(timeout=self._occupancy_interval_s + 1)
+        return super().stop()
 
 
 def main():

@@ -10,6 +10,7 @@ import System from "../basic/pages/System/System";
 import Storage from "../basic/pages/Storage/Storage";
 import Debug from "../basic/pages/Debug/Debug";
 import Guide from "../basic/pages/Guide/Guide";
+import FirstRunModal from "../basic/components/FirstRunModal/FirstRunModal";
 import ConnectionOverlay from "../basic/components/ConnectionOverlay/ConnectionOverlay";
 import RecordingStatusWidget from "../basic/components/RecordingStatusWidget/RecordingStatusWidget";
 
@@ -40,6 +41,7 @@ function App() {
           <Route path="/guide" element={<Guide />} />
         </Routes>
       </div>
+      <FirstRunModal />
       <ConnectionOverlay />
     </div>
   );

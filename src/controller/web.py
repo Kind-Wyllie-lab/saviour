@@ -112,6 +112,48 @@ def _filter_private_keys(d: dict) -> dict:
     return result
 
 
+# Written by saviour-config's run_configuration() when a device becomes a
+# controller or its controller type changes; removed by the web UI once the
+# operator has completed first-run setup (name / location / variant confirm).
+_FIRST_RUN_SENTINEL = "/var/lib/saviour/first_run"
+_PROVISION_CONFIG = "/etc/saviour/config"
+
+
+def _read_first_run_sentinel() -> dict | None:
+    """Return the parsed first-run sentinel ({'reason', 'type', 'created'}),
+    or None if it doesn't exist (the normal steady state)."""
+    try:
+        with open(_FIRST_RUN_SENTINEL) as f:
+            out = {}
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    out[k.strip()] = v.strip()
+            return out
+    except FileNotFoundError:
+        return None
+    except OSError:
+        # Unreadable for some other reason -- treat as "no first run needed"
+        # rather than wedging the UI on a permissions quirk.
+        return None
+
+
+def _provisioned_device_type() -> str | None:
+    """The controller TYPE saviour-config last provisioned (from
+    /etc/saviour/config), for the modal to compare against the frontend's
+    own built VITE_VARIANT. None if the file isn't present (e.g. dev)."""
+    try:
+        with open(_PROVISION_CONFIG) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("TYPE="):
+                    return line[len("TYPE="):].strip().strip('"').strip("'") or None
+    except OSError:
+        return None
+    return None
+
+
 class Web(ABC):
     # Outside the JSON config files on purpose -- those are readable/mergeable
     # via the config-sync socket events, and a credential has no business
@@ -577,6 +619,26 @@ class Web(ABC):
         self.socketio.emit('modules_update', modules)
 
 
+    def _first_run_state(self) -> dict:
+        """Whether the web UI should open its first-run setup modal, plus the
+        context it needs (current name/location to pre-fill, and the
+        provisioned controller type to check the built frontend against)."""
+        sentinel = _read_first_run_sentinel()
+        if sentinel is None:
+            # The steady state -- return early without a config fetch (this
+            # runs on every websocket connect).
+            return {"needed": False}
+        cfg = self.facade.get_config() if self.facade else {}
+        controller_cfg = cfg.get("controller", {}) if isinstance(cfg, dict) else {}
+        return {
+            "needed": True,
+            "reason": sentinel.get("reason"),
+            "provisioned_type": sentinel.get("type") or _provisioned_device_type(),
+            "name": controller_cfg.get("name", ""),
+            "location": controller_cfg.get("location", ""),
+        }
+
+
     def _register_routes(self):
         # Serve React app. Must use the <path:path> converter (matches
         # slashes), not <path> (single segment only) -- otherwise a direct
@@ -648,6 +710,12 @@ class Web(ABC):
             if self.current_experiment_name:
                 self.socketio.emit('experiment_name_update', {"experiment_name": self.current_experiment_name})
                 self.logger.info(f"Sent current experiment name to new client: {self.current_experiment_name}")
+
+            # First-run setup: a freshly (re)configured controller has a
+            # sentinel from saviour-config; tell this client so it can open
+            # the setup modal without having to poll for it.
+            self.socketio.emit("first_run_state", self._first_run_state(),
+                               room=request.sid)
 
 
         @self.socketio.on('disconnect')
@@ -1462,6 +1530,40 @@ class Web(ABC):
             self.socketio.emit("controller_config_response", {
                 "config": config
             })
+
+
+        """First-run setup"""
+        @self.socketio.on('get_first_run_state')
+        def handle_get_first_run_state(data=None):
+            self.socketio.emit("first_run_state", self._first_run_state(),
+                               room=request.sid)
+
+        @self.socketio.on('complete_first_run')
+        def handle_complete_first_run(data):
+            if not self._require_auth("first_run_error",
+                                      {"error": "Login required to complete setup"}):
+                return
+            data = data or {}
+            name = str(data.get("name", "")).strip()
+            location = str(data.get("location", "")).strip()
+            if not name:
+                self.socketio.emit("first_run_error",
+                                   {"error": "A controller name is required"},
+                                   room=request.sid)
+                return
+            self.facade.set_config({"controller": {"name": name, "location": location}})
+            try:
+                os.remove(_FIRST_RUN_SENTINEL)
+                self.logger.info("First-run setup completed; sentinel removed")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self.logger.warning(f"Could not remove first-run sentinel: {e}")
+            # Broadcast so any other open client dismisses its copy of the modal,
+            # and refresh the controller-config view for anyone on Settings.
+            self.socketio.emit("first_run_state", self._first_run_state())
+            self.socketio.emit("controller_config_response",
+                               {"config": self.facade.get_config()})
 
 
         @self.socketio.on('save_controller_config')

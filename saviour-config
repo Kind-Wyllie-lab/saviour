@@ -1551,6 +1551,25 @@ run_configuration() {
         done
     fi
 
+    # A device that just became a controller, or whose controller type
+    # changed, needs the operator to name it, set its location, and confirm
+    # the frontend was built for the intended experiment. Drop a sentinel the
+    # web UI watches for and opens its first-run setup modal on; the frontend
+    # clears it once setup is completed. Deliberately in /var/lib/saviour
+    # (not /etc, so it is NOT part of an SD-clone image -- a cloned card
+    # re-prompts) and not in active_config.json (that is declarative operator
+    # config; this is a one-shot flag).
+    if [ "$DEVICE_ROLE" = "controller" ] && { $role_changed || $type_changed; }; then
+        mkdir -p /var/lib/saviour
+        {
+            echo "reason=$($role_changed && echo role || echo type-change)"
+            echo "type=${DEVICE_TYPE}"
+            echo "created=$(date -Iseconds 2>/dev/null || date)"
+        } > /var/lib/saviour/first_run
+        chmod 644 /var/lib/saviour/first_run
+        log "Wrote first-run setup sentinel (role_changed=$role_changed type_changed=$type_changed)"
+    fi
+
     set_device_hostname
 
     # Also rebuild if dist/ is simply missing -- e.g. after a fresh git clone

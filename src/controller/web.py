@@ -117,6 +117,43 @@ def _filter_private_keys(d: dict) -> dict:
     return result
 
 
+def _list_dir_backups(backup_dir: str) -> list[dict]:
+    """Newest-first list of snapshot subdirs under *backup_dir*, each as
+    {name, version, created_at, reason} read from its .backup_meta.json
+    (any missing/unreadable -> None). Dir names are `<UTC-ts>_<version>`
+    so a reverse lexical sort is chronological."""
+    try:
+        names = [d for d in os.listdir(backup_dir)
+                 if os.path.isdir(os.path.join(backup_dir, d))]
+    except FileNotFoundError:
+        return []
+    out = []
+    for name in names:
+        meta = {}
+        try:
+            with open(os.path.join(backup_dir, name, ".backup_meta.json")) as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            pass
+        out.append({"name": name, "version": meta.get("version"),
+                    "created_at": meta.get("created_at"),
+                    "reason": meta.get("reason")})
+    out.sort(key=lambda b: b["name"], reverse=True)
+    return out
+
+
+def _prune_dir_backups(backup_dir: str, keep: int) -> list[str]:
+    """Delete all but the *keep* newest snapshots in *backup_dir*.
+    Returns the names removed."""
+    import shutil as _shutil
+    removed = []
+    for stale in _list_dir_backups(backup_dir)[keep:]:
+        _shutil.rmtree(os.path.join(backup_dir, stale["name"]),
+                       ignore_errors=True)
+        removed.append(stale["name"])
+    return removed
+
+
 # Written by saviour-config's run_configuration() when a device becomes a
 # controller or its controller type changes; removed by the web UI once the
 # operator has completed first-run setup (name / location / variant confirm).
@@ -1825,6 +1862,59 @@ class Web(ABC):
         _STAGE_SKIP_DIRS = {'.git', 'env', '__pycache__', 'node_modules',
                             '.pytest_cache', 'dist', '.eggs'}
 
+        # ── Controller self-update snapshots ──────────────────────────────────
+        # Taken automatically right before any code path that overwrites the
+        # controller's own _SRC_ROOT (ZIP "Update controller", Git pull), so a
+        # bad controller update can be rolled back from the UI instead of over
+        # SSH. Modules are not covered here by design — they're recovered by
+        # staging the (known-good) running controller code and re-pushing it.
+        _CTRL_BACKUP_DIR  = "/var/lib/saviour/controller_backups"
+        _CTRL_BACKUP_KEEP = 3
+        # Excluded from a snapshot: the venv (large; `pip install` re-runs on
+        # restart anyway) and git/cache dirs. dist/ is deliberately kept —
+        # restoring the built frontend alongside its source makes a revert
+        # instant and self-consistent, with no npm build in the loop.
+        _CTRL_BACKUP_EXCLUDES = ["env/", ".git/", "node_modules/",
+                                 "__pycache__/", ".pytest_cache/", ".eggs/"]
+
+        def _snapshot_controller(reason: str) -> dict:
+            """rsync _SRC_ROOT into a fresh timestamped dir under
+            _CTRL_BACKUP_DIR before an update overwrites it. Unchanged files
+            are hardlinked against the previous snapshot (--link-dest) so
+            keeping several costs little disk. Best-effort: on failure it
+            logs, cleans up the partial dir and returns {"ok": False,...}
+            rather than aborting the update the operator asked for."""
+            import shutil as _shutil
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            version = _read_running_version() or "unknown"
+            name = f"{ts}_{version}"
+            dest = os.path.join(_CTRL_BACKUP_DIR, name)
+            os.makedirs(_CTRL_BACKUP_DIR, exist_ok=True)
+            existing = _list_dir_backups(_CTRL_BACKUP_DIR)
+            cmd = ["rsync", "-a", "--delete"]
+            cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
+            if existing:
+                cmd.append("--link-dest="
+                           + os.path.join(_CTRL_BACKUP_DIR, existing[0]["name"]) + "/")
+            cmd += [f"{_SRC_ROOT}/", f"{dest}/"]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True,
+                               text=True, timeout=600)
+                meta = {"version": version,
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "reason": reason}
+                with open(os.path.join(dest, ".backup_meta.json"), "w") as f:
+                    json.dump(meta, f, indent=2)
+                pruned = _prune_dir_backups(_CTRL_BACKUP_DIR, _CTRL_BACKUP_KEEP)
+                self.logger.info(
+                    f"Controller snapshot saved: {name} ({reason})"
+                    + (f"; pruned {pruned}" if pruned else ""))
+                return {"ok": True, "name": name, **meta}
+            except Exception as e:
+                self.logger.error(f"Controller snapshot failed ({reason}): {e}")
+                _shutil.rmtree(dest, ignore_errors=True)
+                return {"ok": False, "error": str(e)}
+
         def _stage_current_version_zip() -> dict:
             """Zip up _SRC_ROOT's current working tree and write it as the
             staged update package + metadata. Shared by "Stage Current" (the
@@ -1933,11 +2023,13 @@ class Web(ABC):
                 {"stage": "modules_notified", "count": len(modules)})
             return len(modules)
 
-        def _controller_build_and_restart():
+        def _controller_build_and_restart(rebuild_frontend: bool = True):
             """Best-effort pip + frontend rebuild, then restart the service.
             Shared by the ZIP 'update controller' path (after its rsync) and
             the Git-pull 'apply to controller' path (git reset already put
-            the files in place). Runs on its own thread; ends by restarting
+            the files in place). `rebuild_frontend=False` for the revert
+            path — its snapshot restored a matching dist/, so npm is skipped.
+            Runs on its own thread; ends by restarting
             saviour.service. The npm build also doubles as a delay that lets
             modules finish fetching /update/package before the controller
             drops, when this runs as part of an 'update everything'."""
@@ -1958,7 +2050,10 @@ class Web(ABC):
                     candidates = sorted(_glob.glob(
                         "/home/pi/.nvm/versions/node/*/bin/npm"))
                     npm_bin = candidates[-1] if candidates else None
-                if npm_bin and os.path.isdir(frontend_dir):
+                if not rebuild_frontend:
+                    self.logger.info(
+                        "Skipping frontend rebuild (dist/ restored from snapshot)")
+                elif npm_bin and os.path.isdir(frontend_dir):
                     self.socketio.emit("deploy_update_status",
                                        {"stage": "building_frontend"})
                     self.logger.info("Rebuilding frontend after update...")
@@ -2120,6 +2215,10 @@ class Web(ABC):
 
             def _apply_to_controller():
                 try:
+                    snap = _snapshot_controller("pre-zip-update")
+                    self.socketio.emit("deploy_update_status",
+                                       {"stage": "backup", "ok": snap.get("ok", False),
+                                        "name": snap.get("name")})
                     extract_dir = "/tmp/saviour_update"
                     shutil.rmtree(extract_dir, ignore_errors=True)
                     os.makedirs(extract_dir)
@@ -2146,6 +2245,62 @@ class Web(ABC):
 
             threading.Thread(target=_apply_to_controller, daemon=True,
                              name="saviour-deploy-controller").start()
+
+        @self.socketio.on("get_controller_backups")
+        def handle_get_controller_backups(data=None):
+            """List the pre-update controller snapshots available to revert
+            to. Ungated, matching get_update_info — names/versions/timestamps
+            only, no payload."""
+            from flask_socketio import emit as _emit
+            _emit("controller_backups", {
+                "backups": _list_dir_backups(_CTRL_BACKUP_DIR),
+                "running_version": _read_running_version(),
+            })
+
+        @self.socketio.on("revert_controller_update")
+        def handle_revert_controller_update(data=None):
+            """Restore a controller snapshot (default: the most recent) over
+            _SRC_ROOT, regenerate the systemd unit in case the bad update
+            drifted it, then restart. dist/ is part of the snapshot so no
+            frontend rebuild is needed."""
+            from flask_socketio import emit as _emit
+            if not self._require_auth("auth_required"):
+                return
+            backups = _list_dir_backups(_CTRL_BACKUP_DIR)
+            if not backups:
+                _emit("deploy_update_error",
+                      {"error": "No controller backup available to revert to"})
+                return
+            name = (data or {}).get("name") or backups[0]["name"]
+            target = next((b for b in backups if b["name"] == name), None)
+            if target is None:
+                _emit("deploy_update_error", {"error": f"Backup '{name}' not found"})
+                return
+
+            def _do_revert():
+                try:
+                    src = os.path.join(_CTRL_BACKUP_DIR, name)
+                    self.socketio.emit("deploy_update_status",
+                                       {"stage": "reverting", "name": name,
+                                        "version": target.get("version")})
+                    cmd = ["rsync", "-a", "--delete"]
+                    cmd += [f"--exclude={e}" for e in _CTRL_BACKUP_EXCLUDES]
+                    cmd += [f"{src}/", f"{_SRC_ROOT}/"]
+                    subprocess.run(cmd, check=True, capture_output=True,
+                                   text=True, timeout=600)
+                    # A bad update may have left saviour.service pointing at
+                    # paths the reverted code doesn't use — put it back.
+                    subprocess.run(
+                        ["sudo", "saviour-config", "--regenerate-service"],
+                        capture_output=True, text=True, check=False, timeout=60)
+                except Exception as e:
+                    self.logger.error(f"Controller revert failed: {e}")
+                    self.socketio.emit("deploy_update_error", {"error": str(e)})
+                    return
+                _controller_build_and_restart(rebuild_frontend=False)
+
+            threading.Thread(target=_do_revert, daemon=True,
+                             name="saviour-revert-controller").start()
 
         @self.socketio.on("stage_current_version")
         def handle_stage_current_version(data=None):
@@ -2232,6 +2387,9 @@ class Web(ABC):
                         ["git", "-C", _SRC_ROOT, "fetch", "--prune", "origin", branch],
                         check=True, capture_output=True, text=True, timeout=120,
                     )
+                    # git reset --hard rewrites the controller's live working
+                    # tree even for "stage only", so snapshot before it.
+                    _snapshot_controller("pre-git-update")
                     self.socketio.emit(
                         "git_pull_status", {"stage": "resetting", "branch": branch},
                     )

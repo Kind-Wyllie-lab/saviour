@@ -10,6 +10,7 @@ subprocess mocked too and belongs in a separate test module.
 """
 
 import io
+import json
 import os
 import queue
 import re
@@ -22,6 +23,8 @@ from src.controller.recording import RecordingSession
 from src.controller.web import (
     Web,
     _filter_private_keys,
+    _list_dir_backups,
+    _prune_dir_backups,
     _QueueStream,
     _sanitise_config_dict,
 )
@@ -79,6 +82,72 @@ class TestFilterPrivateKeys:
             "name": "cam1",
         })
         assert result == {"camera": {"fps": 30}, "name": "cam1"}
+
+
+class TestControllerBackupHelpers:
+    """Pure fs helpers behind the controller self-update snapshot/revert
+    feature. The rsync/systemctl parts (_snapshot_controller, the
+    revert_controller_update handler) shell out and stay out of scope per
+    this module's docstring."""
+
+    def _make_backup(self, root, name, meta=None):
+        d = os.path.join(root, name)
+        os.makedirs(d)
+        if meta is not None:
+            with open(os.path.join(d, ".backup_meta.json"), "w") as f:
+                json.dump(meta, f)
+        return d
+
+    def test_missing_dir_returns_empty_list(self):
+        assert _list_dir_backups("/no/such/dir") == []
+
+    def test_lists_newest_first_by_name_and_reads_meta(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make_backup(root, "20260101T000000Z_v1",
+                              {"version": "v1", "created_at": "a",
+                               "reason": "pre-zip-update"})
+            self._make_backup(root, "20260201T000000Z_v2",
+                              {"version": "v2", "created_at": "b",
+                               "reason": "pre-git-update"})
+            got = _list_dir_backups(root)
+            assert [b["name"] for b in got] == [
+                "20260201T000000Z_v2", "20260101T000000Z_v1"]
+            assert got[0]["version"] == "v2"
+            assert got[0]["reason"] == "pre-git-update"
+
+    def test_backup_without_meta_yields_none_fields(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make_backup(root, "20260101T000000Z_v1", meta=None)
+            (entry,) = _list_dir_backups(root)
+            assert entry["name"] == "20260101T000000Z_v1"
+            assert entry["version"] is None
+            assert entry["reason"] is None
+
+    def test_corrupt_meta_json_is_tolerated(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = self._make_backup(root, "20260101T000000Z_v1", meta=None)
+            with open(os.path.join(d, ".backup_meta.json"), "w") as f:
+                f.write("{not json")
+            (entry,) = _list_dir_backups(root)
+            assert entry["version"] is None
+
+    def test_prune_keeps_only_the_n_newest_and_returns_removed(self):
+        with tempfile.TemporaryDirectory() as root:
+            for i in range(1, 6):
+                self._make_backup(root, f"2026010{i}T000000Z_v{i}",
+                                  {"version": f"v{i}"})
+            removed = _prune_dir_backups(root, keep=2)
+            assert sorted(removed) == [
+                "20260101T000000Z_v1", "20260102T000000Z_v2",
+                "20260103T000000Z_v3"]
+            assert [b["name"] for b in _list_dir_backups(root)] == [
+                "20260105T000000Z_v5", "20260104T000000Z_v4"]
+
+    def test_prune_noop_when_within_limit(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make_backup(root, "20260101T000000Z_v1", {"version": "v1"})
+            assert _prune_dir_backups(root, keep=3) == []
+            assert len(_list_dir_backups(root)) == 1
 
 
 class TestGenerateExperimentName:

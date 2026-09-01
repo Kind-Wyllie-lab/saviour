@@ -128,6 +128,13 @@ class Web(ABC):
     # Max points returned to the chart / a single CSV export.
     _NAS_HISTORY_MAX_POINTS = 1440
 
+    # Fleet recording-rate history (MB/min written across all recording
+    # modules), sampled once per _nas_monitor_loop pass. Same retention /
+    # down-sampling as the NAS trend; complements it by showing the rate
+    # directly (and before the share's free-space slope reflects it).
+    _DATA_RATE_HISTORY_RETENTION_S = 30 * 24 * 3600
+    _DATA_RATE_HISTORY_MAX_POINTS = 1440
+
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -179,6 +186,9 @@ class Web(ABC):
         # pruned by age, so retention is stable if the interval is retuned.
         self._nas_health = {"status": "unknown", "error": None, "checked_at": None}
         self._nas_history: deque = deque()
+        # (ts, fleet_mb_per_min, {module_id: mb_per_min}) — the per-module dict
+        # only holds modules recording at that sample, so it stays small.
+        self._data_rate_history: deque = deque()
         self._nas_monitor_stop = threading.Event()
 
         # Running flag
@@ -979,6 +989,30 @@ class Web(ABC):
                 },
             )
 
+        @self.app.route("/api/data_rate_history.csv")
+        def download_data_rate_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            hours_param = request.args.get("hours")
+            if hours_param is None or hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
+            return Response(
+                self._data_rate_history_csv(hours),
+                mimetype="text/csv",
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=data_rate_history_{filename_part}.csv"
+                },
+            )
+
         @self.socketio.on("create_session")
         def handle_create_session(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):
@@ -1645,6 +1679,26 @@ class Web(ABC):
             self.socketio.emit("nas_history", {
                 "samples": samples,
                 "retention_days": self._NAS_HISTORY_RETENTION_S // 86400,
+            })
+
+        @self.socketio.on("get_data_rate_history")
+        def handle_get_data_rate_history(data=None):
+            hours = (data or {}).get("hours")
+            try:
+                hours = float(hours) if hours is not None else None
+            except (TypeError, ValueError):
+                hours = None
+            cutoff = time.time() - hours * 3600 if hours else None
+            samples = [
+                [t, fleet] for (t, fleet, _per) in list(self._data_rate_history)
+                if cutoff is None or t >= cutoff
+            ]
+            if len(samples) > self._DATA_RATE_HISTORY_MAX_POINTS:
+                step = len(samples) // self._DATA_RATE_HISTORY_MAX_POINTS + 1
+                samples = samples[::step]
+            self.socketio.emit("data_rate_history", {
+                "samples": samples,
+                "retention_days": self._DATA_RATE_HISTORY_RETENTION_S // 86400,
             })
 
 
@@ -2621,8 +2675,31 @@ class Web(ABC):
             self._nas_history.append((now, int(free), int(total)))
             self._prune_nas_history()
 
+        overview = self._storage_overview()
+        self._sample_data_rate_history(now, overview)
+
         self.socketio.emit("nas_health_update", new)
-        self.socketio.emit("storage_overview", self._storage_overview())
+        self.socketio.emit("storage_overview", overview)
+
+    def _sample_data_rate_history(self, now: float, overview: dict) -> None:
+        """Append one fleet recording-rate point (and per-recording-module
+        breakdown) from a storage overview, then prune by age."""
+        try:
+            dr = overview.get("data_rate") or {}
+            fleet = round(dr.get("recording_mb_per_min", 0.0) or 0.0, 1)
+            per_module = {
+                d["module_id"]: d.get("measured_mb_per_min") or d.get("est_mb_per_min")
+                for d in overview.get("disks", [])
+                if d.get("recording") and (d.get("measured_mb_per_min")
+                                           or d.get("est_mb_per_min"))
+            }
+            self._data_rate_history.append((now, fleet, per_module))
+            cutoff = now - self._DATA_RATE_HISTORY_RETENTION_S
+            h = self._data_rate_history
+            while h and h[0][0] < cutoff:
+                h.popleft()
+        except Exception as e:
+            self.logger.debug(f"_sample_data_rate_history failed: {e}")
 
     def _prune_nas_history(self):
         cutoff = time.time() - self._NAS_HISTORY_RETENTION_S
@@ -2815,6 +2892,23 @@ class Web(ABC):
             pct = round(free / total * 100, 3) if total else ""
             ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
             yield writer.writerow([ts_utc, t, free, total, pct])
+
+    def _data_rate_history_csv(self, hours: "float | None" = None):
+        """Yield fleet recording-rate history as CSV. Columns: timestamp,
+        fleet MB/min, recording-module count, and a per-module JSON blob
+        (module set varies over a long run, so it can't be flat columns)."""
+        cutoff = time.time() - hours * 3600 if hours is not None else None
+        writer = csv.writer(_CsvSink())
+        yield writer.writerow(
+            ["timestamp_utc", "timestamp_epoch", "fleet_mb_per_min",
+             "recording_modules", "per_module_mb_per_min_json"]
+        )
+        for t, fleet, per in list(self._data_rate_history):
+            if cutoff is not None and t < cutoff:
+                continue
+            ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
+            yield writer.writerow(
+                [ts_utc, t, fleet, len(per or {}), json.dumps(per or {})])
 
     def start(self):
         """Start the web interface in a separate thread"""

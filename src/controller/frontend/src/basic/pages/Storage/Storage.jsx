@@ -92,20 +92,25 @@ export default function Storage() {
   const loggedIn = useIsLoggedIn();
   const [overview, setOverview] = useState(null);
   const [history, setHistory] = useState([]);
+  const [rateHistory, setRateHistory] = useState([]);
   const [rangeIdx, setRangeIdx] = useState(1); // 7d
 
   const range = RANGES[rangeIdx];
 
-  const requestHistory = (hours) =>
+  const requestHistory = (hours) => {
     socket.emit("get_nas_history", { hours: hours ?? undefined });
+    socket.emit("get_data_rate_history", { hours: hours ?? undefined });
+  };
 
   useEffect(() => {
     const onOverview = (d) => setOverview(d);
     const onHistory = (d) => setHistory(d?.samples || []);
+    const onRateHistory = (d) => setRateHistory(d?.samples || []);
     const onNasHealth = () => socket.emit("get_storage_overview");
 
     socket.on("storage_overview", onOverview);
     socket.on("nas_history", onHistory);
+    socket.on("data_rate_history", onRateHistory);
     socket.on("nas_health_update", onNasHealth);
 
     socket.emit("get_storage_overview");
@@ -116,6 +121,7 @@ export default function Storage() {
       clearInterval(poll);
       socket.off("storage_overview", onOverview);
       socket.off("nas_history", onHistory);
+      socket.off("data_rate_history", onRateHistory);
       socket.off("nas_health_update", onNasHealth);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,11 +142,23 @@ export default function Storage() {
   );
   const projection = useMemo(() => projectFull(history), [history]);
 
+  const rateSeries = useMemo(
+    () => rateHistory
+      .filter((s) => s.length >= 2)
+      .map(([t, v]) => ({ t, v })),
+    [rateHistory]
+  );
+
   const usedPct = nas.free_pct != null ? 100 - nas.free_pct : null;
 
   const downloadCsv = () => {
     const q = range.hours ? `?hours=${range.hours}` : "?hours=all";
     triggerDownload(`/api/nas_history.csv${q}`, `nas_history_${range.label}.csv`);
+  };
+
+  const downloadRateCsv = () => {
+    const q = range.hours ? `?hours=${range.hours}` : "?hours=all";
+    triggerDownload(`/api/data_rate_history.csv${q}`, `data_rate_history_${range.label}.csv`);
   };
 
   return (
@@ -229,9 +247,20 @@ export default function Storage() {
             <button className="refresh-btn" onClick={downloadCsv}>Download CSV</button>
           </section>
 
-          {/* ── Recording data rate (config estimate) ───────────────── */}
+          {/* ── Recording data rate ────────────────────────────────── */}
           <section className="storage-card">
-            <div className="storage-card__head"><h2>Recording data rate</h2></div>
+            <div className="storage-card__head">
+              <h2>Recording data rate</h2>
+              <div className="storage-range">
+                {RANGES.map((r, i) => (
+                  <button
+                    key={r.label}
+                    className={`storage-range__btn ${i === rangeIdx ? "is-active" : ""}`}
+                    onClick={() => setRangeIdx(i)}
+                  >{r.label}</button>
+                ))}
+              </div>
+            </div>
             {dataRate.recording_module_count > 0 ? (
               <>
                 <div className="storage-bignum">
@@ -253,9 +282,15 @@ export default function Storage() {
               </>
             ) : (
               <p className="storage-muted">
-                No modules recording. Estimated from each module's config
-                (bitrate / sample rate) — a worst-case ceiling.
+                No modules recording. Rate is measured while recording, else
+                estimated from each module's config (a worst-case ceiling).
               </p>
+            )}
+            {rateSeries.length > 1 && (
+              <>
+                <MiniAreaChart data={rateSeries} unit=" MB/min" yMin={0} />
+                <button className="refresh-btn" onClick={downloadRateCsv}>Download CSV</button>
+              </>
             )}
           </section>
 

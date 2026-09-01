@@ -1745,6 +1745,73 @@ class TestNasHistoryCsv:
         assert len(rows) == 2  # header + the one recent sample
 
 
+class TestDataRateHistory:
+    def test_sample_appends_fleet_and_per_recording_module(self):
+        web = _make_web()
+        overview = {
+            "data_rate": {"recording_mb_per_min": 61.3},
+            "disks": [
+                {"module_id": "cam_a", "recording": True,
+                 "est_mb_per_min": 15.2, "measured_mb_per_min": 14.8},
+                {"module_id": "mic_a", "recording": True,
+                 "est_mb_per_min": 46.1, "measured_mb_per_min": None},
+                {"module_id": "cam_b", "recording": False,
+                 "est_mb_per_min": 15.2, "measured_mb_per_min": None},
+            ],
+        }
+        web._sample_data_rate_history(1000.0, overview)
+        assert len(web._data_rate_history) == 1
+        ts, fleet, per = web._data_rate_history[0]
+        assert ts == 1000.0
+        assert fleet == 61.3
+        # measured preferred; non-recording module excluded
+        assert per == {"cam_a": 14.8, "mic_a": 46.1}
+
+    def test_sample_prunes_by_age(self):
+        web = _make_web()
+        old = 1000.0
+        recent = old + web._DATA_RATE_HISTORY_RETENTION_S + 10
+        web._data_rate_history.append((old, 5.0, {}))
+        web._sample_data_rate_history(recent, {"data_rate": {}, "disks": []})
+        assert [t for (t, _f, _p) in web._data_rate_history] == [recent]
+
+    def test_sample_survives_a_malformed_overview(self):
+        web = _make_web()
+        web._sample_data_rate_history(1.0, {})  # no data_rate / disks keys
+        assert list(web._data_rate_history) == [(1.0, 0.0, {})]
+
+    def test_csv_has_header_and_rows(self):
+        web = _make_web()
+        web._data_rate_history.extend([
+            (100.0, 15.0, {"cam_a": 15.0}),
+            (200.0, 0.0, {}),
+        ])
+        rows = list(web._data_rate_history_csv())
+        assert rows[0].startswith(
+            "timestamp_utc,timestamp_epoch,fleet_mb_per_min,recording_modules")
+        assert len(rows) == 3
+        assert ",15.0,1," in rows[1]
+        assert ',0.0,0,{}' in rows[2]
+
+    def test_csv_hours_filter(self):
+        web = _make_web()
+        now = time.time()
+        web._data_rate_history.extend([(now - 7200, 1.0, {}), (now - 60, 2.0, {})])
+        assert len(list(web._data_rate_history_csv(hours=1))) == 2  # header + 1
+
+    def test_socket_handler_emits_downsampled_fleet_series(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {}
+        facade.get_modules.return_value = {}
+        web._data_rate_history.extend([(float(i), float(i), {}) for i in range(5)])
+        client = _connected_client(web)
+        client.emit("get_data_rate_history")
+        msgs = {m["name"]: m["args"][0] for m in client.get_received()}
+        assert "data_rate_history" in msgs
+        assert msgs["data_rate_history"]["samples"] == [[float(i), float(i)] for i in range(5)]
+
+
 class TestStorageSocketHandlers:
     def test_get_storage_overview_emits(self):
         web, facade = _make_web_with_facade()

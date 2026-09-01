@@ -15,17 +15,22 @@ deliberately out of scope -- they need a real or deeply-faked
 MappedArray/Picamera2 pipeline rather than distinct branching logic.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from src.modules.camera_base import CameraBase, _FrameShim
+from src.shared.ratelimit_log import RateLimitedLogger
 
 
 def _make_camera(**attrs) -> CameraBase:
     cam = CameraBase.__new__(CameraBase)
     cam.logger = MagicMock()
+    # Hot-path failure logs go through this coalescing wrapper (see
+    # RateLimitedLogger); it forwards to cam.logger.log(level, msg).
+    cam._rl_log = RateLimitedLogger(cam.logger)
     for key, value in attrs.items():
         setattr(cam, key, value)
     return cam
@@ -109,7 +114,9 @@ class TestGetFrameTimestamp:
         bad_metadata = MagicMock()
         bad_metadata.get.side_effect = RuntimeError("boom")
         assert cam._get_frame_timestamp(bad_metadata) is None
-        cam.logger.error.assert_called_once()
+        # Routed through the rate-limited wrapper -> logger.log(ERROR, ...)
+        cam.logger.log.assert_called_once()
+        assert cam.logger.log.call_args[0][0] == logging.ERROR
 
 
 class TestApplyGrayscale:

@@ -114,12 +114,14 @@ CURATED_MODELS = {
     "multiangle_rats_yolo11n": {
         # Custom single-class rat detector (YOLO11n, on-chip NMS), general
         # multi-angle: side / front / 3-4 / top / held / caged / wild. Trained
-        # on the frauas/rat_detection dataset. Same in-tree/not-fetched status
-        # as the top-down model above.
-        # PREVIEW: epoch 13 of 150 - low/modest confidences, misses small or
-        # distant rats and dark frames; use threshold ~0.35. Replace the HEF
-        # in place when the final training run completes.
-        "label": "Rat detector (multi-angle, preview)",
+        # on the frauas/rat_detection dataset (v4). Same in-tree/not-fetched
+        # status as the top-down model above.
+        # Full run, epoch 150/150. val mAP@50 0.983 / P 0.952 / R 0.947;
+        # held-out test mAP@50 0.982 / P 0.976 / R 0.898. DFC-quantised HEF
+        # emulator recall 0.986, and 0.986 again on grayscale-converted input
+        # (monochrome cameras are fine). True-positive confidences sit in the
+        # 0.3-0.5 band - use threshold ~0.25.
+        "label": "Rat detector (multi-angle, 1 class)",
         "category": "Object detection",
         "hef": "multiangle_rats_yolo11n_640_nms.hef",
         "task": "detection",

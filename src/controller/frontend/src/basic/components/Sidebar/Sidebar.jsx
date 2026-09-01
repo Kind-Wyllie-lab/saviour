@@ -29,6 +29,7 @@ function Sidebar({ navItems }) {
   const [deployError, setDeployError]         = useState(null);
   const [stagingCurrent, setStagingCurrent]   = useState(false);
   const [gitPullStatus, setGitPullStatus]     = useState(null); // null | { stage, branch, commit }
+  const [gitDeployModules, setGitDeployModules] = useState(false); // "also push to modules" checkbox
   const [loggedIn, setLoggedIn]               = useState(() => isLoggedIn());
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const fileInputRef = useRef(null);
@@ -229,31 +230,36 @@ function Sidebar({ navItems }) {
     socket.emit("deploy_update");
   };
 
-  const handleStageCurrent = () => {
+  const handleStageCurrent = (alsoDeployModules = false) => {
     setStagingCurrent(true);
     setUploadError(null);
     setStagedMeta(null);
     setDeployStatus(null);
     setDeployError(null);
-    socket.emit("stage_current_version");
+    socket.emit(alsoDeployModules ? "stage_and_deploy_modules" : "stage_current_version");
   };
 
-  const handleGitPull = () => {
+  const handleGitPull = (opts = {}) => {
     setGitPullStatus({ stage: "fetching" });
     setUploadError(null);
     setStagedMeta(null);
     setDeployStatus(null);
     setDeployError(null);
-    socket.emit("git_pull_update");
+    socket.emit("git_pull_update", {
+      apply_controller: !!opts.applyController,
+      deploy_modules: gitDeployModules,
+    });
   };
 
   const staged = stagedMeta || updateInfo?.staged;
   const gitInfo = updateInfo?.git;
-  const gitPullInProgress = !!gitPullStatus && !staged && !uploadError;
+  const gitApplying = gitPullStatus?.stage === "applying";
+  const gitPullInProgress = !!gitPullStatus && !uploadError && (!staged || gitApplying);
   const GIT_STAGE_LABEL = {
     fetching:  "Fetching from origin…",
     resetting: "Resetting to latest commit…",
     staging:   "Packaging update…",
+    applying:  "Rebuilding & restarting controller…",
   };
 
   return (
@@ -413,14 +419,24 @@ function Sidebar({ navItems }) {
             {updateMode === "zip" && (<>
               <div className="update-version-row">
                 <span className="update-version-label">Current</span>
-                <button
-                  className="update-stage-btn"
-                  onClick={handleStageCurrent}
-                  disabled={stagingCurrent || !!uploadProgress}
-                  title="Package the currently-running code as the staged update"
-                >
-                  {stagingCurrent ? "Staging…" : "Stage running code"}
-                </button>
+                <div className="update-stage-btns">
+                  <button
+                    className="update-stage-btn"
+                    onClick={() => handleStageCurrent(false)}
+                    disabled={stagingCurrent || !!uploadProgress}
+                    title="Package the currently-running code as the staged update"
+                  >
+                    {stagingCurrent ? "Staging…" : "Stage running code"}
+                  </button>
+                  <button
+                    className="update-stage-btn"
+                    onClick={() => handleStageCurrent(true)}
+                    disabled={stagingCurrent || !!uploadProgress}
+                    title="Stage the running code and push it to every module in one action"
+                  >
+                    Stage &amp; deploy to modules
+                  </button>
+                </div>
               </div>
 
               {!uploadProgress && (
@@ -477,20 +493,45 @@ function Sidebar({ navItems }) {
                 Fetches <code>origin/{gitInfo?.branch}</code> and hard-resets this
                 controller's checkout to match it — any local changes on the
                 controller are discarded — then stages the result.
+                <strong> Update controller</strong> also rebuilds the frontend
+                and restarts the service (this page reconnects on its own).
               </p>
+              <label className="update-git-modules-toggle">
+                <input
+                  type="checkbox"
+                  checked={gitDeployModules}
+                  onChange={e => setGitDeployModules(e.target.checked)}
+                  disabled={gitPullInProgress}
+                />
+                also deploy to all modules
+              </label>
               <div className="update-git-pull-row">
                 <button
                   className="save-button"
                   type="button"
-                  onClick={handleGitPull}
+                  onClick={() => handleGitPull({ applyController: true })}
                   disabled={gitPullInProgress}
                 >
                   {gitPullInProgress
                     ? (GIT_STAGE_LABEL[gitPullStatus.stage] || "Pulling…")
-                    : "Pull latest & stage"}
+                    : (gitDeployModules ? "Pull & update everything" : "Pull & update controller")}
+                </button>
+                <button
+                  className="save-button save-button--secondary"
+                  type="button"
+                  onClick={() => handleGitPull({ applyController: false })}
+                  disabled={gitPullInProgress}
+                  title="Pull and stage only — don't rebuild/restart the controller"
+                >
+                  Stage only
                 </button>
               </div>
-              {gitPullStatus?.commit && (
+              {gitApplying && (
+                <p className="update-git-info">
+                  Controller is rebuilding and will restart — this page reconnects shortly.
+                </p>
+              )}
+              {gitPullStatus?.commit && !gitApplying && (
                 <p className="update-git-info">
                   Now at <code>{gitPullStatus.commit}</code> ({gitPullStatus.branch})
                 </p>

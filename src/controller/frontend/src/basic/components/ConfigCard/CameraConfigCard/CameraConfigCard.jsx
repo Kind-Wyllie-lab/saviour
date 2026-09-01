@@ -61,7 +61,7 @@ const HAILO_MODELS = [
   { key: "yolov8m",      label: "YOLOv8m - most accurate",              category: "Object detection",     task: "detection" },
   { key: "yolov11n",     label: "YOLOv11n - newest, fast",              category: "Object detection",     task: "detection" },
   { key: "topdown_rats_yolov8", label: "Rat detector (top-down, 1 class)", category: "Object detection",  task: "detection" },
-  { key: "multiangle_rats_yolo11n", label: "Rat detector (multi-angle, preview)", category: "Object detection", task: "detection" },
+  { key: "multiangle_rats_yolo11n", label: "Rat detector (multi-angle, 1 class)", category: "Object detection", task: "detection" },
   { key: "yolov8s_pose", label: "YOLOv8s-pose - body keypoints",        category: "Pose estimation",      task: "pose" },
   { key: "yolov8m_pose", label: "YOLOv8m-pose - keypoints, accurate",   category: "Pose estimation",      task: "pose" },
   { key: "yolov8s_seg",  label: "YOLOv8s-seg - instance masks",         category: "Instance segmentation", task: "segmentation" },

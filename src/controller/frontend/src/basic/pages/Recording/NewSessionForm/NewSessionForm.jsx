@@ -14,6 +14,13 @@ const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 const daysSerialize = (days) => JSON.stringify([...days]);
 const daysDeserialize = (str) => new Set(JSON.parse(str));
 
+function humanizeMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "0 min";
+  if (mins < 90) return `${Math.round(mins)} min`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} hours`;
+  return `${Math.round(mins / 60 / 24)} days`;
+}
+
 function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessionCreated, prefill }) {
   const { experimentName, experimenter } = useExperimentTitle();
   const [now, setNow] = useState(() => new Date());
@@ -34,12 +41,24 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const [unattended, setUnattended] = usePersistedState("saviour_session_form_unattended", false);
   const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+  const [dataRate, setDataRate] = useState(null);
 
   useEffect(() => { setPtpSyncStatus(null); }, [target]);
   useEffect(() => {
     socket.on("ptp_sync_status", setPtpSyncStatus);
     return () => socket.off("ptp_sync_status", setPtpSyncStatus);
   }, []);
+
+  // Pre-flight data-rate estimate for the chosen target — how much this
+  // session will generate and how long the share holds at that rate.
+  useEffect(() => {
+    const onEstimate = (d) => setDataRate(d);
+    socket.on("data_rate_estimate", onEstimate);
+    return () => socket.off("data_rate_estimate", onEstimate);
+  }, []);
+  useEffect(() => {
+    if (target) socket.emit("estimate_data_rate", { target });
+  }, [target]);
 
   useEffect(() => {
     const onError = (data) => {
@@ -369,6 +388,25 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         {ptpSyncStatus?.ok && (
           <p className="form-ok">
             PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
+          </p>
+        )}
+        {dataRate?.total_mb_per_min > 0 && (
+          <p className={`form-hint${
+            recordingMode === "timed" && dataRate.share_runway_hours != null
+              && totalDurationMins > 0
+              && dataRate.share_runway_hours * 60 < totalDurationMins ? " form-warning" : ""
+          }`}>
+            ~{dataRate.total_mb_per_min} MB/min ({dataRate.total_gb_per_hour} GB/hour).
+            {dataRate.share_runway_hours != null
+              ? ` Share holds this session ~${humanizeMinutes(dataRate.share_runway_hours * 60)} at this rate`
+              : " Share free space not reported"}
+            {recordingMode === "timed" && totalDurationMins > 0
+              && ` (run is set to ${humanizeMinutes(totalDurationMins)})`}.
+            {dataRate.min_local_buffer_min != null && (
+              <> Modules buffer ~{humanizeMinutes(dataRate.min_local_buffer_min)} locally
+                if export stalls{dataRate.min_local_buffer_module
+                  ? ` (shortest: ${dataRate.min_local_buffer_module})` : ""}.</>
+            )}
           </p>
         )}
 

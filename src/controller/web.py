@@ -40,6 +40,11 @@ from flask import (
 from flask_socketio import SocketIO
 
 from src.controller.config import Config
+from src.shared.data_rate import (
+    bytes_per_s_to_mb_per_min,
+    estimate_recording_bytes_per_s,
+    runway_minutes,
+)
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -123,6 +128,13 @@ class Web(ABC):
     # Max points returned to the chart / a single CSV export.
     _NAS_HISTORY_MAX_POINTS = 1440
 
+    # Fleet recording-rate history (MB/min written across all recording
+    # modules), sampled once per _nas_monitor_loop pass. Same retention /
+    # down-sampling as the NAS trend; complements it by showing the rate
+    # directly (and before the share's free-space slope reflects it).
+    _DATA_RATE_HISTORY_RETENTION_S = 30 * 24 * 3600
+    _DATA_RATE_HISTORY_MAX_POINTS = 1440
+
     def __init__(self, config: Config):
         self.logger = logging.getLogger(__name__)
         self.config = config
@@ -174,6 +186,9 @@ class Web(ABC):
         # pruned by age, so retention is stable if the interval is retuned.
         self._nas_health = {"status": "unknown", "error": None, "checked_at": None}
         self._nas_history: deque = deque()
+        # (ts, fleet_mb_per_min, {module_id: mb_per_min}) — the per-module dict
+        # only holds modules recording at that sample, so it stays small.
+        self._data_rate_history: deque = deque()
         self._nas_monitor_stop = threading.Event()
 
         # Running flag
@@ -974,6 +989,30 @@ class Web(ABC):
                 },
             )
 
+        @self.app.route("/api/data_rate_history.csv")
+        def download_data_rate_history():
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a download token first", 401
+            hours_param = request.args.get("hours")
+            if hours_param is None or hours_param.lower() == "all":
+                hours, filename_part = None, "all"
+            else:
+                try:
+                    hours = float(hours_param)
+                except ValueError:
+                    return "Invalid hours parameter", 400
+                if hours <= 0:
+                    return "hours must be positive, or 'all'", 400
+                filename_part = f"{hours_param}h"
+            return Response(
+                self._data_rate_history_csv(hours),
+                mimetype="text/csv",
+                headers={
+                    "Content-Disposition":
+                        f"attachment; filename=data_rate_history_{filename_part}.csv"
+                },
+            )
+
         @self.socketio.on("create_session")
         def handle_create_session(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):
@@ -1626,6 +1665,14 @@ class Web(ABC):
         def handle_get_storage_overview(data=None):
             self.socketio.emit("storage_overview", self._storage_overview())
 
+        @self.socketio.on("estimate_data_rate")
+        def handle_estimate_data_rate(data=None):
+            """Pre-flight: what MB/min will a session against `target` generate,
+            and how long does the share hold at that rate. Read-only, no auth
+            gate (same as get_storage_overview)."""
+            target = (data or {}).get("target")
+            self.socketio.emit("data_rate_estimate", self._estimate_data_rate(target))
+
         @self.socketio.on("get_nas_history")
         def handle_get_nas_history(data=None):
             hours = (data or {}).get("hours")
@@ -1645,6 +1692,26 @@ class Web(ABC):
             self.socketio.emit("nas_history", {
                 "samples": samples,
                 "retention_days": self._NAS_HISTORY_RETENTION_S // 86400,
+            })
+
+        @self.socketio.on("get_data_rate_history")
+        def handle_get_data_rate_history(data=None):
+            hours = (data or {}).get("hours")
+            try:
+                hours = float(hours) if hours is not None else None
+            except (TypeError, ValueError):
+                hours = None
+            cutoff = time.time() - hours * 3600 if hours else None
+            samples = [
+                [t, fleet] for (t, fleet, _per) in list(self._data_rate_history)
+                if cutoff is None or t >= cutoff
+            ]
+            if len(samples) > self._DATA_RATE_HISTORY_MAX_POINTS:
+                step = len(samples) // self._DATA_RATE_HISTORY_MAX_POINTS + 1
+                samples = samples[::step]
+            self.socketio.emit("data_rate_history", {
+                "samples": samples,
+                "retention_days": self._DATA_RATE_HISTORY_RETENTION_S // 86400,
             })
 
 
@@ -2621,8 +2688,31 @@ class Web(ABC):
             self._nas_history.append((now, int(free), int(total)))
             self._prune_nas_history()
 
+        overview = self._storage_overview()
+        self._sample_data_rate_history(now, overview)
+
         self.socketio.emit("nas_health_update", new)
-        self.socketio.emit("storage_overview", self._storage_overview())
+        self.socketio.emit("storage_overview", overview)
+
+    def _sample_data_rate_history(self, now: float, overview: dict) -> None:
+        """Append one fleet recording-rate point (and per-recording-module
+        breakdown) from a storage overview, then prune by age."""
+        try:
+            dr = overview.get("data_rate") or {}
+            fleet = round(dr.get("recording_mb_per_min", 0.0) or 0.0, 1)
+            per_module = {
+                d["module_id"]: d.get("measured_mb_per_min") or d.get("est_mb_per_min")
+                for d in overview.get("disks", [])
+                if d.get("recording") and (d.get("measured_mb_per_min")
+                                           or d.get("est_mb_per_min"))
+            }
+            self._data_rate_history.append((now, fleet, per_module))
+            cutoff = now - self._DATA_RATE_HISTORY_RETENTION_S
+            h = self._data_rate_history
+            while h and h[0][0] < cutoff:
+                h.popleft()
+        except Exception as e:
+            self.logger.debug(f"_sample_data_rate_history failed: {e}")
 
     def _prune_nas_history(self):
         cutoff = time.time() - self._NAS_HISTORY_RETENTION_S
@@ -2662,27 +2752,74 @@ class Web(ABC):
                     "stopped_epoch": getattr(s, "stopped_epoch", None),
                 })
 
-        # Per-module local disk
+        # Per-module local disk + estimated recording data rate
         disks = []
         try:
             health = self.facade.get_module_health() if self.facade else {}
             modules = self.facade.get_modules() if self.facade else {}
         except Exception:
             health, modules = {}, {}
+        try:
+            configs = self.facade.get_module_configs() if self.facade else {}
+            if not isinstance(configs, dict):
+                configs = {}
+        except Exception:
+            configs = {}
+
+        fleet_recording_mb_per_min = 0.0
+        recording_module_count = 0
         for mid, h in (health or {}).items():
             used_gb = h.get("disk_used_gb")
             total_gb = h.get("disk_total_gb")
             free_gb = (round(total_gb - used_gb, 1)
                        if (used_gb is not None and total_gb is not None) else None)
+            mtype = (modules.get(mid) or {}).get("type")
+
+            cfg = (configs.get(mid) or {}).get("true_config") or {}
+            bps, rate_note = estimate_recording_bytes_per_s(mtype, cfg)
+            mb_per_min = bytes_per_s_to_mb_per_min(bps)
+            # Measured rate (bytes actually hitting disk) when the module is
+            # recording -- reality-checks the config estimate.
+            measured_mb_per_min = bytes_per_s_to_mb_per_min(h.get("rec_bytes_per_s"))
+            # Runway prefers the measured rate when we have one.
+            buffer_min = runway_minutes(
+                (free_gb * 1024) if free_gb is not None else None,
+                measured_mb_per_min or mb_per_min)
+
+            if h.get("recording"):
+                rate_for_fleet = measured_mb_per_min or mb_per_min
+                if rate_for_fleet:
+                    fleet_recording_mb_per_min += rate_for_fleet
+                    recording_module_count += 1
+
             disks.append({
                 "module_id": mid,
                 "name": (modules.get(mid) or {}).get("name") or mid,
-                "type": (modules.get(mid) or {}).get("type"),
+                "type": mtype,
                 "used_pct": h.get("disk_space"),
                 "free_gb": free_gb,
                 "total_gb": total_gb,
+                "recording": bool(h.get("recording")),
+                "est_mb_per_min": (
+                    round(mb_per_min, 1) if mb_per_min is not None else None),
+                "measured_mb_per_min": (
+                    round(measured_mb_per_min, 1)
+                    if measured_mb_per_min is not None else None),
+                "est_note": rate_note,
+                "local_buffer_min": (
+                    round(buffer_min) if buffer_min is not None else None),
             })
         disks.sort(key=lambda d: (d["used_pct"] is None, -(d["used_pct"] or 0)))
+
+        # Share runway at the current combined recording rate (nothing is
+        # deleted from the share — it's the archive — so free / rate is the
+        # honest "days left" number, complementing the measured trend chart).
+        nas = self._nas_health or {}
+        share_free_gb = nas.get("free_gb")
+        share_runway_hours = None
+        if share_free_gb and fleet_recording_mb_per_min > 0:
+            share_runway_hours = round(
+                share_free_gb * 1024 / fleet_recording_mb_per_min / 60, 1)
 
         return {
             "nas": self._nas_health,
@@ -2692,6 +2829,104 @@ class Web(ABC):
                 "sessions": exporting_sessions,
             },
             "disks": disks,
+            "data_rate": {
+                "recording_mb_per_min": round(fleet_recording_mb_per_min, 1),
+                "recording_module_count": recording_module_count,
+                "share_runway_hours": share_runway_hours,
+            },
+        }
+
+    def _estimate_data_rate(self, target: "str | None") -> dict:
+        """Per-module + combined recording-rate estimate for `target` (a group
+        name, type, or 'all'), using each module's *target* config so it
+        answers before a session is created. Falls back to every module when
+        target is missing."""
+        try:
+            if target:
+                modules = (self.facade.get_modules_by_target(target)
+                           if self.facade else {})
+            else:
+                modules = self.facade.get_modules() if self.facade else {}
+        except Exception:
+            modules = {}
+        try:
+            configs = self.facade.get_module_configs() if self.facade else {}
+            if not isinstance(configs, dict):
+                configs = {}
+        except Exception:
+            configs = {}
+        try:
+            health = self.facade.get_module_health() if self.facade else {}
+            if not isinstance(health, dict):
+                health = {}
+        except Exception:
+            health = {}
+
+        per_module = []
+        total_mb_per_min = 0.0
+        # Shortest time any one target module's local disk lasts at its own
+        # rate if export fully stalls -- the first module to fill stops the
+        # session, so this caps the "supports this session for X" figure.
+        min_local_buffer_min = None
+        min_local_buffer_module = None
+        for mid, m in (modules or {}).items():
+            mtype = (m or {}).get("type")
+            cfg = ((configs.get(mid) or {}).get("target_config")
+                   or (configs.get(mid) or {}).get("true_config") or {})
+            bps, note = estimate_recording_bytes_per_s(mtype, cfg)
+            mb_per_min = bytes_per_s_to_mb_per_min(bps)
+            if mb_per_min:
+                total_mb_per_min += mb_per_min
+
+            h = health.get(mid) or {}
+            used_gb, total_gb = h.get("disk_used_gb"), h.get("disk_total_gb")
+            free_mb = ((total_gb - used_gb) * 1024
+                       if (used_gb is not None and total_gb is not None) else None)
+            buf = runway_minutes(free_mb, mb_per_min)
+            if buf is not None and (min_local_buffer_min is None
+                                    or buf < min_local_buffer_min):
+                min_local_buffer_min = buf
+                min_local_buffer_module = (m or {}).get("name") or mid
+
+            per_module.append({
+                "module_id": mid,
+                "name": (m or {}).get("name") or mid,
+                "type": mtype,
+                "est_mb_per_min": (
+                    round(mb_per_min, 1) if mb_per_min is not None else None),
+                "est_note": note,
+            })
+
+        nas = self._nas_health or {}
+        share_free_gb = nas.get("free_gb")
+        share_runway_hours = (
+            round(share_free_gb * 1024 / total_mb_per_min / 60, 1)
+            if share_free_gb and total_mb_per_min > 0 else None
+        )
+        # share_runway_hours (how long the archive lasts) and
+        # min_local_buffer_min (export-outage tolerance) are two different
+        # questions and the UI shows them separately. supported_minutes is the
+        # conservative "soonest anything could stop this session" combining
+        # both -- kept for a future headroom check, not the headline figure.
+        supported_minutes = None
+        if share_runway_hours is not None:
+            supported_minutes = share_runway_hours * 60
+        if min_local_buffer_min is not None:
+            supported_minutes = (min_local_buffer_min if supported_minutes is None
+                                 else min(supported_minutes, min_local_buffer_min))
+
+        return {
+            "target": target,
+            "modules": per_module,
+            "total_mb_per_min": round(total_mb_per_min, 1),
+            "total_gb_per_hour": round(total_mb_per_min * 60 / 1024, 2),
+            "share_free_gb": share_free_gb,
+            "share_runway_hours": share_runway_hours,
+            "min_local_buffer_min": (round(min_local_buffer_min)
+                                     if min_local_buffer_min is not None else None),
+            "min_local_buffer_module": min_local_buffer_module,
+            "supported_minutes": (round(supported_minutes)
+                                  if supported_minutes is not None else None),
         }
 
     def _nas_history_csv(self, hours: "float | None" = None):
@@ -2709,6 +2944,23 @@ class Web(ABC):
             pct = round(free / total * 100, 3) if total else ""
             ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
             yield writer.writerow([ts_utc, t, free, total, pct])
+
+    def _data_rate_history_csv(self, hours: "float | None" = None):
+        """Yield fleet recording-rate history as CSV. Columns: timestamp,
+        fleet MB/min, recording-module count, and a per-module JSON blob
+        (module set varies over a long run, so it can't be flat columns)."""
+        cutoff = time.time() - hours * 3600 if hours is not None else None
+        writer = csv.writer(_CsvSink())
+        yield writer.writerow(
+            ["timestamp_utc", "timestamp_epoch", "fleet_mb_per_min",
+             "recording_modules", "per_module_mb_per_min_json"]
+        )
+        for t, fleet, per in list(self._data_rate_history):
+            if cutoff is not None and t < cutoff:
+                continue
+            ts_utc = datetime.fromtimestamp(t, tz=UTC).isoformat()
+            yield writer.writerow(
+                [ts_utc, t, fleet, len(per or {}), json.dumps(per or {})])
 
     def start(self):
         """Start the web interface in a separate thread"""

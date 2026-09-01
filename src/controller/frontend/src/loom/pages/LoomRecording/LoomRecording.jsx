@@ -68,6 +68,17 @@ export default function LoomRecording() {
   // Habituation uses the auto-assigned "cameras" group; loom uses all.
   const target = stage === "habituation" ? HABITUATION_GROUP : "all";
 
+  // Pre-flight data-rate estimate for the selected target.
+  const [dataRate, setDataRate] = useState(null);
+  useEffect(() => {
+    const onEstimate = (d) => setDataRate(d);
+    socket.on("data_rate_estimate", onEstimate);
+    return () => socket.off("data_rate_estimate", onEstimate);
+  }, []);
+  useEffect(() => {
+    socket.emit("estimate_data_rate", { target });
+  }, [target]);
+
   const sessionPreview = useMemo(() => {
     if (!experimentName) return "-";
     const base = safeName(experimentName);
@@ -170,6 +181,20 @@ export default function LoomRecording() {
           )}
           {targetModules.length === 0 && (
             <p className="loom-recording-warning">No target modules connected.</p>
+          )}
+
+          {dataRate?.total_mb_per_min > 0 && (
+            <p className="loom-recording-hint">
+              Est. data rate ~{dataRate.total_mb_per_min} MB/min
+              {" "}({dataRate.total_gb_per_hour} GB/hour)
+              {dataRate.share_runway_hours != null && (
+                <> · share holds ~{
+                  dataRate.share_runway_hours >= 48
+                    ? `${Math.round(dataRate.share_runway_hours / 24)} days`
+                    : `${Math.round(dataRate.share_runway_hours)} hours`
+                } at this rate</>
+              )}
+            </p>
           )}
 
           <div className="loom-recording-actions">

@@ -2688,14 +2688,19 @@ class Web(ABC):
             cfg = (configs.get(mid) or {}).get("true_config") or {}
             bps, rate_note = estimate_recording_bytes_per_s(mtype, cfg)
             mb_per_min = bytes_per_s_to_mb_per_min(bps)
-            # Worst case: export fully stalls -> how long can this module keep
-            # recording before its local disk hits the floor.
+            # Measured rate (bytes actually hitting disk) when the module is
+            # recording -- reality-checks the config estimate.
+            measured_mb_per_min = bytes_per_s_to_mb_per_min(h.get("rec_bytes_per_s"))
+            # Runway prefers the measured rate when we have one.
             buffer_min = runway_minutes(
-                (free_gb * 1024) if free_gb is not None else None, mb_per_min)
+                (free_gb * 1024) if free_gb is not None else None,
+                measured_mb_per_min or mb_per_min)
 
-            if mb_per_min and h.get("recording"):
-                fleet_recording_mb_per_min += mb_per_min
-                recording_module_count += 1
+            if h.get("recording"):
+                rate_for_fleet = measured_mb_per_min or mb_per_min
+                if rate_for_fleet:
+                    fleet_recording_mb_per_min += rate_for_fleet
+                    recording_module_count += 1
 
             disks.append({
                 "module_id": mid,
@@ -2707,6 +2712,9 @@ class Web(ABC):
                 "recording": bool(h.get("recording")),
                 "est_mb_per_min": (
                     round(mb_per_min, 1) if mb_per_min is not None else None),
+                "measured_mb_per_min": (
+                    round(measured_mb_per_min, 1)
+                    if measured_mb_per_min is not None else None),
                 "est_note": rate_note,
                 "local_buffer_min": (
                     round(buffer_min) if buffer_min is not None else None),

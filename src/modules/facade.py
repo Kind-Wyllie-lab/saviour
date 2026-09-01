@@ -66,6 +66,13 @@ class ModuleFacade:
         return self.module.recording.is_recording
 
 
+    def get_measured_recording_rate(self) -> float | None:
+        """Bytes/second actually written to the recordings tree over this
+        recording (None when not recording / before the sampler has two
+        points). See Recording._sample_recording_bytes."""
+        return getattr(self.module.recording, "_measured_rec_bytes_per_s", None)
+
+
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id
 

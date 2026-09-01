@@ -36,6 +36,11 @@ class ModuleHealthSnapshot:
     phc2sys_offset_ns_min: float | None = None
     phc2sys_offset_ns_max: float | None = None
     recording:       bool            = False
+    # Measured recording output in bytes/second (None unless recording). A
+    # reality check against the config-derived estimate in
+    # src/shared/data_rate.py -- if they diverge a lot, the config is wrong
+    # (or a camera scene is unusually busy / a mic is on FLAC).
+    rec_bytes_per_s: float | None = None
     version:         str | None   = None
 
     def to_dict(self) -> dict:

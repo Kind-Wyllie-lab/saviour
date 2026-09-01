@@ -325,7 +325,16 @@ export default function Storage() {
                         <td>{d.used_pct != null ? `${d.used_pct.toFixed(0)}%` : "—"}</td>
                         <td>{d.free_gb != null ? `${d.free_gb} GB` : "—"}</td>
                         <td title={d.est_note || ""}>
-                          {d.est_mb_per_min != null ? `${d.est_mb_per_min} MB/min` : "—"}
+                          {d.measured_mb_per_min != null ? (
+                            <>
+                              {d.measured_mb_per_min} MB/min
+                              {d.est_mb_per_min != null && (
+                                <span className="storage-muted"> (est {d.est_mb_per_min})</span>
+                              )}
+                            </>
+                          ) : d.est_mb_per_min != null ? (
+                            <>~{d.est_mb_per_min} MB/min</>
+                          ) : "—"}
                         </td>
                         <td className={
                           d.local_buffer_min != null && d.local_buffer_min < 60 ? "storage-bad" : undefined

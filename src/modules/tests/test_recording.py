@@ -379,3 +379,73 @@ class TestGetHealthSegmentFilename:
 
             expected = f"{tmpdir}/exp1_camera1_health_metadata_(2_20260803-120000).csv"
             assert filename == expected
+
+
+class TestMeasuredRecordingRate:
+    def _write(self, path, size):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"\0" * size)
+
+    def test_first_sample_sets_baseline_and_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _ = _make_recording(tmpdir)
+            rec.is_recording = True
+            rec._reset_byte_sampler()
+            self._write(f"{tmpdir}/pending/seg0.ts", 1000)
+            rec._sample_recording_bytes()
+            assert rec._measured_rec_bytes_per_s is None
+            assert rec._rec_bytes_baseline == 1000
+
+    def test_rate_from_growth_between_samples(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _ = _make_recording(tmpdir)
+            rec.is_recording = True
+            rec._reset_byte_sampler()
+            self._write(f"{tmpdir}/pending/seg0.ts", 1_000_000)
+            rec._sample_recording_bytes()  # baseline
+            rec._rec_sample_start_ts -= 10  # pretend 10s elapsed
+            self._write(f"{tmpdir}/pending/seg0.ts", 3_000_000)
+            rec._sample_recording_bytes()
+            # +2 MB over 10s ~= 200_000 B/s
+            assert 180_000 <= rec._measured_rec_bytes_per_s <= 220_000
+
+    def test_hwm_survives_export_moving_and_deleting_a_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _ = _make_recording(tmpdir)
+            rec.is_recording = True
+            rec._reset_byte_sampler()
+            self._write(f"{tmpdir}/pending/seg0.ts", 5_000_000)
+            rec._sample_recording_bytes()          # baseline includes seg0
+            rec._rec_sample_start_ts -= 10
+            # export moves seg0 to to_export, then removes it; a new segment appears
+            os.remove(f"{tmpdir}/pending/seg0.ts")
+            self._write(f"{tmpdir}/pending/seg1.ts", 2_000_000)
+            rec._sample_recording_bytes()
+            # cum = seg0 HWM (5MB, retained) + seg1 (2MB) = 7MB; baseline 5MB
+            # -> +2MB / 10s, NOT negative from the deletion
+            assert rec._measured_rec_bytes_per_s > 0
+            assert 180_000 <= rec._measured_rec_bytes_per_s <= 220_000
+
+    def test_pending_export_rename_not_double_counted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _ = _make_recording(tmpdir)
+            rec.is_recording = True
+            rec._reset_byte_sampler()
+            self._write(f"{tmpdir}/to_export/seg0.ts", 1_000_000)
+            rec._sample_recording_bytes()
+            rec._rec_sample_start_ts -= 10
+            # same file, now PENDING_-prefixed mid-export
+            os.rename(f"{tmpdir}/to_export/seg0.ts", f"{tmpdir}/to_export/PENDING_seg0.ts")
+            rec._sample_recording_bytes()
+            assert rec._measured_rec_bytes_per_s == 0.0  # no new data
+
+    def test_noop_when_not_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, _ = _make_recording(tmpdir)
+            rec.is_recording = False
+            rec._reset_byte_sampler()
+            self._write(f"{tmpdir}/pending/seg0.ts", 1000)
+            rec._sample_recording_bytes()
+            assert rec._measured_rec_bytes_per_s is None
+            assert rec._rec_sample_start_ts is None

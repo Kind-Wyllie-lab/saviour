@@ -120,6 +120,7 @@ class Health:
             phc2sys_offset_ns_min=ptp_range.get('phc2sys_offset_ns_min'),
             phc2sys_offset_ns_max=ptp_range.get('phc2sys_offset_ns_max'),
             recording=self.facade.get_recording_status(),
+            rec_bytes_per_s=self.facade.get_measured_recording_rate(),
             version=self.facade.get_saviour_version(),
         )
         return snapshot.to_dict()

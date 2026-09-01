@@ -72,6 +72,23 @@ class ModuleFacade:
         points). See Recording._sample_recording_bytes."""
         return getattr(self.module.recording, "_measured_rec_bytes_per_s", None)
 
+    def get_audio_clip_pct(self) -> float | None:
+        """Microphone only: rolling % of samples clipping on the loudest
+        AudioMoth (from the monitoring stream). None for other module types
+        or when no monitor data is live."""
+        if not getattr(self.module, "monitor_data", None):
+            return None
+        return getattr(self.module, "_monitor_clip_pct", None)
+
+    def get_frame_clip_pct(self) -> float | None:
+        """Camera only: rolling % of the frame clipped white / crushed black
+        (whichever is worse). None for non-camera modules or before the
+        exposure sampler has run (see CameraBase._maybe_sample_exposure)."""
+        if not getattr(self.module, "_exposure_sample_history", None):
+            return None
+        return max(getattr(self.module, "_exposure_over_pct", 0.0),
+                   getattr(self.module, "_exposure_under_pct", 0.0))
+
 
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id

@@ -476,6 +476,12 @@ export default function System() {
                   <tr key={row.id} className={!isOnline ? "system-table__offline-row" : ""}>
                     <td>
                       <span className="device-name">{row.name}</span>
+                      {isOnline && row.audio_clip_pct != null && row.audio_clip_pct >= 0.5 && (
+                        <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
+                          title="Audio is clipping on the loudest AudioMoth — lower the gain">
+                          CLIP {row.audio_clip_pct.toFixed(1)}%
+                        </span>
+                      )}
                       <span className="device-id">{row.id}</span>
                     </td>
                     <td>{connectionCell(connStatus)}</td>

@@ -10,8 +10,14 @@
     /* Was effectively a fixed 200px (width:80px was always overridden by
        min-width:200px). Now scales gently with the viewport so a small
        laptop hands more width to the dashboard grid, clamped so it never
-       gets uselessly narrow or absurdly wide. */
-    width: clamp(148px, 13vw, 210px);
+       gets uselessly narrow or absurdly wide.
+       Floor + vw coefficient tightened 2026-09-01 (reported too wide on a
+       small laptop) — nothing in the sidebar actually needs 148px: the
+       widest content (footer-links' "GitHub"/"Docs" row, the version
+       button) tops out around 110px, and nav-link/logo sizing scale down
+       gracefully with the sidebar itself. The ceiling is unchanged since
+       only the narrow end was reported as an issue. */
+    width: clamp(112px, 10vw, 210px);
     flex-shrink: 0;
     justify-content: space-between;
 }

@@ -1653,9 +1653,79 @@ class TestStorageOverview:
         web, facade = _make_web_with_facade()
         facade.get_recording_sessions.side_effect = RuntimeError("boom")
         facade.get_module_health.side_effect = RuntimeError("boom")
+        facade.get_module_configs.side_effect = RuntimeError("boom")
         ov = web._storage_overview()
         assert ov["exports"]["pending"] == 0
         assert ov["disks"] == []
+        assert ov["data_rate"]["recording_mb_per_min"] == 0
+
+    def test_data_rate_estimate_and_local_buffer(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_space": 20.0, "disk_used_gb": 20.0,
+                      "disk_total_gb": 100.0, "recording": True},
+        }
+        facade.get_modules.return_value = {"cam_a": {"name": "A", "type": "loom_camera"}}
+        facade.get_module_configs.return_value = {
+            "cam_a": {"true_config": {"camera": {"bitrate_mb": 2, "fps": 30}}}
+        }
+        web._nas_health = {"free_gb": 500.0}
+
+        ov = web._storage_overview()
+        d = ov["disks"][0]
+        # 2 Mbit + 30fps CSV ~= 15.2 MB/min
+        assert 15.0 <= d["est_mb_per_min"] <= 15.5
+        # 80 GB free / 15.2 MB/min ~= 5390 min
+        assert d["local_buffer_min"] > 5000
+        assert d["recording"] is True
+        assert ov["data_rate"]["recording_module_count"] == 1
+        assert 15.0 <= ov["data_rate"]["recording_mb_per_min"] <= 15.5
+        assert ov["data_rate"]["share_runway_hours"] is not None
+
+    def test_data_rate_none_for_unknown_module_type(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {
+            "x": {"disk_space": 10.0, "disk_used_gb": 1.0, "disk_total_gb": 10.0},
+        }
+        facade.get_modules.return_value = {"x": {"name": "X", "type": "weather"}}
+        facade.get_module_configs.return_value = {}
+        ov = web._storage_overview()
+        assert ov["disks"][0]["est_mb_per_min"] is None
+        assert ov["disks"][0]["local_buffer_min"] is None
+
+
+class TestEstimateDataRate:
+    def test_sums_target_modules_using_target_config(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"},
+            "mic_a": {"name": "M", "type": "microphone"},
+        }
+        facade.get_module_configs.return_value = {
+            "cam_a": {"target_config": {"camera": {"bitrate_mb": 2, "fps": 30}}},
+            "mic_a": {"target_config": {"audiomoth": {"sample_rate": 192000},
+                                       "audiomoth_labels": {"a": 1, "b": 2}}},
+        }
+        web._nas_health = {"free_gb": 100.0}
+
+        est = web._estimate_data_rate("all")
+        # camera ~15.2 + mic 2x192k*2 = 46.08 -> ~61.3 MB/min
+        assert 60.0 <= est["total_mb_per_min"] <= 62.0
+        assert est["total_gb_per_hour"] > 3
+        assert est["share_runway_hours"] is not None
+        assert {m["module_id"] for m in est["modules"]} == {"cam_a", "mic_a"}
+
+    def test_no_share_free_gb_means_no_runway(self):
+        web, facade = _make_web_with_facade()
+        facade.get_modules_by_target.return_value = {
+            "cam_a": {"name": "A", "type": "camera"}}
+        facade.get_module_configs.return_value = {}
+        web._nas_health = {}
+        est = web._estimate_data_rate("camera")
+        assert est["share_runway_hours"] is None
+        assert est["total_mb_per_min"] > 0
 
 
 class TestNasHistoryCsv:

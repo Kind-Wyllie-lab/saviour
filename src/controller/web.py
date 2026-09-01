@@ -40,6 +40,11 @@ from flask import (
 from flask_socketio import SocketIO
 
 from src.controller.config import Config
+from src.shared.data_rate import (
+    bytes_per_s_to_mb_per_min,
+    estimate_recording_bytes_per_s,
+    runway_minutes,
+)
 from src.shared.zip_extract import extract_preserving_permissions
 
 _SENSITIVE_KEY_FRAGMENTS = {"password", "credential", "secret", "token"}
@@ -1613,6 +1618,14 @@ class Web(ABC):
         def handle_get_storage_overview(data=None):
             self.socketio.emit("storage_overview", self._storage_overview())
 
+        @self.socketio.on("estimate_data_rate")
+        def handle_estimate_data_rate(data=None):
+            """Pre-flight: what MB/min will a session against `target` generate,
+            and how long does the share hold at that rate. Read-only, no auth
+            gate (same as get_storage_overview)."""
+            target = (data or {}).get("target")
+            self.socketio.emit("data_rate_estimate", self._estimate_data_rate(target))
+
         @self.socketio.on("get_nas_history")
         def handle_get_nas_history(data=None):
             hours = (data or {}).get("hours")
@@ -2649,27 +2662,66 @@ class Web(ABC):
                     "stopped_epoch": getattr(s, "stopped_epoch", None),
                 })
 
-        # Per-module local disk
+        # Per-module local disk + estimated recording data rate
         disks = []
         try:
             health = self.facade.get_module_health() if self.facade else {}
             modules = self.facade.get_modules() if self.facade else {}
         except Exception:
             health, modules = {}, {}
+        try:
+            configs = self.facade.get_module_configs() if self.facade else {}
+            if not isinstance(configs, dict):
+                configs = {}
+        except Exception:
+            configs = {}
+
+        fleet_recording_mb_per_min = 0.0
+        recording_module_count = 0
         for mid, h in (health or {}).items():
             used_gb = h.get("disk_used_gb")
             total_gb = h.get("disk_total_gb")
             free_gb = (round(total_gb - used_gb, 1)
                        if (used_gb is not None and total_gb is not None) else None)
+            mtype = (modules.get(mid) or {}).get("type")
+
+            cfg = (configs.get(mid) or {}).get("true_config") or {}
+            bps, rate_note = estimate_recording_bytes_per_s(mtype, cfg)
+            mb_per_min = bytes_per_s_to_mb_per_min(bps)
+            # Worst case: export fully stalls -> how long can this module keep
+            # recording before its local disk hits the floor.
+            buffer_min = runway_minutes(
+                (free_gb * 1024) if free_gb is not None else None, mb_per_min)
+
+            if mb_per_min and h.get("recording"):
+                fleet_recording_mb_per_min += mb_per_min
+                recording_module_count += 1
+
             disks.append({
                 "module_id": mid,
                 "name": (modules.get(mid) or {}).get("name") or mid,
-                "type": (modules.get(mid) or {}).get("type"),
+                "type": mtype,
                 "used_pct": h.get("disk_space"),
                 "free_gb": free_gb,
                 "total_gb": total_gb,
+                "recording": bool(h.get("recording")),
+                "est_mb_per_min": (
+                    round(mb_per_min, 1) if mb_per_min is not None else None),
+                "est_note": rate_note,
+                "local_buffer_min": (
+                    round(buffer_min) if buffer_min is not None else None),
             })
         disks.sort(key=lambda d: (d["used_pct"] is None, -(d["used_pct"] or 0)))
+
+        # Share runway at the current combined recording rate (nothing is
+        # deleted from the share — it's the archive — so free / rate is the
+        # honest "days left" number, complementing the measured trend chart).
+        nas = self._nas_health or {}
+        share_free_gb = nas.get("free_gb")
+        share_runway_hours = None
+        if share_free_gb and fleet_recording_mb_per_min > 0:
+            share_runway_hours = round(
+                share_free_gb * 1024 / fleet_recording_mb_per_min / 60, 1)
 
         return {
             "nas": self._nas_health,
@@ -2679,6 +2731,65 @@ class Web(ABC):
                 "sessions": exporting_sessions,
             },
             "disks": disks,
+            "data_rate": {
+                "recording_mb_per_min": round(fleet_recording_mb_per_min, 1),
+                "recording_module_count": recording_module_count,
+                "share_runway_hours": share_runway_hours,
+            },
+        }
+
+    def _estimate_data_rate(self, target: "str | None") -> dict:
+        """Per-module + combined recording-rate estimate for `target` (a group
+        name, type, or 'all'), using each module's *target* config so it
+        answers before a session is created. Falls back to every module when
+        target is missing."""
+        try:
+            if target:
+                modules = (self.facade.get_modules_by_target(target)
+                           if self.facade else {})
+            else:
+                modules = self.facade.get_modules() if self.facade else {}
+        except Exception:
+            modules = {}
+        try:
+            configs = self.facade.get_module_configs() if self.facade else {}
+            if not isinstance(configs, dict):
+                configs = {}
+        except Exception:
+            configs = {}
+
+        per_module = []
+        total_mb_per_min = 0.0
+        for mid, m in (modules or {}).items():
+            mtype = (m or {}).get("type")
+            cfg = ((configs.get(mid) or {}).get("target_config")
+                   or (configs.get(mid) or {}).get("true_config") or {})
+            bps, note = estimate_recording_bytes_per_s(mtype, cfg)
+            mb_per_min = bytes_per_s_to_mb_per_min(bps)
+            if mb_per_min:
+                total_mb_per_min += mb_per_min
+            per_module.append({
+                "module_id": mid,
+                "name": (m or {}).get("name") or mid,
+                "type": mtype,
+                "est_mb_per_min": (
+                    round(mb_per_min, 1) if mb_per_min is not None else None),
+                "est_note": note,
+            })
+
+        nas = self._nas_health or {}
+        share_free_gb = nas.get("free_gb")
+        share_runway_hours = (
+            round(share_free_gb * 1024 / total_mb_per_min / 60, 1)
+            if share_free_gb and total_mb_per_min > 0 else None
+        )
+        return {
+            "target": target,
+            "modules": per_module,
+            "total_mb_per_min": round(total_mb_per_min, 1),
+            "total_gb_per_hour": round(total_mb_per_min * 60 / 1024, 2),
+            "share_free_gb": share_free_gb,
+            "share_runway_hours": share_runway_hours,
         }
 
     def _nas_history_csv(self, hours: "float | None" = None):

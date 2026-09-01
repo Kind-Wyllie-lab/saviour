@@ -111,6 +111,20 @@ function Dashboard() {
   // loaded frame — used to fit the grid (see fitCellSize above). Assumes a
   // uniform ratio across camera modules, which holds for a real rig.
   const [streamRatio, setStreamRatio] = useState(16 / 9);
+  // The right-hand status panel (health + module list) is the single biggest
+  // consumer of horizontal space on the wide layout — let it be hidden so
+  // the stream grid gets the full width. Persisted; wide layout only (the
+  // compact layout stacks it below the grid, where it costs no width).
+  const [panelHidden, setPanelHidden] = useState(() => {
+    try { return localStorage.getItem("saviour_dashboard_panel_hidden") === "1"; }
+    catch { return false; }
+  });
+  const togglePanel = () => setPanelHidden((v) => {
+    const next = !v;
+    try { localStorage.setItem("saviour_dashboard_panel_hidden", next ? "1" : "0"); }
+    catch { /* storage unavailable — toggle still works for this session */ }
+    return next;
+  });
 
   const groups = useMemo(() => {
     const names = [...new Set(moduleList.map(m => m.group).filter(Boolean))].sort();
@@ -166,19 +180,33 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      {groups.length > 0 && (
-        <div className="dashboard-group-filter">
-          <label htmlFor="group-select">Group:</label>
-          <select
-            id="group-select"
-            value={selectedGroup}
-            onChange={e => setSelectedGroup(e.target.value)}
-          >
-            <option value="all">All modules</option>
-            {groups.map(g => (
-              <option key={g} value={g}>{g}</option>
-            ))}
-          </select>
+      {(groups.length > 0 || !isCompact) && (
+        <div className="dashboard-toolbar">
+          {groups.length > 0 && (
+            <div className="dashboard-group-filter">
+              <label htmlFor="group-select">Group:</label>
+              <select
+                id="group-select"
+                value={selectedGroup}
+                onChange={e => setSelectedGroup(e.target.value)}
+              >
+                <option value="all">All modules</option>
+                {groups.map(g => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {!isCompact && (
+            <button
+              type="button"
+              className="dashboard-panel-toggle"
+              onClick={togglePanel}
+              title={panelHidden ? "Show the status panel" : "Hide the status panel"}
+            >
+              {panelHidden ? "Show panel" : "Hide panel"}
+            </button>
+          )}
         </div>
       )}
 
@@ -238,10 +266,12 @@ function Dashboard() {
             )}
           </div>
 
-          <div className="dashboard-panel">
-            <HealthSummaryWidget />
-            <ModuleList modules={visibleModules} />
-          </div>
+          {!panelHidden && (
+            <div className="dashboard-panel">
+              <HealthSummaryWidget />
+              <ModuleList modules={visibleModules} />
+            </div>
+          )}
         </div>
       )}
     </div>

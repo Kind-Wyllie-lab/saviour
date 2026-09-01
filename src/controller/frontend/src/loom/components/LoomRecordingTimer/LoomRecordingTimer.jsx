@@ -23,6 +23,12 @@ function formatClock(totalSeconds) {
 // recording — meant to be readable from across the room, unlike the small
 // inline text in RecordingStatusWidget's topbar. Shows a fill bar toward
 // timed_stop_at when the session is a timed recording.
+//
+// A session that hits a mid-recording fault (a module dropping out / a dead
+// capture thread) flips to state "error" but is STILL recording on every
+// other module — so the timer stays up, just with a fault treatment. Only a
+// genuinely stopped/absent session blanks it. (RecordingStatusWidget's
+// topbar already treats "active" and "error" the same way; this matches it.)
 export default function LoomRecordingTimer() {
   const { sessionList } = useSessions();
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -32,12 +38,15 @@ export default function LoomRecordingTimer() {
     return () => clearInterval(id);
   }, []);
 
-  const activeSessions = useMemo(
-    () => sessionList.filter((s) => s.state === "active"),
+  const liveSessions = useMemo(
+    () => sessionList.filter((s) => s.state === "active" || s.state === "error"),
     [sessionList]
   );
-  const extraCount = Math.max(0, activeSessions.length - 1);
-  const session = activeSessions[0] ?? null;
+  const extraCount = Math.max(0, liveSessions.length - 1);
+  // Prefer a cleanly-active session for the headline slot; fall back to a
+  // faulted one so a single-session rig still shows its timer during a fault.
+  const session =
+    liveSessions.find((s) => s.state === "active") ?? liveSessions[0] ?? null;
 
   if (!session) {
     return (
@@ -48,6 +57,8 @@ export default function LoomRecordingTimer() {
     );
   }
 
+  const isFault = session.state === "error";
+
   const startDate = parseTimestamp(session.start_time);
   const elapsedSeconds = startDate ? Math.max(0, (nowMs - startDate.getTime()) / 1000) : 0;
 
@@ -57,8 +68,14 @@ export default function LoomRecordingTimer() {
   const progressPct = isTimed ? Math.min(100, (elapsedSeconds / totalSeconds) * 100) : null;
   const nearEnd = isTimed && remainingSeconds <= 60;
 
+  const stateClass = isFault
+    ? " loom-timer--fault"
+    : nearEnd
+    ? " loom-timer--near-end"
+    : "";
+
   return (
-    <div className={`loom-timer card loom-timer--recording${nearEnd ? " loom-timer--near-end" : ""}`}>
+    <div className={`loom-timer card loom-timer--recording${stateClass}`}>
       <div className="loom-timer-top">
         <span className="loom-timer-dot" />
         <span className="loom-timer-session-name" title={session.session_name}>
@@ -67,6 +84,11 @@ export default function LoomRecordingTimer() {
         {extraCount > 0 && <span className="loom-timer-extra">+{extraCount} more</span>}
       </div>
       <span className="loom-timer-clock">{formatClock(elapsedSeconds)}</span>
+      {isFault && (
+        <span className="loom-timer-label loom-timer-label--fault" title={session.error_message || ""}>
+          {session.error_message || "Module fault — recording continues on other modules"}
+        </span>
+      )}
       {isTimed ? (
         <>
           <div className="loom-timer-bar">
@@ -75,7 +97,7 @@ export default function LoomRecordingTimer() {
           <span className="loom-timer-label">{formatClock(remainingSeconds)} remaining</span>
         </>
       ) : (
-        <span className="loom-timer-label">Elapsed - manual stop</span>
+        !isFault && <span className="loom-timer-label">Elapsed - manual stop</span>
       )}
     </div>
   );

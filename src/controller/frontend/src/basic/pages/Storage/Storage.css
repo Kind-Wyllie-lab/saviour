@@ -82,6 +82,16 @@
   color: var(--secondary-text-color);
 }
 
+.storage-rec-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: #c62828;
+  vertical-align: middle;
+}
+
 .capacity-bar {
   height: 8px;
   border-radius: 4px;

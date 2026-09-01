@@ -34,12 +34,24 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
   const [unattended, setUnattended] = usePersistedState("saviour_session_form_unattended", false);
   const [ptpSyncStatus, setPtpSyncStatus] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+  const [dataRate, setDataRate] = useState(null);
 
   useEffect(() => { setPtpSyncStatus(null); }, [target]);
   useEffect(() => {
     socket.on("ptp_sync_status", setPtpSyncStatus);
     return () => socket.off("ptp_sync_status", setPtpSyncStatus);
   }, []);
+
+  // Pre-flight data-rate estimate for the chosen target — how much this
+  // session will generate and how long the share holds at that rate.
+  useEffect(() => {
+    const onEstimate = (d) => setDataRate(d);
+    socket.on("data_rate_estimate", onEstimate);
+    return () => socket.off("data_rate_estimate", onEstimate);
+  }, []);
+  useEffect(() => {
+    if (target) socket.emit("estimate_data_rate", { target });
+  }, [target]);
 
   useEffect(() => {
     const onError = (data) => {
@@ -369,6 +381,19 @@ function NewSessionForm({ modules, sessionList = {}, target, setTarget, onSessio
         {ptpSyncStatus?.ok && (
           <p className="form-ok">
             PTP synchronised to within {ptpSyncStatus.max_offset_us}µs
+          </p>
+        )}
+        {dataRate?.total_mb_per_min > 0 && (
+          <p className="form-hint">
+            Est. data rate: ~{dataRate.total_mb_per_min} MB/min
+            {" "}({dataRate.total_gb_per_hour} GB/hour)
+            {dataRate.share_runway_hours != null && (
+              <> · share holds ~{
+                dataRate.share_runway_hours >= 48
+                  ? `${Math.round(dataRate.share_runway_hours / 24)} days`
+                  : `${Math.round(dataRate.share_runway_hours)} hours`
+              } at this rate</>
+            )}
           </p>
         )}
 

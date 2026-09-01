@@ -1535,6 +1535,19 @@ class Web(ABC):
                     health['cpu_temp'] = round(int(f.read().strip()) / 1000, 1)
             except Exception:
                 health['cpu_temp'] = None
+            # Throttle / under-voltage bitmask (Pi 5 PoE power + thermal). Raw
+            # int; decode with src.shared.health.decode_throttled on the UI side.
+            try:
+                out = subprocess.run(
+                    ["vcgencmd", "get_throttled"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                health['throttled'] = (
+                    int(out.stdout.strip().split("=", 1)[1], 16)
+                    if out.returncode == 0 else None
+                )
+            except Exception:
+                health['throttled'] = None
             # CPU usage — read /proc/stat twice with a short sleep for accuracy
             try:
                 def _read_cpu_stat():

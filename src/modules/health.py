@@ -15,7 +15,7 @@ import time
 
 import psutil
 
-from src.shared.health import ModuleHealthSnapshot
+from src.shared.health import ModuleHealthSnapshot, decode_throttled
 
 
 class Health:
@@ -119,6 +119,7 @@ class Health:
             ptp4l_offset_ns_max=ptp_range.get('ptp4l_offset_ns_max'),
             phc2sys_offset_ns_min=ptp_range.get('phc2sys_offset_ns_min'),
             phc2sys_offset_ns_max=ptp_range.get('phc2sys_offset_ns_max'),
+            throttled=self.get_throttled(),
             recording=self.facade.get_recording_status(),
             version=self.facade.get_saviour_version(),
         )
@@ -131,6 +132,39 @@ class Health:
             return float(temp.replace("temp=","").replace("'C\n",""))
         except:
             return None
+
+    # Last-seen "now" throttle flags, so we log the transition into a
+    # brown-out / thermal-throttle state once rather than every heartbeat.
+    _last_throttle_now: frozenset = frozenset()
+
+    def get_throttled(self):
+        """Raw `vcgencmd get_throttled` bitmask as an int, or None.
+
+        Logs a WARNING when a *currently-active* flag (under-voltage, freq
+        cap, throttling, soft-temp-limit) appears or changes -- the usual
+        root cause of a PoE-powered Pi 5 misbehaving then recovering, and
+        something the existing cpu_temp reading alone can't tell you (a Pi
+        under-fed by an un-configured PoE HAT throttles well before it looks
+        hot)."""
+        try:
+            out = os.popen("vcgencmd get_throttled").readline().strip()
+            # "throttled=0x50005"
+            value = int(out.split("=", 1)[1], 16)
+        except Exception:
+            return None
+        try:
+            now = frozenset(decode_throttled(value)["now"])
+            if now and now != self._last_throttle_now:
+                self.logger.warning(
+                    f"Pi throttle flags active: {', '.join(sorted(now))} "
+                    f"(get_throttled={hex(value)}) -- check PoE power "
+                    f"(PSU_MAX_CURRENT) and cooling")
+            elif not now and self._last_throttle_now:
+                self.logger.info("Pi throttle flags cleared")
+            self._last_throttle_now = now
+        except Exception:
+            pass
+        return value
 
     def stop_heartbeats(self):
         """Stop sending heartbeats"""

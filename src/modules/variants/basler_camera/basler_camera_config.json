@@ -1,0 +1,51 @@
+{
+    "module": {
+        "group": "camera"
+    },
+    "basler": {
+        "_comment": "SKETCH — key names mirror camera_config.json where the concept maps; Pylon-native names are noted in the module docstring.",
+
+        "device_serial": null,
+        "device_user_id": null,
+        "transport": "auto",
+
+        "width": 1920,
+        "height": 1080,
+        "offset_x": 0,
+        "offset_y": 0,
+        "pixel_format": "BGR8",
+        "fps": 30,
+        "limit_fps": true,
+
+        "exposure_auto": "Continuous",
+        "exposure_time_us": 5000,
+        "gain_auto": "Continuous",
+        "gain_db": 0.0,
+        "balance_white_auto": "Continuous",
+        "gamma": 1.0,
+
+        "hflip": false,
+        "vflip": false,
+
+        "packet_size": 8192,
+        "inter_packet_delay_us": 0,
+
+        "ptp_enable": true,
+
+        "overlay_timestamp": true,
+        "text_size": "medium",
+        "overlay_framerate_on_preview": true,
+        "livestream_quality": "normal",
+
+        "grab_timeout_ms": 1000,
+        "grab_strategy": "LatestImageOnly"
+    },
+    "recording": {
+        "_recording_filetype": "ts",
+        "_codec": "h264",
+        "bitrate_mb": 8,
+        "_encoder": "ffmpeg",
+        "_ffmpeg_preset": "ultrafast",
+        "_ffmpeg_extra_args": []
+    }
+}

@@ -125,17 +125,41 @@
         margin-top: 10px;
     }
 
-    /* SAVIOUR wordmark image (replaces the old <h1> text title). The asset has
-       an opaque white background, so border-radius rounds it into a tidy plate
-       that reads on both the light and dark sidebar themes; capped well under
-       the sidebar's min width so it never overflows or widens it. */
+    /* SAVIOUR wordmark — themed text (no raster asset), so it inverts cleanly
+       with the light/dark theme. Geometric-mono, letter-spaced, with a
+       record-red dot; scales with the sidebar and never widens it. */
     .sidebar-wordmark {
-        display: block;
-        width: 100%;
-        max-width: 168px;
-        height: auto;
-        border-radius: 6px;
-        margin: 12px auto 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.32em;
+        margin: 12px 0 4px;
+        color: var(--text-color);
+        font-family: ui-monospace, "Cascadia Mono", "Roboto Mono",
+            "DejaVu Sans Mono", "Courier New", monospace;
+        font-weight: 700;
+        font-size: clamp(13px, 1.7vw, 19px);
+        letter-spacing: 0.08em;
+        line-height: 1;
+    }
+
+    .sidebar-wordmark__bracket {
+        font-weight: 400;
+        opacity: 0.85;
+    }
+
+    .sidebar-wordmark__dot {
+        width: 0.6em;
+        height: 0.6em;
+        border-radius: 50%;
+        background: var(--recording-color, #e11d1d);
+        flex-shrink: 0;
+    }
+
+    .sidebar-wordmark__text {
+        /* trailing letter-spacing adds phantom width on the right — pull the
+           closing bracket back so the pair looks balanced */
+        margin-right: -0.08em;
     }
 
     .sidebar-hostname {

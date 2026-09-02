@@ -500,6 +500,12 @@ export default function System() {
                           EXPOSURE {row.frame_clip_pct.toFixed(0)}%
                         </span>
                       )}
+                      {isOnline && row.hardware_fault && (
+                        <span className="val--danger" style={{ marginLeft: 6, fontWeight: 600 }}
+                          title={row.hardware_fault}>
+                          NO HARDWARE
+                        </span>
+                      )}
                       <span className="device-id">{row.id}</span>
                     </td>
                     <td>{connectionCell(connStatus)}</td>

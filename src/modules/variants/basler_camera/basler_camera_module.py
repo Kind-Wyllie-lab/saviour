@@ -94,19 +94,40 @@ class BaslerCameraModule(Module):
         self.config.load_module_config(self.CONFIG_FILENAME)
         self.description = "Basler GigE/USB3 camera (pypylon)"
 
-        if pylon is None:
-            raise RuntimeError(
-                "pypylon is not installed — run variants/basler_camera/install_pypylon.sh "
-                "(or `env/bin/pip install pypylon`)."
-            )
-
-        # --- hardware -------------------------------------------------------
+        # --- hardware ---------------------------------------------------
+        # None once a device is confirmed open; otherwise a human-readable
+        # reason (missing pypylon, no device found, open() failed). Same
+        # contract as CameraBase.hardware_fault: the module must always
+        # boot and register with the controller so a missing/dead camera
+        # is a visible, explained fault state (readiness check + health
+        # heartbeat) rather than a boot crash indistinguishable from the
+        # process never having started at all.
         self.camera: "pylon.InstantCamera | None" = None
-        self._converter = pylon.ImageFormatConverter()
-        self._converter.OutputPixelFormat = pylon.PixelType_BGR8packed
-        self._converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
-        self._open_camera()
-        self._apply_camera_config(updated_keys=None)
+        self._converter = None
+        self.hardware_fault: str | None = None
+
+        if pylon is None:
+            self.hardware_fault = (
+                "pypylon is not installed — run "
+                "variants/basler_camera/install_pypylon.sh"
+            )
+            self.logger.error(self.hardware_fault)
+        else:
+            try:
+                self._converter = pylon.ImageFormatConverter()
+                self._converter.OutputPixelFormat = pylon.PixelType_BGR8packed
+                self._converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
+                self._open_camera()
+                self._apply_camera_config(updated_keys=None)
+            except Exception as e:
+                self.hardware_fault = f"No Basler camera available: {e}"
+                self.logger.error(
+                    f"{self.hardware_fault} -- module will still start and "
+                    "register with the controller, but recording/streaming "
+                    "are unavailable until a camera is connected and the "
+                    "module is restarted."
+                )
+                self.camera = None
 
         # --- capture / encode state -------------------------------------
         self._grab_thread: threading.Thread | None = None
@@ -228,6 +249,8 @@ class BaslerCameraModule(Module):
     # Grab loop
     # ------------------------------------------------------------------ #
     def _start_grabbing(self) -> None:
+        if self.camera is None:
+            return
         if self._grab_thread and self._grab_thread.is_alive():
             return
         strat = getattr(
@@ -400,6 +423,11 @@ class BaslerCameraModule(Module):
 
     # --- Module recording hooks (called by src/modules/recording.py) ---
     def _start_new_recording(self) -> bool:
+        if self.camera is None:
+            reason = self.hardware_fault or "No Basler camera detected"
+            self.logger.error(f"Cannot start recording: {reason}")
+            self.facade.send_status({"type": "recording_start_failed", "error": reason})
+            return False
         if not self.camera.IsGrabbing():
             self._start_grabbing()
         self._open_segment()
@@ -457,6 +485,13 @@ class BaslerCameraModule(Module):
     def start_streaming(self, receiver_ip=None, port=None) -> bool:
         if self.is_streaming:
             return False
+        if self.camera is None:
+            reason = self.hardware_fault or "No Basler camera detected"
+            self.logger.error(f"Cannot start streaming: {reason}")
+            self.facade.send_status({
+                "type": "streaming_start_failed", "status": "error", "error": reason,
+            })
+            return False
         if not self.camera.IsGrabbing():
             self._start_grabbing()
         self.monitor_stream.render_fn = self._preview_render
@@ -480,7 +515,7 @@ class BaslerCameraModule(Module):
     @check()
     def _check_camera(self):
         if self.camera is None or not self.camera.IsOpen():
-            return False, "Basler camera not open"
+            return False, self.hardware_fault or "Basler camera not open"
         return True, f"{self.camera.GetDeviceInfo().GetModelName()} open"
 
     @check()
@@ -494,6 +529,13 @@ class BaslerCameraModule(Module):
     def start(self) -> bool:
         if not super().start():
             return False
+        if self.camera is None:
+            self.logger.error(
+                f"Starting with no camera hardware ({self.hardware_fault}) -- "
+                "module is registered with the controller but cannot record "
+                "or stream until a camera is connected and restarted."
+            )
+            return True
         self._start_grabbing()
         self.start_streaming()
         return True

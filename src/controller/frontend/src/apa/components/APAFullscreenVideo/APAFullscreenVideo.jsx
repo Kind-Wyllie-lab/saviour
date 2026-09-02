@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import "./APAFullscreenVideo.css";
 import APACommands from "../APACommands/APACommands";
+import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 
 function APAFullscreenVideo({ ip, moduleList, onClose }) {
@@ -16,12 +17,21 @@ function APAFullscreenVideo({ ip, moduleList, onClose }) {
   return (
     <div className="fullscreen-overlay">
       <div className="video-panel">
-        {/* Video fills the overlay */}
-        <img
-          src={videoFeedUrl(ip)}
-          alt="Fullscreen camera stream"
-          className="fullscreen-video"
-        />
+        {/* Wrapper anchors the screenshot button to the video without making
+            .video-panel positioned (that would re-anchor the close button). */}
+        <div className="fullscreen-video-wrap snapshot-hover-parent">
+          <img
+            src={videoFeedUrl(ip)}
+            alt="Fullscreen camera stream"
+            className="fullscreen-video"
+          />
+          {ip && (
+            <SnapshotButton
+              module={{ ip }}
+              className="fullscreen-snapshot-button"
+            />
+          )}
+        </div>
         {/* Close button in top-right corner */}
         <button className="fullscreen-close-btn" onClick={onClose}>
           ✕

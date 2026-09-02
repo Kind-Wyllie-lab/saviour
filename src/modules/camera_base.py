@@ -1452,10 +1452,16 @@ class CameraBase(Module):
 
 
     def register_routes(self):
-        """Register any extra Flask routes beyond the base '/' and
-        '/video_feed', which MJPEGStreamServer already provides. Subclasses
-        (e.g. loom's /roi endpoints) should call super().register_routes()
-        and add their own routes on self.monitor_stream.app."""
+        """Register any extra Flask routes beyond the base '/', '/video_feed'
+        and '/snapshot.jpg', which MJPEGStreamServer already provides.
+        Subclasses (e.g. loom's /roi endpoints) should call
+        super().register_routes() and add their own routes on
+        self.monitor_stream.app.
+
+        Note '/snapshot.jpg' — the still frame the crop editor and the
+        frontend livestream screenshot button both fetch — now lives on
+        MJPEGStreamServer itself, so every module type that serves a
+        monitoring stream gets it, not just cameras."""
         @self.monitor_stream.app.route('/shutdown')
         def shutdown():
             func = request.environ.get('werkzeug.server.shutdown')
@@ -1463,29 +1469,6 @@ class CameraBase(Module):
                 raise RuntimeError('Not running with the Werkzeug Server')
             func()
             return 'Server shutting down...'
-
-        @self.monitor_stream.app.route('/snapshot.jpg', methods=['GET'])
-        def snapshot():
-            """Return a single JPEG snapshot from the latest preview frame --
-            same bytes the MJPEG stream is currently pushing, no extra
-            encode. Used by the crop editor (every camera variant, not just
-            loom) for a still frame to draw a crop rectangle on, and by the
-            frontend livestream "take a picture" button.
-
-            Access-Control-Allow-Origin is set so the frontend (served from
-            the controller origin) can fetch() these bytes cross-origin to
-            build a downloadable Blob -- an <img> tag doesn't need it, but
-            fetch() does. This is the same LAN-open exposure the MJPEG
-            stream itself already has."""
-            jpeg = self.monitor_stream.get_latest_frame()
-            headers = {
-                "Content-Type": "image/jpeg",
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-store",
-            }
-            if jpeg is None:
-                return ("No frame available", 503, headers)
-            return (jpeg, 200, headers)
 
     @command()
     def stop_streaming(self) -> bool:

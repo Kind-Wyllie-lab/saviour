@@ -19,7 +19,7 @@ function APALivestreamCard({ module, moduleList }) {
 
         <div className="stream-content">
           {showStream ? (
-            <div className="stream-video stream-video--clickable" onClick={() => setFullscreen(true)}>
+            <div className="stream-video stream-video--clickable snapshot-hover-parent" onClick={() => setFullscreen(true)}>
               <img
                 key={streamKey}
                 src={videoFeedUrl(module, { key: streamKey })}

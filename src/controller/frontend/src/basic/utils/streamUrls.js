@@ -26,11 +26,13 @@ export function videoFeedUrl(moduleOrIp, { port = 8080, key } = {}) {
   return `http://${host(moduleOrIp)}:${port}/video_feed${nonce ? `?${nonce}` : ""}`;
 }
 
-/** Single-frame JPEG snapshot URL. */
-export function snapshotUrl(moduleOrIp) {
+/** Single-frame JPEG snapshot URL. Served by MJPEGStreamServer on every
+ *  module type that exposes a monitoring stream, at the same port as
+ *  /video_feed (cameras 8080, microphone 8081, ttl 8082, rfid 8083). */
+export function snapshotUrl(moduleOrIp, { port = 8080 } = {}) {
   const t = Date.now();
   if (MOCK) {
     return `/mock-media/frame.svg?t=${t}&label=${encodeURIComponent(label(moduleOrIp))}`;
   }
-  return `http://${host(moduleOrIp)}:8080/snapshot.jpg?t=${t}`;
+  return `http://${host(moduleOrIp)}:${port}/snapshot.jpg?t=${t}`;
 }

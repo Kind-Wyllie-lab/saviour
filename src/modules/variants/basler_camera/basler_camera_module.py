@@ -143,9 +143,11 @@ class BaslerCameraModule(Module):
         self._fps_ema = 0.0
 
         # --- preview --------------------------------------------------------
+        # /snapshot.jpg (still frame for the crop editor / frontend screenshot
+        # button) is registered by MJPEGStreamServer itself — no per-variant
+        # route needed.
         self.monitor_stream = MJPEGStreamServer(logger=self.logger, name="Basler")
         self.is_streaming = False
-        self._register_routes()
 
         self.is_recording = False
 
@@ -460,14 +462,6 @@ class BaslerCameraModule(Module):
     # ------------------------------------------------------------------ #
     # Preview stream
     # ------------------------------------------------------------------ #
-    def _register_routes(self):
-        @self.monitor_stream.app.route("/snapshot.jpg")
-        def snapshot():
-            jpeg = self.monitor_stream.get_latest_frame()
-            if jpeg is None:
-                return ("No frame available", 503)
-            return (jpeg, 200, {"Content-Type": "image/jpeg"})
-
     def _preview_render(self) -> bytes | None:
         with self._frame_lock:
             frame = None if self._latest_frame is None else self._latest_frame.copy()

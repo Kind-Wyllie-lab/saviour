@@ -66,7 +66,9 @@
         "notify_disk_space": true
     },
     "frontend": {
+        "theme_id": "default",
+        "dark_mode": true,
         "accent_color": "#6495ed",
-        "dark_mode": true
+        "custom_themes": []
     }
 } 

@@ -40,6 +40,7 @@ from flask import (
 from flask_socketio import SocketIO
 
 from src.controller.config import Config
+from src.controller.themes import ThemeError, ThemeStore
 from src.shared.data_rate import (
     bytes_per_s_to_mb_per_min,
     estimate_recording_bytes_per_s,
@@ -218,6 +219,14 @@ class Web(ABC):
         self.logger = logging.getLogger(__name__)
         self.config = config
 
+        # Operator-defined colour themes, one JSON file each, alongside the
+        # active config (built-ins are hardcoded in the frontend). Injected
+        # into every controller_config_response as frontend.custom_themes.
+        self.theme_store = ThemeStore(
+            os.path.join(os.path.dirname(self.config.active_config_path), "themes"),
+            logger=self.logger,
+        )
+
         # Get the port from the config
         self.port = self.config.get("interface.web_interface_port")
 
@@ -380,6 +389,16 @@ class Web(ABC):
         """Whether the current Socket.IO connection (request.sid) has logged
         in. Gates every mutating/destructive handler."""
         return request.sid in self._authenticated_sids
+
+
+    def _controller_config_payload(self) -> dict:
+        """facade.get_config() with frontend.custom_themes populated from the
+        on-disk ThemeStore -- the frontend treats that list as part of the
+        config, but it's never persisted to active_config.json (see
+        handle_save_controller_config, which strips it back out)."""
+        config = self.facade.get_config()
+        config.setdefault("frontend", {})["custom_themes"] = self.theme_store.list()
+        return config
 
 
     def _require_auth(self, error_event: str, error_payload=None) -> bool:
@@ -1602,10 +1621,47 @@ class Web(ABC):
         @self.socketio.on('get_controller_config')
         def handle_get_controller_config(data=None):
             self.logger.info("Received request for controller config")
-            config = self.facade.get_config()
             self.socketio.emit("controller_config_response", {
-                "config": config
+                "config": self._controller_config_payload()
             })
+
+        @self.socketio.on('save_custom_theme')
+        def handle_save_custom_theme(data):
+            if not self._require_auth("custom_theme_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            try:
+                saved = self.theme_store.save({
+                    "name": data.get("name", ""),
+                    "id": data.get("id"),
+                    "light": data.get("light"),
+                    "dark": data.get("dark"),
+                })
+            except ThemeError as e:
+                self.socketio.emit("custom_theme_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            self.socketio.emit("custom_theme_saved", {"theme": saved},
+                               room=request.sid)
+            # Broadcast so every client's picker (and useControllerTheme)
+            # sees the new theme immediately.
+            self.socketio.emit("controller_config_response",
+                               {"config": self._controller_config_payload()})
+
+        @self.socketio.on('delete_custom_theme')
+        def handle_delete_custom_theme(data):
+            if not self._require_auth("custom_theme_error",
+                                      {"error": "Login required for this action"}):
+                return
+            try:
+                self.theme_store.delete((data or {}).get("id", ""))
+            except ThemeError as e:
+                self.socketio.emit("custom_theme_error", {"error": str(e)},
+                                   room=request.sid)
+                return
+            self.socketio.emit("controller_config_response",
+                               {"config": self._controller_config_payload()})
 
 
         """First-run setup"""
@@ -1639,7 +1695,7 @@ class Web(ABC):
             # and refresh the controller-config view for anyone on Settings.
             self.socketio.emit("first_run_state", self._first_run_state())
             self.socketio.emit("controller_config_response",
-                               {"config": self.facade.get_config()})
+                               {"config": self._controller_config_payload()})
 
 
         @self.socketio.on('save_controller_config')
@@ -1654,9 +1710,14 @@ class Web(ABC):
             # every save regardless of section.
             old_export = self.facade.get_config().get("export", {})
             new_config = _filter_private_keys(data.get("config", {}))
+            # custom_themes rides in the config payload for the frontend's
+            # convenience but lives only as on-disk theme files -- never let a
+            # save round-trip it into active_config.json.
+            if isinstance(new_config.get("frontend"), dict):
+                new_config["frontend"].pop("custom_themes", None)
             self.facade.set_config(new_config)
             self.socketio.emit("controller_config_response", {
-                "config": self.facade.get_config()
+                "config": self._controller_config_payload()
             })
 
             new_export = new_config.get("export", {})

@@ -123,6 +123,7 @@ class Health:
             rec_bytes_per_s=self.facade.get_measured_recording_rate(),
             audio_clip_pct=self.facade.get_audio_clip_pct(),
             frame_clip_pct=self.facade.get_frame_clip_pct(),
+            hardware_fault=self.facade.get_hardware_fault(),
             version=self.facade.get_saviour_version(),
         )
         return snapshot.to_dict()

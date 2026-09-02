@@ -8,6 +8,7 @@ import ModuleList from "/src/basic/components/ModuleList/ModuleList";
 import LoomStimulusControl from "/src/loom/components/LoomStimulusControl/LoomStimulusControl";
 import LoomRecordingTimer from "/src/loom/components/LoomRecordingTimer/LoomRecordingTimer";
 import { StageDropdown } from "/src/loom/LoomStageContext";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 
 const CAMERA_PORT  = 8080;
 const MIC_PORT     = 8081;
@@ -118,7 +119,7 @@ function StreamTile({ ip, port, label, isRecording, syncStatus }) {
         <img
           key={streamKey}
           ref={imgRef}
-          src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
+          src={videoFeedUrl(ip, { port, key: streamKey })}
           alt={label || "stream"}
           onLoad={resetStall}
           onError={handleError}

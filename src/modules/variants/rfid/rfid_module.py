@@ -156,6 +156,12 @@ class RFIDModule(Module):
         self.bus = RS485Bus()
         self.bus.on_transponder_read = self._on_transponder_read
         self.bus.on_bus_status = self._on_bus_status
+        # None once a reader is on the bus; otherwise a human-readable reason.
+        # Surfaced every heartbeat via get_health() (the System page's "NO
+        # HARDWARE" badge) and as the _check_rfid() readiness failure reason.
+        # Set here so a module that never finds a reader still reports the
+        # fault before start()/_bring_up_bus() has run.
+        self.hardware_fault: str | None = "RFID reader not yet connected"
 
         # ── Monitoring stream ──────────────────────────────────────────
         self.is_streaming = False
@@ -494,9 +500,11 @@ class RFIDModule(Module):
     @check()
     def _check_rfid(self):
         if self.bus.is_connected:
+            self.hardware_fault = None
             return True, (f"RFID bus on {self.bus.port}, "
                           f"{len(self.bus.units)} unit(s) seen")
-        return False, "no RFID reader found on any serial port"
+        self.hardware_fault = "No RFID reader found on any serial port"
+        return False, self.hardware_fault
 
     # ══════════════════════════════════════════════════════════════════════
     # Commands
@@ -524,9 +532,11 @@ class RFIDModule(Module):
             self.logger.warning(f"RFID: bus connect failed: {e}")
 
         if connected:
+            self.hardware_fault = None
             if self.config.get("rfid.scan_on_start", True):
                 threading.Timer(1.5, self._safe_scan).start()
         else:
+            self.hardware_fault = "No RFID reader found on any serial port"
             self.logger.warning("RFID: no reader found on any serial port")
 
     def _teardown_bus(self) -> None:

@@ -405,3 +405,80 @@ class TestExposureSampling:
                 cam._maybe_sample_exposure(frame)
         assert cam._exposure_warned is False
         cam.logger.info.assert_called_with("Exposure back within range")
+
+
+# ---------------------------------------------------------------------------
+# Missing/dead camera hardware: __init__'s Picamera2() probe (see the try/
+# except around it) sets picam2=None + hardware_fault instead of letting the
+# exception crash module startup. These tests don't exercise that probe
+# itself (out of scope per this file's docstring -- it needs a real or
+# deeply-faked Picamera2), only the downstream guards that make picam2=None
+# a safe, well-explained state rather than a latent AttributeError.
+# ---------------------------------------------------------------------------
+
+_NO_SENSOR = "No camera sensor detected: boom"
+
+
+class TestCheckPicam:
+    def test_no_camera_reports_fault_reason(self):
+        cam = _make_camera(picam2=None, hardware_fault=_NO_SENSOR)
+        ok, message = cam._check_picam()
+        assert ok is False
+        assert message == _NO_SENSOR
+
+    def test_no_camera_falls_back_to_generic_message(self):
+        # hardware_fault unset (e.g. attribute never set on an old instance) --
+        # still reports something, not a crash from the `or` falling through.
+        cam = _make_camera(picam2=None, hardware_fault=None)
+        ok, message = cam._check_picam()
+        assert ok is False
+        assert message == "No camera hardware detected"
+
+    def test_camera_present_reports_sensor_model(self):
+        cam = _make_camera(
+            picam2=MagicMock(), hardware_fault=None, sensor_model="imx708",
+        )
+        ok, message = cam._check_picam()
+        assert ok is True
+        assert message == "imx708 present"
+
+
+class TestStartNewRecordingNoHardware:
+    def test_returns_false_and_reports_status_without_touching_picam2(self):
+        # picam2=None on purpose -- if the guard didn't fire first, any of the
+        # SplittableOutput/PyavOutput/_open_timestamp_csv calls below it would
+        # raise on a None object.
+        cam = _make_camera(picam2=None, hardware_fault=_NO_SENSOR, facade=MagicMock())
+        result = cam._start_new_recording()
+        assert result is False
+        cam.facade.send_status.assert_called_once_with({
+            "type": "recording_start_failed", "error": _NO_SENSOR,
+        })
+
+
+class TestStartNextRecordingSegmentNoHardware:
+    def test_returns_false_without_touching_picam2(self):
+        cam = _make_camera(picam2=None, hardware_fault="boom")
+        assert cam._start_next_recording_segment() is False
+
+
+class TestStartStreamingNoHardware:
+    def test_returns_false_and_reports_status(self):
+        cam = _make_camera(
+            is_streaming=False, picam2=None, hardware_fault=_NO_SENSOR,
+            communication=MagicMock(),
+        )
+        result = cam.start_streaming()
+        assert result is False
+        cam.communication.send_status.assert_called_once_with({
+            "type": "streaming_start_failed", "status": "error", "error": _NO_SENSOR,
+        })
+
+
+class TestConfigureModuleSpecialNoHardware:
+    def test_no_ops_cleanly_instead_of_raising(self):
+        cam = _make_camera(picam2=None, hardware_fault="boom")
+        # subclass hook, called first either way
+        cam._configure_module_extra = MagicMock()
+        cam.configure_module_special(["camera.fps"])  # must not raise
+        cam._configure_module_extra.assert_called_once_with(["camera.fps"])

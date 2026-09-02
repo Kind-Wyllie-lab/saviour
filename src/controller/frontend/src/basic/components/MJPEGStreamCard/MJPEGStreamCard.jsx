@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./MJPEGStreamCard.css";
 
 const STALL_TIMEOUT_MS = 8000;
@@ -227,7 +228,7 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
             <img
               key={streamKey}
               ref={imgRef}
-              src={`http://${ip}:${port}/video_feed?t=${streamKey}`}
+              src={videoFeedUrl(ip, { port, key: streamKey })}
               alt={label || "stream"}
               onLoad={handleLoad}
               onError={handleError}

@@ -29,7 +29,7 @@ AUDIOMOTH_CMD = "/usr/local/bin/AudioMoth-USB-Microphone"
 # Import SAVIOUR dependencies
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.mjpeg_stream import MJPEGStreamServer
-from modules.module import Module, command
+from modules.module import Module, check, command
 
 # Colour palette for the monitoring spectrogram, selectable via
 # `monitoring.colormap`. Value None => plain grayscale (no colormap).
@@ -57,6 +57,12 @@ class AudiomothModule(Module):
         # Initialize audiomoth
         self.mics = [] # An empty list for discovering all connected mics
         self.audiomoths = {} # An empty dict for discovering connected audiomoths
+        # None once at least one AudioMoth is confirmed connected; otherwise a
+        # human-readable reason. Kept fresh by _check_audiomoths() (re-scans
+        # live, since AudioMoths are hot-pluggable unlike a camera sensor) and
+        # surfaced the same way as CameraBase.hardware_fault -- readiness
+        # check + every health heartbeat.
+        self.hardware_fault: str | None = None
         self._find_audiomoths() # Discover any and all connected microphones
 
         # Per-segment recording threads and state
@@ -223,6 +229,19 @@ class AudiomothModule(Module):
                 serial = re.split(r"-|_", mic.id)[-3] # Serial code, unique identifier for each audiomoth
                 self.audiomoths[serial] = mic.id
         self.logger.info(f"Found {len(self.audiomoths)} audiomoths, serial numbers are {', '.join(self.audiomoths.keys())}")
+        self.hardware_fault = (
+            None if self.audiomoths else "No AudioMoth microphones detected"
+        )
+
+    @check()
+    def _check_audiomoths(self):
+        """Re-scans live (unlike CameraBase's boot-time-only hardware probe,
+        AudioMoths are hot-pluggable, so a stale flag from module startup
+        would be actively misleading)."""
+        self._find_audiomoths()
+        if not self.audiomoths:
+            return False, self.hardware_fault
+        return True, f"{len(self.audiomoths)} audiomoth(s) connected"
 
 
     """Recording"""
@@ -235,7 +254,7 @@ class AudiomothModule(Module):
         return f"{self.facade.get_filename_prefix()}_{label}_({self.facade.get_segment_id()}_{strtime}).{filetype}"
 
 
-    def _start_new_recording(self) -> None:
+    def _start_new_recording(self) -> bool:
         """Start initial recording segments for all connected audiomoths."""
         self._recording_stop_event.clear()
         self._segment_stop_event.clear()
@@ -251,8 +270,18 @@ class AudiomothModule(Module):
         self._find_audiomoths()
 
         if not self.audiomoths:
+            # Previously returned None here and let the caller declare
+            # "recording_started"/success regardless -- a session would run
+            # to completion with zero audio ever recorded and no fault
+            # reported anywhere. Now an explicit False (recording.py gates
+            # _begin_recording on this) plus the module's own fault status,
+            # matching CameraBase's contract for the same failure mode.
             self.logger.warning("No audiomoths connected, cannot start recording")
-            return
+            self.facade.send_status({
+                "type": "recording_start_failed",
+                "error": self.hardware_fault or "No AudioMoth microphones detected",
+            })
+            return False
 
         intended_start_at = getattr(self, "recording_intended_start_at", None)
         for serial, mic_id in self.audiomoths.items():
@@ -269,6 +298,7 @@ class AudiomothModule(Module):
             thread.start()
 
         self.logger.info(f"Started {len(self.audiomoth_threads)} audiomoth recording threads")
+        return True
 
 
     def _start_next_recording_segment(self) -> None:

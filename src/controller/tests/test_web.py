@@ -1727,6 +1727,8 @@ class TestStorageOverview:
         assert ov["exports"]["pending"] == 0
         assert ov["disks"] == []
         assert ov["data_rate"]["recording_mb_per_min"] == 0
+        assert ov["data_rate"]["fleet_est_mb_per_min"] == 0
+        assert ov["data_rate"]["fleet_est_module_count"] == 0
 
     def test_data_rate_estimate_and_local_buffer(self):
         web, facade = _make_web_with_facade()
@@ -1751,6 +1753,37 @@ class TestStorageOverview:
         assert ov["data_rate"]["recording_module_count"] == 1
         assert 15.0 <= ov["data_rate"]["recording_mb_per_min"] <= 15.5
         assert ov["data_rate"]["share_runway_hours"] is not None
+        # Expected-flat-out aggregate is populated regardless of recording state.
+        assert 15.0 <= ov["data_rate"]["fleet_est_mb_per_min"] <= 15.5
+        assert ov["data_rate"]["fleet_est_module_count"] == 1
+        assert ov["data_rate"]["est_share_runway_hours"] is not None
+
+    def test_fleet_estimate_populated_with_nothing_recording(self):
+        web, facade = _make_web_with_facade()
+        facade.get_recording_sessions.return_value = {}
+        facade.get_module_health.return_value = {
+            "cam_a": {"disk_space": 20.0, "disk_used_gb": 20.0,
+                      "disk_total_gb": 100.0},  # note: no "recording" key
+            "cam_b": {"disk_space": 20.0, "disk_used_gb": 20.0,
+                      "disk_total_gb": 100.0},
+        }
+        facade.get_modules.return_value = {
+            "cam_a": {"name": "A", "type": "loom_camera"},
+            "cam_b": {"name": "B", "type": "loom_camera"},
+        }
+        facade.get_module_configs.return_value = {
+            "cam_a": {"true_config": {"camera": {"bitrate_mb": 2, "fps": 30}}},
+            "cam_b": {"true_config": {"camera": {"bitrate_mb": 2, "fps": 30}}},
+        }
+        web._nas_health = {"free_gb": 500.0}
+
+        dr = web._storage_overview()["data_rate"]
+        assert dr["recording_module_count"] == 0
+        assert dr["recording_mb_per_min"] == 0
+        # Two cameras at ~15.2 MB/min each.
+        assert 30.0 <= dr["fleet_est_mb_per_min"] <= 30.6
+        assert dr["fleet_est_module_count"] == 2
+        assert dr["est_share_runway_hours"] is not None
 
     def test_data_rate_none_for_unknown_module_type(self):
         web, facade = _make_web_with_facade()

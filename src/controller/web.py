@@ -3028,6 +3028,12 @@ class Web(ABC):
 
         fleet_recording_mb_per_min = 0.0
         recording_module_count = 0
+        # Expected fleet-wide rate if every recording-capable module recorded
+        # at once -- independent of what's actually recording right now, so
+        # the Storage page can show a concrete "the fleet generates ~X MB/min
+        # flat out" figure even when idle.
+        fleet_est_mb_per_min = 0.0
+        fleet_est_module_count = 0
         for mid, h in (health or {}).items():
             used_gb = h.get("disk_used_gb")
             total_gb = h.get("disk_total_gb")
@@ -3045,6 +3051,10 @@ class Web(ABC):
             buffer_min = runway_minutes(
                 (free_gb * 1024) if free_gb is not None else None,
                 measured_mb_per_min or mb_per_min)
+
+            if mb_per_min:
+                fleet_est_mb_per_min += mb_per_min
+                fleet_est_module_count += 1
 
             if h.get("recording"):
                 rate_for_fleet = measured_mb_per_min or mb_per_min
@@ -3080,6 +3090,10 @@ class Web(ABC):
         if share_free_gb and fleet_recording_mb_per_min > 0:
             share_runway_hours = round(
                 share_free_gb * 1024 / fleet_recording_mb_per_min / 60, 1)
+        est_share_runway_hours = None
+        if share_free_gb and fleet_est_mb_per_min > 0:
+            est_share_runway_hours = round(
+                share_free_gb * 1024 / fleet_est_mb_per_min / 60, 1)
 
         return {
             "nas": self._nas_health,
@@ -3090,9 +3104,15 @@ class Web(ABC):
             },
             "disks": disks,
             "data_rate": {
-                "recording_mb_per_min": round(fleet_recording_mb_per_min, 1),
+                "recording_mb_per_min": round(fleet_recording_mb_per_min, 2),
                 "recording_module_count": recording_module_count,
                 "share_runway_hours": share_runway_hours,
+                # Expected fleet-wide rate flat out (all recording-capable
+                # modules at once), always populated so the page has a
+                # concrete number even with nothing recording.
+                "fleet_est_mb_per_min": round(fleet_est_mb_per_min, 2),
+                "fleet_est_module_count": fleet_est_module_count,
+                "est_share_runway_hours": est_share_runway_hours,
             },
         }
 

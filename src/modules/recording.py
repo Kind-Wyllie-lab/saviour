@@ -263,7 +263,22 @@ class Recording:
                     target=self._auto_stop_recording, args=(int(duration),)
                 )
 
-        self._create_initial_recording_segment()
+        if not self._create_initial_recording_segment():
+            # Module explicitly reported it could not start (e.g. missing
+            # hardware) and is responsible for its own recording_start_failed
+            # status -- see e.g. CameraBase._start_new_recording. Stop here
+            # rather than falling through to the unconditional is_recording=True
+            # / "recording_started" success below, which used to happen
+            # regardless of what _start_new_recording() actually returned.
+            self.logger.error(
+                "Module could not start recording -- not marking session as recording"
+            )
+            return {
+                "result": "error",
+                "error": "Module could not start recording "
+                         "(see recording_start_failed status)",
+            }
+
         self._start_recording_segment_monitoring()
         self._start_new_health_recording()
         self._start_recording_health_monitoring()
@@ -402,14 +417,20 @@ class Recording:
         self.facade.signal_export_ready(export_path) # Signal to controller that files are ready to export
 
 
-    def _create_initial_recording_segment(self) -> None:
+    def _create_initial_recording_segment(self) -> bool:
         self.logger.info("Creating initial recording segment")
         self.segment_id = 0
         self.segment_start_time = time.time()
         self.logger.info(f"Segment {self.segment_id} started at {self.segment_start_time}")
 
-        # Start video
-        self.facade.start_new_recording()
+        # Start video. Gated on `is False` specifically, not just falsy --
+        # most module types' _start_new_recording() still return None (or
+        # nothing at all) on success rather than explicit True, so treating
+        # any falsy return as failure would incorrectly block them. Only a
+        # literal False -- the explicit "I could not start" contract e.g.
+        # CameraBase and apa_arduino already use -- is treated as failure.
+        result = self.facade.start_new_recording()
+        return result is not False
 
 
     """Segment Length Monitoring"""

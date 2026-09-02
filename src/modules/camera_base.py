@@ -115,20 +115,48 @@ class CameraBase(Module):
         super().__init__(module_type)
         self.config.load_module_config(self.CONFIG_FILENAME)
 
-        # Initialize camera
-        self.picam2 = Picamera2()
+        # Camera attributes -- set to their "no hardware" values before the
+        # probe below so every attribute exists even if it fails.
         self.height = None
         self.width = None
         self.fps = None
         self.mode = None
         self.gain = None
+        self.picam2 = None
+        self.sensor_modes = []
+        self.sensor_model = ""
+        self.has_autofocus = False
+        # None once a sensor is confirmed present and configured; otherwise a
+        # human-readable reason. Surfaced two ways: passively every heartbeat
+        # via get_health(), and as the explicit failure reason from the
+        # _check_picam() readiness check (validate_readiness(), the New
+        # Session drawer's readiness summary). A missing/dead camera must
+        # never crash module startup -- Picamera2() raises when no sensor is
+        # detected, which used to take the whole process down before it ever
+        # registered with the controller (silently indistinguishable from a
+        # powered-off device). The module now always starts and registers;
+        # only recording/streaming are unavailable until a sensor is
+        # connected and the module restarted.
+        self.hardware_fault: str | None = None
 
-        # Get camera modes and sensor identity
-        self.sensor_modes = self.picam2.sensor_modes
-        self.sensor_model = self.picam2.camera_properties.get("Model", "").lower()
-        self.has_autofocus = "imx708" in self.sensor_model
-        self.logger.info(f"Sensor model: {self.sensor_model!r}, autofocus: {self.has_autofocus}")
-        time.sleep(0.1)
+        try:
+            self.picam2 = Picamera2()
+            self.sensor_modes = self.picam2.sensor_modes
+            self.sensor_model = self.picam2.camera_properties.get("Model", "").lower()
+            self.has_autofocus = "imx708" in self.sensor_model
+            self.logger.info(
+                f"Sensor model: {self.sensor_model!r}, "
+                f"autofocus: {self.has_autofocus}"
+            )
+            time.sleep(0.1)
+        except Exception as e:
+            self.picam2 = None
+            self.hardware_fault = f"No camera sensor detected: {e}"
+            self.logger.error(
+                f"{self.hardware_fault} -- module will still start and register "
+                "with the controller, but recording/streaming are unavailable "
+                "until a sensor is connected and the module is restarted."
+            )
 
         # Streaming variables
         self.monitor_stream = MJPEGStreamServer(logger=self.logger, name="Camera")
@@ -147,10 +175,21 @@ class CameraBase(Module):
         # delivering frames at all" for every camera variant.
         self._last_frame_wall_time = None
 
-        # Configure camera
-        time.sleep(0.1)
-        self._configure_camera()
-        time.sleep(0.1)
+        # Configure camera -- skipped entirely if no sensor was found above.
+        # A configure-time failure (sensor present but unhappy, e.g. a bad
+        # ribbon cable) is folded into the same hardware_fault/picam2=None
+        # state as "no sensor at all" -- both mean recording/streaming are
+        # unavailable, and distinguishing them further isn't worth the
+        # complexity here.
+        if self.picam2 is not None:
+            time.sleep(0.1)
+            try:
+                self._configure_camera()
+            except Exception as e:
+                self.hardware_fault = f"Camera found but failed to configure: {e}"
+                self.logger.error(self.hardware_fault)
+                self.picam2 = None
+            time.sleep(0.1)
 
         # State flags
         self.is_recording = False
@@ -217,8 +256,8 @@ class CameraBase(Module):
     @check()
     def _check_picam(self) -> tuple:
         if not self.picam2:
-            return False, "No picam2 object"
-        return True, "Picam2 object instantiated"
+            return False, self.hardware_fault or "No camera hardware detected"
+        return True, f"{self.sensor_model or 'camera'} present"
 
 
     @command()
@@ -387,6 +426,18 @@ class CameraBase(Module):
     def configure_module_special(self, updated_keys: list | None):
         """Shared restart-vs-live-controls config handling for every camera module."""
         self._configure_module_extra(updated_keys)
+
+        if self.picam2 is None:
+            # Nothing to (re)configure -- avoid a confusing AttributeError-shaped
+            # log line from the picam2 calls below. Config is still saved by the
+            # generic config path; it just can't be applied to hardware that
+            # isn't there. _check_picam() keeps reporting why on every readiness
+            # check until a sensor is connected and the module restarted.
+            self.logger.info(
+                f"Config changed but no camera hardware present "
+                f"({self._hardware_fault_reason()}) -- nothing to apply"
+            )
+            return
 
         if self.is_streaming:
             self._restarting_stream = bool(
@@ -670,6 +721,14 @@ class CameraBase(Module):
 
     """Segment Oriented Recording (to manage long recordings)"""
     def _start_next_recording_segment(self) -> bool:
+        # Defensive, not just belt-and-braces: recording.py's segment-rotation
+        # timer doesn't check whether the initial start actually succeeded
+        # (see _start_new_recording's own guard above), so this can still be
+        # reached against a hardware-less camera.
+        if self.picam2 is None:
+            reason = self._hardware_fault_reason()
+            self.logger.error(f"Cannot start next segment: {reason}")
+            return False
         self._start_new_video_segment()
         return True
 
@@ -732,8 +791,17 @@ class CameraBase(Module):
 
         self.logger.info("Pre-staging complete")
 
+    def _hardware_fault_reason(self) -> str:
+        return self.hardware_fault or "No camera hardware detected"
+
     def _start_new_recording(self) -> bool:
         """Start a new recording session - set up SplittableOutput"""
+        if self.picam2 is None:
+            reason = self._hardware_fault_reason()
+            self.logger.error(f"Cannot start recording: {reason}")
+            self.facade.send_status({"type": "recording_start_failed", "error": reason})
+            return False
+
         if self._prestaged_segment is not None:
             # Fast path: file and CSV were pre-created before the spin-wait.
             prestaged = self._prestaged_segment
@@ -1268,6 +1336,16 @@ class CameraBase(Module):
                 self.logger.warning("Already streaming")
                 return False
 
+            if self.picam2 is None:
+                reason = self._hardware_fault_reason()
+                self.logger.error(f"Cannot start streaming: {reason}")
+                self.communication.send_status({
+                    'type': 'streaming_start_failed',
+                    'status': 'error',
+                    'error': reason,
+                })
+                return False
+
             port = 8080
             self.logger.info(f"Starting streaming from {self.network.ip}:{port}")
 
@@ -1391,11 +1469,23 @@ class CameraBase(Module):
             """Return a single JPEG snapshot from the latest preview frame --
             same bytes the MJPEG stream is currently pushing, no extra
             encode. Used by the crop editor (every camera variant, not just
-            loom) to have a still frame to draw a crop rectangle on."""
+            loom) for a still frame to draw a crop rectangle on, and by the
+            frontend livestream "take a picture" button.
+
+            Access-Control-Allow-Origin is set so the frontend (served from
+            the controller origin) can fetch() these bytes cross-origin to
+            build a downloadable Blob -- an <img> tag doesn't need it, but
+            fetch() does. This is the same LAN-open exposure the MJPEG
+            stream itself already has."""
             jpeg = self.monitor_stream.get_latest_frame()
+            headers = {
+                "Content-Type": "image/jpeg",
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-store",
+            }
             if jpeg is None:
-                return ("No frame available", 503)
-            return (jpeg, 200, {"Content-Type": "image/jpeg"})
+                return ("No frame available", 503, headers)
+            return (jpeg, 200, headers)
 
     @command()
     def stop_streaming(self) -> bool:

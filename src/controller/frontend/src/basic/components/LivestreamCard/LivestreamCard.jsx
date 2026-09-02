@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
+import SnapshotButton from "../SnapshotButton/SnapshotButton";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./LivestreamCard.css";
 
 const STALL_TIMEOUT_MS = 8000;  // reconnect if no frame arrives within this window
@@ -116,12 +118,13 @@ function LivestreamCard({ module }) {
             <img
               key={streamKey}
               ref={imgRef}
-              src={`http://${module.ip}:8080/video_feed?t=${streamKey}`}
+              src={videoFeedUrl(module, { key: streamKey })}
               alt={`Stream for ${module.id}`}
               onLoad={handleLoad}
               onError={handleError}
               onClick={() => setFullscreen(true)}
             />
+            <SnapshotButton module={module} className="stream-snapshot-button" />
             <button
               type="button"
               className="stream-restart-button"

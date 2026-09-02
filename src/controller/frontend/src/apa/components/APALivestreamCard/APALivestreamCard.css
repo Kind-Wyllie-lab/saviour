@@ -23,6 +23,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
+    position: relative;       /* anchor the SnapshotButton overlay */
   }
   
   .stream-video img {

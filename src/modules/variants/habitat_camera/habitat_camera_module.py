@@ -457,6 +457,12 @@ class HabitatCameraModule(CameraBase):
         CircularOutput pre-roll buffer -- the encoder runs continuously for
         the whole armed window, but no clip file is opened until the first
         motion trigger."""
+        if self.picam2 is None:
+            reason = self._hardware_fault_reason()
+            self.logger.error(f"Cannot arm: {reason}")
+            self.facade.send_status({"type": "recording_start_failed", "error": reason})
+            return False
+
         if not self.picam2.started:
             self.picam2.start()
             time.sleep(0.1)

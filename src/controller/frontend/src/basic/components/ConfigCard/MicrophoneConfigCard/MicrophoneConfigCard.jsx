@@ -4,6 +4,7 @@ import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigCardShell from "../ConfigCardShell";
 
@@ -65,7 +66,7 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
     reconnectTimer.current = setTimeout(bump, RECONNECT_MS);
   };
 
-  const src = `http://${ip}:${port}/video_feed?t=${bumpKey}`;
+  const src = videoFeedUrl(ip, { port, key: bumpKey });
 
   return (
     <>

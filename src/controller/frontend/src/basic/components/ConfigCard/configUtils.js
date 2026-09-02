@@ -1,4 +1,14 @@
 /**
+ * Config sections that are transport / infrastructure plumbing and are never
+ * surfaced as editable fields in any module config card (tune via the config
+ * file if ever needed). `network` and `logging` are already all-private, so
+ * filterPrivateKeys drops them anyway; `communication` carries one public key
+ * (`missed_ack_threshold`) that we deliberately keep out of the UI too, so it
+ * doesn't render inconsistently across card types.
+ */
+export const HIDDEN_CONFIG_SECTIONS = ["communication", "network", "logging"];
+
+/**
  * Compare the section keys (top-level object-valued keys, excluding private "_" keys)
  * of two config objects. Returns null if compatible, or a descriptive string if not.
  *

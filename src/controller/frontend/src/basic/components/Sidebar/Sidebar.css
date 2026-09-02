@@ -125,16 +125,17 @@
         margin-top: 10px;
     }
 
-    .sidebar-title {
-        font-size: clamp(20px, 2.4vw, 30px);
-        font-weight: bold;
-        text-align: center;
-        /* Explicit margins rather than the <h1> UA-stylesheet default
-           (~0.67em top/bottom) — that default was most of why the hostname
-           below read as closer to the nav than to this title: with
-           .header-content's old justify-content: space-between removed,
-           the browser's own h1 margin would otherwise still dominate. */
-        margin: 12px 0 2px;
+    /* SAVIOUR wordmark image (replaces the old <h1> text title). The asset has
+       an opaque white background, so border-radius rounds it into a tidy plate
+       that reads on both the light and dark sidebar themes; capped well under
+       the sidebar's min width so it never overflows or widens it. */
+    .sidebar-wordmark {
+        display: block;
+        width: 100%;
+        max-width: 168px;
+        height: auto;
+        border-radius: 6px;
+        margin: 12px auto 4px;
     }
 
     .sidebar-hostname {
@@ -175,11 +176,19 @@
     .footer {
         justify-self: flex-end;
         text-align: center;
-        padding-bottom: 24px;
+        padding-bottom: 10px;
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 8px;
+    }
+
+    /* Sits last in .footer, right at the sidebar's bottom edge, and small. */
+    .footer-copyright {
+        margin: 2px 0 0;
+        font-size: 9px;
+        letter-spacing: 0.03em;
+        opacity: 0.4;
     }
 
     .footer-actions {

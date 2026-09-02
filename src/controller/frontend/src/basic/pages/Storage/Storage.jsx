@@ -174,7 +174,6 @@ export default function Storage() {
   return (
     <div className="storage-page">
       <div className="storage-header">
-        <h1>Storage</h1>
         <button className="refresh-btn" onClick={() => {
           socket.emit("get_storage_overview");
           requestHistory(range.hours);

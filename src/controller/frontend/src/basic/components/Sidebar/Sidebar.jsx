@@ -6,6 +6,7 @@ import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
 import SIDBLogo from "/src/assets/logos/sidb_logo_alpha.png";
+import SaviourWordmark from "/src/assets/logos/saviour-logo.png";
 
 const CHUNK_SIZE = 256 * 1024; // 256 KiB
 
@@ -305,7 +306,7 @@ function Sidebar({ navItems }) {
           <img src={SIDBLogo} alt="SIDB Logo" className="logo" />
         </div>
 
-        <h1 className="sidebar-title">{document.title}</h1>
+        <img src={SaviourWordmark} alt={document.title} className="sidebar-wordmark" />
         {hostname && <p className="sidebar-hostname">{hostname}</p>}
 
         {/* Admin/Guest badge — lives here (below the title) rather than in
@@ -382,7 +383,6 @@ function Sidebar({ navItems }) {
             </svg>
           </button>
         </div>
-        <p>© SIDB 2026</p>
         <div className="footer-links">
           <a className="footer-link" href="https://github.com/Kind-Wyllie-lab/saviour" target="_blank" rel="noopener noreferrer">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -398,6 +398,7 @@ function Sidebar({ navItems }) {
             Docs
           </a>
         </div>
+        <p className="footer-copyright">© SIDB 2026</p>
       </div>
       </header>
 

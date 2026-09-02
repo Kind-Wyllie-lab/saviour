@@ -128,6 +128,7 @@ function ControllerConfigCard() {
       <div className="config-card-body">
         <div className="config-form">
 
+          <div className="config-tabs-layout">
           <div className="config-tabs">
             {TABS.map(t => (
               <button key={t.key} type="button"
@@ -345,6 +346,7 @@ function ControllerConfigCard() {
                 </div>
               </>
             )}
+          </div>
           </div>
 
           <div className="config-section-divider" />

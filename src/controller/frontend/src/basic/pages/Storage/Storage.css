@@ -2,15 +2,13 @@
   padding: 16px 24px;
 }
 
+/* No page-level <h1> — matches System / Guide. Just the action row, aligned
+   right like .system-header. */
 .storage-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-bottom: 16px;
-}
-.storage-header h1 {
-  margin: 0;
-  font-size: 1.4em;
 }
 
 .storage-muted {

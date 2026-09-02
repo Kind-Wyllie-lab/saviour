@@ -34,6 +34,7 @@ function App() {
             <Sidebar navItems={pages} />
             <div className="content">
             <RecordingStatusWidget />
+            <div className="content-scroll">
             <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/settings" element={<Settings />} />
@@ -42,6 +43,7 @@ function App() {
                 <Route path="/storage" element={<Storage />} />
                 <Route path="/guide" element={<Guide />} />
             </Routes>
+            </div>
             </div>
             <FirstRunModal />
             <ConnectionOverlay />

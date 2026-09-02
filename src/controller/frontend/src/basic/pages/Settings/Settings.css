@@ -16,44 +16,106 @@
   align-items: center;
 }
 
-.settings-toolbar {
-  margin-bottom: 20px;
+/* Outer card: owns the border/background chrome the inner .config-card used
+   to draw. The device dropdown is its titlebar; the config body sits below. */
+.settings-card {
+  width: 100%;
+  max-width: 1400px;
+  align-self: flex-start;
+  box-sizing: border-box;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg-color);
+  color: var(--text-color);
 }
 
-.settings-label {
+.settings-card-titlebar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* Left: device name (dropdown) with IP / version stacked beneath it. */
+.settings-card-titlebar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-card-titlebar-select {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 14px;
 }
 
-.settings-label-text {
+.settings-card-titlebar-prefix {
+  font-size: 0.8em;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
   white-space: nowrap;
 }
 
-.settings-page select {
-  padding: 10px 12px;
-  font-size: 14px;
+.settings-card-deviceinfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.78em;
+  opacity: 0.55;
+  padding-left: 2px;
+}
+
+/* Right: the reboot/update/… actions menu. */
+.settings-card-titlebar-actions {
+  flex-shrink: 0;
+}
+
+.settings-device-select {
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 6px 10px;
+  max-width: 460px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background-color: var(--card-bg-color);
+  border-radius: 6px;
+  background-color: var(--bg-color);
   color: var(--text-color);
   outline: none;
   transition: border-color 0.2s ease;
 }
 
-.settings-page select:focus {
+.settings-device-select:focus {
+  border-color: var(--accent-color);
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
 }
 
-.module-grid {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  box-sizing: border-box;
+/* Inner config card renders borderless/flush inside .settings-card — the outer
+   card and titlebar now provide the chrome and the title. */
+.settings-card > .config-card {
+  border: none;
+  margin: 0;
+  padding: 12px 16px 16px;
+  background: transparent;
+  max-width: none;
 }
 
-.module-grid > * {
-  width: 100%;
+/* The inner card's whole header (title, IP/version, actions menu) is now
+   rendered in the titlebar above, so hide the original. */
+.settings-card .card-header {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .settings-card-titlebar {
+    flex-wrap: wrap;
+  }
+
+  .settings-device-select {
+    max-width: 100%;
+    flex: 1 1 auto;
+  }
 }

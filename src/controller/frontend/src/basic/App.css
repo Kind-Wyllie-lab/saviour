@@ -20,6 +20,19 @@
     flex-shrink: 0;
   }
 
+  /* Single scroll region for the routed page. The recording-status widget and
+     NAS banner above it are flex siblings of this, so they stay pinned no
+     matter which page is shown — previously some pages set their own
+     flex/overflow and pinned the widget, others didn't and scrolled it away
+     with the page. */
+  .content-scroll {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
 .nas-warning-banner {
   background: color-mix(in srgb, var(--error-color, #e74c3c) 15%, var(--card-bg-color));
   color: var(--error-color, #e74c3c);

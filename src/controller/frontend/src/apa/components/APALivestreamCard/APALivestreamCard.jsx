@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import APAFullscreenVideo from "../APAFullscreenVideo/APAFullscreenVideo";
+import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import "./APALivestreamCard.css";
 
 function APALivestreamCard({ module, moduleList }) {
@@ -27,6 +28,7 @@ function APALivestreamCard({ module, moduleList }) {
                   setStreamKey(Date.now());
                 }}
               />
+              <SnapshotButton module={module} />
             </div>
           ) : (
             <div className="stream-placeholder">

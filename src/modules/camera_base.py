@@ -1469,11 +1469,23 @@ class CameraBase(Module):
             """Return a single JPEG snapshot from the latest preview frame --
             same bytes the MJPEG stream is currently pushing, no extra
             encode. Used by the crop editor (every camera variant, not just
-            loom) to have a still frame to draw a crop rectangle on."""
+            loom) for a still frame to draw a crop rectangle on, and by the
+            frontend livestream "take a picture" button.
+
+            Access-Control-Allow-Origin is set so the frontend (served from
+            the controller origin) can fetch() these bytes cross-origin to
+            build a downloadable Blob -- an <img> tag doesn't need it, but
+            fetch() does. This is the same LAN-open exposure the MJPEG
+            stream itself already has."""
             jpeg = self.monitor_stream.get_latest_frame()
+            headers = {
+                "Content-Type": "image/jpeg",
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-store",
+            }
             if jpeg is None:
-                return ("No frame available", 503)
-            return (jpeg, 200, {"Content-Type": "image/jpeg"})
+                return ("No frame available", 503, headers)
+            return (jpeg, 200, headers)
 
     @command()
     def stop_streaming(self) -> bool:

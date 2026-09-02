@@ -1,0 +1,32 @@
+.snapshot-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: white;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.snapshot-button:hover:not(:disabled),
+.snapshot-button:focus-visible {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.snapshot-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}

@@ -33,6 +33,19 @@
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
 }
 
+/* Many cells in the habitat grid -- keep the snapshot button out of the way
+   until the cell is hovered. */
+.habitat-livestream-card .snapshot-button {
+  opacity: 0;
+}
+.habitat-livestream-card:hover .snapshot-button {
+  opacity: 0.7;
+}
+.habitat-livestream-card .snapshot-button:hover:not(:disabled),
+.habitat-livestream-card .snapshot-button:focus-visible {
+  opacity: 1;
+}
+
 .offline-livestream {
   height: 100%;
   width: 100%;

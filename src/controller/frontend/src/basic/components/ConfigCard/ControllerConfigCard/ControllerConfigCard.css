@@ -2,9 +2,11 @@
   justify-content: center;
 }
 
+/* Wider than the old 520px: the tab rail now sits inside .config-form as a
+   left column (~140px), so the content column keeps roughly its former width. */
 .controller-config-card .config-form {
-  max-width: 520px;
-  flex: 0 1 520px;
+  max-width: 680px;
+  flex: 0 1 680px;
 }
 
 .export-config-preview {

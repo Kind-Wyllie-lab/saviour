@@ -377,6 +377,28 @@ class CameraBase(Module):
             return None
 
 
+    def _full_frame_scaler_crop(self) -> tuple[int, int, int, int] | None:
+        """The ScalerCrop rectangle covering the whole field of view, used to
+        undo a digital-zoom crop when camera.crop_rect is cleared. Without
+        this, clearing a crop while streaming just omits ScalerCrop from the
+        live set_controls() call, leaving the previous zoomed-in rectangle
+        applied. Prefers the driver-reported ScalerCropMaximum, falling back
+        to the active sensor mode's crop_limits."""
+        try:
+            smax = self.picam2.camera_properties.get("ScalerCropMaximum")
+            if smax and smax[2] > 0 and smax[3] > 0:
+                return tuple(int(v) for v in smax)
+        except Exception as e:
+            self.logger.warning(f"Could not read ScalerCropMaximum: {e}")
+        mode = self.mode
+        if not mode and self.sensor_modes:
+            idx = int(self.config.get("camera.sensor_mode_index", 0))
+            mode = self.sensor_modes[max(0, min(idx, len(self.sensor_modes) - 1))]
+        if mode and mode.get("crop_limits"):
+            return tuple(int(v) for v in mode["crop_limits"])
+        return None
+
+
     @command()
     def trigger_autofocus(self):
         """Trigger a one-shot autofocus cycle (IMX708 / Camera Module 3 only)."""
@@ -506,6 +528,11 @@ class CameraBase(Module):
                     live_controls["LensPosition"] = float(self.config.get("camera.lens_position", 0.0))
 
             scaler_crop = self._compute_scaler_crop_rect()
+            if scaler_crop is None and "camera.crop_rect" in (updated_keys or []):
+                # Crop was just cleared -- explicitly restore the full field of
+                # view. Merely omitting ScalerCrop here would leave the
+                # previously-applied digital-zoom rectangle in effect.
+                scaler_crop = self._full_frame_scaler_crop()
             if scaler_crop is not None:
                 live_controls["ScalerCrop"] = scaler_crop
 

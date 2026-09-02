@@ -19,3 +19,13 @@
   .content > .hrc {
     flex-shrink: 0;
   }
+
+  /* Single scroll region for the routed page — keeps the recording control
+     bar above it pinned regardless of which page sets its own overflow. */
+  .content-scroll {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }

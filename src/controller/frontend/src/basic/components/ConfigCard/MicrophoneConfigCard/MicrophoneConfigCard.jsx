@@ -8,6 +8,7 @@ import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton"
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigCardShell from "../ConfigCardShell";
+import { HIDDEN_CONFIG_SECTIONS } from "../configUtils";
 
 const STALL_MS     = 8000;
 const RECONNECT_MS = 2500;
@@ -174,7 +175,8 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
     ? "Time window must be 60 s or less"
     : null;
 
-  // Strip sections that are rendered in dedicated tabs
+  // Strip sections that are rendered in dedicated tabs, plus transport/infra
+  // sections that are never surfaced as editable fields (see HIDDEN_CONFIG_SECTIONS).
   const configFieldsData = (() => {
     if (!formData) return formData;
     const {
@@ -182,6 +184,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       module: _mod, export: _exp, recording: _rec,
       ...rest
     } = formData;
+    for (const k of HIDDEN_CONFIG_SECTIONS) delete rest[k];
     return rest;
   })();
 
@@ -256,68 +259,14 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
   // Compute tabBadges: warn on monitor tab if there are validation errors
   const tabBadges = (freqError || timeWindowError) ? { monitor: "⚠" } : {};
 
-  const sidebar = (
-    <>
-      <div className="monitor-controls">
-        <div className="monitor-controls__row">
-          <span className="monitor-controls__label">Stream</span>
-          <button type="button"
-            className={`monitor-toggle-btn${streamEnabled ? " monitor-toggle-btn--active" : ""}`}
-            onClick={() => setStreamEnabled(v => !v)}>
-            {streamEnabled ? "On" : "Off"}
-          </button>
-        </div>
-        <div className="monitor-controls__row">
-          <span className="monitor-controls__label">Plot</span>
-          {[
-            ["spectrogram",         "Spectrogram"],
-            ["spectrogram_compact", "Spectrogram (no meter)"],
-            ["spectrum",            "Spectrum"],
-            ["peaks",               "Peaks"],
-            ["compact_peaks",       "Compact Peaks"],
-            ["waveform",            "Waveform"],
-            ["history",             "History"],
-            ["band_power",          "Band Power"],
-          ].map(([val, lbl]) => (
-            <button key={val} type="button"
-              className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
-              onClick={() => setMonitorPref("plot_mode", val)}>
-              {lbl}
-            </button>
-          ))}
-        </div>
-        {(plotMode === "spectrogram" || plotMode === "spectrogram_compact" || plotMode === "spectrum") && (
-          <div className="monitor-controls__row">
-            <span className="monitor-controls__label">Range</span>
-            {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
-              <button key={val} type="button"
-                className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
-                onClick={() => setMonitorPref("freq_range", val)}>
-                {lbl}
-              </button>
-            ))}
-          </div>
-        )}
-        {discoveredSerials.length > 1 && (
-          <div className="monitor-controls__row">
-            <span className="monitor-controls__label">Layout</span>
-            {[["stacked", "Stacked"], ["grid", "Grid"]].map(([val, lbl]) => (
-              <button key={val} type="button"
-                className={`monitor-toggle-btn${streamLayout === val ? " monitor-toggle-btn--active" : ""}`}
-                onClick={() => setMonitorPref("layout", val)}>
-                {lbl}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      {streamEnabled ? (
-        <MicrophoneStream ip={module.ip} port={streamPort}
-          plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
-      ) : (
-        <div className="monitor-stream-paused">Stream paused</div>
-      )}
-    </>
+  // Right side of the card is just the live plot, like every other config
+  // card's MJPEG stream. The stream-display controls (Stream / Plot / Range /
+  // Layout) live only on the Monitor tab — they still drive what renders here.
+  const sidebar = streamEnabled ? (
+    <MicrophoneStream ip={module.ip} port={streamPort}
+      plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
+  ) : (
+    <div className="monitor-stream-paused">Stream paused</div>
   );
 
   return (
@@ -517,65 +466,49 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
           </div>
           <div className="config-section-divider" />
 
-          {/* Stream display controls */}
-          <div className="monitor-controls">
-            <div className="monitor-controls__row">
-              <span className="monitor-controls__label">Stream</span>
-              <button type="button"
-                className={`monitor-toggle-btn${streamEnabled ? " monitor-toggle-btn--active" : ""}`}
-                onClick={() => setStreamEnabled(v => !v)}>
-                {streamEnabled ? "On" : "Off"}
-              </button>
-            </div>
-            <div className="monitor-controls__row">
-              <span className="monitor-controls__label">Plot</span>
-              {[
-                ["spectrogram",         "Spectrogram"],
-                ["spectrogram_compact", "Spectrogram (no meter)"],
-                ["spectrum",            "Spectrum"],
-                ["peaks",               "Peaks"],
-                ["waveform",            "Waveform"],
-                ["history",             "History"],
-                ["band_power",          "Band Power"],
-              ].map(([val, lbl]) => (
-                <button key={val} type="button"
-                  className={`monitor-toggle-btn${plotMode === val ? " monitor-toggle-btn--active" : ""}`}
-                  onClick={() => setMonitorPref("plot_mode", val)}>
-                  {lbl}
-                </button>
-              ))}
-            </div>
-            {(plotMode === "spectrogram" || plotMode === "spectrogram_compact" || plotMode === "spectrum") && (
-              <div className="monitor-controls__row">
-                <span className="monitor-controls__label">Range</span>
-                {[["band", "Band"], ["full", "Full"]].map(([val, lbl]) => (
-                  <button key={val} type="button"
-                    className={`monitor-toggle-btn${freqRange === val ? " monitor-toggle-btn--active" : ""}`}
-                    onClick={() => setMonitorPref("freq_range", val)}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            )}
-            {discoveredSerials.length > 1 && (
-              <div className="monitor-controls__row">
-                <span className="monitor-controls__label">Layout</span>
-                {[["stacked", "Stacked"], ["grid", "Grid"]].map(([val, lbl]) => (
-                  <button key={val} type="button"
-                    className={`monitor-toggle-btn${streamLayout === val ? " monitor-toggle-btn--active" : ""}`}
-                    onClick={() => setMonitorPref("layout", val)}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            )}
+          {/* Stream display controls — drive the live plot shown on the right
+              of the card. Same select/label style as every other config field;
+              no stream <img> is rendered here, the sidebar owns that. */}
+          <div className="form-field">
+            <label>Stream:</label>
+            <select value={streamEnabled ? "on" : "off"}
+              onChange={e => setStreamEnabled(e.target.value === "on")}>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
           </div>
-
-          {streamEnabled ? (
-            <MicrophoneStream ip={module.ip} port={streamPort}
-              plotMode={plotMode} freqRange={freqRange} layout={streamLayout} />
-          ) : (
-            <div className="monitor-stream-paused">Stream paused</div>
+          <div className="form-field">
+            <label>Plot:</label>
+            <select value={plotMode}
+              onChange={e => setMonitorPref("plot_mode", e.target.value)}>
+              <option value="spectrogram">Spectrogram</option>
+              <option value="spectrogram_compact">Spectrogram (no meter)</option>
+              <option value="spectrum">Spectrum</option>
+              <option value="peaks">Peaks</option>
+              <option value="waveform">Waveform</option>
+              <option value="history">History</option>
+              <option value="band_power">Band Power</option>
+            </select>
+          </div>
+          {(plotMode === "spectrogram" || plotMode === "spectrogram_compact" || plotMode === "spectrum") && (
+            <div className="form-field">
+              <label>Range:</label>
+              <select value={freqRange}
+                onChange={e => setMonitorPref("freq_range", e.target.value)}>
+                <option value="band">Band</option>
+                <option value="full">Full</option>
+              </select>
+            </div>
+          )}
+          {discoveredSerials.length > 1 && (
+            <div className="form-field">
+              <label>Layout:</label>
+              <select value={streamLayout}
+                onChange={e => setMonitorPref("layout", e.target.value)}>
+                <option value="stacked">Stacked</option>
+                <option value="grid">Grid</option>
+              </select>
+            </div>
           )}
         </>
       )}

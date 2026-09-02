@@ -65,14 +65,16 @@ function App() {
         <Sidebar navItems={pages} />
         <div className="content">
           <RecordingStatusWidget />
-          <Routes>
-            <Route path="/"          element={<Dashboard />} />
-            <Route path="/settings"  element={<Settings />} />
-            <Route path="/recording" element={<LoomRecording />} />
-            <Route path="/system"    element={<System />} />
-            <Route path="/storage"    element={<Storage />} />
-            <Route path="/guide"     element={<Guide />} />
-          </Routes>
+          <div className="content-scroll">
+            <Routes>
+              <Route path="/"          element={<Dashboard />} />
+              <Route path="/settings"  element={<Settings />} />
+              <Route path="/recording" element={<LoomRecording />} />
+              <Route path="/system"    element={<System />} />
+              <Route path="/storage"    element={<Storage />} />
+              <Route path="/guide"     element={<Guide />} />
+            </Routes>
+          </div>
         </div>
 
         {pendingFaults.length > 0 && (

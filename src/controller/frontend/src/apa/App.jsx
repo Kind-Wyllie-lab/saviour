@@ -31,15 +31,17 @@ function App() {
       <Sidebar navItems={pages} />
       <div className="content">
         <RecordingStatusWidget />
-        <Routes>
-          <Route path="/" element={<APADashboard />} />
-          <Route path="/recording/*" element={<Recording />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/system" element={<System />} />
-          <Route path="/storage" element={<Storage />} />
-          <Route path="/debug" element={<Debug />} />
-          <Route path="/guide" element={<Guide />} />
-        </Routes>
+        <div className="content-scroll">
+          <Routes>
+            <Route path="/" element={<APADashboard />} />
+            <Route path="/recording/*" element={<Recording />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/system" element={<System />} />
+            <Route path="/storage" element={<Storage />} />
+            <Route path="/debug" element={<Debug />} />
+            <Route path="/guide" element={<Guide />} />
+          </Routes>
+        </div>
       </div>
       <FirstRunModal />
       <ConnectionOverlay />

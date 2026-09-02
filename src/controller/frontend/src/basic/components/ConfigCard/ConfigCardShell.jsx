@@ -96,18 +96,20 @@ function ConfigCardShell({
       <div className="config-card-body">
         <div className="config-form">
 
-          <div className="config-tabs">
-            {tabs.map(t => (
-              <button key={t.key} type="button"
-                className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
-                onClick={() => onTabChange(t.key)}>
-                {t.label}{tabBadges[t.key] ? ` ${tabBadges[t.key]}` : ""}
-              </button>
-            ))}
-          </div>
+          <div className="config-tabs-layout">
+            <div className="config-tabs">
+              {tabs.map(t => (
+                <button key={t.key} type="button"
+                  className={`config-tab-btn${activeTab === t.key ? " active" : ""}`}
+                  onClick={() => onTabChange(t.key)}>
+                  {t.label}{tabBadges[t.key] ? ` ${tabBadges[t.key]}` : ""}
+                </button>
+              ))}
+            </div>
 
-          <div className="config-tab-content">
-            {children}
+            <div className="config-tab-content">
+              {children}
+            </div>
           </div>
 
           <div className="config-section-divider" />

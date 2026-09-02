@@ -4,26 +4,47 @@ import LivestreamCard from "/src/basic/components/LivestreamCard/LivestreamCard"
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
-import { filterPrivateKeys } from "../configUtils";
+import { filterPrivateKeys, isPlainObject, HIDDEN_CONFIG_SECTIONS } from "../configUtils";
 import ConfigFields from "../ConfigFields";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigCardShell from "../ConfigCardShell";
 
-const TAB_COPY_SECTION = {
-  basic:  { key: "module", label: "Basic"  },
-  export: { key: "export", label: "Export" },
-  // settings: omitted — dynamic sections, only "Copy all" shown
-};
+// Sections that never get a per-section tab: the ones with their own dedicated
+// tab (module/export/recording), plus transport/infra plumbing.
+const NON_SECTION_TABS = new Set(["module", "export", "recording", ...HIDDEN_CONFIG_SECTIONS]);
 
-const TABS = [
-  { key: "basic",    label: "Basic"    },
-  { key: "settings", label: "Settings" },
-  { key: "export",   label: "Export"   },
-];
+// Acronyms that shouldn't be title-cased to "Rfid" / "Ttl".
+const SECTION_LABELS = { rfid: "RFID", ttl: "TTL" };
+const sectionLabel = (key) =>
+  SECTION_LABELS[key] ??
+  key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
   const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
-  const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
+
+  // One tab per remaining top-level config section (e.g. RFID + Monitoring for
+  // an rfid module) instead of a single catch-all "Settings" tab that stacks
+  // them all together.
+  const cleaned = filterPrivateKeys(formData) ?? {};
+  const extraSections = Object.keys(cleaned).filter(
+    (k) => !NON_SECTION_TABS.has(k) && isPlainObject(cleaned[k])
+  );
+
+  const tabs = [
+    { key: "basic", label: "Basic" },
+    ...extraSections.map((k) => ({ key: k, label: sectionLabel(k) })),
+    { key: "export", label: "Export" },
+  ];
+
+  const tabCopySection = {
+    basic:  { key: "module", label: "Basic" },
+    export: { key: "export", label: "Export" },
+    ...Object.fromEntries(
+      extraSections.map((k) => [k, { key: k, label: sectionLabel(k) }])
+    ),
+  };
+
+  const [activeTab, setActiveTab] = useHashTab("basic", tabs.map((t) => t.key));
 
   useEffect(() => {
     socket.emit("get_module_config", { module_id: module.id });
@@ -40,13 +61,6 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
     });
   };
 
-  // Settings tab: all sections except module, export, recording (rendered in their own tabs)
-  const settingsData = (() => {
-    if (!formData) return formData;
-    const { module: _m, export: _e, recording: _r, ...rest } = filterPrivateKeys(formData) ?? {};
-    return rest;
-  })();
-
   return (
     <ConfigCardShell
       id={id}
@@ -55,10 +69,10 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       clipboard={clipboard}
       onCopy={onCopy}
       onPaste={handlePaste}
-      tabs={TABS}
+      tabs={tabs}
       activeTab={activeTab}
       onTabChange={setActiveTab}
-      tabSectionMap={TAB_COPY_SECTION}
+      tabSectionMap={tabCopySection}
       markSaved={markSaved}
       sidebar={
         module.type?.includes("camera")
@@ -97,10 +111,14 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
         </>
       )}
 
-      {/* SETTINGS */}
-      {activeTab === "settings" && (
+      {/* One tab per config section — fields rendered directly (no outer
+          collapsible fieldset), paths prefixed back to the section. */}
+      {extraSections.includes(activeTab) && (
         <form>
-          <ConfigFields data={settingsData} handleChange={handleChange} />
+          <ConfigFields
+            data={cleaned[activeTab]}
+            handleChange={(path, e) => handleChange([activeTab, ...path], e)}
+          />
         </form>
       )}
 

@@ -19,3 +19,13 @@
     .content > .recording-status-widget {
       flex-shrink: 0;
     }
+
+    /* Single scroll region for the routed page — keeps the recording-status
+       widget above it pinned regardless of which page sets its own overflow. */
+    .content-scroll {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }

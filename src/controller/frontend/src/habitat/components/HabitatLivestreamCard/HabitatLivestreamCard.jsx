@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
 import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./HabitatLivestreamCard.css";
 
 function HabitatLivestreamCard({ module }) {
@@ -24,7 +25,7 @@ function HabitatLivestreamCard({ module }) {
           ) : (
             <>
               <img
-                src={`http://${module.ip}:8080/video_feed`}
+                src={videoFeedUrl(module)}
                 alt={`Stream for ${module.name}`}
                 onClick={() => setFullscreen(true)}
               />

@@ -10,6 +10,8 @@
 // Requires Access-Control-Allow-Origin on /snapshot.jpg (set in
 // camera_base.py) so fetch() can read the response cross-origin.
 
+import { snapshotUrl } from "./streamUrls";
+
 /**
  * @param {{ip: string, id?: string, name?: string}} module
  * @returns {Promise<void>} resolves once the download has been triggered
@@ -17,7 +19,7 @@
 export async function captureLivestreamSnapshot(module) {
   if (!module?.ip) throw new Error("No module IP for snapshot");
 
-  const res = await fetch(`http://${module.ip}:8080/snapshot.jpg?t=${Date.now()}`);
+  const res = await fetch(snapshotUrl(module));
   if (!res.ok) {
     throw new Error(`Snapshot failed (${res.status} ${res.statusText})`);
   }

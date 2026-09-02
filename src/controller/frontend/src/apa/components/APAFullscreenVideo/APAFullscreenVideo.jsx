@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import "./APAFullscreenVideo.css";
 import APACommands from "../APACommands/APACommands";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 
 function APAFullscreenVideo({ ip, moduleList, onClose }) {
   // Handle ESC key to close fullscreen
@@ -17,7 +18,7 @@ function APAFullscreenVideo({ ip, moduleList, onClose }) {
       <div className="video-panel">
         {/* Video fills the overlay */}
         <img
-          src={`http://${ip}:8080/video_feed`}
+          src={videoFeedUrl(ip)}
           alt="Fullscreen camera stream"
           className="fullscreen-video"
         />

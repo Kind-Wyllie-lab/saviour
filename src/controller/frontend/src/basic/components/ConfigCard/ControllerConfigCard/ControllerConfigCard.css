@@ -179,3 +179,110 @@
 
 .teams-test-result--ok   { color: #2d9e4f; }
 .teams-test-result--fail { color: #cc3333; }
+
+/* Frontend tab: the theme picker is a wrap of tall swatch tiles, so this one
+   field stacks (label above, hint below) instead of the default label|input
+   flex row. */
+.frontend-theme-field {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.frontend-theme-field > label:first-child {
+  flex: none;
+  margin-bottom: 4px;
+}
+
+.theme-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.theme-swatch {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg-color);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.theme-swatch:hover {
+  border-color: var(--accent-color);
+}
+
+.theme-swatch.selected {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+/* Real radio, visually removed -- keeps native keyboard/focus behaviour and
+   lets useConfigForm's handleChange read e.target.value unchanged. */
+.theme-swatch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.theme-swatch-preview {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 3px;
+  width: 54px;
+  height: 40px;
+  padding: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.theme-swatch-dot {
+  border-radius: 3px;
+}
+
+.theme-swatch-name {
+  max-width: 76px;
+  font-size: 0.78em;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--secondary-text-color);
+}
+
+.theme-picker-actions {
+  margin-top: 8px;
+}
+
+.theme-swatch-delete {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 16px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: var(--card-bg-color);
+  color: var(--secondary-text-color);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.theme-swatch:hover .theme-swatch-delete,
+.theme-swatch-delete:focus-visible {
+  opacity: 1;
+}
+
+.theme-swatch-delete:hover {
+  color: var(--recording-color);
+  border-color: var(--recording-color);
+}

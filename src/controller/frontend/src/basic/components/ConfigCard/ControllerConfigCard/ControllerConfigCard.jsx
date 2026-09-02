@@ -7,6 +7,10 @@ import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "./ExportConfigSection";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
+import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
+import { listThemes, themeTokens, DEFAULT_THEME_ID, BUILTIN_THEMES } from "/src/basic/utils/themes";
+
+const BUILTIN_THEME_IDS = new Set(BUILTIN_THEMES.map(t => t.id));
 
 const TABS = [
   { key: "basic",      label: "Basic"      },
@@ -15,8 +19,6 @@ const TABS = [
   { key: "alerts",     label: "Alerts"     },
   { key: "frontend",   label: "Frontend"   },
 ];
-
-const DEFAULT_ACCENT_COLOR = "#6495ed"; // matches index.css's static fallback (cornflowerblue)
 
 // recording.* keys surfaced on the Thresholds tab. Every one is wired:
 //  - ptp_start_gate_us   -> recording-START gate: _check_ptp_sync (recording.py) blocks
@@ -48,6 +50,7 @@ function ControllerConfigCard() {
   const [saveStatus, setSaveStatus] = useState(null);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [teamsTestStatus, setTeamsTestStatus] = useState(null); // null | "testing" | {success, detail}
+  const [showThemeImport, setShowThemeImport] = useState(false);
   const saveTimerRef = useRef(null);
 
   useEffect(() => {
@@ -253,15 +256,74 @@ function ControllerConfigCard() {
             {/* FRONTEND */}
             {activeTab === "frontend" && (
               <>
-                <div className="form-field">
-                  <label>Accent color:</label>
-                  <input
-                    type="color"
-                    value={formData?.frontend?.accent_color || DEFAULT_ACCENT_COLOR}
-                    onChange={e => handleChange(["frontend", "accent_color"], e)}
-                  />
+                <div className="form-field frontend-theme-field">
+                  <label>Theme:</label>
+                  <div className="theme-picker">
+                    {listThemes(formData?.frontend?.custom_themes).map(t => {
+                      const darkMode = formData?.frontend?.dark_mode ?? true;
+                      const selected =
+                        (formData?.frontend?.theme_id ?? DEFAULT_THEME_ID) === t.id;
+                      const preview = themeTokens(t, darkMode);
+                      return (
+                        <label
+                          key={t.id}
+                          className={`theme-swatch${selected ? " selected" : ""}`}
+                          title={t.name}
+                        >
+                          <input
+                            type="radio"
+                            name="frontend-theme"
+                            value={t.id}
+                            checked={selected}
+                            onChange={e => handleChange(["frontend", "theme_id"], e)}
+                          />
+                          <span
+                            className="theme-swatch-preview"
+                            style={{
+                              background: preview["--bg-color"],
+                              borderColor: preview["--border-color"],
+                            }}
+                          >
+                            <span className="theme-swatch-dot" style={{ background: preview["--card-bg-color"] }} />
+                            <span className="theme-swatch-dot" style={{ background: preview["--accent-color"] }} />
+                            <span className="theme-swatch-dot" style={{ background: preview["--accent-color-alt"] }} />
+                            <span className="theme-swatch-dot" style={{ background: preview["--text-color"] }} />
+                          </span>
+                          <span className="theme-swatch-name">{t.name}</span>
+                          {!BUILTIN_THEME_IDS.has(t.id) && loggedIn && (
+                            <button
+                              type="button"
+                              className="theme-swatch-delete"
+                              title={`Delete "${t.name}"`}
+                              onClick={e => {
+                                e.preventDefault();
+                                if (window.confirm(`Delete the "${t.name}" theme?`)) {
+                                  socket.emit("delete_custom_theme", { id: t.id });
+                                }
+                              }}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="theme-picker-actions">
+                    <button
+                      type="button"
+                      className="teams-test-btn"
+                      onClick={() => setShowThemeImport(true)}
+                      disabled={!loggedIn}
+                      title={loggedIn ? undefined : "Login required for this action"}
+                    >
+                      + Import from Coolors
+                    </button>
+                  </div>
                   <span className="frontend-accent-hint">
-                    Applied live across every dashboard variant on save - buttons, links, and highlights.
+                    Applied live across every dashboard variant on save - background, cards,
+                    text, buttons, links and highlights. Preview shows each theme's{" "}
+                    {(formData?.frontend?.dark_mode ?? true) ? "dark" : "light"} variant.
                   </span>
                 </div>
                 <div className="form-field">
@@ -277,7 +339,8 @@ function ControllerConfigCard() {
                     </span>
                   </label>
                   <span className="frontend-accent-hint">
-                    Applied live across every dashboard variant on save.
+                    Applied live across every dashboard variant on save. Each theme
+                    has its own light and dark variant.
                   </span>
                 </div>
               </>
@@ -298,6 +361,10 @@ function ControllerConfigCard() {
           )}
         </div>
       </div>
+
+      {showThemeImport && (
+        <ThemeImportModal onClose={() => setShowThemeImport(false)} />
+      )}
     </div>
   );
 }

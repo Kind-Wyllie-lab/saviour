@@ -165,6 +165,7 @@ function makeControllerConfig() {
       export_stale_mins: 150,
     },
     alerts: { teams_webhook_url: "" },
+    frontend: { theme_id: "default", dark_mode: true, accent_color: "#6495ed", custom_themes: [] },
   };
 }
 

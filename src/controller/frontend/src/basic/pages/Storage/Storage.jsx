@@ -349,7 +349,7 @@ export default function Storage() {
                       <th>Module</th><th>Type</th><th>Used</th><th>Free</th>
                       <th title="Estimated recording output, from this module's config (worst-case ceiling)">Rate</th>
                       <th title="How long local free space lasts at that rate if export fully stalls">Buffer</th>
-                      <th></th>
+                      <th>Usage</th>
                     </tr>
                   </thead>
                   <tbody>

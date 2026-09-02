@@ -12,17 +12,33 @@ activity_threshold/inactivity_min_duration_s against real footage becomes:
 label once here, then re-run replay_habitat_motion.py with different
 --config values against the same labels.
 
+PRESENCE MODE (--presence): a stripped-down variant for the one binary
+question "is the rat in frame or not?", instead of activity windows. The
+only labelling key is 't': it toggles at the current frame -- press it where
+the rat first appears (opens an interval), press it again where the rat
+leaves (closes it). Everything between marked intervals is "not in frame".
+No i/o, no minor/major tags. A thick coloured border round the video
+(green = in frame here, grey = not) tracks the derived state as you scrub.
+Output goes to <video_stem>_presence.csv (same start_utc/end_utc columns,
+severity = "present") so it can't clobber an activity _labels.csv, and it
+feeds the occupancy-detector eval the same way _labels.csv feeds the
+motion-detector eval. If you quit with an interval still open it's closed
+at the frame you're on, with a loud warning -- reopen and mark the real
+exit if the rat stayed in view past there.
+
 Controls (a window pops up once the video loads -- click it for keyboard
 focus, cv2's window doesn't grab it automatically):
   space       play / pause
   , / .       step back / forward 1 frame (while paused)
   [ / ]       step back / forward ~1s (25 frames; while paused)
+  t           (--presence only) toggle "rat in frame" at the current frame
   i           mark IN point (start of an interesting segment) at current frame
   o           mark OUT point (end of segment) -- commits the pending segment
   1 / 2       tag the just-committed segment minor / major (optional, right
               after pressing 'o' -- e.g. minor = resident shifting in its
               sleep, major = an intruder entering/moving/leaving frame)
-  u           undo the last committed segment
+  u           undo the last committed segment (or, in --presence, the last
+              't' toggle)
   s           save labels to the output CSV now (also auto-saved on quit)
   b           toggle BOX MODE -- auto-pauses. While on:
                 - drag empty space to draw a NEW box around the rat/animal
@@ -74,7 +90,7 @@ current playback position -- click anywhere on it to seek there directly.
 Usage:
     python3 src/modules/variants/habitat_camera/analysis/label_activity.py [VIDEO.ts]
         [--timestamps CSV] [--labels-out LABELS.csv] [--start-frame N]
-        [--boxes-dir DIR] [--class-name rat]
+        [--boxes-dir DIR] [--class-name rat] [--presence]
 
     Omit VIDEO.ts to pick one via a file-open dialog instead of typing a path.
 """
@@ -99,7 +115,13 @@ _PANEL_BG = (35, 35, 35)
 _PANEL_LINE_H = 20
 _TIMELINE_H = 28  # colored segment-overview strip along the bottom of the window
 _TIMELINE_BG = (50, 50, 50)
-_SEVERITY_COLOR = {"major": (0, 0, 220), "minor": (0, 170, 220), "": (150, 150, 150)}
+_SEVERITY_COLOR = {
+    "major": (0, 0, 220), "minor": (0, 170, 220), "": (150, 150, 150),
+    "present": (0, 200, 0),  # --presence intervals: rat in frame
+}
+_PRESENCE_BORDER_PX = 6
+_PRESENCE_IN_COLOR = (0, 200, 0)
+_PRESENCE_OUT_COLOR = (90, 90, 90)
 _PLAYHEAD_COLOR = (255, 255, 255)
 _BOX_COLOR = (0, 255, 0)  # committed bounding boxes
 _BOX_DRAG_COLOR = (0, 255, 255)  # in-progress drag preview
@@ -212,6 +234,13 @@ def _load_existing_labels(path: Path) -> list[list[str]]:
             [row["start_utc"], row["end_utc"], row.get("severity", "")]
             for row in csv.DictReader(f)
         ]
+
+
+def _ts_in_segments(ts_iso: str, segments: list[list[str]]) -> bool:
+    """Whether an ISO-8601 UTC timestamp falls inside any [start, end]
+    interval. All timestamps here share the _timestamps.csv format/zone, so
+    plain string comparison is chronological -- no datetime parse needed."""
+    return any(start <= ts_iso <= end for start, end, _sev in segments)
 
 
 _YOLO_LINE_FIELDS = 5  # class x_center y_center width height
@@ -370,6 +399,10 @@ def main() -> None:
                      help="class name recorded in classes.txt (default: rat) "
                           "-- box labels are always written as single-class "
                           "id 0, matching the apa_camera training pipeline")
+    ap.add_argument("--presence", action="store_true",
+                     help="binary 'rat in frame / not' mode: single 't' key "
+                          "toggles presence at the current frame; output goes "
+                          "to <video_stem>_presence.csv (severity='present')")
     args = ap.parse_args()
 
     video_arg = args.video or _pick_video_path()
@@ -382,8 +415,13 @@ def main() -> None:
     if not ts_path.exists():
         sys.exit(f"No timestamps CSV found at {ts_path} -- pass --timestamps")
 
+    presence_mode = args.presence
+    _default_labels_name = (
+        f"{video_path.stem}_presence.csv" if presence_mode
+        else f"{video_path.stem}_labels.csv"
+    )
     labels_out = Path(args.labels_out) if args.labels_out else (
-        video_path.parent / f"{video_path.stem}_labels.csv"
+        video_path.parent / _default_labels_name
     )
 
     rows = _load_frame_metadata(ts_path)
@@ -426,12 +464,17 @@ def main() -> None:
 
     segments: list[list[str]] = _load_existing_labels(labels_out)
     if segments:
-        print(f"Loaded {len(segments)} existing segment(s) from {labels_out} -- "
-              f"continuing to add to them (press 'u' if you want to remove one)")
+        _noun = "presence interval" if presence_mode else "segment"
+        print(f"Loaded {len(segments)} existing {_noun}(s) from {labels_out} -- "
+              f"continuing to add to them (press 'u' to remove one)")
     pending_start_idx: int | None = None
     playing = False
 
-    window = "label_activity  --  space play/pause, i/o mark, u undo, s save, q quit"
+    window = (
+        "label_activity  --  space play/pause, t toggle, u undo, s save, q quit"
+        if presence_mode
+        else "label_activity  --  space play/pause, i/o mark, u undo, s save, q quit"
+    )
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
 
     def on_trackbar(pos: int) -> None:
@@ -708,6 +751,21 @@ def main() -> None:
         video_disp = _letterbox(frame_for_display, video_w, win_h)
 
         ts = rows[frame_idx]["timestamp_utc"] if frame_idx < len(rows) else "?"
+
+        # --presence: thick border tracking the derived state at this frame
+        # (an open interval, or the current frame falling inside a committed
+        # one), so it's obvious while scrubbing whether the rat is "in".
+        rat_in_frame = presence_mode and (
+            pending_start_idx is not None or _ts_in_segments(ts, segments)
+        )
+        if presence_mode:
+            bcol = _PRESENCE_IN_COLOR if rat_in_frame else _PRESENCE_OUT_COLOR
+            cv2.rectangle(
+                video_disp, (0, 0),
+                (video_disp.shape[1] - 1, video_disp.shape[0] - 1),
+                bcol, _PRESENCE_BORDER_PX,
+            )
+
         pending_note = (
             f"  IN marked @ {rows[pending_start_idx]['timestamp_utc']}"
             if pending_start_idx is not None else ""
@@ -717,6 +775,10 @@ def main() -> None:
             ts,
             ("PLAYING" if playing else "paused") + pending_note,
         ]
+        if presence_mode:
+            status_lines.append(
+                ">>> RAT IN FRAME <<<" if rat_in_frame else "... rat out of frame ..."
+            )
         if box_mode:
             if draft_boxes is not None and frame_idx not in frame_boxes:
                 status_lines.append(
@@ -729,21 +791,34 @@ def main() -> None:
                     f"corner=resize body=move  "
                     f"({len(frame_boxes.get(frame_idx, []))} box(es) here)"
                 )
-        legend_lines = [
-            "space:play/pause",
-            ",/.: step 1 frame",
-            "[/]: step ~1s",
-            "i: mark IN",
-            "o: mark OUT",
-            "1/2: tag last minor/major",
-            "u: undo   s: save",
-            "b: box mode   x: undo box",
-            "c: confirm draft box(es)",
-            "q/Esc: save+quit",
-        ]
+        if presence_mode:
+            legend_lines = [
+                "PRESENCE MODE",
+                "space:play/pause",
+                ",/.: step 1 frame",
+                "[/]: step ~1s",
+                "t: toggle rat in/out here",
+                "u: undo   s: save",
+                "b: box mode   x: undo box",
+                "q/Esc: save+quit",
+            ]
+        else:
+            legend_lines = [
+                "space:play/pause",
+                ",/.: step 1 frame",
+                "[/]: step ~1s",
+                "i: mark IN",
+                "o: mark OUT",
+                "1/2: tag last minor/major",
+                "u: undo   s: save",
+                "b: box mode   x: undo box",
+                "c: confirm draft box(es)",
+                "q/Esc: save+quit",
+            ]
         shown = segments[-_MAX_SHOWN:]
         hidden_count = len(segments) - len(shown)
-        segment_lines = [f"{len(segments)} segment(s):"]
+        _noun = "presence interval" if presence_mode else "segment"
+        segment_lines = [f"{len(segments)} {_noun}(s):"]
         if hidden_count > 0:
             segment_lines.append(f"  ... ({hidden_count} earlier)")
         for i, (start, end, severity) in enumerate(shown, len(segments) - len(shown) + 1):
@@ -799,6 +874,26 @@ def main() -> None:
                 print(f"Segment committed: {start_ts} -> {end_ts}  "
                       f"(press 1=minor / 2=major to tag it)")
                 pending_start_idx = None
+        elif presence_mode and key == ord('t'):
+            if pending_start_idx is not None:
+                # close the open "in frame" interval at this frame
+                start_ts = rows[pending_start_idx]["timestamp_utc"]
+                end_ts = ts
+                if end_ts < start_ts:
+                    start_ts, end_ts = end_ts, start_ts
+                segments.append([start_ts, end_ts, "present"])
+                segments.sort()
+                pending_start_idx = None
+                print(f"Rat OUT at frame {frame_idx} ({ts}) -- "
+                      f"interval {start_ts} -> {end_ts}")
+            elif _ts_in_segments(ts, segments):
+                print("This frame is already inside a labeled 'in frame' "
+                      "interval -- press 'u' to drop it, or move outside it "
+                      "before toggling.")
+            else:
+                pending_start_idx = frame_idx
+                print(f"Rat IN at frame {frame_idx} ({ts}) -- "
+                      f"press 't' again where it leaves")
         elif key == ord('1'):
             if segments:
                 segments[-1][2] = "minor"
@@ -808,11 +903,19 @@ def main() -> None:
                 segments[-1][2] = "major"
                 print(f"Tagged last segment: major  {segments[-1]}")
         elif key == ord('u'):
-            if segments:
-                print(f"Undid segment {segments.pop()}")
+            if presence_mode and pending_start_idx is not None:
+                print(f"Undid open 'in frame' mark at frame {pending_start_idx}")
+                pending_start_idx = None
+            elif segments:
+                print(f"Undid {'interval' if presence_mode else 'segment'} "
+                      f"{segments.pop()}")
         elif key == ord('s'):
             _write_labels(labels_out, segments)
-            print(f"Saved {len(segments)} segment(s) to {labels_out}")
+            print(f"Saved {len(segments)} "
+                  f"{'interval' if presence_mode else 'segment'}(s) to {labels_out}")
+            if presence_mode and pending_start_idx is not None:
+                print("  (note: 1 'in frame' interval is still open and was "
+                      "NOT saved -- press 't' where the rat leaves)")
         elif key == ord('b'):
             box_mode = not box_mode
             playing = False
@@ -866,8 +969,21 @@ def main() -> None:
 
     cap.release()
     cv2.destroyAllWindows()
+
+    if presence_mode and pending_start_idx is not None:
+        start_ts = rows[pending_start_idx]["timestamp_utc"]
+        end_ts = rows[min(frame_idx, len(rows) - 1)]["timestamp_utc"]
+        if end_ts < start_ts:
+            start_ts, end_ts = end_ts, start_ts
+        segments.append([start_ts, end_ts, "present"])
+        segments.sort()
+        print("!! WARNING: an 'in frame' interval was still open on quit -- "
+              f"closed it at the current frame ({end_ts}). If the rat stayed "
+              "in view past there, rerun and mark the real exit with 't'.")
+
     _write_labels(labels_out, segments)
-    print(f"Saved {len(segments)} segment(s) to {labels_out}")
+    print(f"Saved {len(segments)} "
+          f"{'interval' if presence_mode else 'segment'}(s) to {labels_out}")
     print(f"Boxes: {len(frame_boxes)} frame(s), "
           f"{sum(len(v) for v in frame_boxes.values())} box(es) total in {boxes_dir}")
 

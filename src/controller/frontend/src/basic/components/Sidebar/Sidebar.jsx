@@ -6,7 +6,6 @@ import { isLoggedIn, onAuthChange, logOut } from "/src/auth";
 import "./Sidebar.css";
 import UoELogo from "/src/assets/logos/uofe_logo_alpha.png";
 import SIDBLogo from "/src/assets/logos/sidb_logo_alpha.png";
-import SaviourWordmark from "/src/assets/logos/saviour-logo.png";
 
 const CHUNK_SIZE = 256 * 1024; // 256 KiB
 
@@ -306,7 +305,16 @@ function Sidebar({ navItems }) {
           <img src={SIDBLogo} alt="SIDB Logo" className="logo" />
         </div>
 
-        <img src={SaviourWordmark} alt={document.title} className="sidebar-wordmark" />
+        {/* Wordmark rendered as themed text (no raster asset) so it inverts
+            cleanly with the light/dark theme — the dot reuses the semantic
+            record-red var. Swap for an <img>/inline <svg> if a proper vector
+            logo is supplied. */}
+        <div className="sidebar-wordmark" role="img" aria-label={document.title}>
+          <span className="sidebar-wordmark__bracket" aria-hidden="true">[</span>
+          <span className="sidebar-wordmark__dot" aria-hidden="true" />
+          <span className="sidebar-wordmark__text">SAVIOUR</span>
+          <span className="sidebar-wordmark__bracket" aria-hidden="true">]</span>
+        </div>
         {hostname && <p className="sidebar-hostname">{hostname}</p>}
 
         {/* Admin/Guest badge — lives here (below the title) rather than in

@@ -185,6 +185,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
           {/* ── Left column: config ── */}
           <div className="ttl-config-col config-form">
 
+            <div className="config-tabs-layout">
             <div className="config-tabs">
               {TABS.map(t => (
                 <button key={t.key} type="button"
@@ -337,6 +338,7 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
                   moduleId={id}
                 />
               )}
+            </div>
             </div>
 
             <div className="config-section-divider" />

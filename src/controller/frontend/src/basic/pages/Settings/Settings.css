@@ -109,6 +109,74 @@
   display: none;
 }
 
+/* ── Stable layout across device types ──────────────────────────────────
+   Switching device should change the tab *content* only — not the card
+   width, nor where the tab rail / form column / livestream sit. Each card
+   type otherwise brings its own widths and alignment (controller = 680px &
+   centred, modules = flex 400, TTL = a 2fr/3fr grid), which made the whole
+   card jump around on every dropdown change. These rules force one shape;
+   they're all scoped to .settings-card so dashboards are unaffected. */
+
+/* Body: left-aligned flex row for every card type (TTL uses a grid). */
+.settings-card .config-card-body,
+.settings-card .controller-config-card .config-card-body,
+.settings-card .ttl-body {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 0;
+}
+
+/* Fixed-width left column — overrides controller's 680px and modules' flex. */
+.settings-card .config-form,
+.settings-card .controller-config-card .config-form {
+  flex: 0 0 580px;
+  max-width: 580px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* Right column (livestream / MJPEG / spectrogram) always fills the rest, in
+   the same place; simply absent for cards without a stream — the form
+   doesn't move either way. */
+.settings-card .livestream-wrapper,
+.settings-card .ttl-stream-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+
+/* Fixed tab-rail width so content starts at the same x for every card,
+   regardless of its longest tab label. */
+.settings-card .config-tabs {
+  flex: 0 0 124px;
+  width: 124px;
+}
+
+/* Reserve vertical space so a 2-field tab (e.g. Basic) doesn't collapse the
+   card relative to a dense one. */
+.settings-card .config-tab-content {
+  min-height: 380px;
+}
+
+/* Narrow viewports: drop the two-column body to a stack. */
+@media (max-width: 900px) {
+  .settings-card .config-card-body,
+  .settings-card .controller-config-card .config-card-body,
+  .settings-card .ttl-body {
+    flex-direction: column;
+  }
+
+  .settings-card .config-form,
+  .settings-card .controller-config-card .config-form {
+    flex: 1 1 auto;
+    max-width: none;
+    width: 100%;
+  }
+}
+
 @media (max-width: 560px) {
   .settings-card-titlebar {
     flex-wrap: wrap;
@@ -117,5 +185,11 @@
   .settings-device-select {
     max-width: 100%;
     flex: 1 1 auto;
+  }
+
+  /* rail already goes horizontal here via ConfigCard.css's own query */
+  .settings-card .config-tabs {
+    flex: 0 0 auto;
+    width: auto;
   }
 }

@@ -38,6 +38,16 @@ function humanMinutes(mins) {
   return humanDuration(mins * 60) || "< 1 hour";
 }
 
+// MB/min → GB/hour, both to 2 d.p. as the user asked.
+function fmt2(n) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function gbPerHour(mbPerMin) {
+  if (mbPerMin == null || !Number.isFinite(mbPerMin)) return "—";
+  return fmt2((mbPerMin * 60) / 1024);
+}
+
 // Least-squares slope of free bytes vs time over the visible window.
 function projectFull(samples) {
   const pts = samples.filter((s) => s.length >= 3);
@@ -264,13 +274,21 @@ export default function Storage() {
             {dataRate.recording_module_count > 0 ? (
               <>
                 <div className="storage-bignum">
-                  {dataRate.recording_mb_per_min?.toLocaleString()} MB/min
+                  {fmt2(dataRate.recording_mb_per_min)} MB/min
                   <span className="storage-bignum__sub">
-                    {dataRate.recording_module_count} module
+                    now · {dataRate.recording_module_count} module
                     {dataRate.recording_module_count === 1 ? "" : "s"} recording ·
-                    {" "}{((dataRate.recording_mb_per_min || 0) * 60 / 1024).toFixed(1)} GB/hour
+                    {" "}{gbPerHour(dataRate.recording_mb_per_min)} GB/hour
                   </span>
                 </div>
+                {dataRate.fleet_est_mb_per_min > 0 && (
+                  <div className="storage-muted storage-datarate__flatout">
+                    Fleet flat out: ~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min
+                    {" "}(~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour)
+                    {" "}across {dataRate.fleet_est_module_count} recording-capable
+                    {" "}module{dataRate.fleet_est_module_count === 1 ? "" : "s"}
+                  </div>
+                )}
                 <div className={`storage-projection storage-projection--${
                   dataRate.share_runway_hours == null ? "flat"
                     : dataRate.share_runway_hours < 72 ? "danger"
@@ -281,10 +299,30 @@ export default function Storage() {
                 </div>
               </>
             ) : (
-              <p className="storage-muted">
-                No modules recording. Rate is measured while recording, else
-                estimated from each module's config (a worst-case ceiling).
-              </p>
+              <>
+                <div className="storage-bignum">
+                  ~{fmt2(dataRate.fleet_est_mb_per_min)} MB/min
+                  <span className="storage-bignum__sub">
+                    expected fleet total, flat out ·
+                    {" "}{dataRate.fleet_est_module_count || 0} recording-capable
+                    {" "}module{dataRate.fleet_est_module_count === 1 ? "" : "s"} ·
+                    {" "}~{gbPerHour(dataRate.fleet_est_mb_per_min)} GB/hour
+                  </span>
+                </div>
+                <div className={`storage-projection storage-projection--${
+                  dataRate.est_share_runway_hours == null ? "flat"
+                    : dataRate.est_share_runway_hours < 72 ? "danger"
+                    : dataRate.est_share_runway_hours < 168 ? "warn" : "flat"}`}>
+                  {dataRate.est_share_runway_hours == null
+                    ? "nothing recording — estimated from each module's config"
+                    : `share would hold ${humanDuration(dataRate.est_share_runway_hours * 3600)} `
+                      + `if every module recorded at once`}
+                </div>
+                <p className="storage-muted">
+                  Estimated from each module's config (a worst-case ceiling);
+                  the measured rate replaces it once recording starts.
+                </p>
+              </>
             )}
             {rateSeries.length > 1 && (
               <>

@@ -152,6 +152,47 @@ class TestStartRecording:
             assert rec.recording_session_id == "camera_ab12cd"
 
 
+class TestStartRecordingModuleReportsFailure:
+    """facade.start_new_recording() returning literal False (e.g.
+    CameraBase/microphone with no hardware) must not fall through to
+    declaring recording_started/success -- see _create_initial_recording_
+    segment's `is not False` gate. The module itself is responsible for its
+    own recording_start_failed status (not asserted here -- that's the
+    module's contract, exercised in test_camera_base.py); this only checks
+    the generic caller stops correctly instead of lying about success."""
+
+    def test_false_return_stops_before_declaring_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir)
+            facade.start_new_recording.return_value = False
+
+            with patch("src.modules.recording.threading.Thread"):
+                result = rec.start_recording("exp1", None)
+
+            assert result == {
+                "result": "error",
+                "error": "Module could not start recording "
+                         "(see recording_start_failed status)",
+            }
+            assert rec.is_recording is False
+            sent_types = [c.args[0]["type"] for c in facade.send_status.call_args_list]
+            assert "recording_started" not in sent_types
+
+    def test_none_return_is_still_treated_as_success(self):
+        """Most module types (microphone pre-fix, ttl, sound, template) return
+        None on a successful start, not True -- the gate must not start
+        treating every falsy return as failure, only an explicit False."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rec, facade = _make_recording(tmpdir)
+            facade.start_new_recording.return_value = None
+
+            with patch("src.modules.recording.threading.Thread"):
+                result = rec.start_recording("exp1", None)
+
+            assert result == {"result": "success"}
+            assert rec.is_recording is True
+
+
 class TestScheduledStart:
     """_scheduled_start's own SCHED_FIFO/pre-stage/spin-wait mechanics are
     deliberately out of scope (see module docstring) -- these tests cover

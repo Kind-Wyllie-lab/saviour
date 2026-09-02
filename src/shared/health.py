@@ -72,6 +72,15 @@ class ModuleHealthSnapshot:
     # black (whichever is worse), from the capture thread. A coarse
     # "exposure/gain is wrong" data-quality indicator; None for non-camera.
     frame_clip_pct:  float | None = None
+    # Set by a module whose expected sensor/peripheral hardware wasn't found
+    # or failed to initialise (e.g. no camera sensor on the CSI bus, no
+    # AudioMoth enumerated) -- a human-readable reason, or None when the
+    # module's hardware is present and healthy. The module still boots and
+    # registers normally in this state; only recording/streaming that needs
+    # the missing hardware is unavailable. Distinct from the module simply
+    # never appearing at all (a genuine crash/power-off), which this field
+    # can't help with -- see each module's hardware_fault attribute.
+    hardware_fault:  str | None = None
     recording:       bool            = False
     # Measured recording output in bytes/second (None unless recording). A
     # reality check against the config-derived estimate in

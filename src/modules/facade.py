@@ -89,6 +89,15 @@ class ModuleFacade:
         return max(getattr(self.module, "_exposure_over_pct", 0.0),
                    getattr(self.module, "_exposure_under_pct", 0.0))
 
+    def get_hardware_fault(self) -> str | None:
+        """Human-readable reason a module's expected sensor/peripheral
+        hardware is missing or failed to initialise, or None when healthy.
+        Generic across module types via getattr -- any module can set
+        self.hardware_fault (see CameraBase.__init__ for the reference
+        implementation) without this facade method needing a per-type
+        branch."""
+        return getattr(self.module, "hardware_fault", None)
+
 
     def get_recording_session_id(self) -> str:
         return self.module.recording_session_id

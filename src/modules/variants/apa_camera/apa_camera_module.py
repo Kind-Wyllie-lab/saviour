@@ -27,6 +27,7 @@ from picamera2 import MappedArray
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
+from modules.module import check
 # Detection + the on-chip-NMS picamera2 wrapper are shared with hailo_camera.
 from modules.hailo_infer import Detection, HailoDetector
 
@@ -308,6 +309,13 @@ class APACameraModule(CameraBase):
         # ── APA: detection state ────────────────────────────────────────────
         self.detector: HailoDetector | None = None
         self._detector_backend: str | None = None
+        # Set when object detection is enabled in config but the Hailo
+        # detector failed to initialise (no AI HAT / driver / HEF). Unlike
+        # hailo_camera -- which is meant to fall back to a plain camera --
+        # the APA rig's shock-zone logic is the point, so a missing
+        # accelerator is a genuine fault. Folded into self.hardware_fault
+        # (CameraBase's camera-sensor fault takes precedence).
+        self._inference_fault: str | None = None
         self._labels: list[str] = ["rat"]
         self.threshold = 0.55
         self.max_detections = 2
@@ -350,6 +358,13 @@ class APACameraModule(CameraBase):
     # Object detection config
     # -----------------------------------------------------------------------
 
+    def _sync_hardware_fault(self) -> None:
+        """Fold the inference-accelerator state into self.hardware_fault,
+        without masking a camera-sensor fault (CameraBase owns that and only
+        sets hardware_fault when picam2 is None)."""
+        if self.picam2 is not None:
+            self.hardware_fault = self._inference_fault
+
     def _configure_object_detection(self):
         self._labels = self.config.get("object_detection.labels", ["rat"])
         self.threshold = self.config.get("object_detection.threshold", 0.55)
@@ -360,6 +375,8 @@ class APACameraModule(CameraBase):
                 self.detector.close()
                 self.detector = None
                 self._detector_backend = None
+            self._inference_fault = None  # nothing expected
+            self._sync_hardware_fault()
             return
 
         new_backend = self.config.get("object_detection.backend", "hailo")
@@ -387,6 +404,8 @@ class APACameraModule(CameraBase):
                 track_square_size = bt.get("track_square_size", 150),
             )
             self.logger.info("Blob tracker detector ready")
+            self._inference_fault = None  # CPU tracker, no accelerator needed
+            self._sync_hardware_fault()
             return
 
         model_path = self.config.get(
@@ -400,10 +419,25 @@ class APACameraModule(CameraBase):
             else:
                 self.detector = HailoDetector(model_path, threshold=self.threshold)
                 self.logger.info(f"Hailo detector ready: {model_path}")
+            self._inference_fault = None
         except Exception as e:
             self.logger.error(f"Failed to initialise Hailo detector: {e}")
             self.detector = None
             self._detector_backend = None
+            self._inference_fault = (
+                f"Hailo AI HAT unavailable for object detection: {e}"
+            )
+        self._sync_hardware_fault()
+
+
+    @check()
+    def _check_object_detector(self) -> tuple[bool, str]:
+        """Blocks readiness only when object detection is configured for a
+        Hailo backend that failed to come up -- a `blob` (CPU) backend or
+        detection-disabled leaves _inference_fault None and passes."""
+        if self._inference_fault:
+            return False, self._inference_fault
+        return True, "Object detector OK"
 
 
     # -----------------------------------------------------------------------

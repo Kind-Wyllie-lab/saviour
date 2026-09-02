@@ -16,6 +16,7 @@ import pytest
 
 from src.modules.variants.lightning_camera.lightning_camera_module import (
     HailoPoseDetector,
+    LightningCameraModule,
     StubPoseDetector,
 )
 
@@ -124,3 +125,48 @@ class TestCsvColumnGeneration:
 
     def test_empty_keypoint_list_yields_no_columns(self):
         assert _csv_columns_for([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Inference-accelerator (Hailo HAT) fault state
+#
+# _sync_hardware_fault / _check_pose_detector only touch self.picam2,
+# self._inference_fault and self.hardware_fault, so __new__ construction
+# (as in test_camera_base.py) is enough -- the full CameraBase subclass is
+# out of scope here per this file's top docstring.
+# ---------------------------------------------------------------------------
+
+def _make_lightning(**attrs) -> LightningCameraModule:
+    m = LightningCameraModule.__new__(LightningCameraModule)
+    m.picam2 = object()          # a sensor is present unless a test says otherwise
+    m._inference_fault = None
+    m.hardware_fault = None
+    for k, v in attrs.items():
+        setattr(m, k, v)
+    return m
+
+
+class TestInferenceFault:
+    def test_sync_surfaces_inference_fault_as_hardware_fault(self):
+        m = _make_lightning(_inference_fault="Hailo AI HAT unavailable: boom")
+        m._sync_hardware_fault()
+        assert m.hardware_fault == "Hailo AI HAT unavailable: boom"
+
+    def test_sync_clears_hardware_fault_when_inference_ok(self):
+        m = _make_lightning(_inference_fault=None, hardware_fault="stale")
+        m._sync_hardware_fault()
+        assert m.hardware_fault is None
+
+    def test_sync_never_masks_a_camera_sensor_fault(self):
+        # CameraBase owns hardware_fault while picam2 is None -- the subclass
+        # must not overwrite "no camera sensor" with its inference state.
+        m = _make_lightning(picam2=None, hardware_fault="No camera sensor detected: x")
+        m._inference_fault = None
+        m._sync_hardware_fault()
+        assert m.hardware_fault == "No camera sensor detected: x"
+
+    def test_check_pose_detector_blocks_only_on_a_real_inference_fault(self):
+        ok, _ = _make_lightning(_inference_fault=None)._check_pose_detector()
+        assert ok is True
+        ok, msg = _make_lightning(_inference_fault="no HAT")._check_pose_detector()
+        assert ok is False and msg == "no HAT"

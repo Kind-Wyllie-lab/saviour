@@ -39,6 +39,7 @@ from picamera2 import MappedArray
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from modules.camera_base import CameraBase
+from modules.module import check
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -156,6 +157,11 @@ class LightningCameraModule(CameraBase):
 
         self.detector: StubPoseDetector | HailoPoseDetector | None = None
         self._detector_backend: str | None = None
+        # Set when pose estimation is configured for the Hailo backend but the
+        # detector failed to initialise (no AI HAT / driver / model). The
+        # stub backend needs no accelerator, so it stays None there. Folded
+        # into self.hardware_fault (CameraBase's camera-sensor fault wins).
+        self._inference_fault: str | None = None
         self._keypoint_names: list[str] = []
         self._skeleton: list[tuple[str, str]] = []
         self.threshold = 0.3
@@ -193,6 +199,8 @@ class LightningCameraModule(CameraBase):
                 self.detector.close()
                 self.detector = None
                 self._detector_backend = None
+            self._inference_fault = None  # nothing expected
+            self._sync_hardware_fault()
             return
 
         new_backend = self.config.get("pose_estimation.backend", "stub")
@@ -211,13 +219,35 @@ class LightningCameraModule(CameraBase):
                     model_path, self._keypoint_names, threshold=self.threshold,
                 )
                 self.logger.info(f"Hailo pose detector ready: {model_path}")
+                self._inference_fault = None
             except Exception as e:
                 self.logger.error(f"Failed to initialise Hailo pose detector: {e}")
                 self.detector = None
                 self._detector_backend = None
+                self._inference_fault = (
+                    f"Hailo AI HAT unavailable for pose estimation: {e}"
+                )
         else:
             self.detector = StubPoseDetector(self._keypoint_names)
             self.logger.info("Stub pose detector ready (no model configured)")
+            self._inference_fault = None  # stub backend, no accelerator needed
+        self._sync_hardware_fault()
+
+    def _sync_hardware_fault(self) -> None:
+        """Fold the inference-accelerator state into self.hardware_fault
+        without masking a camera-sensor fault (CameraBase only sets
+        hardware_fault when picam2 is None)."""
+        if self.picam2 is not None:
+            self.hardware_fault = self._inference_fault
+
+    @check()
+    def _check_pose_detector(self) -> tuple[bool, str]:
+        """Blocks readiness only when pose estimation is configured for the
+        Hailo backend and it failed to come up; the stub backend and
+        pose-disabled both pass."""
+        if self._inference_fault:
+            return False, self._inference_fault
+        return True, "Pose detector OK"
 
     # -----------------------------------------------------------------------
     # Recording — reset detection state on each new session

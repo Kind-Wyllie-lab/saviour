@@ -482,3 +482,59 @@ class TestConfigureModuleSpecialNoHardware:
         cam._configure_module_extra = MagicMock()
         cam.configure_module_special(["camera.fps"])  # must not raise
         cam._configure_module_extra.assert_called_once_with(["camera.fps"])
+
+
+_FULL_FOV = (0, 0, 4056, 3040)
+
+
+class TestFullFrameScalerCrop:
+    def test_prefers_scaler_crop_maximum(self):
+        cam = _make_camera()
+        cam.picam2 = MagicMock()
+        cam.picam2.camera_properties = {"ScalerCropMaximum": _FULL_FOV}
+        assert cam._full_frame_scaler_crop() == _FULL_FOV
+
+    def test_falls_back_to_active_mode_crop_limits(self):
+        mode = {"crop_limits": (0, 0, 2028, 1520)}
+        cam = _make_camera(mode=mode, sensor_modes=[])
+        cam.picam2 = MagicMock()
+        cam.picam2.camera_properties = {"ScalerCropMaximum": (0, 0, 0, 0)}
+        assert cam._full_frame_scaler_crop() == tuple(mode["crop_limits"])
+
+    def test_returns_none_when_nothing_available(self):
+        cam = _make_camera(mode=None, sensor_modes=[])
+        cam.picam2 = MagicMock()
+        cam.picam2.camera_properties = {}
+        assert cam._full_frame_scaler_crop() is None
+
+
+class TestConfigureModuleSpecialClearsCrop:
+    def _streaming_cam(self):
+        cam = _make_camera(
+            picam2=MagicMock(),
+            is_streaming=True,
+            has_autofocus=False,
+            fps=30,
+            mode={"crop_limits": _FULL_FOV},
+            sensor_modes=[],
+        )
+        cam.picam2.camera_properties = {"ScalerCropMaximum": _FULL_FOV}
+        cam._configure_module_extra = MagicMock()
+        cam._cache_frame_config = MagicMock()
+        cam._ae_tuning_controls = lambda: {}
+        cam._compute_scaler_crop_rect = MagicMock(return_value=None)
+        cam.config = MagicMock()
+        cam.config.get.side_effect = lambda key, default=None: default
+        return cam
+
+    def test_clearing_crop_restores_full_frame_scaler_crop(self):
+        cam = self._streaming_cam()
+        cam.configure_module_special(["camera.crop_rect"])
+        applied = cam.picam2.set_controls.call_args[0][0]
+        assert applied["ScalerCrop"] == _FULL_FOV
+
+    def test_unrelated_key_change_does_not_touch_scaler_crop(self):
+        cam = self._streaming_cam()
+        cam.configure_module_special(["camera.fps"])
+        applied = cam.picam2.set_controls.call_args[0][0]
+        assert "ScalerCrop" not in applied

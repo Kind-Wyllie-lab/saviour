@@ -111,6 +111,9 @@ export default function CropEditorModal({ moduleIp, moduleId, open, onClose, ini
       if (!msg || msg.module_id !== moduleId) return;
       if (msg.type === "camera_crop_updated") {
         setStatus(msg.crop_rect ? "Saved. Crop will apply immediately." : "Crop cleared.");
+        // Pull a fresh snapshot so the preview reflects the now-applied
+        // (or now-removed) crop rather than the pre-change frame.
+        setSnapshotKey((k) => k + 1);
       }
     };
     // Command failures (Command._handle_error's generic "error" status) are

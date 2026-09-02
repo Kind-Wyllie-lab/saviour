@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import "./HabitatMicrophoneStrip.css";
+import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 
 const RECONNECT_DELAY_MS = 3000;
@@ -26,20 +27,25 @@ function MicModuleColumn({ module }) {
   const label = module.name || module.id;
 
   return (
-    <div className="mic-module-col">
+    <div className="mic-module-col snapshot-hover-parent">
       <div className="mic-module-label">{label}</div>
       {module.status === "OFFLINE" ? (
         <div className="mic-module-offline">
           <span className="mic-module-offline-label">OFFLINE</span>
         </div>
       ) : (
-        <img
-          key={streamKey}
-          src={videoFeedUrl(module, { port: 8081, key: streamKey })}
-          alt={label}
-          onLoad={resetStall}
-          onError={handleError}
-        />
+        <>
+          <img
+            key={streamKey}
+            src={videoFeedUrl(module, { port: 8081, key: streamKey })}
+            alt={label}
+            onLoad={resetStall}
+            onError={handleError}
+          />
+          {module.ip && (
+            <SnapshotButton module={{ ip: module.ip, id: label }} port={8081} />
+          )}
+        </>
       )}
       {module.status === "RECORDING" && <span className="mic-rec-dot" />}
     </div>

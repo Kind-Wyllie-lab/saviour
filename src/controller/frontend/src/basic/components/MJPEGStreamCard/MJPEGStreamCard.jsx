@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import FullscreenVideo from "../FullscreenVideo/FullscreenVideo";
+import SnapshotButton from "../SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./MJPEGStreamCard.css";
 
@@ -215,9 +216,12 @@ function MJPEGStreamCard({ ip, port = 8080, label, isRecording = false, onAspect
           </button>
         </div>
         <div
-          className="mjpeg-stream-video"
+          className="mjpeg-stream-video snapshot-hover-parent"
           style={aspectRatio ? { "--stream-ratio": aspectRatio } : undefined}
         >
+          {active && ip && (
+            <SnapshotButton module={{ ip, id: label }} port={port} />
+          )}
           {/* `?t=${streamKey}` cache-busts the request — without a query
               param that changes on every bump(), a remounted <img> can
               still resolve against the browser's in-flight/cached response

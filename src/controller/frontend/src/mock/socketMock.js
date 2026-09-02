@@ -172,6 +172,20 @@ const ROUTER = {
     Object.assign(state.controllerConfig, payload?.config || {});
     this._fire("controller_config_response", { config: clone(state.controllerConfig) });
   },
+  save_custom_theme(payload) {
+    const fe = (state.controllerConfig.frontend ||= { custom_themes: [] });
+    fe.custom_themes ||= [];
+    const id = (payload?.name || "theme").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "theme";
+    fe.custom_themes = [...fe.custom_themes.filter((t) => t.id !== id),
+      { id, name: payload.name, light: payload.light, dark: payload.dark }];
+    this._fire("custom_theme_saved", { theme: { id } });
+    this._fire("controller_config_response", { config: clone(state.controllerConfig) });
+  },
+  delete_custom_theme(payload) {
+    const fe = state.controllerConfig.frontend;
+    if (fe?.custom_themes) fe.custom_themes = fe.custom_themes.filter((t) => t.id !== payload?.id);
+    this._fire("controller_config_response", { config: clone(state.controllerConfig) });
+  },
   save_module_config(payload) {
     const id = payload?.id;
     if (id) state.moduleConfigs[id] = payload.config || {};

@@ -42,6 +42,22 @@
     background: rgba(0,0,0,0.8);
   }
 
+/* Screenshot button, sitting just left of the close button and scaled up to
+   match the fullscreen chrome. */
+.video-panel .snapshot-button.fullscreen-snapshot-button {
+  top: 20px;
+  right: 82px;
+  width: 50px;
+  height: 50px;
+}
+.video-panel .snapshot-button.fullscreen-snapshot-button .snapshot-button__icon {
+  width: 24px;
+  height: 24px;
+}
+.video-panel .snapshot-button.fullscreen-snapshot-button .snapshot-button__spinner {
+  font-size: 22px;
+}
+
 /* .video-panel {
   border: 1px solid red;
 }

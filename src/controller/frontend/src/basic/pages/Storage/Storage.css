@@ -81,6 +81,9 @@
   font-weight: 400;
   color: var(--secondary-text-color);
 }
+.storage-datarate__flatout {
+  margin: -2px 0 8px;
+}
 
 .storage-rec-dot {
   display: inline-block;

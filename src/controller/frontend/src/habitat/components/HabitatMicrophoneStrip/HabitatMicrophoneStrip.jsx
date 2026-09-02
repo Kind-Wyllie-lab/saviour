@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import "./HabitatMicrophoneStrip.css";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 
 const RECONNECT_DELAY_MS = 3000;
 const STALL_TIMEOUT_MS = 10000;
@@ -34,7 +35,7 @@ function MicModuleColumn({ module }) {
       ) : (
         <img
           key={streamKey}
-          src={`http://${module.ip}:8081/video_feed`}
+          src={videoFeedUrl(module, { port: 8081, key: streamKey })}
           alt={label}
           onLoad={resetStall}
           onError={handleError}

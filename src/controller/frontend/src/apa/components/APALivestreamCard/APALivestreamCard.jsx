@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import APAFullscreenVideo from "../APAFullscreenVideo/APAFullscreenVideo";
 import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
+import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import "./APALivestreamCard.css";
 
 function APALivestreamCard({ module, moduleList }) {
@@ -21,7 +22,7 @@ function APALivestreamCard({ module, moduleList }) {
             <div className="stream-video stream-video--clickable" onClick={() => setFullscreen(true)}>
               <img
                 key={streamKey}
-                src={`http://${module.ip}:8080/video_feed?t=${streamKey}`}
+                src={videoFeedUrl(module, { key: streamKey })}
                 alt={`Stream for ${module.id}`}
                 onError={() => {
                   console.log("Stream error, forcing reconnect");

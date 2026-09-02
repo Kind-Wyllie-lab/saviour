@@ -4,6 +4,7 @@ import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import ConfigFields from "../ConfigFields";
 import FullscreenVideo from "/src/basic/components/FullscreenVideo/FullscreenVideo";
+import SnapshotButton from "/src/basic/components/SnapshotButton/SnapshotButton";
 import { videoFeedUrl } from "/src/basic/utils/streamUrls";
 import ExportConfigSection from "../ExportConfigSection";
 import ConfigCardShell from "../ConfigCardShell";
@@ -70,15 +71,21 @@ function MicrophoneStream({ ip, port, plotMode, freqRange, layout }) {
 
   return (
     <>
-      <img
-        key={imgKey}
-        src={src}
-        alt="Microphone monitor stream"
-        style={{ width: "100%", maxHeight: "400px", objectFit: "contain", display: "block", borderRadius: "4px", cursor: "pointer" }}
-        onLoad={resetStall}
-        onError={handleError}
-        onClick={() => setFullscreen(true)}
-      />
+      <div
+        className="snapshot-hover-parent"
+        style={{ position: "relative", display: "block", lineHeight: 0 }}
+      >
+        <img
+          key={imgKey}
+          src={src}
+          alt="Microphone monitor stream"
+          style={{ width: "100%", maxHeight: "400px", objectFit: "contain", display: "block", borderRadius: "4px", cursor: "pointer" }}
+          onLoad={resetStall}
+          onError={handleError}
+          onClick={() => setFullscreen(true)}
+        />
+        {ip && <SnapshotButton module={{ ip, name: "microphone" }} port={port} />}
+      </div>
       {fullscreen && (
         <FullscreenVideo ip={ip} port={port} onClose={() => setFullscreen(false)} />
       )}

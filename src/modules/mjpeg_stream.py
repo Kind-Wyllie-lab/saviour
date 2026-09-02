@@ -73,6 +73,23 @@ class MJPEGStreamServer:
         with self._frame_lock:
             self._latest_frame = None
 
+    def _snapshot_bytes(self):
+        """Best-effort single JPEG for the /snapshot.jpg endpoint.
+
+        Pull mode: render one frame on demand — that's what render_fn is for,
+        and it works even when nobody is currently watching the stream. Push
+        mode (or a pull render that returned nothing): hand back the last
+        frame the stream served — the exact bytes currently on screen."""
+        if self.render_fn is not None:
+            try:
+                frame = self.render_fn()
+                if frame is not None:
+                    return frame
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"{self.name} snapshot render failed: {e}")
+        return self.get_latest_frame()
+
     def _register_routes(self):
         @self.app.route('/')
         def index():
@@ -84,6 +101,26 @@ class MJPEGStreamServer:
                 self._generate_frames(),
                 mimetype='multipart/x-mixed-replace; boundary=frame'
             )
+
+        @self.app.route('/snapshot.jpg', methods=['GET'])
+        def snapshot():
+            """A single still JPEG — same bytes the MJPEG stream is showing,
+            no extra encode in push mode. Used by the crop editor and by the
+            frontend livestream "screenshot" button.
+
+            Access-Control-Allow-Origin is set so the frontend (served from
+            the controller origin) can fetch() these bytes cross-origin to
+            build a downloadable Blob — an <img> tag doesn't need it, fetch()
+            does. Same LAN-open exposure the MJPEG stream itself already has."""
+            headers = {
+                "Content-Type": "image/jpeg",
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-store",
+            }
+            jpeg = self._snapshot_bytes()
+            if jpeg is None:
+                return ("No frame available", 503, headers)
+            return (jpeg, 200, headers)
 
     @staticmethod
     def _mjpeg_chunk(frame: bytes) -> bytes:

@@ -59,6 +59,57 @@ class TestRoutes:
         assert resp.mimetype == "multipart/x-mixed-replace"
 
 
+class TestSnapshotRoute:
+    """`/snapshot.jpg` is served by MJPEGStreamServer itself (not per module
+    type), so every module with a monitoring stream — camera preview,
+    microphone spectrogram, TTL trace, RFID reads — exposes it. The frontend
+    screenshot button and the crop editor both fetch it cross-origin, hence
+    the CORS + no-store headers on every response including the 503."""
+
+    def _headers_ok(self, resp):
+        assert resp.headers["Content-Type"] == "image/jpeg"
+        assert resp.headers["Access-Control-Allow-Origin"] == "*"
+        assert resp.headers["Cache-Control"] == "no-store"
+
+    def test_push_mode_returns_last_pushed_frame(self):
+        server = MJPEGStreamServer(name="camera")
+        server.push_frame(b"jpeg-bytes")
+        resp = server.app.test_client().get("/snapshot.jpg")
+        assert resp.status_code == 200
+        assert resp.data == b"jpeg-bytes"
+        self._headers_ok(resp)
+
+    def test_503_with_cors_headers_when_no_frame(self):
+        server = MJPEGStreamServer()
+        resp = server.app.test_client().get("/snapshot.jpg")
+        assert resp.status_code == 503
+        self._headers_ok(resp)
+
+    def test_pull_mode_renders_on_demand(self):
+        # No client is watching the stream, so the frame mailbox is empty —
+        # a pull-mode server must render one fresh instead of 503ing.
+        calls = []
+        def render():
+            calls.append(1)
+            return b"spectro-%d" % len(calls)
+        server = MJPEGStreamServer(render_fn=render, name="microphone")
+        client = server.app.test_client()
+        assert client.get("/snapshot.jpg").data == b"spectro-1"
+        assert client.get("/snapshot.jpg").data == b"spectro-2"
+
+    def test_pull_render_returning_none_falls_back_to_last_frame(self):
+        server = MJPEGStreamServer(render_fn=lambda: None)
+        server.push_frame(b"stale-but-real")
+        assert server.app.test_client().get("/snapshot.jpg").data == b"stale-but-real"
+
+    def test_pull_render_raising_is_caught_and_503s(self):
+        def boom():
+            raise RuntimeError("camera busy")
+        server = MJPEGStreamServer(render_fn=boom, logger=MagicMock())
+        resp = server.app.test_client().get("/snapshot.jpg")
+        assert resp.status_code == 503
+
+
 # ---------------------------------------------------------------------------
 # _mjpeg_chunk
 # ---------------------------------------------------------------------------

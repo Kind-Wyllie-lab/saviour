@@ -25,10 +25,17 @@ class SoundModule(Module):
 
         self.config.load_module_config("sound_config.json")
 
+        # .wav files ship alongside this module; resolve relative to the file
+        # so discovery/playback don't depend on the process CWD.
+        self._sounds_dir = os.path.join(os.path.dirname(__file__), "sounds")
 
-        self.module_checks = {
-            self._check_hifiberry
-        }
+        # None once a HiFiBerry sound card is detected; otherwise a
+        # human-readable reason. Surfaced every heartbeat via get_health()
+        # (the System page's "NO HARDWARE" badge) and as the _check_hifiberry
+        # readiness-failure reason.
+        self.hardware_fault: str | None = None
+
+        self.module_checks = [self._check_hifiberry]
 
         self.sound_commands = {
             "play_sound": self._play_sound,
@@ -41,17 +48,25 @@ class SoundModule(Module):
 
         # Sound files
         self.available_sounds = self._get_available_sounds()
-        self.sound_to_play = self.available_sounds[0]
+        self.sound_to_play = (
+            self.available_sounds[0] if self.available_sounds else None
+        )
 
         # Recording
         self.current_sound_event_file = None
         self._sound_file_handle = None
 
+        # Populate hardware_fault for the first heartbeat (the readiness check
+        # refreshes it thereafter).
+        self._check_hifiberry()
+
     @command()
     def _play_sound(self):
-        duration = self.config.get("sound.duration") # Duration in seconds to play for
-        filename = "sounds/" + self.sound_to_play # The wav to be played
-        volume = self.config.get("sound.volume") # The volume to play at (1 = 100%)
+        if not self.sound_to_play:
+            return {"result": "error", "message": "no sound file available"}
+        duration = self.config.get("sound.duration")  # seconds to play for
+        filename = os.path.join(self._sounds_dir, self.sound_to_play)
+        volume = self.config.get("sound.volume")  # 1 = 100%
         device = "plughw:2,0"
 
         timestamp = time.time_ns()
@@ -104,8 +119,14 @@ class SoundModule(Module):
 
 
     def _get_available_sounds(self) -> list:
-        files = [f for f in os.listdir("sounds/") if os.path.isfile(f"sounds/{f}")]
-        return files
+        try:
+            return [
+                f for f in os.listdir(self._sounds_dir)
+                if os.path.isfile(os.path.join(self._sounds_dir, f))
+            ]
+        except FileNotFoundError:
+            self.logger.warning(f"No sounds directory at {self._sounds_dir}")
+            return []
 
 
     """Config"""
@@ -177,16 +198,38 @@ class SoundModule(Module):
 
 
     """Self Check"""
+    def _detect_hifiberry(self) -> tuple[bool, str]:
+        """A HiFiBerry DAC/AMP HAT registers an ALSA card whose id/name
+        contains "hifiberry" (e.g. "sndrpihifiberry"). /proc/asound/cards is
+        the cheapest source; fall back to `aplay -l`."""
+        try:
+            with open("/proc/asound/cards") as f:
+                text = f.read()
+            for line in text.splitlines():
+                if "hifiberry" in line.lower():
+                    return True, line.strip()
+        except OSError:
+            pass
+        try:
+            out = subprocess.run(
+                ["aplay", "-l"], capture_output=True, text=True,
+                timeout=5, check=False,
+            ).stdout
+            if "hifiberry" in out.lower():
+                return True, "aplay -l"
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return False, ""
+
     @check()
     def _check_hifiberry(self):
-        # Do something here to check hifiberry working as intended
-        hifiberry_working = True
-        if not hifiberry_working:
-            message = "Hifiberry not working"
-            self.logger.warning(message)
-            return False, message
-        else:
-            return True, "Hifiberry working"
+        detected, detail = self._detect_hifiberry()
+        if detected:
+            self.hardware_fault = None
+            return True, f"HiFiBerry sound card present ({detail})"
+        self.hardware_fault = "No HiFiBerry sound card detected"
+        self.logger.warning(self.hardware_fault)
+        return False, self.hardware_fault
 
 
 def main():

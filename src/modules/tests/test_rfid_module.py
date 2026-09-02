@@ -102,12 +102,17 @@ class TestCheckRfid:
         ok, msg = m._check_rfid()
         assert ok is True
         assert "/dev/ttyUSB0" in msg and "2 unit" in msg
+        # A recovered check clears the hardware-fault flag.
+        assert m.hardware_fault is None
 
     def test_no_reader_not_ready(self):
         m = _make_rfid()
         ok, msg = m._check_rfid()
         assert ok is False
-        assert "no RFID reader" in msg
+        assert "no rfid reader" in msg.lower()
+        # ...and the missing reader is surfaced as a hardware fault for the
+        # controller's System-page badge / health heartbeat.
+        assert m.hardware_fault == msg
 
 
 class TestRecordingHooks:

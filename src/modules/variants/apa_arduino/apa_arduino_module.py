@@ -45,6 +45,11 @@ class APAModule(Module):
         self.connected_arduinos: dict[str, Protocol] = {} # Maps arduino_type to a Protocol which implements a protocol around a serial connection
         self.motor: Motor = None
         self.shock: Shocker = None
+        # None once both the motor and shock Arduinos are connected; otherwise
+        # a human-readable reason. Surfaced every heartbeat via get_health()
+        # (the System page's "NO HARDWARE" badge); the per-Arduino readiness
+        # checks below already block recording on their own.
+        self.hardware_fault: str | None = "Motor and shock Arduinos not yet connected"
         self._find_arduino_ports()
 
         # Sending state to controller
@@ -98,6 +103,7 @@ class APAModule(Module):
     def handle_system_ready(self):
         """Called when both arduino are discovered."""
         self.logger.info("Both arduino initialized.")
+        self._refresh_hardware_fault()
         self.set_arduino_callbacks()
         self.send_state_thread = threading.Thread(target=self.send_state_loop, daemon=True)
         self.send_state_thread.start()
@@ -203,8 +209,23 @@ class APAModule(Module):
         return True, "All checks passed"
 
 
+    def _refresh_hardware_fault(self) -> None:
+        """Keep self.hardware_fault in sync with what's actually connected --
+        called from the per-Arduino readiness checks (which run on every
+        validate_readiness) and once discovery completes."""
+        missing = [
+            name for name, obj in (("motor", self.motor), ("shock", self.shock))
+            if not obj
+        ]
+        self.hardware_fault = (
+            None if not missing
+            else f"{' and '.join(missing)} Arduino not connected"
+        )
+
+
     @check()
     def _check_motor(self) -> tuple[bool, str]:
+        self._refresh_hardware_fault()
         if not self.motor:
             return False, "No motor found"
         else:
@@ -213,6 +234,7 @@ class APAModule(Module):
 
     @check()
     def _check_shocker(self) -> tuple[bool, str]:
+        self._refresh_hardware_fault()
         if not self.shock:
             return False, "No shocker found"
         else:
@@ -221,6 +243,8 @@ class APAModule(Module):
 
     @check()
     def _check_shock_grid_fault(self) -> tuple[bool, str]:
+        if not self.shock:
+            return False, "No shocker found"
         try:
             t0 = time.time()
             status, message = self.shock.run_grid_test()
@@ -236,6 +260,8 @@ class APAModule(Module):
 
     @check()
     def _check_shock_grid_active(self) -> tuple[bool, str]:
+        if not self.shock:
+            return False, "No shocker found"
         if self.shock.shock_activated:
             return False, "Shocks are active! Please deactivate and try again."
         else:
@@ -244,6 +270,8 @@ class APAModule(Module):
 
     @check()
     def _check_shocks_not_above_50(self) -> tuple[bool, str]:
+        if not self.shock:
+            return False, "No shocker found"
         limit = self.shock._max_shocks
         with self.shock._shock_lock:
             attempted = self.shock.attempted_shocks
@@ -255,6 +283,8 @@ class APAModule(Module):
 
     @check()
     def _check_shocks_equal_zero(self) -> tuple[bool, str]:
+        if not self.shock:
+            return False, "No shocker found"
         with self.shock._shock_lock:
             attempted = self.shock.attempted_shocks
             attempted_arduino = self.shock.attempted_shocks_from_arduino

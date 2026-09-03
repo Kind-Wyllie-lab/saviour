@@ -176,29 +176,63 @@ def _label(frame: np.ndarray, text: str) -> np.ndarray:
     return frame
 
 
+def _fit_into(frame: np.ndarray, w: int, h: int) -> np.ndarray:
+    """Resize `frame` to fill (w, h) while preserving its aspect ratio,
+    letterboxed onto black. Keeps a portrait pane from being squashed
+    into a landscape box (and vice versa)."""
+    src_h, src_w = frame.shape[:2]
+    scale = min(w / src_w, h / src_h)
+    new_w, new_h = max(1, int(src_w * scale)), max(1, int(src_h * scale))
+    resized = cv2.resize(frame, (new_w, new_h))
+    pane = np.zeros((h, w, 3), dtype=np.uint8)
+    y0, x0 = (h - new_h) // 2, (w - new_w) // 2
+    pane[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    return pane
+
+
 def compose_session_video(
     date_dir: str,
     output_path: str,
     layout: str = "auto",
     fps: int = DEFAULT_FPS,
+    streams: list[str] | None = None,
+    regions: list[tuple[int, int, int, int]] | None = None,
+    canvas: tuple[int, int] | None = None,
+    progress=None,
 ) -> str:
-    streams = discover_camera_streams(date_dir)
-    if not streams:
+    """Compose the session's cameras into one layout video.
+
+    `streams` restricts to those module folder names (order preserved).
+    `regions` + `canvas` supply a pre-planned layout (from
+    compose.plan_regions) and, when given, override `layout`. `progress`
+    is called `progress(done, total, stage)` every ~1 % of frames.
+    """
+    found = discover_camera_streams(date_dir)
+    if streams is not None:
+        by_name = {s.name: s for s in found}
+        missing = [s for s in streams if s not in by_name]
+        if missing:
+            raise ValueError(f"streams not found under {date_dir}: {missing}")
+        found = [by_name[s] for s in streams]
+    if not found:
         raise ValueError(
             f"No camera streams (video + *_timestamps.csv) found under {date_dir}"
         )
 
-    ordered = streams
-    loom_layout = _loom_regions(streams) if layout in ("auto", "loom") else None
-    if loom_layout is not None:
-        regions, canvas_w, canvas_h, ordered = loom_layout
+    ordered = found
+    if regions is not None and canvas is not None:
+        canvas_w, canvas_h = canvas
     else:
-        if layout == "loom":
-            raise ValueError(
-                "--layout loom requires exactly one "
-                "LoomCam/Home/ScreenCam-named stream each"
-            )
-        regions, canvas_w, canvas_h = _grid_regions(len(streams))
+        loom_layout = _loom_regions(found) if layout in ("auto", "loom") else None
+        if loom_layout is not None:
+            regions, canvas_w, canvas_h, ordered = loom_layout
+        else:
+            if layout == "loom":
+                raise ValueError(
+                    "--layout loom requires exactly one "
+                    "LoomCam/Home/ScreenCam-named stream each"
+                )
+            regions, canvas_w, canvas_h = _grid_regions(len(found))
 
     cursors = [_StreamCursor(s) for s in ordered]
     t_start = max(c.first_ts for c in cursors)
@@ -217,14 +251,17 @@ def compose_session_video(
     if not writer.isOpened():
         raise RuntimeError("VideoWriter failed to open — codec unavailable")
 
+    report_every = max(1, n_out // 100)
     try:
         for i in range(n_out):
             t = t_start + i * step_ns
-            canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+            frame = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
             for cursor, (x, y, w, h) in zip(cursors, regions, strict=True):
-                pane = _label(cv2.resize(cursor.sync_to(t), (w, h)), cursor.name)
-                canvas[y : y + h, x : x + w] = pane
-            writer.write(canvas)
+                pane = _label(_fit_into(cursor.sync_to(t), w, h), cursor.name)
+                frame[y : y + h, x : x + w] = pane
+            writer.write(frame)
+            if progress is not None and (i % report_every == 0 or i == n_out - 1):
+                progress(i + 1, n_out, "rendering")
     finally:
         writer.release()
         for cursor in cursors:

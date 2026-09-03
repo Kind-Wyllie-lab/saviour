@@ -10,6 +10,7 @@ import {
 } from "../sessionFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
+import ComposeVideoPanel from "./ComposeVideoPanel";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -641,6 +642,14 @@ export default function SessionDetailPage() {
               </div>
             );
           })()}
+
+          {fileInfo && fileInfo !== "loading" && fileInfo.files.length > 0 && !isActive && (
+            <ComposeVideoPanel
+              sessionName={session.session_name}
+              files={fileInfo.files}
+              onRequestDownload={requestDownload}
+            />
+          )}
 
           {(isActive || isError) && session.modules.length > 0 && (
             <div className="session-recording-state-section">

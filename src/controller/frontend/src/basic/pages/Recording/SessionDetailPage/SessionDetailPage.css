@@ -98,3 +98,98 @@
   gap: 8px;
   margin-top: 2px;
 }
+
+/* --- Compose aggregated video panel --- */
+.compose-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compose-panel h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.compose-panel__streams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.compose-panel__stream {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.compose-panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.compose-panel__row .form-field {
+  min-width: 0;
+}
+
+.compose-panel__jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.compose-job {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--border-color, #ddd) 10%, transparent);
+}
+
+.compose-job__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.compose-job__state {
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+.compose-job__state--done { color: var(--success-color, #2e7d32); }
+.compose-job__state--error,
+.compose-job__state--cancelled { color: var(--error-color, #c62828); }
+
+.compose-job__pct {
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-job__head .btn-small {
+  margin-left: auto;
+}
+
+.compose-job__bar {
+  margin-top: 6px;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--border-color, #ccc) 40%, transparent);
+  overflow: hidden;
+}
+
+.compose-job__bar-fill {
+  height: 100%;
+  background: var(--accent-color, #3f7cac);
+  transition: width 0.25s ease;
+}
+
+.compose-job__error {
+  margin-top: 6px;
+  color: var(--error-color, #c62828);
+  font-size: 0.82rem;
+}

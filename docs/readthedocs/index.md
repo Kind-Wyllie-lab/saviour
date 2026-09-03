@@ -15,6 +15,8 @@ To learn about developing modules, GUIs, and the process of contributing to SAVI
 - [Getting Started](getting_started.md) - assigning device roles, connecting modules, running and exporting a recording session.
 - [FAQs](faqs.md)
 - [Using SAVIOUR with Ephys](open_ephys.md) - syncing and aligning SAVIOUR recordings with an Open Ephys rig.
+- [Synchronisation](synchronisation.md) - the three layers that put every stream on one clock: fleet-wide PTP, FrameSync, ephys sync.
+- [Post-Processing & Aligning](aligning.md) - correcting sample-rate drift and frame timing after recording, and the outputs you can build.
 - [How it Works](how_it_works.md) - architecture and internals, for contributors.
 - [Hardware](hardware.md) - the parts list for a controller, and for each module type.
 - [CAD/3D Prints](cad.md)

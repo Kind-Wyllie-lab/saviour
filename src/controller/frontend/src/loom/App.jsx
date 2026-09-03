@@ -8,6 +8,7 @@ import Settings from "/src/basic/pages/Settings/Settings";
 import LoomRecording from "/src/loom/pages/LoomRecording/LoomRecording";
 import System from "/src/basic/pages/System/System";
 import Storage from "/src/basic/pages/Storage/Storage";
+import PostProcess from "/src/basic/pages/PostProcess/PostProcess";
 import Guide from "/src/basic/pages/Guide/Guide";
 import FaultAlertModal from "/src/basic/components/FaultAlertModal/FaultAlertModal";
 import FirstRunModal from "/src/basic/components/FirstRunModal/FirstRunModal";
@@ -24,6 +25,7 @@ const pages = [
   { label: "Recording", path: "/recording" },
   { label: "System",    path: "/system" },
   { label: "Storage",    path: "/storage" },
+    { label: "Post-Process",    path: "/post-process" },
   { label: "Guide",     path: "/guide" },
 ];
 
@@ -72,6 +74,7 @@ function App() {
               <Route path="/recording" element={<LoomRecording />} />
               <Route path="/system"    element={<System />} />
               <Route path="/storage"    element={<Storage />} />
+            <Route path="/post-process"    element={<PostProcess />} />
               <Route path="/guide"     element={<Guide />} />
             </Routes>
           </div>

@@ -124,6 +124,7 @@ export default function SessionDetailPage() {
   const [editDurationSeconds, setEditDurationSeconds] = useState("0");
   const [editError, setEditError] = useState(null);
   const [pendingDownload, setPendingDownload] = useState(null); // null | { url, name, sizeBytes }
+  const [diagState, setDiagState] = useState(null); // null | "collecting"
 
   const requestDownload = (url, name, sizeBytes) => {
     if (sizeBytes >= DOWNLOAD_CONFIRM_BYTES) {
@@ -149,6 +150,19 @@ export default function SessionDetailPage() {
     const handler = (data) => setShareInfo(data);
     socket.on("export_destination_response", handler);
     return () => socket.off("export_destination_response", handler);
+  }, []);
+
+  useEffect(() => {
+    const onReady = ({ token, filename, error }) => {
+      setDiagState(null);
+      if (error) { window.alert(`Diagnostics failed: ${error}`); return; }
+      const a = document.createElement("a");
+      a.href = `/api/bug_report/${token}`;
+      a.download = filename;
+      a.click();
+    };
+    socket.on("session_diagnostics_ready", onReady);
+    return () => socket.off("session_diagnostics_ready", onReady);
   }, []);
 
   useEffect(() => {
@@ -328,6 +342,10 @@ export default function SessionDetailPage() {
   };
   const handleAddModuleConfirm = (name, moduleId) => socket.emit("add_module_to_session", { session_name: name, module_id: moduleId });
   const handleRetryExport = () => socket.emit("retry_failed_exports", { session_name: sessionName });
+  const handleExportDiagnostics = () => {
+    setDiagState("collecting");
+    socket.emit("get_session_diagnostics", { session_name: sessionName });
+  };
   const handleRefreshRecordingState = () => socket.emit("request_recording_state_refresh", { session_name: sessionName });
   const toggleSessionLog = () => {
     if (sessionLog !== undefined) {
@@ -811,6 +829,14 @@ export default function SessionDetailPage() {
                 Retry Export
               </button>
             )}
+            <button
+              className="session-btn session-btn--copy"
+              onClick={handleExportDiagnostics}
+              disabled={diagState === "collecting"}
+              title="Zip this session's logs -- controller journal since it started, each of its modules' current logs, session_events.log / metadata / per-module stop journals"
+            >
+              {diagState === "collecting" ? "Collecting…" : "Export Diagnostics"}
+            </button>
             <button
               className="session-btn session-btn--copy"
               onClick={() => openCopyDrawer(session)}

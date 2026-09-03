@@ -175,6 +175,59 @@ def test_window_close_does_not_end_the_session():
     assert s.state == SessionState.ACTIVE             # cams still going
 
 
+def test_reload_leaves_out_of_window_plan_stopped():
+    from src.controller.recording_plans import RecordingPlan
+
+    rec, _ = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    with patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_9AM          # 09:00, night-audio window shut
+        rec.start_pending_session("hab")
+    rec._save_sessions()
+    saved_path = recording_module.SESSIONS_FILE
+
+    with patch("src.controller.recording.threading.Thread"), \
+         patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_9AM
+        recording_module.SESSIONS_FILE = saved_path
+        rec2 = Recording()
+    rec2._check_share_writable = lambda: None
+
+    s = rec2.sessions["hab"]
+    plans = {p.plan_id: p for p in s.plans}
+    assert plans["mics"].recording is False
+    assert s.module_stop_states["m1"] == "stopped"     # not "unknown"
+    assert s.module_stop_states["c1"] == "unknown"     # in-window continuous plan
+    assert isinstance(plans["mics"], RecordingPlan)
+
+
+def test_module_back_online_ignores_out_of_window_plan():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    rec.sessions["hab"].state = SessionState.ACTIVE
+    rec.sessions["hab"].module_stop_states = {
+        m: "unknown" for m in rec.sessions["hab"].modules
+    }
+    rec.get_session_name_from_target = lambda mid: "hab"
+    with patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_9AM          # night-audio window shut
+        rec.module_back_online("m1")
+    assert not _commands(facade)               # no start_recording sent
+    assert rec.sessions["hab"].module_stop_states["m1"] == "stopped"
+
+
+def test_evaluate_stops_modules_recording_out_of_window():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    s = rec.sessions["hab"]
+    s.state = SessionState.ACTIVE
+    mics = next(p for p in s.plans if p.plan_id == "mics")
+    mics.recording = False                     # flag stale / never set
+    facade.is_module_recording.side_effect = lambda m: m == "m1"  # mic wrongly on
+    rec._evaluate_plans("hab", s, now=MON_9AM)
+    assert any(c.args[0] == "m1" for c in _commands(facade, "stop_recording"))
+
+
 def test_reload_rehydrates_plans_and_keeps_active():
     from src.controller.recording_plans import RecordingPlan
 

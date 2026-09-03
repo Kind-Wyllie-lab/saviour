@@ -301,3 +301,18 @@
   color: var(--text-muted, #888);
   margin-top: 3px;
 }
+
+.session-postprocess-link {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 8px 12px;
+  border: 1px solid var(--accent-color, #3f7cac);
+  border-radius: 6px;
+  color: var(--accent-color, #3f7cac);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.session-postprocess-link:hover {
+  background: color-mix(in srgb, var(--accent-color, #3f7cac) 10%, transparent);
+}

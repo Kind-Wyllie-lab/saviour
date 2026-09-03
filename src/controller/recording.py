@@ -1016,11 +1016,20 @@ class Recording:
             return
         now = now or datetime.now()
         for plan in session.plans:
-            action = recording_plans.plan_window_action(plan, now)
-            if action == "start":
-                self._start_plan(session, plan, now)
-            elif action == "stop":
+            should = recording_plans.plan_should_record(plan, now)
+            if should and not plan.recording:
+                if recording_plans.plan_window_action(plan, now) == "start":
+                    self._start_plan(session, plan, now)
+            elif plan.recording and not should:
                 self._stop_plan(session, plan, "window closed")
+            elif not should and any(
+                self.facade.is_module_recording(m) for m in plan.modules
+            ):
+                # Modules recording while the plan's window is shut — e.g. a
+                # controller-restart recovery re-armed them blindly. _stop_plan
+                # checks each module's real state, so a stale plan.recording
+                # flag doesn't matter here.
+                self._stop_plan(session, plan, "outside window")
             elif plan.recording:
                 self._rearm_plan_dropouts(session, plan)
 
@@ -1063,6 +1072,11 @@ class Recording:
         for m in plan.modules:
             session.module_stop_states[m] = "recording"
             session.module_export_states.setdefault(m, "idle")
+            # A module that kept recording through a controller restart is
+            # already going — re-sending start_recording just earns an
+            # "Already recording" fault. Mark it tracked and move on.
+            if self.facade.is_module_recording(m):
+                continue
             self.facade.send_command(m, "start_recording", params)
             self.facade.send_command(
                 m, "report_recording_state", {"session_name": session.session_name}
@@ -1520,6 +1534,28 @@ class Recording:
         session = self.sessions[session_name]
 
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
+            # Habitat Session: only re-arm a reconnecting module if its plan's
+            # window is actually open right now. Otherwise a controller
+            # restart (which faults every session module) would start e.g. a
+            # nightly-audio plan's mics in the middle of the afternoon.
+            if session.plans:
+                plan = next(
+                    (p for p in session.plans if module_id in p.modules), None
+                )
+                if plan and not recording_plans.plan_should_record(
+                    plan, datetime.now()
+                ):
+                    with self._lock:
+                        session.module_stop_states[module_id] = "stopped"
+                    self._log_session_event(
+                        session_name, "INFO",
+                        f"{module_id} back online — plan '{plan.label}' is "
+                        f"outside its window, not started",
+                    )
+                    self.facade.update_sessions(self.sessions)
+                    self._save_sessions()
+                    return
+
             already_tracking = (
                 session.module_stop_states.get(module_id) == "recording"
                 and session.state == SessionState.ACTIVE
@@ -2441,7 +2477,23 @@ class Recording:
                 if session.state == SessionState.ACTIVE:
                     session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
                     session.error_message = "Controller restarted during active session"
-                    session.module_stop_states = {m: "unknown" for m in session.modules}
+                    if session.plans:
+                        # Reconcile each plan against the clock: an in-window
+                        # plan's modules are "unknown" (re-probe + re-arm), a
+                        # shut plan's modules are "stopped" so the recovery
+                        # path leaves them alone until their window opens.
+                        now = datetime.now()
+                        states: dict = {}
+                        for plan in session.plans:
+                            should = recording_plans.plan_should_record(plan, now)
+                            plan.recording = should
+                            for m in plan.modules:
+                                states[m] = "unknown" if should else "stopped"
+                        session.module_stop_states = states
+                    else:
+                        session.module_stop_states = {
+                            m: "unknown" for m in session.modules
+                        }
                     # An unattended (long-term) session stays ACTIVE so the
                     # monitor loop re-arms its modules instead of parking it in
                     # ERROR for an operator who isn't watching.

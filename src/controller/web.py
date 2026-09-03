@@ -2869,6 +2869,23 @@ class Web(ABC):
                 target=self._collect_bug_report, args=(requester_sid,), daemon=True
             ).start()
 
+        @self.socketio.on("get_session_diagnostics")
+        def handle_get_session_diagnostics(data=None):
+            if not self._require_auth("auth_required"):
+                return
+            import re
+            session_name = (data or {}).get("session_name", "")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                from flask_socketio import emit as _emit
+                _emit("session_diagnostics_ready", {"error": "invalid session"})
+                return
+            self.logger.info(f"Session diagnostics requested for {session_name}")
+            requester_sid = request.sid
+            threading.Thread(
+                target=self._collect_session_diagnostics,
+                args=(requester_sid, session_name), daemon=True,
+            ).start()
+
         @self.app.route("/api/bug_report/<token>")
         def download_bug_report(token):
             entry = self._bug_report_store.get(token)
@@ -3211,6 +3228,134 @@ class Web(ABC):
             {"token": token, "filename": f"saviour_diagnostics_{ts}.zip"},
             room=requester_sid,
         )
+
+    def _collect_session_diagnostics(self, requester_sid: str,
+                                     session_name: str) -> None:
+        """Background thread: everything relevant to one session — the
+        controller's journal since it started, that session's own
+        modules' current logs, the session_events.log / metadata /
+        per-module stop journals already on the share — zipped and handed
+        back as a download token (same store/route as the fleet report)."""
+        import re
+
+        self.socketio.emit("bug_report_status", {"status": "collecting"},
+                           room=requester_sid)
+        sessions = self.facade.get_recording_sessions() if self.facade else {}
+        session = sessions.get(session_name)
+        if session is None:
+            self.socketio.emit("session_diagnostics_ready",
+                               {"error": f"unknown session '{session_name}'"},
+                               room=requester_sid)
+            return
+        sdict = (asdict(session) if hasattr(session, "__dataclass_fields__")
+                 else dict(session))
+        mods = list(sdict.get("modules", []))
+
+        # journal window: 10 min before the session's start_time
+        # ("YYYYMMDD-HHMMSS"), so a module already in a bad state / PTP
+        # already drifting before recording began is in the bundle too.
+        from datetime import timedelta
+        since = None
+        st = sdict.get("start_time") or ""
+        m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})", st)
+        if m:
+            start_dt = datetime(int(m[1]), int(m[2]), int(m[3]),
+                                int(m[4]), int(m[5]), int(m[6]))
+            since = (start_dt - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+
+        modules = self.facade.get_modules() if self.facade else {}
+        online = [mid for mid in mods if modules.get(mid, {}).get("online")]
+
+        pending = {mid: {"event": threading.Event(), "data": None}
+                   for mid in online}
+        with self._diag_lock:
+            self._diag_pending.update(pending)
+        for mid in online:
+            self.facade.send_command(mid, "get_diagnostics", {})
+        for mid in online:
+            pending[mid]["event"].wait(timeout=15)
+        with self._diag_lock:
+            for mid in online:
+                self._diag_pending.pop(mid, None)
+
+        since_args = (["--since", since] if since else ["-n", "5000"])
+        ctrl = {
+            "logs_since_session.txt": _journalctl(
+                ["-u", "saviour.service", *since_args, "--output=short-precise"]),
+            "kernel_since_session.txt": _journalctl(["-k", *since_args]),
+        }
+
+        share = os.path.realpath(
+            self.config.get("export.mount_path", "/home/pi/controller_share"))
+        session_dir = os.path.realpath(os.path.join(share, session_name))
+        safe = session_dir.startswith(share + os.sep) and os.path.isdir(session_dir)
+
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        root = f"session_diagnostics_{session_name}_{ts}"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{root}/session.json",
+                        json.dumps(sdict, indent=2, default=str))
+            for fname, content in ctrl.items():
+                zf.writestr(f"{root}/controller/{fname}", content)
+            try:
+                hours = 24.0
+                if since:
+                    age = (datetime.now() - datetime.strptime(
+                        since, "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600
+                    hours = max(1.0, min(age + 1, 24 * 30))
+                zf.writestr(f"{root}/controller/ptp_history.csv",
+                            "".join(self.facade.export_ptp_history_csv(hours)))
+            except Exception as e:  # noqa: BLE001
+                zf.writestr(f"{root}/controller/ptp_history.csv", f"error: {e}")
+
+            if safe:
+                for name in ("session_events.log", "session_metadata.json"):
+                    p = os.path.join(session_dir, name)
+                    if os.path.isfile(p):
+                        with open(p, "rb") as fh:
+                            zf.writestr(f"{root}/{name}", fh.read())
+                for dp, _dn, fns in os.walk(session_dir):
+                    for fn in fns:
+                        if "journal" in fn.lower() and fn.lower().endswith(".txt"):
+                            fp = os.path.join(dp, fn)
+                            rel = os.path.relpath(fp, session_dir).replace(os.sep, "/")
+                            with open(fp, "rb") as fh:
+                                zf.writestr(
+                                    f"{root}/session_journals/{rel}", fh.read()
+                                )
+
+            for mid in online:
+                data = pending[mid].get("data") or {}
+                base = f"{root}/modules/{mid}"
+                zf.writestr(f"{base}/logs.txt", data.get("logs", "(no response)"))
+                for key, fname in (("logs_prevboot", "logs_prevboot.txt"),
+                                   ("kernel_prevboot", "kernel_prevboot.txt"),
+                                   ("boots", "boots.txt")):
+                    if data.get(key):
+                        zf.writestr(f"{base}/{fname}", data[key])
+                if data.get("config"):
+                    zf.writestr(f"{base}/config.json", json.dumps(
+                        _sanitise_config_dict(data["config"]), indent=2, default=str))
+
+            offline = [mid for mid in mods if mid not in online]
+            zf.writestr(f"{root}/manifest.json", json.dumps({
+                "session_name": session_name,
+                "generated_at": ts,
+                "session_start": sdict.get("start_time"),
+                "since": since,
+                "state": sdict.get("state"),
+                "online_modules": online,
+                "offline_modules": offline,
+                "responded": [mid for mid in online if pending[mid].get("data")],
+            }, indent=2))
+
+        token = secrets.token_urlsafe(16)
+        fn = f"{root}.zip"
+        self._bug_report_store = {token: (buf.getvalue(), fn)}
+        self.socketio.emit("session_diagnostics_ready",
+                           {"token": token, "filename": fn},
+                           room=requester_sid)
 
     def _nas_monitor_loop(self):
         NAS_CHECK_INTERVAL_S = self.config.get("export.nas_health_interval_s", 300)

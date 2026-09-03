@@ -155,10 +155,15 @@
   width: 124px;
 }
 
-/* Reserve vertical space so a 2-field tab (e.g. Basic) doesn't collapse the
-   card relative to a dense one. */
+/* Keep the Save / Reset / status footer in a consistent spot as you switch
+   tabs: reserve enough vertical space that the common tabs (Basic, Record,
+   Preview, Export …) all place it at the same height, rather than each tab's
+   own content length deciding where it lands. A genuinely long tab (e.g.
+   camera Image) still grows past this and you scroll to the footer — but it
+   never *moves while scrolling*, which a sticky footer did (it rode the
+   viewport bottom, detaching from the panel). */
 .settings-card .config-tab-content {
-  min-height: 380px;
+  min-height: 440px;
 }
 
 /* Narrow viewports: drop the two-column body to a stack. */

@@ -20,7 +20,7 @@ const sectionLabel = (key) =>
   key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 function GenericConfigCard({ id, module, clipboard, onCopy }) {
-  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
 
   // One tab per remaining top-level config section (e.g. RFID + Monitoring for
   // an rfid module) instead of a single catch-all "Settings" tab that stacks
@@ -74,6 +74,7 @@ function GenericConfigCard({ id, module, clipboard, onCopy }) {
       onTabChange={setActiveTab}
       tabSectionMap={tabCopySection}
       markSaved={markSaved}
+      isDirty={isDirty}
       sidebar={
         module.type?.includes("camera")
           ? <LivestreamCard module={module} />

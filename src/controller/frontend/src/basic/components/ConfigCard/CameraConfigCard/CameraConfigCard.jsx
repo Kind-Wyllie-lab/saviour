@@ -105,7 +105,7 @@ function detectPreset(presetList, width, height, fps) {
 }
 
 function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
-  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const { moduleList } = useModules();
   const [sensorModes, setSensorModes] = useState([]);
   const [sensorModel, setSensorModel] = useState("");
@@ -284,6 +284,7 @@ function CameraConfigCard({ id, module, clipboard, onCopy, syncServerModule }) {
         onTabChange={setActiveTab}
         tabSectionMap={TAB_COPY_SECTION}
         markSaved={markSaved}
+        isDirty={isDirty}
         deviceInfoExtras={[sensorModel]}
         tabBadges={hasSyncWarning ? { record: "⚠" } : {}}
         sidebar={

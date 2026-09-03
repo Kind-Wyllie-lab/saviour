@@ -25,10 +25,14 @@ function RecordingLayout() {
     const { sessionList } = useSessions();
     const navigate = useNavigate();
     const [drawerOpen, setDrawerOpen] = useState(false);
-    // Habitat builds get a second form mode in the drawer: one session
-    // whose modules follow different recording strategies (see
-    // HabitatSessionForm / recording_plans.py).
-    const [formMode, setFormMode] = useState("standard");
+    // Habitat builds open the drawer straight into the plan-based
+    // "Habitat Session" form (the common case for that rig); a link at the
+    // top switches to the standard single-strategy form. Other builds only
+    // ever see the standard form.
+    const [formMode, setFormMode] = useState(
+        BUILT_VARIANT === "habitat" ? "habitat" : "standard",
+    );
+    const habitatForm = BUILT_VARIANT === "habitat" && formMode === "habitat";
 
     // Set by SessionDetailPage's "Copy" button (via the outlet context
     // below) to seed the New Session form with an existing session's
@@ -114,24 +118,26 @@ function RecordingLayout() {
             >
                 {BUILT_VARIANT === "habitat" && (
                     <div className="recording-form-mode">
+                        <span className="recording-form-mode__label">
+                            {habitatForm
+                                ? "Habitat Session — plan-based recording"
+                                : "Standard session"}
+                        </span>
                         <button
                             type="button"
-                            className={formMode === "standard" ? "is-active" : ""}
-                            onClick={() => setFormMode("standard")}
+                            className="recording-form-mode__switch"
+                            onClick={() =>
+                                setFormMode(habitatForm ? "standard" : "habitat")
+                            }
                         >
-                            Standard
-                        </button>
-                        <button
-                            type="button"
-                            className={formMode === "habitat" ? "is-active" : ""}
-                            onClick={() => setFormMode("habitat")}
-                        >
-                            Habitat Session
+                            {habitatForm
+                                ? "Switch to standard session"
+                                : "Switch to Habitat Session"}
                         </button>
                     </div>
                 )}
 
-                {BUILT_VARIANT === "habitat" && formMode === "habitat" ? (
+                {habitatForm ? (
                     <HabitatSessionForm
                         modules={moduleList}
                         onSessionCreated={(sessionName) => {

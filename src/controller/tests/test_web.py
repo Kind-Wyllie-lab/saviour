@@ -577,8 +577,11 @@ class TestReadOnlySocketIOHandlers:
 
         received = client.get_received()
         assert received[0]["name"] == "controller_config_response"
+        # _controller_config_payload() always injects the on-disk custom
+        # themes list (empty here) alongside the persisted config.
         assert received[0]["args"][0]["config"] == {
-            "interface": {"web_interface_port": 5000}
+            "interface": {"web_interface_port": 5000},
+            "frontend": {"custom_themes": []},
         }
 
 

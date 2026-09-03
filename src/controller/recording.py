@@ -127,6 +127,10 @@ class RecordingSession:
     # untouched. When non-empty the monitor drives each plan independently
     # (recording_plans.plan_window_action).
     plans:                     list = field(default_factory=list)
+    # Why a Habitat Session is PAUSED: None/"operator" (manual, stays paused
+    # until an operator resumes) or "disk" (auto-paused on critically low
+    # share space, auto-resumed once space recovers).
+    pause_reason:              str | None = None
 
     def __post_init__(self):
         # sessions.json round-trips plans as plain dicts; rehydrate them.
@@ -893,23 +897,28 @@ class Recording:
         return {"success": True}
 
     def pause_session(self, session_name: str) -> dict:
-        """Stop every plan's modules but keep the session (husbandry access
-        etc.). resume_session() re-arms whatever is in-window then."""
+        """Operator pause: stop every plan's modules but keep the session
+        (husbandry access etc.). Stays paused until resume_session()."""
         session = self.sessions.get(session_name)
         if not session or not session.plans:
             return {"success": False, "error": "Not a Habitat Session"}
         if session.state != SessionState.ACTIVE:
             return {"success": False,
                     "error": f"Session is {session.state}, not active"}
+        self._pause(session, "operator", "PAUSE", "Session paused by operator")
+        return {"success": True}
+
+    def _pause(self, session: RecordingSession, reason: str,
+               level: str, message: str) -> None:
         with self._lock:
             session.state = SessionState.PAUSED
+            session.pause_reason = reason
         for plan in session.plans:
             if plan.recording:
-                self._stop_plan(session, plan, "paused")
-        self._log_session_event(session_name, "PAUSE", "Session paused by operator")
+                self._stop_plan(session, plan, f"paused ({reason})")
+        self._log_session_event(session.session_name, level, message)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
-        return {"success": True}
 
     def resume_session(self, session_name: str) -> dict:
         session = self.sessions.get(session_name)
@@ -918,16 +927,86 @@ class Recording:
         if session.state != SessionState.PAUSED:
             return {"success": False,
                     "error": f"Session is {session.state}, not paused"}
+        self._resume(session, "RESUME", "Session resumed by operator")
+        return {"success": True}
+
+    def _resume(self, session: RecordingSession, level: str, message: str) -> None:
         with self._lock:
             session.state = SessionState.ACTIVE
+            session.pause_reason = None
             # Clear the once-per-window guard so an interrupted window resumes.
             for plan in session.plans:
                 plan.last_start_date = None
-        self._log_session_event(session_name, "RESUME", "Session resumed by operator")
-        self._evaluate_plans(session_name, session)
+        self._log_session_event(session.session_name, level, message)
+        self._evaluate_plans(session.session_name, session)
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
-        return {"success": True}
+
+    def _check_habitat_disk_autopause(self) -> None:
+        """Auto-pause any ACTIVE Habitat Session when the export share is
+        critically low, and auto-resume a disk-paused one once space
+        recovers (hysteresis so it can't flap). Operator pauses
+        (pause_reason != "disk") are never auto-resumed."""
+        habitat = [
+            (n, s) for n, s in self.sessions.items()
+            if s.plans and s.state in (SessionState.ACTIVE, SessionState.PAUSED)
+        ]
+        if not habitat:
+            return
+        nas = self._check_nas_space()
+        if not nas.get("ok"):
+            return
+        free = nas["free_pct"]
+        rec_cfg = self.facade.get_config().get("recording", {})
+        pause_at = rec_cfg.get(
+            "habitat_autopause_free_pct", rec_cfg.get("nas_min_free_pct", 5)
+        )
+        resume_at = rec_cfg.get(
+            "habitat_autoresume_free_pct", rec_cfg.get("nas_warn_free_pct", 15)
+        )
+        for name, session in habitat:
+            if session.state == SessionState.ACTIVE and free < pause_at:
+                self.logger.warning(
+                    f"Habitat Session '{name}': share {free:.1f}% free "
+                    f"< {pause_at}% — auto-pausing"
+                )
+                self._pause(
+                    session, "disk", "FAULT",
+                    f"Auto-paused — export share critically low ({free:.1f}% free, "
+                    f"{nas['free_gb']:.0f} GiB)",
+                )
+                if self._notify_enabled("notify_disk_space"):
+                    self.facade.send_alert(
+                        key=f"habitat_autopause_{name}",
+                        title=f"Habitat Session auto-paused — {name}",
+                        message=(
+                            f"**{name}** was auto-paused: the export share is only "
+                            f"**{free:.1f}%** free ({nas['free_gb']:.0f} GiB). "
+                            f"Free space above {resume_at}% and it resumes "
+                            f"automatically."
+                        ),
+                        severity="error",
+                    )
+            elif (session.state == SessionState.PAUSED
+                  and session.pause_reason == "disk" and free >= resume_at):
+                self.logger.info(
+                    f"Habitat Session '{name}': share recovered to {free:.1f}% "
+                    f">= {resume_at}% — auto-resuming"
+                )
+                self._resume(
+                    session, "RESUME",
+                    f"Auto-resumed — share recovered ({free:.1f}% free)",
+                )
+                if self._notify_enabled("notify_disk_space"):
+                    self.facade.send_alert(
+                        key=f"habitat_autoresume_{name}",
+                        title=f"Habitat Session resumed — {name}",
+                        message=(
+                            f"**{name}** auto-resumed: the export share is back to "
+                            f"{free:.1f}% free ({nas['free_gb']:.0f} GiB)."
+                        ),
+                        severity="info",
+                    )
 
     def _evaluate_plans(self, session_name: str, session: RecordingSession,
                         now: datetime | None = None) -> None:
@@ -2151,6 +2230,15 @@ class Recording:
                 self._check_export_stall_after_stop()
                 self._poll_recording_state()
                 self._flush_unattended_digest()
+
+            # Habitat Session disk auto-pause / auto-resume runs more often
+            # than the 5-min alert cadence — a critically full share should
+            # stop write pressure within ~30 s, not minutes.
+            if self._monitor_cycle % 6 == 0:
+                try:
+                    self._check_habitat_disk_autopause()
+                except Exception as e:
+                    self.logger.exception(f"Habitat disk auto-pause check failed: {e}")
 
             # ── Daily gap detection (once per calendar day) ───────────────────
             if self._gap_check_date != today:

@@ -202,6 +202,66 @@ def test_reload_rehydrates_plans_and_keeps_active():
 # --------------------------------------------------------------------------- #
 
 
+def _space(rec, free_pct):
+    rec._check_nas_space = lambda: {
+        "ok": True, "free_pct": free_pct, "free_gb": free_pct * 2,
+    }
+
+
+def test_disk_autopause_then_autoresume():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    with patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_11PM
+        rec.start_pending_session("hab")
+    s = rec.sessions["hab"]
+    facade.is_module_recording.return_value = True
+
+    _space(rec, 3)                       # below nas_min_free_pct (5)
+    rec._check_habitat_disk_autopause()
+    assert s.state == SessionState.PAUSED
+    assert s.pause_reason == "disk"
+    assert all(not p.recording for p in s.plans)
+
+    _space(rec, 8)                       # recovering but below resume (15)
+    rec._check_habitat_disk_autopause()
+    assert s.state == SessionState.PAUSED
+
+    facade.is_module_recording.return_value = False
+    _space(rec, 20)                      # above resume threshold
+    with patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_11PM
+        rec._check_habitat_disk_autopause()
+    assert s.state == SessionState.ACTIVE
+    assert s.pause_reason is None
+
+
+def test_operator_pause_is_not_auto_resumed_by_free_space():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    with patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_9AM
+        rec.start_pending_session("hab")
+    facade.is_module_recording.return_value = True
+    rec.pause_session("hab")
+    assert rec.sessions["hab"].pause_reason == "operator"
+
+    _space(rec, 50)
+    rec._check_habitat_disk_autopause()
+    assert rec.sessions["hab"].state == SessionState.PAUSED   # stays paused
+
+
+def test_disk_check_noop_when_space_healthy():
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    with patch("src.controller.recording.datetime") as dt:
+        dt.now.return_value = MON_11PM
+        rec.start_pending_session("hab")
+    _space(rec, 40)
+    rec._check_habitat_disk_autopause()
+    assert rec.sessions["hab"].state == SessionState.ACTIVE
+
+
 def test_estimate_habitat_volume_projects_and_checks_space():
     rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
     est = rec.estimate_habitat_volume(_TWO_PLANS, expected_minutes=24 * 60)

@@ -17,6 +17,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 
+from src.controller import recording_plans
+from src.shared.data_rate import estimate_recording_bytes_per_s
+
 SESSIONS_FILE = "/var/lib/saviour/controller/sessions.json"
 _SHARE_ROOT_DEFAULT = "/home/pi/controller_share"
 
@@ -44,6 +47,10 @@ class SessionState(StrEnum):
     PENDING   = "pending"
     SCHEDULED = "scheduled"
     ACTIVE    = "active"
+    # Habitat Session paused by an operator (husbandry access etc.): every
+    # plan's modules are stopped, the session object and its plans stay put,
+    # resume_session() re-arms whatever should be recording at that moment.
+    PAUSED    = "paused"
     STOPPED   = "stopped"
     ERROR     = "error"
 
@@ -115,6 +122,19 @@ class RecordingSession:
     # Set while a module self-reports its recording capture has gone unhealthy
     # (e.g. a dead AudioMoth thread, a stalled camera pipeline); cleared on recovery.
     recording_health_warning: str | None = None
+    # Habitat Session: per-plan recording strategy. Empty for an ordinary
+    # single-strategy session, which keeps its existing start/stop path
+    # untouched. When non-empty the monitor drives each plan independently
+    # (recording_plans.plan_window_action).
+    plans:                     list = field(default_factory=list)
+
+    def __post_init__(self):
+        # sessions.json round-trips plans as plain dicts; rehydrate them.
+        self.plans = [
+            p if isinstance(p, recording_plans.RecordingPlan)
+            else recording_plans.RecordingPlan.from_dict(p)
+            for p in (self.plans or [])
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +162,10 @@ class Recording:
         # self-healed "not recording" episodes since the last digest flush}.
         self._unattended_fault_digest: dict[str, dict] = {}
         self._unattended_digest_flushed_at: float = time.time()
+        # Habitat Session names currently doing a full stop_session(), so a
+        # per-plan module stop isn't mistaken by _check_all_stopped for the
+        # whole session ending.
+        self._full_stopping: set[str] = set()
 
         self._load_sessions()
 
@@ -531,6 +555,9 @@ class Recording:
         if session.state != SessionState.PENDING:
             return {"success": False, "error": f"Session is not pending (state: {session.state})"}
 
+        if session.plans:
+            return self._start_habitat_session(session_name)
+
         modules = list(self.facade.get_modules_by_target(session.target).keys())
         if not modules:
             return {"success": False, "error": f"No online modules found for target '{session.target}'"}
@@ -754,6 +781,12 @@ class Recording:
             self.logger.info(f"Session '{session_name}' is already stopped")
             return
 
+        # Mark a full stop so _check_all_stopped will actually transition a
+        # plan-driven Habitat Session (per-plan stops don't).
+        self._full_stopping.add(session_name)
+        for plan in session.plans:
+            plan.recording = False
+
         with self._lock:
             for module_id in session.modules:
                 # Modules that aren't actually recording can't respond — count them done immediately
@@ -773,6 +806,237 @@ class Recording:
         )
         # If all modules were already offline, complete the transition immediately
         self._check_all_stopped(session_name)
+
+
+    # ------------------------------------------------------------------ #
+    # Habitat Session -- one session, per-plan recording strategy        #
+    # ------------------------------------------------------------------ #
+
+    def create_habitat_session(self, session_name: str, plans_raw: list,
+                               researcher: str | None = None,
+                               duration_minutes: float | None = None) -> dict:
+        """Create a PENDING Habitat Session: one session whose modules are
+        split into plans, each recording continuously or in nightly
+        windows (see recording_plans). Always unattended-posture."""
+        if not session_name or not session_name.strip():
+            return {"success": False, "error": "Session name cannot be empty"}
+        share_err = self._check_share_writable()
+        if share_err:
+            return {"success": False, "error": share_err}
+        try:
+            plans = recording_plans.parse_plans(plans_raw)
+        except recording_plans.PlanError as exc:
+            return {"success": False, "error": str(exc)}
+
+        modules = [m for p in plans for m in p.modules]
+        online = set(self.facade.get_modules().keys())
+        missing = [m for m in modules if m not in online]
+        if missing:
+            return {"success": False,
+                    "error": f"module(s) offline: {', '.join(missing)}"}
+
+        ptp = self._check_ptp_sync(modules)
+        if not ptp["ok"]:
+            return {"success": False, "error": ptp["error"]}
+
+        session_name = "".join(
+            c for c in session_name if c.isalnum() or c in ("-", "_")
+        )
+        with self._lock:
+            overlap = self._busy_modules() & set(modules)
+            if overlap:
+                return {"success": False,
+                        "error": f"Already recording: {', '.join(sorted(overlap))}"}
+            self.sessions[session_name] = RecordingSession(
+                session_name=session_name,
+                target=",".join(sorted(online & set(modules))),
+                state=SessionState.PENDING,
+                modules=modules,
+                researcher=researcher or None,
+                duration_minutes=duration_minutes,
+                unattended=True,
+                plans=plans,
+            )
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        self._log_session_event(
+            session_name, "INFO",
+            f"Habitat Session created — {len(plans)} plan(s): "
+            + "; ".join(
+                f"{p.label} ({p.strategy}, {len(p.modules)} mod)" for p in plans
+            ),
+        )
+        return {"success": True, "session_name": session_name}
+
+    def _start_habitat_session(self, session_name: str) -> dict:
+        """PENDING -> ACTIVE for a plan-driven session: nothing records
+        until the monitor's plan evaluation starts whatever is in-window."""
+        session = self.sessions[session_name]
+        start_at = time.time() + LEAD_SECS
+        with self._lock:
+            session.state = SessionState.ACTIVE
+            session.start_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            session.recording_start_at = start_at
+            session.module_stop_states = {m: "stopped" for m in session.modules}
+            session.module_export_states = {m: "idle" for m in session.modules}
+            session.timed_stop_at = (
+                start_at + session.duration_minutes * 60
+                if session.duration_minutes else None
+            )
+            for plan in session.plans:
+                plan.recording = False
+                plan.last_start_date = None
+        self._log_session_event(session_name, "INFO", "Habitat Session started")
+        self._evaluate_plans(session_name, session)
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        return {"success": True}
+
+    def pause_session(self, session_name: str) -> dict:
+        """Stop every plan's modules but keep the session (husbandry access
+        etc.). resume_session() re-arms whatever is in-window then."""
+        session = self.sessions.get(session_name)
+        if not session or not session.plans:
+            return {"success": False, "error": "Not a Habitat Session"}
+        if session.state != SessionState.ACTIVE:
+            return {"success": False,
+                    "error": f"Session is {session.state}, not active"}
+        with self._lock:
+            session.state = SessionState.PAUSED
+        for plan in session.plans:
+            if plan.recording:
+                self._stop_plan(session, plan, "paused")
+        self._log_session_event(session_name, "PAUSE", "Session paused by operator")
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        return {"success": True}
+
+    def resume_session(self, session_name: str) -> dict:
+        session = self.sessions.get(session_name)
+        if not session or not session.plans:
+            return {"success": False, "error": "Not a Habitat Session"}
+        if session.state != SessionState.PAUSED:
+            return {"success": False,
+                    "error": f"Session is {session.state}, not paused"}
+        with self._lock:
+            session.state = SessionState.ACTIVE
+            # Clear the once-per-window guard so an interrupted window resumes.
+            for plan in session.plans:
+                plan.last_start_date = None
+        self._log_session_event(session_name, "RESUME", "Session resumed by operator")
+        self._evaluate_plans(session_name, session)
+        self.facade.update_sessions(self.sessions)
+        self._save_sessions()
+        return {"success": True}
+
+    def _evaluate_plans(self, session_name: str, session: RecordingSession,
+                        now: datetime | None = None) -> None:
+        """One monitor pass over a plan-driven ACTIVE session: start/stop
+        each plan's modules per its window schedule."""
+        if session.state != SessionState.ACTIVE:
+            return
+        now = now or datetime.now()
+        for plan in session.plans:
+            action = recording_plans.plan_window_action(plan, now)
+            if action == "start":
+                self._start_plan(session, plan, now)
+            elif action == "stop":
+                self._stop_plan(session, plan, "window closed")
+            elif plan.recording:
+                self._rearm_plan_dropouts(session, plan)
+
+    def _rearm_plan_dropouts(self, session: RecordingSession,
+                             plan: recording_plans.RecordingPlan) -> None:
+        """Re-issue start_recording to any module of a recording plan that
+        isn't actually recording (self-heal, matching the unattended
+        posture). Throttled per module via _health_probe_times."""
+        now_ts = time.time()
+        for m in plan.modules:
+            if self.facade.is_module_recording(m):
+                self._not_recording_strikes.pop((session.session_name, m), None)
+                continue
+            key = (session.session_name, m)
+            self._not_recording_strikes[key] = (
+                self._not_recording_strikes.get(key, 0) + 1
+            )
+            if self._not_recording_strikes[key] < self._NOT_RECORDING_STRIKES_THRESHOLD:
+                continue
+            if now_ts - self._health_probe_times.get(m, 0) < 60:
+                continue
+            self._health_probe_times[m] = now_ts
+            self.facade.send_command(m, "start_recording", {
+                "duration": 0, "session_name": session.session_name,
+            })
+            self._record_unattended_fault(session.session_name, [m])
+            self._log_session_event(
+                session.session_name, "FAULT",
+                f"{m} not recording (plan '{plan.label}') — re-armed",
+            )
+
+    def _start_plan(self, session: RecordingSession,
+                    plan: recording_plans.RecordingPlan,
+                    now: datetime | None = None) -> None:
+        start_at = time.time() + LEAD_SECS
+        params = {"duration": 0, "session_name": session.session_name,
+                  "start_at": start_at}
+        if plan.segment_minutes:
+            params["segment_minutes"] = plan.segment_minutes
+        for m in plan.modules:
+            session.module_stop_states[m] = "recording"
+            session.module_export_states.setdefault(m, "idle")
+            self.facade.send_command(m, "start_recording", params)
+            self.facade.send_command(
+                m, "report_recording_state", {"session_name": session.session_name}
+            )
+        plan.recording = True
+        plan.last_start_date = recording_plans.current_anchor(
+            plan, now or datetime.now()
+        )
+        self._log_session_event(
+            session.session_name, "INFO",
+            f"Plan '{plan.label}' recording — {', '.join(plan.modules)}",
+        )
+
+    def _stop_plan(self, session: RecordingSession,
+                   plan: recording_plans.RecordingPlan, reason: str) -> None:
+        for m in plan.modules:
+            if self.facade.is_module_recording(m):
+                session.module_stop_states[m] = "stopping"
+                self.facade.send_command(m, "stop_recording", {})
+            else:
+                session.module_stop_states[m] = "stopped"
+        plan.recording = False
+        self._log_session_event(
+            session.session_name, "INFO",
+            f"Plan '{plan.label}' stopped ({reason}) — {', '.join(plan.modules)}",
+        )
+
+    def estimate_habitat_volume(self, plans_raw: list,
+                                expected_minutes: float) -> dict:
+        """Projected data volume for a Habitat Session vs. free space, for
+        the new-session form to show before the session is created."""
+        try:
+            plans = recording_plans.parse_plans(plans_raw)
+        except recording_plans.PlanError as exc:
+            return {"success": False, "error": str(exc)}
+        cfg = self.facade.get_config()
+        modules_info = self.facade.get_modules()
+        rates: dict[str, float] = {}
+        for m in (mm for p in plans for mm in p.modules):
+            mtype = (modules_info.get(m) or {}).get("type", "")
+            bps, _ = estimate_recording_bytes_per_s(mtype, cfg)
+            rates[m] = bps or 0.0
+        est = recording_plans.estimate_campaign_volume(
+            plans, rates, expected_minutes
+        )
+        est["success"] = True
+        try:
+            free = shutil.disk_usage(self._get_share_root()).free
+            est["share_free_bytes"] = free
+            est["fits"] = est["projected_bytes_total"] <= free
+        except OSError:
+            est["share_free_bytes"] = None
+        return est
 
 
     def force_start_scheduled_session(self, session_name: str) -> dict:
@@ -1277,6 +1541,12 @@ class Recording:
         if not session or session.state == SessionState.STOPPED:
             return
 
+        # A Habitat Session stops individual plans' modules as windows close
+        # (or on pause) without the whole session ending; only a real
+        # stop_session() (which registers the name here) transitions it.
+        if session.plans and session_name not in self._full_stopping:
+            return
+
         still_stopping = any(
             v == "stopping" for v in session.module_stop_states.values()
         )
@@ -1295,6 +1565,7 @@ class Recording:
                 session.stopped_epoch = time.time()
                 new_state = SessionState.STOPPED
 
+        self._full_stopping.discard(session_name)
         self.logger.info(
             f"All modules confirmed stopped — session '{session_name}' → {new_state}"
         )
@@ -1916,6 +2187,18 @@ class Recording:
                                 f"Timed session '{session_name}' duration elapsed — stopping"
                             )
                             self.stop_session(session_name)
+                            continue
+
+                        # Habitat Session: drive each plan's own window schedule
+                        # (start/stop as windows open and close, re-arm a
+                        # recording plan's dropped modules). The uniform
+                        # module-by-module liveness check below assumes every
+                        # session module should be recording, which isn't true
+                        # here, so it's skipped for plan-driven sessions.
+                        if session.plans:
+                            self._evaluate_plans(session_name, session)
+                            if session.state == SessionState.ACTIVE:
+                                self._check_ptp_mid_recording(session_name, session)
                             continue
 
                         # Probe any modules whose state is unknown (e.g. after black start).

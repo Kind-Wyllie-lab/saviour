@@ -2234,3 +2234,38 @@ class TestEphysHandlers:
             resp = web.app.test_client().post(
                 "/api/ephys/upload?session=bad%20name", data={})
         assert resp.status_code == 400
+
+
+class TestSessionDiagnosticsHandler:
+    def test_requires_login(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("get_session_diagnostics", {"session_name": "sess1"})
+        assert client.get_received()[0]["name"] == "auth_required"
+
+    def test_rejects_bad_session_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("get_session_diagnostics", {"session_name": "bad name!"})
+            rec = client.get_received()
+        assert rec[0]["name"] == "session_diagnostics_ready"
+        assert rec[0]["args"][0]["error"] == "invalid session"
+
+    def test_unknown_session_reports_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, facade = _make_web_with_facade()
+            facade.get_recording_sessions.return_value = {}
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("get_session_diagnostics", {"session_name": "nope"})
+            # runs in a thread; the emit lands on the next drain
+            deadline = time.time() + 3
+            got = None
+            while time.time() < deadline and got is None:
+                for m in client.get_received():
+                    if m["name"] == "session_diagnostics_ready":
+                        got = m["args"][0]
+                time.sleep(0.05)
+        assert got and "unknown session" in got["error"]

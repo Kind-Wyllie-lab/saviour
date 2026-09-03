@@ -228,6 +228,46 @@ def test_evaluate_stops_modules_recording_out_of_window():
     assert any(c.args[0] == "m1" for c in _commands(facade, "stop_recording"))
 
 
+def test_errored_unattended_session_self_heals_out_of_window_mic():
+    """The habitat_CRLLT3_20260903 diagnostic: an old-code restart re-armed a
+    night-audio mic in the afternoon and 'Already recording' camera faults
+    parked the session in ERROR. A plan-driven session in ERROR was inert
+    (the monitor routes it to _evaluate_plans, which used to early-return on
+    any non-ACTIVE state). It must now stop the stray mic and recover."""
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    s = rec.sessions["hab"]
+    s.state = SessionState.ERROR
+    s.error_message = "c1: recording_start_failed: Already recording"
+    cams = next(p for p in s.plans if p.plan_id == "cams")
+    cams.recording = True
+    mics = next(p for p in s.plans if p.plan_id == "mics")
+    mics.recording = False
+    # cams recording (correct), m1 recording out of window (wrong)
+    facade.is_module_recording.side_effect = lambda m: m in ("c1", "c2", "m1")
+    rec._evaluate_plans("hab", s, now=MON_9AM)
+    assert any(c.args[0] == "m1" for c in _commands(facade, "stop_recording"))
+    # once the mic is confirmed stopped, a later pass recovers the session
+    facade.is_module_recording.side_effect = lambda m: m in ("c1", "c2")
+    rec._evaluate_plans("hab", s, now=MON_9AM)
+    assert s.state == SessionState.ACTIVE
+    assert not s.error_message
+
+
+def test_errored_attended_session_stays_inert():
+    """The self-heal is unattended-only; a plain session in ERROR is left for
+    the operator."""
+    rec, facade = _rec(c1="camera", c2="camera", m1="microphone")
+    rec.create_habitat_session("hab", _TWO_PLANS)
+    s = rec.sessions["hab"]
+    s.unattended = False
+    s.state = SessionState.ERROR
+    facade.is_module_recording.side_effect = lambda m: m == "m1"
+    rec._evaluate_plans("hab", s, now=MON_9AM)
+    assert not _commands(facade, "stop_recording")
+    assert s.state == SessionState.ERROR
+
+
 def test_reload_rehydrates_plans_and_keeps_active():
     from src.controller.recording_plans import RecordingPlan
 

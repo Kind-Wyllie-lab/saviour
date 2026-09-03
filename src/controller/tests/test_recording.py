@@ -735,18 +735,40 @@ class TestModuleOffline:
 class TestReportModuleFault:
     def test_no_session_for_module_is_a_no_op(self):
         rec, facade = _make_recording()
-        rec.report_module_fault("cam1", "recording_start_failed: Already recording")
+        rec.report_module_fault("cam1", "recording_start_failed: disk full")
         facade.update_sessions.assert_not_called()
 
     def test_marks_session_errored_with_module_and_message(self):
         rec, facade = _make_recording()
         rec.sessions["exp1"] = _session(modules=["cam1"])
-        rec.report_module_fault("cam1", "recording_start_failed: Already recording")
+        rec.report_module_fault("cam1", "recording_start_failed: disk full")
         session = rec.sessions["exp1"]
         assert session.state == SessionState.ERROR
         assert "cam1" in session.error_message
         assert "recording_start_failed" in session.error_message
         facade.update_sessions.assert_called_once()
+
+    def test_already_recording_is_benign_not_a_fault(self):
+        """A module that kept recording through a controller restart replies
+        'Already recording' to the recovery start_recording — it's doing what
+        we want, so it must not error the session (16× at once after a
+        habitat-scale restart previously wedged the session in ERROR)."""
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(modules=["cam1"])
+        rec.report_module_fault("cam1", "recording_start_failed: Already recording")
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.ACTIVE
+        assert not session.error_message
+        facade.update_sessions.assert_not_called()
+
+    def test_unattended_session_records_fault_but_stays_active(self):
+        rec, facade = _make_recording()
+        rec.sessions["exp1"] = _session(modules=["cam1"], unattended=True)
+        rec.report_module_fault("cam1", "recording_start_failed: disk full")
+        session = rec.sessions["exp1"]
+        assert session.state == SessionState.ACTIVE
+        assert "cam1" in session.error_message
+        assert "recording_start_failed" in session.error_message
 
     def test_stopped_session_is_a_no_op(self):
         rec, facade = _make_recording()

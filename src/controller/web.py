@@ -3251,12 +3251,17 @@ class Web(ABC):
                  else dict(session))
         mods = list(sdict.get("modules", []))
 
-        # session.start_time is "YYYYMMDD-HHMMSS"
+        # journal window: 10 min before the session's start_time
+        # ("YYYYMMDD-HHMMSS"), so a module already in a bad state / PTP
+        # already drifting before recording began is in the bundle too.
+        from datetime import timedelta
         since = None
         st = sdict.get("start_time") or ""
         m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})", st)
         if m:
-            since = f"{m[1]}-{m[2]}-{m[3]} {m[4]}:{m[5]}:{m[6]}"
+            start_dt = datetime(int(m[1]), int(m[2]), int(m[3]),
+                                int(m[4]), int(m[5]), int(m[6]))
+            since = (start_dt - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
 
         modules = self.facade.get_modules() if self.facade else {}
         online = [mid for mid in mods if modules.get(mid, {}).get("online")]

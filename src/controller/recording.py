@@ -1010,9 +1010,22 @@ class Recording:
 
     def _evaluate_plans(self, session_name: str, session: RecordingSession,
                         now: datetime | None = None) -> None:
-        """One monitor pass over a plan-driven ACTIVE session: start/stop
-        each plan's modules per its window schedule."""
-        if session.state != SessionState.ACTIVE:
+        """One monitor pass over a plan-driven session: start/stop each plan's
+        modules per its window schedule.
+
+        Runs while ACTIVE, and also while an *unattended* session sits in ERROR
+        (a habitat-scale controller restart can drop one there via a module
+        fault) — the whole point of the unattended posture is that the monitor
+        keeps healing rather than parking for an absent operator. A run that
+        finds every plan in the state its schedule wants clears the fault and
+        returns the session to ACTIVE.
+        """
+        if session.state == SessionState.PAUSED:
+            return
+        recovering = (
+            session.state == SessionState.ERROR and session.unattended
+        )
+        if session.state != SessionState.ACTIVE and not recovering:
             return
         now = now or datetime.now()
         for plan in session.plans:
@@ -1032,6 +1045,29 @@ class Recording:
                 self._stop_plan(session, plan, "outside window")
             elif plan.recording:
                 self._rearm_plan_dropouts(session, plan)
+
+        if recovering and self._plans_all_settled(session, now):
+            reason = session.error_message or "faulted modules"
+            session.error_message = ""
+            session.error_time = None
+            session.state = SessionState.ACTIVE
+            self._log_session_event(
+                session_name, "RECOVERY",
+                f"Recovered — {reason}; all plans back on schedule",
+            )
+            self.facade.update_sessions(self.sessions)
+            self._save_sessions()
+
+    def _plans_all_settled(self, session: RecordingSession,
+                           now: datetime) -> bool:
+        """True when every plan matches its schedule: in-window plans have all
+        their modules recording, out-of-window plans have none."""
+        for plan in session.plans:
+            should = recording_plans.plan_should_record(plan, now)
+            for m in plan.modules:
+                if self.facade.is_module_recording(m) != should:
+                    return False
+        return True
 
     def _rearm_plan_dropouts(self, session: RecordingSession,
                              plan: recording_plans.RecordingPlan) -> None:
@@ -1421,20 +1457,50 @@ class Recording:
         # it by starting a real recording outside the schedule (found live
         # 2026-08-27, habitat DailyAudio session — see CHANGELOG).
         if session.state in (SessionState.ACTIVE, SessionState.ERROR):
+            # Habitat Session: a module whose plan window is currently shut is
+            # supposed to be idle — its dropping offline isn't a session fault.
+            if session.plans:
+                plan = next(
+                    (p for p in session.plans if module_id in p.modules), None
+                )
+                if plan and not recording_plans.plan_should_record(
+                    plan, datetime.now()
+                ):
+                    with self._lock:
+                        session.module_stop_states[module_id] = "stopped"
+                    self._log_session_event(
+                        session_name, "INFO",
+                        f"{module_id} went offline while plan '{plan.label}' "
+                        f"is outside its window — not a fault",
+                    )
+                    self.facade.update_sessions(self.sessions)
+                    self._save_sessions()
+                    return
+
             session.error_message = f"{module_id} is offline"
             if session.state != SessionState.ERROR:
                 session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-            session.state = SessionState.ERROR
+            # Unattended sessions self-heal rather than parking in ERROR — see
+            # report_module_fault / _check_session_recording_liveness.
+            if not session.unattended:
+                session.state = SessionState.ERROR
             self.facade.update_sessions(self.sessions)
             self._save_sessions()
-            self.logger.info(f"Session '{session_name}' → ERROR: {module_id} offline")
+            note = "recorded (unattended)" if session.unattended else "→ ERROR"
+            self.logger.info(f"Session '{session_name}' {note}: {module_id} offline")
             self._log_session_event(session_name, "FAULT", f"{module_id} went offline")
             if self._notify_enabled("notify_module_offline"):
-                self.facade.send_alert(
-                    key=f"module_offline_{module_id}",
-                    title=f"Module offline — {module_id}",
-                    message=f"Module **{module_id}** went offline during recording session **{session_name}**.",
-                )
+                if session.unattended:
+                    self._record_unattended_fault(session_name, [module_id])
+                else:
+                    self.facade.send_alert(
+                        key=f"module_offline_{module_id}",
+                        title=f"Module offline — {module_id}",
+                        message=(
+                            f"Module **{module_id}** went offline during "
+                            f"recording session **{session_name}**."
+                        ),
+                    )
 
 
     def report_module_fault(self, module_id: str, message: str) -> None:
@@ -1456,20 +1522,47 @@ class Recording:
         if session.state == SessionState.STOPPED:
             return
 
+        # "Already recording" is not a fault. A module that kept recording
+        # through a controller restart replies this to the recovery-path
+        # start_recording — it's doing exactly what we want. Escalating the
+        # whole session to ERROR on it (16× at once, after a habitat-scale
+        # restart) is what previously wedged an unattended Habitat Session:
+        # ERROR disables _evaluate_plans' self-heal, so out-of-window plan
+        # modules the old recovery path blindly started never got stopped
+        # (found live 2026-09-03, session habitat_CRLLT3_20260903).
+        if "already recording" in message.lower():
+            self.logger.info(
+                f"{module_id} reported '{message}' in '{session_name}' — "
+                f"already going, no fault"
+            )
+            return
+
         session.error_message = f"{module_id}: {message}"
         if session.state != SessionState.ERROR:
             session.error_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-        session.state = SessionState.ERROR
+        # An unattended (long-term) session never parks terminally in ERROR --
+        # it stays ACTIVE / PAUSED so the monitor loop's self-heal keeps
+        # running. The fault is still recorded (badge + event log) and the
+        # per-event alert folds into the daily digest. Matches the posture in
+        # _check_session_recording_liveness.
+        if not session.unattended:
+            session.state = SessionState.ERROR
         self.facade.update_sessions(self.sessions)
         self._save_sessions()
-        self.logger.info(f"Session '{session_name}' → ERROR: {module_id} reported fault: {message}")
+        note = "recorded (unattended, active)" if session.unattended else "→ ERROR"
+        self.logger.info(
+            f"Session '{session_name}' {note}: {module_id} reported fault: {message}"
+        )
         self._log_session_event(session_name, "FAULT", f"{module_id}: {message}")
         if self._notify_enabled("notify_session_faults"):
-            self.facade.send_alert(
-                key=f"module_fault_{module_id}",
-                title=f"Recording error — {session_name}",
-                message=f"Module **{module_id}** reported a recording fault in session **{session_name}**: {message}",
-            )
+            if session.unattended:
+                self._record_unattended_fault(session_name, [module_id])
+            else:
+                self.facade.send_alert(
+                    key=f"module_fault_{module_id}",
+                    title=f"Recording error — {session_name}",
+                    message=f"Module **{module_id}** reported a recording fault in session **{session_name}**: {message}",
+                )
 
 
     def handle_recording_health_status(self, module_id: str, status: str, message: str | None) -> None:

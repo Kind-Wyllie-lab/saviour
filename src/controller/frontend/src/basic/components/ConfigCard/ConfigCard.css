@@ -397,6 +397,120 @@ min-width: 300px;
   cursor: default;
 }
 
+/* Shared config-card footer (ConfigActionBar) — Save / Reset / status chip,
+   sits at the end of the form via .config-form-actions. Distinct from
+   .config-action-buttons above, which is also used for one-off in-tab buttons
+   (e.g. camera Motion tab's "Reset trigger"). */
+.config-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.config-action-bar-spacer {
+  flex: 1 1 auto;
+}
+
+/* Save and Reset read as one matched pair — same size, shape and weight — so
+   the only difference is fill colour: Save is the accent-filled primary,
+   Reset a neutral-filled secondary. The loud outline-red .reset-button style
+   is deliberately kept for the *confirm* dialog, where the destructive step
+   actually happens; this trigger just opens that dialog. */
+.config-action-bar .save-button,
+.config-action-bar .reset-button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.85em;
+  max-width: none;
+  border: 1px solid transparent;
+}
+
+.config-action-bar .reset-button {
+  background: color-mix(in srgb, var(--text-color) 8%, transparent);
+  border-color: var(--border-color);
+  color: var(--secondary-text-color, var(--text-color));
+}
+
+.config-action-bar .reset-button:hover:not(:disabled) {
+  background: color-mix(in srgb, red 12%, transparent);
+  border-color: color-mix(in srgb, red 50%, var(--border-color));
+  color: color-mix(in srgb, red 65%, var(--text-color));
+}
+
+/* Save Config is disabled while the form matches what's stored (nothing to
+   save). When there ARE unsaved changes it takes on the same "pending" amber
+   as the dirty card outline (.config-form--dirty) and the "Unsaved changes"
+   chip, so the state and its call-to-action read as one thing. */
+.config-action-bar--dirty .save-button:not(:disabled) {
+  background: #f5a623;
+  color: #3a2a00;
+}
+
+.config-action-bar--dirty .save-button:not(:disabled):hover {
+  background: color-mix(in srgb, #f5a623 88%, #000);
+}
+
+/* Disabled Save (nothing to save / not logged in) reads as a plainly inactive
+   neutral control rather than a faded-out primary. */
+.config-action-bar .save-button:disabled {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text-color) 10%, transparent);
+  color: color-mix(in srgb, var(--text-color) 45%, transparent);
+  cursor: default;
+}
+
+.config-state-chip {
+  font-size: 0.8em;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.config-state-chip--dirty {
+  color: #9a6700;
+  background: color-mix(in srgb, #f5a623 22%, transparent);
+}
+
+.config-state-chip--saving {
+  color: var(--text-color);
+  opacity: 0.6;
+}
+
+.config-state-chip--saved {
+  color: #2d9e4f;
+  background: color-mix(in srgb, #2d9e4f 16%, transparent);
+}
+
+.config-state-chip--clean {
+  color: var(--text-color);
+  opacity: 0.4;
+}
+
+.config-state-chip--failed {
+  color: #cc3333;
+  background: color-mix(in srgb, #cc3333 15%, transparent);
+}
+
+/* Panel gets an accent outline while it holds unsaved edits. */
+.config-form--dirty {
+  border-color: color-mix(in srgb, #f5a623 70%, var(--border-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, #f5a623 45%, transparent);
+}
+
+/* Groups the divider + copy/paste bar + ConfigActionBar so they read as one
+   footer block at the end of the form. (Settings.css reserves tab-content
+   height so this block lands consistently across tabs.) */
+.config-form-actions {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Copy / paste toolbar */
 .clipboard-bar {
   display: flex;

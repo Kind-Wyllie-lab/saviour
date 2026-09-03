@@ -89,7 +89,7 @@ function Section({ title, open, onToggle, children }) {
 }
 
 function APACameraConfigCard({ id, module, clipboard, onCopy }) {
-  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const [sensorModes, setSensorModes]   = useState([]);
   const [sensorModel, setSensorModel]   = useState("");
   const [hasAutofocus, setHasAutofocus] = useState(false);
@@ -241,6 +241,7 @@ function APACameraConfigCard({ id, module, clipboard, onCopy }) {
       tabSectionMap={TAB_COPY_SECTION}
       saveTransform={saveTransform}
       markSaved={markSaved}
+      isDirty={isDirty}
       deviceInfoExtras={[sensorModel]}
       sidebar={
         <>

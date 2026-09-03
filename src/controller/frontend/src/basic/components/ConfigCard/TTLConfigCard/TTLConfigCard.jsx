@@ -8,6 +8,7 @@ import { filterPrivateKeys, checkClipboardCompatibility } from "../configUtils";
 import ExportConfigSection from "../ExportConfigSection";
 import MJPEGStreamCard from "/src/basic/components/MJPEGStreamCard/MJPEGStreamCard";
 import CopyActionsBar from "../CopyActionsBar";
+import ConfigActionBar from "../ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
 const OUTPUT_MODES = new Set(["experiment_clock", "pseudorandom", "interval_pulse"]);
@@ -28,7 +29,7 @@ const TABS = [
 
 function TTLConfigCard({ id, module, clipboard, onCopy }) {
   const loggedIn = useIsLoggedIn();
-  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
   const [newPin, setNewPin] = useState("");
@@ -168,22 +169,13 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
         <div className="device-info">
           <span>{module.ip}</span>
           <span>{module.version}</span>
-          {hasSaved && module.config_sync_status === "PENDING" && (
-            <span className="config-sync-badge config-sync-badge--pending">Saving…</span>
-          )}
-          {hasSaved && module.config_sync_status === "SYNCED" && (
-            <span className="config-sync-badge config-sync-badge--synced">Saved</span>
-          )}
-          {hasSaved && module.config_sync_status === "FAILED" && (
-            <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
-          )}
         </div>
       </div>
 
       {!collapsed && (
         <div className="ttl-body">
           {/* ── Left column: config ── */}
-          <div className="ttl-config-col config-form">
+          <div className={`ttl-config-col config-form${isDirty ? " config-form--dirty" : ""}`}>
 
             <div className="config-tabs-layout">
             <div className="config-tabs">
@@ -341,39 +333,43 @@ function TTLConfigCard({ id, module, clipboard, onCopy }) {
             </div>
             </div>
 
-            <div className="config-section-divider" />
+            <div className="config-form-actions">
+              <div className="config-section-divider" />
 
-            <CopyActionsBar
-              activeTab={activeTab}
-              tabSectionMap={TAB_COPY_SECTION}
-              formData={formData}
-              moduleType={module.type}
-              moduleName={module.name || id}
-              onCopy={onCopy}
-              onApplyAll={setApplyAllConfirm}
-            />
+              <CopyActionsBar
+                activeTab={activeTab}
+                tabSectionMap={TAB_COPY_SECTION}
+                formData={formData}
+                moduleType={module.type}
+                moduleName={module.name || id}
+                onCopy={onCopy}
+                onApplyAll={setApplyAllConfirm}
+              />
 
-            {clipboard && (() => {
-              const pasteError = checkClipboardCompatibility(clipboard.data, formData);
-              return (
-                <div className="clipboard-bar">
-                  <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-                  <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
-                  <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-                  {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
-                </div>
-              );
-            })()}
+              {clipboard && (() => {
+                const pasteError = checkClipboardCompatibility(clipboard.data, formData);
+                return (
+                  <div className="clipboard-bar">
+                    <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                    <button type="button" className="copy-btn" onClick={handlePaste} disabled={!!pasteError}>Paste</button>
+                    <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                    {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+                  </div>
+                );
+              })()}
 
-            <div className="ttl-action-row">
-              <button className="save-button" type="button" onClick={saveConfig}
-                disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
-                Save Config
-              </button>
-              <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}
-                disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
-                Reset to Default
-              </button>
+              <ConfigActionBar
+                onSave={saveConfig}
+                onReset={() => setShowResetConfirm(true)}
+                isDirty={isDirty}
+                saveStatus={
+                  !hasSaved ? "idle"
+                  : module.config_sync_status === "PENDING" ? "saving"
+                  : module.config_sync_status === "FAILED" ? "failed"
+                  : module.config_sync_status === "SYNCED" ? "saved"
+                  : "idle"
+                }
+              />
             </div>
           </div>
 

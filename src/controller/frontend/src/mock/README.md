@@ -3,14 +3,20 @@
 Run the frontend with **no controller and no Pi**:
 
 ```bash
-npm run dev:mock          # = VITE_MOCK=1 vite
+npm run dev:mock          # = vite --mode mock
 ```
+
+`--mode mock` makes Vite load `.env.mock` (which sets `VITE_MOCK=1`) on top
+of the normal env files. Using a mode + env file rather than an inline
+`VITE_MOCK=1` prefix keeps the script working on Windows/PowerShell too.
 
 `src/socket.jsx` swaps the real `socket.io-client` singleton for
 `socketMock.js`, an in-memory fake. Every hook and component is unchanged —
 they still `import socket from "/src/socket"`.
 
-Pick a rig variant the usual way: `VITE_VARIANT=habitat npm run dev:mock`.
+Pick a rig variant the usual way — on POSIX shells
+`VITE_VARIANT=habitat npm run dev:mock`, or on any OS put `VITE_VARIANT=habitat`
+in `.env.local` (gitignored).
 
 ## What works
 

@@ -113,7 +113,7 @@ const MIC_TABS = [
 ];
 
 function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
-  const { formData, setFormData, handleChange, markSaved } = useConfigForm(module.config);
+  const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm(module.config);
   const [activeTab, setActiveTab]               = useHashTab("basic", MIC_TABS.map(t => t.key));
   const [discoveredSerials, setDiscoveredSerials] = useState([]);
   const [streamEnabled, setStreamEnabled] = useState(true);
@@ -282,6 +282,7 @@ function MicrophoneConfigCard({ id, module, clipboard, onCopy }) {
       onTabChange={setActiveTab}
       tabSectionMap={TAB_COPY_SECTION}
       markSaved={markSaved}
+      isDirty={isDirty}
       saveDisabled={!!freqError || !!timeWindowError}
       tabBadges={tabBadges}
       sidebar={sidebar}

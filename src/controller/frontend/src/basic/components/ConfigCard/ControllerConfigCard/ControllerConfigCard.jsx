@@ -6,6 +6,7 @@ import { useConfigForm } from "../useConfigForm";
 import { useHashTab } from "../useHashTab";
 import { filterPrivateKeys } from "../configUtils";
 import ExportConfigSection from "./ExportConfigSection";
+import ConfigActionBar from "../ConfigActionBar";
 import ControllerActionsMenu from "/src/basic/components/ControllerActionsMenu/ControllerActionsMenu";
 import ThemeImportModal from "/src/basic/components/ThemeImportModal/ThemeImportModal";
 import { listThemes, themeTokens, DEFAULT_THEME_ID, BUILTIN_THEMES } from "/src/basic/utils/themes";
@@ -45,7 +46,7 @@ const THRESHOLD_FIELDS = [
 
 function ControllerConfigCard() {
   const loggedIn = useIsLoggedIn();
-  const { formData, setFormData, handleChange, markSaved } = useConfigForm();
+  const { formData, setFormData, handleChange, markSaved, isDirty } = useConfigForm();
   const [controllerInfo, setControllerInfo] = useState({ ip: null, version: null });
   const [saveStatus, setSaveStatus] = useState(null);
   const [activeTab, setActiveTab] = useHashTab("basic", TABS.map(t => t.key));
@@ -126,7 +127,7 @@ function ControllerConfigCard() {
         </div>
       </div>
       <div className="config-card-body">
-        <div className="config-form">
+        <div className={`config-form${isDirty ? " config-form--dirty" : ""}`}>
 
           <div className="config-tabs-layout">
           <div className="config-tabs">
@@ -349,18 +350,15 @@ function ControllerConfigCard() {
           </div>
           </div>
 
-          <div className="config-section-divider" />
+          <div className="config-form-actions">
+            <div className="config-section-divider" />
 
-          <button className="save-button" type="button" onClick={handleSave}
-            disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
-            Save Config
-          </button>
-          {saveStatus === "saving" && (
-            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
-          )}
-          {saveStatus === "saved" && (
-            <span className="config-sync-badge config-sync-badge--synced">&#10003; Saved</span>
-          )}
+            <ConfigActionBar
+              onSave={handleSave}
+              isDirty={isDirty}
+              saveStatus={saveStatus ?? "idle"}
+            />
+          </div>
         </div>
       </div>
 

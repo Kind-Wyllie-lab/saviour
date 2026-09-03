@@ -3,6 +3,7 @@ import socket from "/src/socket";
 import useIsLoggedIn from "/src/hooks/useIsLoggedIn";
 import { filterPrivateKeys, checkClipboardCompatibility } from "./configUtils";
 import CopyActionsBar from "./CopyActionsBar";
+import ConfigActionBar from "./ConfigActionBar";
 import ModuleActionsMenu from "/src/basic/components/ModuleActionsMenu/ModuleActionsMenu";
 
 /**
@@ -41,6 +42,7 @@ function ConfigCardShell({
   saveDisabled = false,
   saveTransform,
   markSaved,
+  isDirty = false,
   deviceInfoExtras = [],
   tabBadges = {},
   sidebar,
@@ -75,6 +77,13 @@ function ConfigCardShell({
 
   const pasteError = clipboard ? checkClipboardCompatibility(clipboard.data, formData) : null;
 
+  const saveStatus =
+    !hasSaved ? "idle"
+    : module.config_sync_status === "PENDING" ? "saving"
+    : module.config_sync_status === "FAILED" ? "failed"
+    : module.config_sync_status === "SYNCED" ? "saved"
+    : "idle";
+
   return (
     <div className="config-card">
       <div className="card-header">
@@ -94,7 +103,7 @@ function ConfigCardShell({
       </div>
 
       <div className="config-card-body">
-        <div className="config-form">
+        <div className={`config-form${isDirty ? " config-form--dirty" : ""}`}>
 
           <div className="config-tabs-layout">
             <div className="config-tabs">
@@ -112,46 +121,36 @@ function ConfigCardShell({
             </div>
           </div>
 
-          <div className="config-section-divider" />
+          <div className="config-form-actions">
+            <div className="config-section-divider" />
 
-          <CopyActionsBar
-            activeTab={activeTab}
-            tabSectionMap={tabSectionMap}
-            formData={formData}
-            moduleType={module.type}
-            moduleName={module.name}
-            onCopy={onCopy}
-            onApplyAll={setApplyAllConfirm}
-          />
+            <CopyActionsBar
+              activeTab={activeTab}
+              tabSectionMap={tabSectionMap}
+              formData={formData}
+              moduleType={module.type}
+              moduleName={module.name}
+              onCopy={onCopy}
+              onApplyAll={setApplyAllConfirm}
+            />
 
-          {clipboard && (
-            <div className="clipboard-bar">
-              <span className="clipboard-label">Clipboard: {clipboard.label}</span>
-              <button type="button" className="copy-btn" onClick={onPaste} disabled={!!pasteError}>Paste</button>
-              <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
-              {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
-            </div>
-          )}
+            {clipboard && (
+              <div className="clipboard-bar">
+                <span className="clipboard-label">Clipboard: {clipboard.label}</span>
+                <button type="button" className="copy-btn" onClick={onPaste} disabled={!!pasteError}>Paste</button>
+                <button type="button" className="copy-btn" onClick={() => onCopy(null)}>Clear</button>
+                {pasteError && <span className="config-sync-badge config-sync-badge--failed">{pasteError}</span>}
+              </div>
+            )}
 
-          <div className="config-action-buttons">
-            <button className="save-button" type="button" onClick={handleSave}
-              disabled={saveDisabled || !loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
-              Save Config
-            </button>
-            <button className="reset-button" type="button" onClick={() => setShowResetConfirm(true)}
-              disabled={!loggedIn} title={loggedIn ? undefined : "Login required for this action"}>
-              Reset to Default
-            </button>
+            <ConfigActionBar
+              onSave={handleSave}
+              onReset={() => setShowResetConfirm(true)}
+              isDirty={isDirty}
+              saveStatus={saveStatus}
+              saveDisabled={saveDisabled}
+            />
           </div>
-          {hasSaved && module.config_sync_status === "PENDING" && (
-            <span className="config-sync-badge config-sync-badge--pending">Saving...</span>
-          )}
-          {hasSaved && module.config_sync_status === "SYNCED" && (
-            <span className="config-sync-badge config-sync-badge--synced">Saved</span>
-          )}
-          {hasSaved && module.config_sync_status === "FAILED" && (
-            <span className="config-sync-badge config-sync-badge--failed">Save failed</span>
-          )}
         </div>
 
         {sidebar && (

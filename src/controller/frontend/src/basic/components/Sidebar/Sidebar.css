@@ -20,6 +20,13 @@
     width: clamp(112px, 10vw, 210px);
     flex-shrink: 0;
     justify-content: space-between;
+    /* Query container so children (the wordmark) can size themselves against
+       the sidebar's *own* width via cqi units. `vw` is the wrong basis: the
+       sidebar hits its 112px floor at ~1120px viewport, but a vw-linked font
+       keeps growing until ~765px, so on a small laptop the wordmark rendered
+       at its max size inside an already-minimum-width sidebar and spilled
+       over / clipped at both edges. */
+    container: sidebar / inline-size;
 }
 
 /* Full-hide collapse (toggled from .sidebar-collapse-btn; reopened from the
@@ -127,19 +134,24 @@
 
     /* SAVIOUR wordmark — themed text (no raster asset), so it inverts cleanly
        with the light/dark theme. Geometric-mono, letter-spaced, with a
-       record-red dot; scales with the sidebar and never widens it. */
+       record-red dot; scales with the sidebar and never widens it.
+       font-size is in cqi (sidebar width, see .sidebar `container`) not vw:
+       at the 112px sidebar floor 12cqi ≈ 13.4px so `[● SAVIOUR]` lands ~97px
+       wide with room to spare; it grows to the 18px cap by ~150px sidebar. */
     .sidebar-wordmark {
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 0.32em;
+        max-width: 100%;
+        gap: 0.28em;
         margin: 12px 0 4px;
         color: var(--text-color);
         font-family: ui-monospace, "Cascadia Mono", "Roboto Mono",
             "DejaVu Sans Mono", "Courier New", monospace;
         font-weight: 700;
-        font-size: clamp(13px, 1.7vw, 19px);
-        letter-spacing: 0.08em;
+        font-size: 14px; /* fallback for no-cqi browsers */
+        font-size: clamp(11px, 12cqi, 18px);
+        letter-spacing: 0.06em;
         line-height: 1;
     }
 
@@ -158,8 +170,9 @@
 
     .sidebar-wordmark__text {
         /* trailing letter-spacing adds phantom width on the right — pull the
-           closing bracket back so the pair looks balanced */
-        margin-right: -0.08em;
+           closing bracket back so the pair looks balanced (matches the
+           .sidebar-wordmark letter-spacing) */
+        margin-right: -0.06em;
     }
 
     .sidebar-hostname {

@@ -11,6 +11,7 @@ import Recording from "./pages/Recording/Recording";
 import Debug from "./pages/Debug/Debug";
 import System from "./pages/System/System";
 import Storage from "./pages/Storage/Storage";
+import PostProcess from "./pages/PostProcess/PostProcess";
 import Guide from "./pages/Guide/Guide";
 import ClockModal from "./components/ClockModal/ClockModal";
 import FaultAlertModal from "./components/FaultAlertModal/FaultAlertModal";
@@ -31,6 +32,7 @@ const pages = [
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
   { label: "Storage", path: "/storage" },
+    { label: "Post-Process", path: "/post-process" },
   { label: "Guide", path: "/guide" },
 ];
 
@@ -114,6 +116,7 @@ function App() {
             <Route path="/recording/*" element={<Recording />} />
             <Route path="/system" element={<System />} />
             <Route path="/storage" element={<Storage />} />
+            <Route path="/post-process" element={<PostProcess />} />
             <Route path="/guide" element={<Guide />} />
           </Routes>
         </div>

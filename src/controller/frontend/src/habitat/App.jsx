@@ -6,6 +6,7 @@ import Sidebar from '../basic/components/Sidebar/Sidebar';
 import Settings from "../basic/pages/Settings/Settings";
 import System from "../basic/pages/System/System";
 import Storage from "../basic/pages/Storage/Storage";
+import PostProcess from "../basic/pages/PostProcess/PostProcess";
 import Recording from '../basic/pages/Recording/Recording';
 import Guide from '../basic/pages/Guide/Guide';
 
@@ -28,6 +29,7 @@ const pages = [
   { label: "Recording", path: "/recording" },
   { label: "System", path: "/system" },
   { label: "Storage", path: "/storage" },
+    { label: "Post-Process", path: "/post-process" },
   { label: "Guide", path: "/guide" },
 ];
 
@@ -67,6 +69,7 @@ function App() {
             <Route path="/recording/*" element={<Recording />} />
             <Route path="/system" element={<System />} />
             <Route path="/storage" element={<Storage />} />
+            <Route path="/post-process" element={<PostProcess />} />
             <Route path="/guide" element={<Guide />} />
           </Routes>
         </div>

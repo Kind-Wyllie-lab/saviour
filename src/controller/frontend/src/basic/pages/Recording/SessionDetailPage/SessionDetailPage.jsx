@@ -10,7 +10,6 @@ import {
 } from "../sessionFormat";
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
-import ComposeVideoPanel from "./ComposeVideoPanel";
 import HabitatSessionPanel from "./HabitatSessionPanel";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
@@ -649,11 +648,12 @@ export default function SessionDetailPage() {
           })()}
 
           {fileInfo && fileInfo !== "loading" && fileInfo.files.length > 0 && !isActive && (
-            <ComposeVideoPanel
-              sessionName={session.session_name}
-              files={fileInfo.files}
-              onRequestDownload={requestDownload}
-            />
+            <Link
+              className="session-postprocess-link"
+              to={`/post-process?session=${encodeURIComponent(session.session_name)}`}
+            >
+              Post-process this session — compose video, aligned audio, ephys →
+            </Link>
           )}
 
           {(isActive || isError) && session.modules.length > 0 && (

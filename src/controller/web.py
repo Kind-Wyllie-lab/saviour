@@ -1317,6 +1317,59 @@ class Web(ABC):
                 "error": result.get("error") if result and not result.get("success") else None,
             })
 
+
+        # -- Habitat Session (one session, per-plan recording strategy) -------
+
+        @self.socketio.on("estimate_habitat_volume")
+        def handle_estimate_habitat_volume(data):
+            from flask_socketio import emit as _emit
+            plans = (data or {}).get("plans") or []
+            expected_minutes = float((data or {}).get("expected_minutes") or 0)
+            _emit("habitat_volume_estimate",
+                  self.facade.estimate_habitat_volume(plans, expected_minutes))
+
+        @self.socketio.on("create_habitat_session")
+        def handle_create_habitat_session(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            nas_error = self._check_nas_free_space()
+            if nas_error:
+                self.socketio.emit("session_error",
+                                   {"error": f"NAS unreachable — {nas_error}"})
+                return
+            result = self.facade.create_habitat_session(
+                data.get("session_name"), data.get("plans") or [],
+                data.get("researcher") or None, data.get("duration_minutes"),
+            )
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                self._write_session_metadata(result["session_name"],
+                                             result["session_name"])
+                self.socketio.emit("create_session_result", {
+                    "success": True, "session_name": result["session_name"],
+                })
+
+        @self.socketio.on("pause_session")
+        def handle_pause_session(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            result = self.facade.pause_session((data or {}).get("session_name"))
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+
+        @self.socketio.on("resume_session")
+        def handle_resume_session(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            result = self.facade.resume_session((data or {}).get("session_name"))
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+
         @self.socketio.on("stop_session")
         def handle_stop_session(data):
             if not self._require_auth("session_error", {"error": "Login required for this action"}):

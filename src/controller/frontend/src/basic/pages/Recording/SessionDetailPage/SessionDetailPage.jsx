@@ -11,6 +11,7 @@ import {
 import { Countdown, CopyButton } from "../sessionFormatComponents";
 import FileTree from "./FileTree";
 import ComposeVideoPanel from "./ComposeVideoPanel";
+import HabitatSessionPanel from "./HabitatSessionPanel";
 import "../SessionList/SessionList.css";
 import "./SessionDetailPage.css";
 
@@ -272,6 +273,7 @@ export default function SessionDetailPage() {
   const state = session.state;
   const isPending    = state === "pending";
   const isActive     = state === "active";
+  const isPaused     = state === "paused";
   const isStopped    = state === "stopped";
   const isError      = state === "error";
   const isScheduled  = state === "scheduled";
@@ -373,10 +375,13 @@ export default function SessionDetailPage() {
               fault {formatFaultTime(session.error_time)}
             </span>
           )}
+          {isPaused    && <span className="session-state-label session-state-label--scheduled">Paused</span>}
           {isStopped   && <span className="session-state-label session-state-label--stopped">Stopped</span>}
           {isScheduled && <span className="session-state-label session-state-label--scheduled">Scheduled</span>}
           {isError     && <span className="session-state-label session-state-label--error">Error</span>}
         </div>
+
+        <HabitatSessionPanel session={session} />
 
         <div className="session-details">
           <div className="session-meta-grid">

@@ -20,6 +20,7 @@ import logging
 import os
 import secrets
 import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -773,6 +774,74 @@ class Web(ABC):
                 target=_work, args=(data,), daemon=True, name="compose-preview"
             ).start()
 
+        @self.socketio.on("run_ephys_align")
+        def handle_run_ephys_align(data=None):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            import re
+            import shlex
+            session_name = (data or {}).get("session_name", "")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                self.socketio.emit("ephys_align_update",
+                                   {"session_name": session_name,
+                                    "state": "error", "error": "invalid session"})
+                return
+            share = self.config.get("export.mount_path",
+                                    "/home/pi/controller_share")
+            session_dir = os.path.join(share, session_name)
+            ephys_dir = os.path.join(session_dir, "_ephys")
+            repo_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            cli = os.path.join(repo_root, "tools", "ephys", "align_cli.py")
+            # env2 carries pandas (the align tool needs it); fall back to
+            # whatever's running this process.
+            env2_py = os.path.join(repo_root, "env2", "bin", "python")
+            py = env2_py if os.path.exists(env2_py) else sys.executable
+
+            def _run():
+                self.socketio.emit("ephys_align_update",
+                                   {"session_name": session_name,
+                                    "state": "running", "stage": "fitting model"})
+                if not os.path.isdir(ephys_dir):
+                    self.socketio.emit("ephys_align_update",
+                                       {"session_name": session_name,
+                                        "state": "error",
+                                        "error": "no uploaded ephys dataset"})
+                    return
+                cmd = [py, cli, "--oe", ephys_dir, "--session", session_dir]
+                self.logger.info("ephys align: %s", shlex.join(cmd))
+                try:
+                    proc = subprocess.run(cmd, capture_output=True, text=True,
+                                          timeout=1800)
+                except Exception as exc:  # noqa: BLE001
+                    self.socketio.emit("ephys_align_update",
+                                       {"session_name": session_name,
+                                        "state": "error", "error": str(exc)})
+                    return
+                out = (proc.stdout or "").strip().splitlines()
+                payload = {"session_name": session_name}
+                try:
+                    payload.update(json.loads(out[-1]) if out else {})
+                except Exception:  # noqa: BLE001
+                    payload["raw"] = (proc.stdout or "") + (proc.stderr or "")
+                if proc.returncode == 0 and payload.get("ok"):
+                    payload["state"] = "done"
+                    payload["stage"] = (
+                        f"R2 {payload.get('r2', 0):.7f}, "
+                        f"residual max {payload.get('residual_max_ms', '?')} ms"
+                    )
+                else:
+                    payload["state"] = "error"
+                    payload.setdefault(
+                        "error",
+                        (proc.stderr or proc.stdout or "align failed").strip()[-400:],
+                    )
+                self.socketio.emit("ephys_align_update", payload)
+
+            threading.Thread(target=_run, daemon=True, name="ephys-align").start()
+
 
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""
@@ -1149,6 +1218,50 @@ class Web(ABC):
             if not os.path.isdir(session_dir):
                 return "Not found", 404
             return _stream_zip_response(session_dir, f"{session_name}.zip")
+
+        @self.app.route("/api/ephys/upload", methods=["POST"])
+        def upload_ephys_dataset():
+            """Multipart upload of an Open Ephys recording for a session,
+            stored at <share>/<session>/_ephys/ for the Post-Process page's
+            ephys-alignment job. Same short-lived token auth as the file
+            downloads."""
+            if not self._check_download_token(request.args.get("token")):
+                return "Unauthorized -- request a token first", 401
+            import re
+            session_name = request.args.get("session", "")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]+", session_name):
+                return "Invalid session", 400
+            share = os.path.realpath(
+                self.config.get("export.mount_path", "/home/pi/controller_share")
+            )
+            dest_root = os.path.realpath(
+                os.path.join(share, session_name, "_ephys")
+            )
+            if not dest_root.startswith(share + os.sep):
+                return "Forbidden", 403
+            files = request.files.getlist("files")
+            if not files:
+                return "No files", 400
+            written = 0
+            total = 0
+            for f in files:
+                rel = (f.filename or "").replace("\\", "/").lstrip("/")
+                if not rel or ".." in rel.split("/"):
+                    continue
+                target = os.path.realpath(os.path.join(dest_root, rel))
+                if not target.startswith(dest_root + os.sep) and target != dest_root:
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                f.save(target)
+                try:
+                    total += os.path.getsize(target)
+                except OSError:
+                    pass
+                written += 1
+            self.logger.info(
+                f"Ephys upload: {written} file(s), {total} bytes -> {dest_root}"
+            )
+            return jsonify({"files": written, "bytes": total, "dir": dest_root})
 
         @self.app.route("/api/ptp_history.csv")
         def download_ptp_history():

@@ -2200,3 +2200,37 @@ class TestComposeHandlers:
                 rec = client.get_received()
         fake_worker.submit.assert_called_once()
         assert rec[0]["name"] == "compose_job_accepted"
+
+
+# ---------------------------------------------------------------------------
+# Post-Process: ephys upload + align
+# ---------------------------------------------------------------------------
+
+class TestEphysHandlers:
+    def test_run_ephys_align_requires_login(self):
+        web, _ = _make_web_with_facade()
+        client = _connected_client(web)
+        client.emit("run_ephys_align", {"session_name": "sess"})
+        assert client.get_received()[0]["name"] == "session_error"
+
+    def test_run_ephys_align_rejects_bad_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            web, _ = _make_web_with_facade()
+            client = _connected_client(web)
+            _login(web, client, tmpdir)
+            client.emit("run_ephys_align", {"session_name": "bad name!"})
+            rec = client.get_received()
+        assert rec[0]["name"] == "ephys_align_update"
+        assert rec[0]["args"][0]["state"] == "error"
+
+    def test_ephys_upload_rejects_without_token(self):
+        web = _make_web()
+        resp = web.app.test_client().post("/api/ephys/upload?session=sess", data={})
+        assert resp.status_code == 401
+
+    def test_ephys_upload_rejects_bad_session_name(self):
+        web = _make_web()
+        with patch.object(web, "_check_download_token", return_value=True):
+            resp = web.app.test_client().post(
+                "/api/ephys/upload?session=bad%20name", data={})
+        assert resp.status_code == 400

@@ -184,3 +184,19 @@
   color: var(--error-color, #c62828);
   font-weight: 600;
 }
+
+.hsf-name-preview {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  margin-top: -6px;
+}
+
+.hsf-name-preview code {
+  color: var(--text-color);
+}
+
+.hsf .form-field em {
+  font-style: normal;
+  opacity: 0.6;
+  font-weight: 400;
+}

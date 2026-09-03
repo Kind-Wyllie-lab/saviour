@@ -179,9 +179,15 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
   const cams = online.filter((m) => (m.type || "").includes("camera"));
   const mics = online.filter((m) => (m.type || "").includes("microphone"));
 
-  const [sessionName, setSessionName] = useState("");
+  const [cohort, setCohort] = useState("");
   const [researcher, setResearcher] = useState("");
   const [expectedDays, setExpectedDays] = useState(7);
+
+  // habitat_<cohort>_<YYYYMMDD> — the whole session name comes from the
+  // cohort ID + today's date; nothing else to type.
+  const cleanCohort = cohort.trim().replace(/[^A-Za-z0-9-]/g, "");
+  const startDate = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const sessionName = cleanCohort ? `habitat_${cleanCohort}_${startDate}` : "";
   const [autoStop, setAutoStop] = useState(false);
   const [plans, setPlans] = useState(() => {
     const p = [];
@@ -237,7 +243,7 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
 
   const submit = () => {
     setError("");
-    if (!sessionName.trim()) return setError("Session name is required");
+    if (!cleanCohort) return setError("Cohort ID is required");
     if (!plans.some((p) => p.modules.length))
       return setError("Add at least one module to a plan");
     setCreating(true);
@@ -257,24 +263,28 @@ export default function HabitatSessionForm({ modules, onSessionCreated }) {
     <div className="hsf">
       <div className="hsf-row">
         <label className="form-field">
-          <span>Session name</span>
+          <span>Cohort ID</span>
           <input
-            value={sessionName}
-            onChange={(e) => setSessionName(e.target.value)}
-            placeholder="e.g. CRLLT3-autumn-cohort"
+            value={cohort}
+            onChange={(e) => setCohort(e.target.value)}
+            placeholder="e.g. CRLLT3"
+            autoFocus
           />
         </label>
         <label className="form-field">
-          <span>Researcher</span>
+          <span>Researcher <em>(optional)</em></span>
           <input
             value={researcher}
             onChange={(e) => setResearcher(e.target.value)}
           />
         </label>
       </div>
+      <div className="hsf-name-preview">
+        Session: <code>{sessionName || "habitat_<cohort>_" + startDate}</code>
+      </div>
 
       <label className="form-field hsf-len">
-        <span>Expected campaign length</span>
+        <span>Expected length</span>
         <input
           type="number"
           min="1"

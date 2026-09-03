@@ -39,6 +39,7 @@ from flask import (
 )
 from flask_socketio import SocketIO
 
+from src.controller import compose
 from src.controller.config import Config
 from src.controller.themes import ThemeError, ThemeStore
 from src.shared.data_rate import (
@@ -261,6 +262,7 @@ class Web(ABC):
         # Register routes and webhooks
         self._register_routes()
         self._register_socketio_events()
+        self._register_compose_events()
 
         # Store module readiness state in memory
         self.module_readiness = {}  # {module_id: {'ready': bool, 'timestamp': float, 'checks': dict, 'error': str}}
@@ -281,6 +283,11 @@ class Web(ABC):
 
         # Running flag
         self._running = False
+
+        # Lazily-built background worker for the "compose aggregated video"
+        # page — spun up on first request so no thread starts before the
+        # app is serving.
+        self._compose_worker = None
 
         # Set up paths
         self.habitat_share_dir = Path(self.config.get("export.mount_path", "/home/pi/controller_share"))
@@ -678,6 +685,93 @@ class Web(ABC):
     def register_additional_socketio_events(self, handler_func):
         """Allow extra socketio event handlers to be registered dynamically"""
         handler_func(self.socketio)
+
+
+    # ------------------------------------------------------------------ #
+    # "Compose aggregated video" page (src/controller/compose.py)        #
+    # ------------------------------------------------------------------ #
+
+    def _get_compose_worker(self):
+        """Build the single-slot compose worker on first use."""
+        if self._compose_worker is None:
+            share = self.config.get("export.mount_path", "/home/pi/controller_share")
+
+            def _busy():
+                try:
+                    return compose.any_session_busy_reason(
+                        self.facade.get_recording_sessions()
+                    )
+                except Exception:  # facade not ready / transient — don't block
+                    return None
+
+            self._compose_worker = compose.ComposeWorker(
+                share_path=share,
+                busy_check=_busy,
+                on_update=lambda summary: self.socketio.emit(
+                    "compose_job_update", summary
+                ),
+                logger=self.logger,
+            )
+        return self._compose_worker
+
+    def _register_compose_events(self):
+        @self.socketio.on("compose_session_video")
+        def handle_compose_session_video(data=None):
+            from flask_socketio import emit as _emit
+            try:
+                spec = compose.ComposeSpec.from_dict(data or {})
+                job = self._get_compose_worker().submit(spec)
+                _emit("compose_job_accepted", job.summary())
+            except compose.ComposeError as exc:
+                _emit("compose_job_rejected", {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self.logger.exception("compose submit failed")
+                _emit("compose_job_rejected", {"error": f"internal error: {exc}"})
+
+        @self.socketio.on("get_compose_jobs")
+        def handle_get_compose_jobs(data=None):
+            from flask_socketio import emit as _emit
+            worker = self._compose_worker
+            _emit("compose_jobs", {"jobs": worker.list() if worker else []})
+
+        @self.socketio.on("cancel_compose_job")
+        def handle_cancel_compose_job(data=None):
+            from flask_socketio import emit as _emit
+            job_id = (data or {}).get("job_id", "")
+            worker = self._compose_worker
+            ok = bool(worker and worker.cancel(job_id))
+            _emit("compose_job_cancelled", {"job_id": job_id, "ok": ok})
+
+        @self.socketio.on("compose_preview")
+        def handle_compose_preview(data=None):
+            # One composited frame (~1-3 s of OpenCV) — off the socket
+            # thread so it doesn't stall this client's other events.
+            def _work(spec_dict):
+                import base64
+                try:
+                    spec = compose.ComposeSpec.from_dict(spec_dict or {})
+                    png = compose.render_preview(
+                        self.config.get(
+                            "export.mount_path", "/home/pi/controller_share"
+                        ),
+                        spec,
+                    )
+                    self.socketio.emit("compose_preview_ready", {
+                        "image": "data:image/png;base64,"
+                        + base64.b64encode(png).decode(),
+                    })
+                except compose.ComposeError as exc:
+                    self.socketio.emit("compose_preview_ready", {"error": str(exc)})
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.exception("compose preview failed")
+                    self.socketio.emit(
+                        "compose_preview_ready",
+                        {"error": f"internal error: {exc}"},
+                    )
+
+            threading.Thread(
+                target=_work, args=(data,), daemon=True, name="compose-preview"
+            ).start()
 
 
     def notify_module_update(self):
@@ -1222,6 +1316,59 @@ class Web(ABC):
                 "success": bool(result and result.get("success")),
                 "error": result.get("error") if result and not result.get("success") else None,
             })
+
+
+        # -- Habitat Session (one session, per-plan recording strategy) -------
+
+        @self.socketio.on("estimate_habitat_volume")
+        def handle_estimate_habitat_volume(data):
+            from flask_socketio import emit as _emit
+            plans = (data or {}).get("plans") or []
+            expected_minutes = float((data or {}).get("expected_minutes") or 0)
+            _emit("habitat_volume_estimate",
+                  self.facade.estimate_habitat_volume(plans, expected_minutes))
+
+        @self.socketio.on("create_habitat_session")
+        def handle_create_habitat_session(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            data = data or {}
+            nas_error = self._check_nas_free_space()
+            if nas_error:
+                self.socketio.emit("session_error",
+                                   {"error": f"NAS unreachable — {nas_error}"})
+                return
+            result = self.facade.create_habitat_session(
+                data.get("session_name"), data.get("plans") or [],
+                data.get("researcher") or None, data.get("duration_minutes"),
+            )
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+            elif result and result.get("success"):
+                self._write_session_metadata(result["session_name"],
+                                             result["session_name"])
+                self.socketio.emit("create_session_result", {
+                    "success": True, "session_name": result["session_name"],
+                })
+
+        @self.socketio.on("pause_session")
+        def handle_pause_session(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            result = self.facade.pause_session((data or {}).get("session_name"))
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
+
+        @self.socketio.on("resume_session")
+        def handle_resume_session(data):
+            if not self._require_auth("session_error",
+                                      {"error": "Login required for this action"}):
+                return
+            result = self.facade.resume_session((data or {}).get("session_name"))
+            if result and not result.get("success"):
+                self.socketio.emit("session_error", {"error": result.get("error")})
 
         @self.socketio.on("stop_session")
         def handle_stop_session(data):

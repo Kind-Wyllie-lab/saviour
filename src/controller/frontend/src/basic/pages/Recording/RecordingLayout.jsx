@@ -9,7 +9,10 @@ import usePersistedState from "/src/hooks/usePersistedState";
 import Drawer from "/src/basic/components/Drawer/Drawer";
 import ReadinessSummary from "/src/basic/components/ReadinessSummary/ReadinessSummary";
 import NewSessionForm from "./NewSessionForm/NewSessionForm";
+import HabitatSessionForm from "./HabitatSessionForm/HabitatSessionForm";
 import SessionList from "./SessionList/SessionList";
+
+const BUILT_VARIANT = import.meta.env.VITE_VARIANT || "basic";
 
 // Persistent shell for both /recording routes -- a narrow session-list
 // rail on the left (always visible, like a secondary nav), and the routed
@@ -22,6 +25,10 @@ function RecordingLayout() {
     const { sessionList } = useSessions();
     const navigate = useNavigate();
     const [drawerOpen, setDrawerOpen] = useState(false);
+    // Habitat builds get a second form mode in the drawer: one session
+    // whose modules follow different recording strategies (see
+    // HabitatSessionForm / recording_plans.py).
+    const [formMode, setFormMode] = useState("standard");
 
     // Set by SessionDetailPage's "Copy" button (via the outlet context
     // below) to seed the New Session form with an existing session's
@@ -105,19 +112,50 @@ function RecordingLayout() {
                 onClose={() => { setDrawerOpen(false); setCopyPrefill(null); }}
                 title="New Session"
             >
-                <NewSessionForm
-                    modules={moduleList}
-                    sessionList={sessionList}
-                    target={target}
-                    setTarget={setTarget}
-                    prefill={copyPrefill}
-                    onSessionCreated={(sessionName) => {
-                        setDrawerOpen(false);
-                        setCopyPrefill(null);
-                        navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
-                    }}
-                />
-                <ReadinessSummary modules={moduleList} target={target} />
+                {BUILT_VARIANT === "habitat" && (
+                    <div className="recording-form-mode">
+                        <button
+                            type="button"
+                            className={formMode === "standard" ? "is-active" : ""}
+                            onClick={() => setFormMode("standard")}
+                        >
+                            Standard
+                        </button>
+                        <button
+                            type="button"
+                            className={formMode === "habitat" ? "is-active" : ""}
+                            onClick={() => setFormMode("habitat")}
+                        >
+                            Habitat Session
+                        </button>
+                    </div>
+                )}
+
+                {BUILT_VARIANT === "habitat" && formMode === "habitat" ? (
+                    <HabitatSessionForm
+                        modules={moduleList}
+                        onSessionCreated={(sessionName) => {
+                            setDrawerOpen(false);
+                            navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
+                        }}
+                    />
+                ) : (
+                    <>
+                        <NewSessionForm
+                            modules={moduleList}
+                            sessionList={sessionList}
+                            target={target}
+                            setTarget={setTarget}
+                            prefill={copyPrefill}
+                            onSessionCreated={(sessionName) => {
+                                setDrawerOpen(false);
+                                setCopyPrefill(null);
+                                navigate(`/recording/sessions/${encodeURIComponent(sessionName)}`);
+                            }}
+                        />
+                        <ReadinessSummary modules={moduleList} target={target} />
+                    </>
+                )}
             </Drawer>
         </div>
     );

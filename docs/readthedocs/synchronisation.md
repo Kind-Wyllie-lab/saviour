@@ -1,0 +1,15 @@
+# Synchronisation
+
+A SAVIOUR dataset is only useful if you can trust that a frame, an audio sample, and a neural spike recorded on three different machines can be placed on one shared timeline. SAVIOUR does this in three layers, each solving a different problem.
+
+## 1. Fleet-wide PTP
+
+Every device on the network disciplines its clock to a single reference using **PTP** (Precision Time Protocol, IEEE 1588). The controller is the **grandmaster**; every module is a slave. Two services do the work: `ptp4l` disciplines a hardware clock on the network card, and `phc2sys` disciplines the Raspberry Pi's system clock from that hardware clock. The result is that `time.time()` on a camera module and `time.time()` on a microphone module agree to within tens of microseconds when PTP is settled, so any timestamp written by any module is directly comparable to any other. This is the foundation the other two layers build on — without it, every module would be keeping its own slightly-wrong time and nothing could be aligned after the fact. PTP quality is not automatic: it depends on the network (plain switches add jitter that grows with every hop), so habitat rigs follow a wiring standard, and every recording checks the PTP offset against a threshold before it is allowed to start.
+
+## 2. FrameSync
+
+PTP makes timestamps comparable, but it does not make two cameras *expose their sensors at the same instant* — left alone, each camera free-runs at its own framerate and their frames land at whatever phase they happen to. **FrameSync** fixes this for multi-camera rigs using libcamera's software frame-sync: one camera is nominated the sync server and broadcasts timing packets over UDP; the other cameras nudge their framerate frame-by-frame to lock onto that schedule. Once locked, every camera captures frame *N* within a few hundred microseconds of the others, and a fixed per-session phase offset (a hardware characteristic of when each camera's clock happened to be at lock time) can be calibrated out from the per-frame timestamp sidecar. FrameSync is optional and per-rig (`camera.sync_mode: server | client | none`); it needs the target framerate to sit well below the sensor's maximum so a lagging camera has headroom to catch up, which is why very high framerates cannot phase-lock.
+
+## 3. Ephys sync
+
+Electrophysiology rigs (Open Ephys and similar) run their own acquisition clock that SAVIOUR cannot discipline. The bridge is a **shared TTL pulse train**: a TTL module and the ephys acquisition system are wired to the same physical line, so both systems log the same pulse edges — each against its own clock. A pseudorandom (non-periodic) pulse train is used because it can be aligned unambiguously even if a few pulses are missed on either side. After the experiment, matching the pulse edges between the two logs fits a clock offset (and drift, if the ephys clock is not disciplined) between ephys time and SAVIOUR/PTP time, and that mapping brings spike times, video frames, and every module's timestamps onto one timeline. See [Using SAVIOUR with Open Ephys](open_ephys.md) for the wiring and the post-hoc steps.

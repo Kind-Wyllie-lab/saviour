@@ -150,6 +150,23 @@ class ControllerFacade:
     def stop_session(self, session_name: str) -> None:
         return self.controller.recording.stop_session(session_name)
 
+    def create_habitat_session(self, session_name: str, plans: list,
+                               researcher=None, duration_minutes=None) -> dict:
+        return self.controller.recording.create_habitat_session(
+            session_name, plans, researcher, duration_minutes
+        )
+
+    def pause_session(self, session_name: str) -> dict:
+        return self.controller.recording.pause_session(session_name)
+
+    def resume_session(self, session_name: str) -> dict:
+        return self.controller.recording.resume_session(session_name)
+
+    def estimate_habitat_volume(self, plans: list, expected_minutes: float) -> dict:
+        return self.controller.recording.estimate_habitat_volume(
+            plans, expected_minutes
+        )
+
     def force_start_scheduled_session(self, session_name: str) -> dict:
         return self.controller.recording.force_start_scheduled_session(session_name)
 

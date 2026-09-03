@@ -111,6 +111,8 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
   });
   const [jobs, setJobs] = useState({});
   const [notice, setNotice] = useState("");
+  const [preview, setPreview] = useState(null); // { image } | { error }
+  const [previewing, setPreviewing] = useState(false);
 
   const cams = byDate[dateDir]?.cameras || [];
   const mics = byDate[dateDir]?.mics || [];
@@ -142,16 +144,22 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
       upsert(j);
     };
     const onRejected = (d) => setNotice(d.error || "Compose request rejected");
+    const onPreview = (d) => {
+      setPreviewing(false);
+      setPreview(d);
+    };
     socket.on("compose_jobs", onList);
     socket.on("compose_job_update", upsert);
     socket.on("compose_job_accepted", onAccepted);
     socket.on("compose_job_rejected", onRejected);
+    socket.on("compose_preview_ready", onPreview);
     socket.emit("get_compose_jobs");
     return () => {
       socket.off("compose_jobs", onList);
       socket.off("compose_job_update", upsert);
       socket.off("compose_job_accepted", onAccepted);
       socket.off("compose_job_rejected", onRejected);
+      socket.off("compose_preview_ready", onPreview);
     };
   }, []);
 
@@ -201,6 +209,17 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
   };
 
   const setSpecField = (k, v) => setSpec((s) => ({ ...s, [k]: v }));
+
+  const requestPreview = () => {
+    setPreview(null);
+    setPreviewing(true);
+    socket.emit("compose_preview", {
+      session_name: sessionName,
+      date_dir: dateDir || undefined,
+      streams: selected,
+      layout,
+    });
+  };
 
   const download = (job) => {
     // output_rel is "<session>/<date>/<file>"; the download route wants the
@@ -375,13 +394,33 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
 
       {notice && <div className="compose-job__error">{notice}</div>}
 
-      <button
-        className="btn"
-        onClick={submit}
-        disabled={!selected.length || anyActive}
-      >
-        {anyActive ? "Rendering…" : "Render video"}
-      </button>
+      {preview?.error && (
+        <div className="compose-job__error">{preview.error}</div>
+      )}
+      {preview?.image && (
+        <img
+          className="compose-panel__preview"
+          src={preview.image}
+          alt="Layout preview (mid-session frame)"
+        />
+      )}
+
+      <div className="compose-panel__actions">
+        <button
+          className="btn btn-secondary"
+          onClick={requestPreview}
+          disabled={!selected.length || previewing}
+        >
+          {previewing ? "Rendering preview…" : "Preview layout"}
+        </button>
+        <button
+          className="btn"
+          onClick={submit}
+          disabled={!selected.length || anyActive}
+        >
+          {anyActive ? "Rendering…" : "Render video"}
+        </button>
+      </div>
 
       {jobList.length > 0 && (
         <div className="compose-panel__jobs">

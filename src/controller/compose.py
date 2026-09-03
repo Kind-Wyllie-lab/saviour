@@ -304,6 +304,32 @@ def find_microphone(date_dir: str, source: str | None):
     )
 
 
+def render_preview(share_path: str, spec: ComposeSpec, max_width: int = 960) -> bytes:
+    """One composited frame (mid-window) as PNG bytes -- a fast layout
+    preview before committing to a full render. Video layout only; audio
+    modes aren't previewed."""
+    from src.controller import video_compose
+
+    session_dir = os.path.join(share_path, spec.session_name)
+    if not os.path.isdir(session_dir):
+        raise ComposeError("session directory not found")
+    date_dir = resolve_date_dir(session_dir, spec.date_dir)
+    streams = discover_streams(date_dir, spec.streams)
+    regions, cw, ch = plan_regions(
+        [(s.width, s.height) for s in streams], spec.layout, canvas_width=max_width,
+    )
+    tmp = os.path.join(date_dir, f".compose_preview_{uuid.uuid4().hex[:8]}.png")
+    try:
+        video_compose.compose_preview_frame(
+            date_dir, tmp, streams=[s.name for s in streams],
+            regions=regions, canvas=(cw, ch),
+        )
+        with open(tmp, "rb") as f:
+            return f.read()
+    finally:
+        _safe_unlink(tmp)
+
+
 # --------------------------------------------------------------------------- #
 # Jobs + worker                                                               #
 # --------------------------------------------------------------------------- #

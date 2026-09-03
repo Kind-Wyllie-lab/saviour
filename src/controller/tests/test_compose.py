@@ -5,7 +5,10 @@ The layout planner and spec validation are pure. The worker is exercised
 with a fake `_render` so nothing here needs OpenCV or ffmpeg.
 """
 
+import os
+import sys
 import time
+import types
 from dataclasses import dataclass
 
 import pytest
@@ -20,6 +23,7 @@ from src.controller.compose import (
     discover_streams,
     find_microphone,
     plan_regions,
+    render_preview,
     resolve_date_dir,
 )
 
@@ -96,6 +100,40 @@ def test_compose_spec_embeds_audio():
         {"session_name": "s", "audio": {"mode": "track"}}
     )
     assert spec.audio["mode"] == "track"
+
+
+# --------------------------------------------------------------------------- #
+# render_preview                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_render_preview_composites_one_frame(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.controller.compose.probe_dimensions", lambda _p: (640, 480)
+    )
+    dd = tmp_path / "sess" / "20260805" / "camera_a"
+    dd.mkdir(parents=True)
+    (dd / "v.ts").write_bytes(b"x")
+    (dd / "v_timestamps.csv").write_text("timestamp_ns\n1\n2\n")
+
+    captured = {}
+
+    def fake_preview(date_dir, out_png, **kw):
+        captured.update(out=out_png, kw=kw)
+        with open(out_png, "wb") as f:
+            f.write(b"\x89PNG-preview")
+        return out_png
+
+    # video_compose pulls in OpenCV; stand in a fake module so this test
+    # runs without it (render_preview imports it lazily).
+    fake_vc = types.SimpleNamespace(compose_preview_frame=fake_preview)
+    monkeypatch.setitem(sys.modules, "src.controller.video_compose", fake_vc)
+
+    spec = ComposeSpec.from_dict({"session_name": "sess", "layout": "grid"})
+    data = render_preview(str(tmp_path), spec, max_width=800)
+    assert data == b"\x89PNG-preview"
+    assert captured["kw"]["streams"] == ["camera_a"]
+    assert not os.path.exists(captured["out"])  # temp preview cleaned up
 
 
 # --------------------------------------------------------------------------- #

@@ -204,3 +204,16 @@
 .compose-panel__spec .form-field label {
   font-size: 0.78rem;
 }
+
+.compose-panel__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.compose-panel__preview {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}

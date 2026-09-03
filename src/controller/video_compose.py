@@ -270,6 +270,45 @@ def compose_session_video(
     return output_path
 
 
+def compose_preview_frame(
+    date_dir: str, output_png: str,
+    streams: list[str] | None = None,
+    regions: list[tuple[int, int, int, int]] | None = None,
+    canvas: tuple[int, int] | None = None,
+    at_fraction: float = 0.5,
+) -> str:
+    """Composite a single frame (at `at_fraction` through the overlap
+    window) to a PNG -- a fast layout preview before a full render."""
+    found = discover_camera_streams(date_dir)
+    if streams is not None:
+        by_name = {s.name: s for s in found}
+        found = [by_name[s] for s in streams if s in by_name]
+    if not found:
+        raise ValueError(f"No camera streams found under {date_dir}")
+    if regions is None or canvas is None:
+        regions, cw, ch = _grid_regions(len(found))
+    else:
+        cw, ch = canvas
+
+    cursors = [_StreamCursor(s) for s in found]
+    try:
+        t_start = max(c.first_ts for c in cursors)
+        t_end = min(c.last_ts for c in cursors)
+        t = t_start + int((t_end - t_start) * max(0.0, min(1.0, at_fraction)))
+        frame = np.zeros((ch, cw, 3), dtype=np.uint8)
+        for cursor, (x, y, w, h) in zip(cursors, regions, strict=True):
+            pane = _label(_fit_into(cursor.sync_to(t), w, h), cursor.name)
+            frame[y : y + h, x : x + w] = pane
+    finally:
+        for cursor in cursors:
+            cursor.release()
+
+    os.makedirs(os.path.dirname(output_png) or ".", exist_ok=True)
+    if not cv2.imwrite(output_png, frame):
+        raise RuntimeError("cv2.imwrite failed for the preview frame")
+    return output_png
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

@@ -742,6 +742,37 @@ class Web(ABC):
             ok = bool(worker and worker.cancel(job_id))
             _emit("compose_job_cancelled", {"job_id": job_id, "ok": ok})
 
+        @self.socketio.on("compose_preview")
+        def handle_compose_preview(data=None):
+            # One composited frame (~1-3 s of OpenCV) — off the socket
+            # thread so it doesn't stall this client's other events.
+            def _work(spec_dict):
+                import base64
+                try:
+                    spec = compose.ComposeSpec.from_dict(spec_dict or {})
+                    png = compose.render_preview(
+                        self.config.get(
+                            "export.mount_path", "/home/pi/controller_share"
+                        ),
+                        spec,
+                    )
+                    self.socketio.emit("compose_preview_ready", {
+                        "image": "data:image/png;base64,"
+                        + base64.b64encode(png).decode(),
+                    })
+                except compose.ComposeError as exc:
+                    self.socketio.emit("compose_preview_ready", {"error": str(exc)})
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.exception("compose preview failed")
+                    self.socketio.emit(
+                        "compose_preview_ready",
+                        {"error": f"internal error: {exc}"},
+                    )
+
+            threading.Thread(
+                target=_work, args=(data,), daemon=True, name="compose-preview"
+            ).start()
+
 
     def notify_module_update(self):
         """Function that can be used externally by controller.py to notify frontend when modules updated"""

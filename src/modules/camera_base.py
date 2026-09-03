@@ -224,6 +224,17 @@ class CameraBase(Module):
         self._csv_prev_ns = None  # previous frame timestamp for delta/drop calculation
         self._segment_dropped = 0  # frames estimated dropped in the current segment
 
+        # True only between start_encoder() and stop_encoder(). The CSV row for a
+        # frame is written only while this holds, so the sidecar covers exactly
+        # the encoder's active window rather than the (wider) open/close-CSV
+        # window — otherwise _frame_precallback logs rows for frames captured
+        # before the encoder started / after it stopped, and the CSV ends up
+        # with more rows than the video has frames (row i then no longer lines
+        # up with video frame i for downstream alignment).
+        self._encoder_active = False
+        self._encoder_start_ns = 0
+        self._encoder_stop_ns = 0
+
         # Periodic "still capturing" throughput line while recording — makes a
         # silently-wedged pipeline visible after the fact in the journal
         # (recording.camera_throughput_log_secs, 0 disables).
@@ -860,6 +871,8 @@ class CameraBase(Module):
         # existing phase state rather than resetting it with SyncFrames/sync_enable,
         # which would discard any accumulated phase convergence.
         self.picam2.start_encoder(self.main_encoder, name="main")
+        self._encoder_start_ns = time.time_ns()
+        self._encoder_active = True
         self.recording_start_time = time.time()
         return True
 
@@ -922,6 +935,11 @@ class CameraBase(Module):
     """Recording"""
     def _stop_recording_video(self):
         """Stop recording current segment"""
+        # Close the encoder-active window before stop_encoder() so the CSV
+        # flush thread stops appending rows for any frames delivered during
+        # teardown (see _encoder_active).
+        self._encoder_active = False
+        self._encoder_stop_ns = time.time_ns()
         self.picam2.stop_encoder(self.main_encoder)
         self.last_video_segment = self.current_video_segment
 
@@ -931,8 +949,22 @@ class CameraBase(Module):
         try:
             self.logger.info("Attempting to stop camera recording")
 
-            self._stop_recording_video()
+            self._stop_recording_video()  # flips _encoder_active off first
+            final_segment_rows = self._frame_id  # frozen once the encoder is idle
             self._close_timestamp_csv()
+
+            # Reconciliation line: the encoder-active window vs the CSV rows
+            # written for the final segment. A large mismatch between rows and
+            # (window / frame interval) points at frames landing outside the
+            # gate — the thing that historically desynced row i from frame i.
+            if self._encoder_stop_ns > self._encoder_start_ns:
+                window_s = (self._encoder_stop_ns - self._encoder_start_ns) / 1e9
+                expected = window_s * self.fps if self.fps else 0
+                self.logger.info(
+                    f"Encoder-active window {window_s:.3f}s "
+                    f"(~{expected:.0f} frames at {self.fps} fps); "
+                    f"final segment wrote {final_segment_rows} CSV rows"
+                )
 
             for file in self.session_files:
                 if file.endswith(".ts"):
@@ -1156,8 +1188,11 @@ class CameraBase(Module):
                         m.array, ts_label, "main", compensate_k=compensate_k,
                     )
 
-            # Buffer CSV row for off-thread write — no file I/O on the capture thread.
-            if self._timestamp_csv_writer is not None:
+            # Buffer CSV row for off-thread write — no file I/O on the capture
+            # thread. Gated on _encoder_active so row i always corresponds to
+            # video frame i (frames delivered before start_encoder / after
+            # stop_encoder are not in the video and must not be in the CSV).
+            if self._timestamp_csv_writer is not None and self._encoder_active:
                 wall_mono_offset = time.time() - time.monotonic()
                 sync_lag_us      = meta.get("SyncTimer", "")
                 colour_gains     = meta.get("ColourGains") or ("", "")

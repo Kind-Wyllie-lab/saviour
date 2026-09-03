@@ -8,7 +8,9 @@ nav:
   - Getting Started: getting_started.md
   - FAQs: faqs.md
   - Using SAVIOUR with ephys: open_ephys.md
-  - How it Works: how_it_works.md 
+  - Synchronisation: synchronisation.md
+  - Post-Processing & Aligning: aligning.md
+  - How it Works: how_it_works.md
   - Hardware: hardware.md
   - Habitat Camera: habitat_camera.md
   - Training a Model and Deploying it to Hailo: hailo_model_deployment.md

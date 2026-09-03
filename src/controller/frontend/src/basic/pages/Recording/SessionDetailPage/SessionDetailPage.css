@@ -217,3 +217,87 @@
   border: 1px solid var(--border-color);
   border-radius: 6px;
 }
+
+/* --- Habitat Session panel --- */
+.habitat-session-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.habitat-session-panel__head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.habitat-session-panel__state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--border-color, #ccc) 30%, transparent);
+}
+
+.habitat-session-panel__state--active {
+  color: var(--success-color, #2e7d32);
+}
+
+.habitat-session-panel__state--paused {
+  color: var(--warning-color, #b26a00);
+}
+
+.habitat-session-panel__head .btn {
+  margin-left: auto;
+}
+
+.habitat-session-panel__plans {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.habitat-plan {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--border-color, #ddd) 8%, transparent);
+}
+
+.habitat-plan__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.habitat-plan__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-muted, #999);
+  flex-shrink: 0;
+}
+
+.habitat-plan__dot--on {
+  background: var(--success-color, #2e7d32);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-color, #2e7d32) 25%, transparent);
+}
+
+.habitat-plan__label {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.habitat-plan__strategy {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #888);
+}
+
+.habitat-plan__meta,
+.habitat-plan__modules {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  margin-top: 3px;
+}

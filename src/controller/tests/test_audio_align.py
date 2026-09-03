@@ -16,6 +16,7 @@ import pytest
 
 from src.controller.audio_align import (
     AlignOptions,
+    SpectrogramOpts,
     _is_float,
     _label_from_filename,
     align_session_audio,
@@ -27,6 +28,40 @@ from src.controller.audio_align import (
     resolve_window,
     summarise_ptp_window,
 )
+
+# --------------------------------------------------------------------------- #
+# SpectrogramOpts                                                             #
+# --------------------------------------------------------------------------- #
+
+
+def test_spectrogram_opts_builds_filters():
+    s = SpectrogramOpts(color="viridis", fmin_hz=15000, fmax_hz=96000,
+                        fscale="log", ascale="sqrt", gain=3.0)
+    pic = s.pic_filter(800, 300)
+    assert pic.startswith("showspectrumpic=s=800x300")
+    assert "color=viridis" in pic and "scale=sqrt" in pic and "fscale=log" in pic
+    assert "start=15000" in pic and "stop=96000" in pic and "legend=1" in pic
+    scroll = s.scroll_filter(640, 240, 15)
+    assert scroll.startswith("showspectrum=s=640x240")
+    assert "slide=scroll" in scroll and "fps=15" in scroll
+
+
+def test_spectrogram_opts_omits_unset_band():
+    f = SpectrogramOpts().pic_filter(100, 100)
+    assert "start=" not in f and "stop=" not in f
+
+
+@pytest.mark.parametrize("bad", [
+    {"color": "sparkle"},
+    {"fscale": "quadratic"},
+    {"ascale": "nope"},
+    {"gain": 0},
+    {"gain": 50},
+    {"fmin_hz": 90000, "fmax_hz": 20000},
+])
+def test_spectrogram_opts_validation(bad):
+    with pytest.raises(ValueError):
+        SpectrogramOpts(**bad)
 
 FRAME_NUM = 1024 * 128
 NOMINAL_RATE = 192000

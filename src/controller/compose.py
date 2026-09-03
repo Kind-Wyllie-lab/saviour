@@ -18,6 +18,7 @@ at `_render` in phase 2 via audio_align.py.
 
 from __future__ import annotations
 
+import csv
 import glob
 import json
 import math
@@ -29,7 +30,14 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 
+from src.controller import audio_align
+
 LAYOUTS = ("auto", "side", "stack", "grid", "loom")
+# none  -> silent composite (default)
+# track -> aligned audio muxed as an audio track
+# strip -> scrolling spectrogram strip overlaid on the bottom of the video
+# panel -> full scrolling spectrogram panel below the video (ethogram-style)
+AUDIO_MODES = ("none", "track", "strip", "panel")
 DEFAULT_CANVAS_WIDTH = 1920
 DEFAULT_FPS = 15
 MAX_QUEUE = 4
@@ -40,6 +48,41 @@ class ComposeError(ValueError):
 
 
 @dataclass
+class AudioSpec:
+    mode: str = "none"
+    source: str | None = None                 # mic module folder; None -> first
+    spectrogram: dict = field(default_factory=dict)  # -> audio_align.SpectrogramOpts
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> AudioSpec:
+        if not raw:
+            return cls()
+        if not isinstance(raw, dict):
+            raise ComposeError("audio must be an object")
+        mode = str(raw.get("mode", "none")).lower()
+        if mode not in AUDIO_MODES:
+            raise ComposeError(f"audio.mode must be one of {', '.join(AUDIO_MODES)}")
+        source = raw.get("source")
+        if source is not None and not _safe_segment(str(source)):
+            raise ComposeError("invalid audio.source")
+        spectrogram = raw.get("spectrogram") or {}
+        if not isinstance(spectrogram, dict):
+            raise ComposeError("audio.spectrogram must be an object")
+        # Validate the spectrogram options now (SpectrogramOpts raises on bad
+        # enum / range) so a bad request fails at submit, not mid-render.
+        try:
+            audio_align.SpectrogramOpts(**spectrogram)
+        except TypeError as exc:
+            raise ComposeError(f"unknown audio.spectrogram field: {exc}") from exc
+        except ValueError as exc:
+            raise ComposeError(str(exc)) from exc
+        return cls(mode=mode, source=source, spectrogram=dict(spectrogram))
+
+    def spec_opts(self) -> audio_align.SpectrogramOpts:
+        return audio_align.SpectrogramOpts(**self.spectrogram)
+
+
+@dataclass
 class ComposeSpec:
     session_name: str
     date_dir: str | None = None       # date-subdir name; None -> the latest one
@@ -47,6 +90,7 @@ class ComposeSpec:
     layout: str = "auto"
     fps: int = DEFAULT_FPS
     fmt: str = "mp4"
+    audio: dict = field(default_factory=dict)   # -> AudioSpec
 
     @classmethod
     def from_dict(cls, raw: dict) -> ComposeSpec:
@@ -77,9 +121,10 @@ class ComposeSpec:
         date_dir = raw.get("date_dir")
         if date_dir is not None and not _safe_segment(str(date_dir)):
             raise ComposeError("invalid date_dir")
+        audio = asdict(AudioSpec.from_dict(raw.get("audio")))
         return cls(
             session_name=name, date_dir=date_dir, streams=streams,
-            layout=layout, fps=fps, fmt=fmt,
+            layout=layout, fps=fps, fmt=fmt, audio=audio,
         )
 
 
@@ -215,6 +260,48 @@ def discover_streams(date_dir: str, wanted: list[str] | None) -> list[SessionStr
     if not streams:
         raise ComposeError("no camera streams found for this session")
     return streams
+
+
+def camera_window(streams: list[SessionStream]) -> tuple[int, int]:
+    """`(t_start_ns, t_end_ns)` -- the wall-clock window every selected
+    camera covers (overlap), from each stream's per-frame CSV. This is
+    the window audio is aligned into, matching video_compose."""
+    firsts, lasts = [], []
+    for s in streams:
+        rows = read_frame_timestamps(s.csv_path)
+        if rows:
+            firsts.append(rows[0])
+            lasts.append(rows[-1])
+    if not firsts:
+        raise ComposeError("camera CSVs have no timestamps")
+    start, end = max(firsts), min(lasts)
+    if end <= start:
+        raise ComposeError("selected cameras have no overlapping time window")
+    return start, end
+
+
+def read_frame_timestamps(csv_path: str) -> list[int]:
+    with open(csv_path, newline="") as f:
+        return [int(row["timestamp_ns"]) for row in csv.DictReader(f)]
+
+
+def find_microphone(date_dir: str, source: str | None):
+    """The chosen mic's (audio_path, sidecar_path), or the first mic
+    folder with an audio file + a `*_timestamps.txt` sidecar."""
+    for entry in sorted(os.listdir(date_dir)):
+        if source is not None and entry != source:
+            continue
+        mdir = os.path.join(date_dir, entry)
+        if not os.path.isdir(mdir):
+            continue
+        for ext in (".flac", ".wav"):
+            for audio in sorted(glob.glob(os.path.join(mdir, f"*{ext}"))):
+                sidecar = f"{os.path.splitext(audio)[0]}_timestamps.txt"
+                if os.path.isfile(sidecar):
+                    return audio, sidecar
+    raise ComposeError(
+        f"no microphone recording found{f' for {source}' if source else ''}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -353,8 +440,14 @@ class ComposeWorker:
             [(s.width, s.height) for s in streams], spec.layout,
         )
 
-        out_name = f"{spec.session_name}_composed_{job.id}.{spec.fmt}"
+        audio = AudioSpec(**spec.audio)
+        # `strip`/`panel` composite a spectrogram video with ffmpeg, so the
+        # base pass writes a temp mp4; `track`/`none` write the final file.
+        needs_ffmpeg_pass = audio.mode in ("strip", "panel")
+        fmt = "mkv" if needs_ffmpeg_pass else spec.fmt
+        out_name = f"{spec.session_name}_composed_{job.id}.{fmt}"
         out_path = os.path.join(date_dir, out_name)
+        base_path = out_path + ".base.mp4" if audio.mode != "none" else out_path
 
         def progress(done: int, total: int, stage: str = "rendering") -> None:
             if job.state == "cancelled":
@@ -365,16 +458,44 @@ class ComposeWorker:
 
         try:
             video_compose.compose_session_video(
-                date_dir, out_path,
+                date_dir, base_path,
                 streams=[s.name for s in streams],
                 regions=regions, canvas=(canvas_w, canvas_h),
                 fps=spec.fps, progress=progress,
             )
+            if audio.mode != "none":
+                progress(99, 100, "aligning audio")
+                self._apply_audio(date_dir, streams, audio, base_path, out_path,
+                                  spec.fps)
+                _safe_unlink(base_path)
         except _CancelledError:
+            _safe_unlink(base_path)
             _safe_unlink(out_path)
             raise ComposeError("cancelled") from None
 
         return os.path.relpath(out_path, self.share_path)
+
+    def _apply_audio(self, date_dir, streams, audio: AudioSpec,
+                     base_path: str, out_path: str, fps: int) -> None:
+        audio_file, sidecar = find_microphone(date_dir, audio.source)
+        t_start, t_end = camera_window(streams)
+        fit = audio_align.parse_mic_sidecar(sidecar, audio_file)
+        aligned = os.path.splitext(out_path)[0] + "_aligned.flac"
+        audio_align.render_aligned_audio(
+            audio_align.AudioStream("mic", audio_file, sidecar), fit,
+            t_start, (t_end - t_start) / 1e9, aligned, fit.nominal_rate_hz,
+        )
+        try:
+            if audio.mode == "track":
+                audio_align.render_muxed_track(base_path, aligned, out_path)
+            else:  # strip | panel
+                audio_align.render_overlay(
+                    base_path, [aligned], out_path,
+                    audio_align.DEFAULT_STRIP_HEIGHT, fps,
+                    spec=audio.spec_opts(), stacked=(audio.mode == "panel"),
+                )
+        finally:
+            _safe_unlink(aligned)
 
 
 class _CancelledError(Exception):

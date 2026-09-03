@@ -10,26 +10,49 @@ const LAYOUTS = [
   { value: "loom", label: "Loom (LoomCam / Home / Screen)" },
 ];
 
-// Group the flat session file list into { dateDir: [cameraStreamName, ...] }.
-// A camera stream is a module folder that holds both a video (.ts/.mp4) and
-// a *_timestamps.csv — the pair compose.discover_streams() looks for.
-function cameraStreamsByDate(files) {
-  const videos = new Map(); // "date/module" -> true
-  const csvs = new Map();
+const AUDIO_MODES = [
+  { value: "none", label: "No audio" },
+  { value: "track", label: "Muxed audio track" },
+  { value: "strip", label: "Spectrogram strip (over video)" },
+  { value: "panel", label: "Spectrogram panel (below video)" },
+];
+
+const SPEC_COLORS = [
+  "intensity", "rainbow", "magma", "viridis", "plasma", "cividis",
+  "fire", "moreland", "nebulae", "terrain", "cool", "green",
+];
+
+// Group the flat session file list into { dateDir: { cameras: [...], mics: [...] } }.
+// A camera stream is a folder with a video (.ts/.mp4) + a *_timestamps.csv;
+// a mic is a folder with a .flac/.wav + a *_timestamps.txt — the pairs
+// compose.discover_streams() / find_microphone() look for.
+function streamsByDate(files) {
+  const has = { vid: new Set(), csv: new Set(), aud: new Set(), txt: new Set() };
   for (const f of files || []) {
     const parts = f.path.split("/");
     if (parts.length < 3) continue;
     const key = `${parts[0]}/${parts[1]}`;
-    if (/\.(ts|mp4)$/i.test(f.name)) videos.set(key, true);
-    if (/_timestamps\.csv$/i.test(f.name)) csvs.set(key, true);
+    if (/\.(ts|mp4)$/i.test(f.name)) has.vid.add(key);
+    if (/_timestamps\.csv$/i.test(f.name)) has.csv.add(key);
+    if (/\.(flac|wav)$/i.test(f.name)) has.aud.add(key);
+    if (/_timestamps\.txt$/i.test(f.name)) has.txt.add(key);
   }
   const byDate = {};
-  for (const key of videos.keys()) {
-    if (!csvs.has(key)) continue;
-    const [date, mod] = key.split("/");
-    (byDate[date] ||= []).push(mod);
+  const bucket = (d) => (byDate[d] ||= { cameras: [], mics: [] });
+  for (const key of has.vid) {
+    if (!has.csv.has(key)) continue;
+    const [d, m] = key.split("/");
+    bucket(d).cameras.push(m);
   }
-  for (const date of Object.keys(byDate)) byDate[date].sort();
+  for (const key of has.aud) {
+    if (!has.txt.has(key)) continue;
+    const [d, m] = key.split("/");
+    bucket(d).mics.push(m);
+  }
+  for (const d of Object.keys(byDate)) {
+    byDate[d].cameras.sort();
+    byDate[d].mics.sort();
+  }
   return byDate;
 }
 
@@ -72,7 +95,7 @@ function JobRow({ job, onCancel, onDownload }) {
 }
 
 export default function ComposeVideoPanel({ sessionName, files, onRequestDownload }) {
-  const byDate = useMemo(() => cameraStreamsByDate(files), [files]);
+  const byDate = useMemo(() => streamsByDate(files), [files]);
   const dates = Object.keys(byDate).sort();
 
   const [dateDir, setDateDir] = useState("");
@@ -80,19 +103,30 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
   const [layout, setLayout] = useState("auto");
   const [fps, setFps] = useState(15);
   const [fmt, setFmt] = useState("mp4");
+  const [audioMode, setAudioMode] = useState("none");
+  const [audioSource, setAudioSource] = useState("");
+  const [spec, setSpec] = useState({
+    color: "intensity", fmin_hz: 0, fmax_hz: 96000, fscale: "lin",
+    ascale: "log", gain: 2.5,
+  });
   const [jobs, setJobs] = useState({});
   const [notice, setNotice] = useState("");
+
+  const cams = byDate[dateDir]?.cameras || [];
+  const mics = byDate[dateDir]?.mics || [];
 
   // Default to the most recent date dir and select all its cameras.
   useEffect(() => {
     if (!dates.length) return;
     const d = dates.includes(dateDir) ? dateDir : dates[dates.length - 1];
     if (d !== dateDir) setDateDir(d);
-    setSelected(byDate[d] || []);
+    setSelected(byDate[d]?.cameras || []);
   }, [dates.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setSelected(byDate[dateDir] || []);
+    setSelected(byDate[dateDir]?.cameras || []);
+    setAudioSource((byDate[dateDir]?.mics || [])[0] || "");
+    if (!(byDate[dateDir]?.mics || []).length) setAudioMode("none");
   }, [dateDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -137,6 +171,24 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
 
   const submit = () => {
     setNotice("");
+    const audio =
+      audioMode === "none"
+        ? { mode: "none" }
+        : {
+            mode: audioMode,
+            source: audioSource || undefined,
+            spectrogram:
+              audioMode === "track"
+                ? {}
+                : {
+                    color: spec.color,
+                    fmin_hz: Number(spec.fmin_hz) || 0,
+                    fmax_hz: Number(spec.fmax_hz) || undefined,
+                    fscale: spec.fscale,
+                    ascale: spec.ascale,
+                    gain: Number(spec.gain) || 1,
+                  },
+          };
     socket.emit("compose_session_video", {
       session_name: sessionName,
       date_dir: dateDir || undefined,
@@ -144,8 +196,11 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
       layout,
       fps: Number(fps) || 15,
       fmt,
+      audio,
     });
   };
+
+  const setSpecField = (k, v) => setSpec((s) => ({ ...s, [k]: v }));
 
   const download = (job) => {
     // output_rel is "<session>/<date>/<file>"; the download route wants the
@@ -183,7 +238,7 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
       <div className="form-field">
         <label>Cameras:</label>
         <div className="compose-panel__streams">
-          {(byDate[dateDir] || []).map((mod) => (
+          {cams.map((mod) => (
             <label key={mod} className="compose-panel__stream">
               <input
                 type="checkbox"
@@ -225,6 +280,98 @@ export default function ComposeVideoPanel({ sessionName, files, onRequestDownloa
           </select>
         </div>
       </div>
+
+      <div className="compose-panel__row">
+        <div className="form-field">
+          <label>Audio:</label>
+          <select
+            value={audioMode}
+            onChange={(e) => setAudioMode(e.target.value)}
+            disabled={!mics.length}
+            title={mics.length ? "" : "No microphone recording in this session"}
+          >
+            {AUDIO_MODES.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {audioMode !== "none" && mics.length > 1 && (
+          <div className="form-field">
+            <label>Microphone:</label>
+            <select
+              value={audioSource}
+              onChange={(e) => setAudioSource(e.target.value)}
+            >
+              {mics.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {(audioMode === "strip" || audioMode === "panel") && (
+        <div className="compose-panel__row compose-panel__spec">
+          <div className="form-field">
+            <label>Colour:</label>
+            <select
+              value={spec.color}
+              onChange={(e) => setSpecField("color", e.target.value)}
+            >
+              {SPEC_COLORS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>Freq min (Hz):</label>
+            <input
+              type="number"
+              min="0"
+              step="1000"
+              value={spec.fmin_hz}
+              onChange={(e) => setSpecField("fmin_hz", e.target.value)}
+            />
+          </div>
+          <div className="form-field">
+            <label>Freq max (Hz):</label>
+            <input
+              type="number"
+              min="1000"
+              step="1000"
+              value={spec.fmax_hz}
+              onChange={(e) => setSpecField("fmax_hz", e.target.value)}
+            />
+          </div>
+          <div className="form-field">
+            <label>Freq scale:</label>
+            <select
+              value={spec.fscale}
+              onChange={(e) => setSpecField("fscale", e.target.value)}
+            >
+              <option value="lin">Linear</option>
+              <option value="log">Log</option>
+            </select>
+          </div>
+          <div className="form-field">
+            <label>Gain:</label>
+            <input
+              type="number"
+              min="0.1"
+              max="20"
+              step="0.5"
+              value={spec.gain}
+              onChange={(e) => setSpecField("gain", e.target.value)}
+            />
+          </div>
+        </div>
+      )}
 
       {notice && <div className="compose-job__error">{notice}</div>}
 

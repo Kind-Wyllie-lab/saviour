@@ -11,11 +11,14 @@ from dataclasses import dataclass
 import pytest
 
 from src.controller.compose import (
+    AudioSpec,
     ComposeError,
     ComposeSpec,
     ComposeWorker,
     any_session_busy_reason,
+    camera_window,
     discover_streams,
+    find_microphone,
     plan_regions,
     resolve_date_dir,
 )
@@ -54,6 +57,45 @@ def test_spec_keeps_valid_stream_list():
         {"session_name": "s", "streams": ["camera_a", "camera_b"], "layout": "grid"}
     )
     assert spec.streams == ["camera_a", "camera_b"]
+
+
+# --------------------------------------------------------------------------- #
+# AudioSpec                                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_audio_spec_defaults_to_none():
+    assert AudioSpec.from_dict(None).mode == "none"
+    assert AudioSpec.from_dict({}).mode == "none"
+
+
+def test_audio_spec_valid_with_spectrogram():
+    a = AudioSpec.from_dict({
+        "mode": "panel", "source": "microphone_1",
+        "spectrogram": {"color": "viridis", "fmin_hz": 15000, "fmax_hz": 96000},
+    })
+    assert a.mode == "panel"
+    opts = a.spec_opts()
+    assert opts.color == "viridis" and opts.fmax_hz == 96000
+
+
+@pytest.mark.parametrize("bad", [
+    {"mode": "waveform"},
+    {"mode": "strip", "source": "../x"},
+    {"mode": "strip", "spectrogram": {"color": "sparkle"}},
+    {"mode": "strip", "spectrogram": {"fmin_hz": 90000, "fmax_hz": 20000}},
+    {"mode": "strip", "spectrogram": {"nonsense": 1}},
+])
+def test_audio_spec_rejects_bad(bad):
+    with pytest.raises(ComposeError):
+        AudioSpec.from_dict(bad)
+
+
+def test_compose_spec_embeds_audio():
+    spec = ComposeSpec.from_dict(
+        {"session_name": "s", "audio": {"mode": "track"}}
+    )
+    assert spec.audio["mode"] == "track"
 
 
 # --------------------------------------------------------------------------- #
@@ -139,6 +181,43 @@ def test_discover_streams_filters_and_probes(tmp_path, monkeypatch):
 
     with pytest.raises(ComposeError):
         discover_streams(str(dd), ["camera_a", "camera_missing"])
+
+
+def test_camera_window_is_the_overlap(tmp_path):
+    from src.controller.compose import SessionStream
+
+    def _csv(p, first, last):
+        p.write_text(f"frame_id,timestamp_ns\n0,{first}\n1,{last}\n")
+
+    a, b = tmp_path / "a.csv", tmp_path / "b.csv"
+    _csv(a, 1_000, 9_000)
+    _csv(b, 2_000, 7_000)
+    streams = [
+        SessionStream("a", "a.ts", str(a), 640, 480),
+        SessionStream("b", "b.ts", str(b), 640, 480),
+    ]
+    assert camera_window(streams) == (2_000, 7_000)
+
+
+def test_find_microphone_picks_first_or_named(tmp_path):
+    dd = tmp_path / "20260805"
+    for name in ("microphone_1", "microphone_2"):
+        d = dd / name
+        d.mkdir(parents=True)
+        (d / "rec.flac").write_bytes(b"x")
+        (d / "rec_timestamps.txt").write_text("STARTED 1.0\n")
+    (dd / "microphone_3").mkdir()
+    (dd / "microphone_3" / "rec.flac").write_bytes(b"x")  # no sidecar
+
+    audio, sidecar = find_microphone(str(dd), None)
+    assert "microphone_1" in audio and audio.endswith("rec.flac")
+    assert sidecar.endswith("rec_timestamps.txt")
+    audio2, _ = find_microphone(str(dd), "microphone_2")
+    assert "microphone_2" in audio2
+    with pytest.raises(ComposeError):
+        find_microphone(str(dd), "microphone_3")  # sidecar-less
+    with pytest.raises(ComposeError):
+        find_microphone(str(dd), "microphone_9")
 
 
 # --------------------------------------------------------------------------- #

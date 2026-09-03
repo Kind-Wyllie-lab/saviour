@@ -193,3 +193,14 @@
   color: var(--error-color, #c62828);
   font-size: 0.82rem;
 }
+
+.compose-panel__spec {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border-color, #ddd) 8%, transparent);
+}
+
+.compose-panel__spec .form-field label {
+  font-size: 0.78rem;
+}
